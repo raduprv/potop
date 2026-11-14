@@ -1064,3 +1064,7 @@ of their own to divide by), and looked worse than the occlusion alone.
 Kept from that work: step 2's light from round about as prop_body.glsl
 gives it (the share), the not-a-number guards, the fade in from the eye.
 The render.indirect_light* settings are gone.
+
+## Animals turn going, not on the spot (39d)
+
+actors.c: spot_turn_degrees (actors.ini; default 20 for ground_align > 0, else 0): standing, a straight walker turns no farther than that from spot_yaw_radians (where it last went; taken while moving or going 0.1 m/s), clamped at the end of move_actor (looks, sidesteps, bumps). Such a type with no turn_walk_fraction gets 0.4 (the cow had none: it span on the spot). Tried first: held while walking too, backing out at the limit: --sim walking in place 3x..30x (cow 176, pig 138, ram 380 vs 60, 5, 52); so walking is not held (blocked arcs still turn on the spot). Now: cow 21, pig 4, ram 28.

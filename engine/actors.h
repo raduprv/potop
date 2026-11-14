@@ -119,6 +119,11 @@ typedef struct
 	// stopping to turn on the spot (0: it stops); on the spot still where
 	// the arc's first step is blocked, or the goal is inside its circle
 	float turn_walk_fraction;
+	// Walking straight, how far it may turn standing (degrees; below 0, not
+	// given: 20 for one on four legs, ground_align above 0, else no limit):
+	// past it, it turns only going, forward round an arc or backing out
+	// (a cow does not spin on the spot, hit by another or not)
+	float spot_turn_degrees;
 	// Its steps between standing and walking, if its model has them (people:
 	// found by name, ACTOR_GAIT_): a walk's start (and one turning about as
 	// it starts, its own turn in it), its stop on either foot (begun as that
@@ -272,6 +277,9 @@ typedef struct
 	// Walking given points straight (actors_walk_straight): no search for a
 	// way, ever; a body in its way (physics) stops it there
 	bool straight;
+	// Where its yaw stood when it last went (spot_turn_degrees: standing,
+	// it turns no farther from it than that)
+	float spot_yaw_radians;
 	// Walks stopped at once in a row (caught in something: a hen in a
 	// feeder's trough, every way out a wall from inside); past a few, the
 	// next walks out free for a while (straight_free_meters)

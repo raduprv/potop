@@ -15,6 +15,9 @@
 
 // MAX_BONES in data/shaders/actor_skinning.glsl
 #define ACTOR_MAX_BONES_DRAWN 64
+#define SPOT_TURN_FOUR_LEGS_DEGREES 20.0f  // spot_turn_degrees not given, on four legs
+#define SPOT_TURN_WALK_FRACTION 0.4f        // its arc's walk then, if it has none
+#define SPOT_TURN_GOING_SPEED 0.1f          // m/s: going at least this fast (forward or back), it turns freely
 
 // ---------------------------------------------------------------------------
 // data/actors.ini
@@ -42,6 +45,7 @@ static void set_type_defaults(actor_type_t *type, const char *name)
 	SDL_strlcpy(type->walk_action_name, "walk", sizeof(type->walk_action_name));
 	type->walk_action = -1;
 	type->turn_degrees_per_second = 180.0f;
+	type->spot_turn_degrees = -1.0f;
 	SDL_strlcpy(type->turn_left_action_name, "turn_left", sizeof(type->turn_left_action_name));
 	type->turn_left_action = -1;
 	SDL_strlcpy(type->turn_right_action_name, "turn_right", sizeof(type->turn_right_action_name));
@@ -194,6 +198,10 @@ static bool load_key(void *user_data, const char *section, const char *key, cons
 	if (SDL_strcmp(key, "turn_walk_fraction") == 0)
 	{
 		return ini_value_to_float(value, &type->turn_walk_fraction);
+	}
+	if (SDL_strcmp(key, "spot_turn_degrees") == 0)
+	{
+		return ini_value_to_float(value, &type->spot_turn_degrees);
 	}
 	if (SDL_strcmp(key, "maximum_slope_degrees") == 0)
 	{
@@ -449,6 +457,16 @@ static void load_models(actors_t *actors)
 		type->swim_meters_per_second = SDL_max(type->swim_meters_per_second, 0.05f);
 		type->turn_degrees_per_second = SDL_max(type->turn_degrees_per_second, 1.0f);
 		type->turn_walk_fraction = SDL_clamp(type->turn_walk_fraction, 0.0f, 1.0f);
+		if (type->spot_turn_degrees < 0.0f)
+		{
+			type->spot_turn_degrees = type->ground_align > 0.0f ? SPOT_TURN_FOUR_LEGS_DEGREES : 0.0f;
+		}
+		// (limited on the spot, it must be able to turn going: an arc of
+		// its own if none is given)
+		if (type->spot_turn_degrees > 0.0f && type->turn_walk_fraction <= 0.0f)
+		{
+			type->turn_walk_fraction = SPOT_TURN_WALK_FRACTION;
+		}
 		type->maximum_slope_degrees = SDL_clamp(type->maximum_slope_degrees, 1.0f, 89.0f);
 		type->swim_depth_meters = SDL_max(type->swim_depth_meters, 0.05f);
 		type->wade_depth_meters = SDL_clamp(type->wade_depth_meters, 0.0f, type->swim_depth_meters);
@@ -1386,6 +1404,7 @@ uint32_t actors_add(actors_t *actors, const terrain_t *terrain, int type, float 
 	actor->x = x;
 	actor->z = z;
 	actor->yaw_radians = yaw_radians;
+	actor->spot_yaw_radians = yaw_radians;
 	actor->scale = actors->types[type].scale;
 	actor->y = terrain_sample_height_meters(terrain, x, z);
 	place_on_ground(actors, actor, terrain, NULL, NULL, 0.0f);
@@ -2505,6 +2524,8 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 	float current_z = 0.0f;
 	float wanted_speed = 0.0f;
 	float yaw_before = actor->yaw_radians;
+	float x_before = actor->x;
+	float z_before = actor->z;
 
 	// A step between standing and walking under way: its clip moves it
 	actor->animation_held = false;
@@ -3038,6 +3059,39 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 			SDL_Log("Actor %u (%s): its body caught in something at (%.2f, %.2f)", actor->id, type->name, (double)actor->x, (double)actor->z);
 		}
 		actor->body_fitted = fits;
+	}
+	// Standing (one that walks straight, spot_turn_degrees), it turns no
+	// farther than that from where it last went: a look (at a feeder), a
+	// step aside, a bump from another. Going, its walk turns it round its
+	// arc (turn_walk_fraction, given it by default above), on the spot
+	// only where the arc's first step is blocked (not held there: held to
+	// the limit and backing out instead, tested in the pens, they got stuck
+	// walking in place three to thirty times as often)
+	if (seconds > 0.0f && actor->straight && type->spot_turn_degrees > 0.0f && !actor->swimming && !is_dying(actors, actor))
+	{
+		float limit = degrees_to_radians(type->spot_turn_degrees);
+		float moved_x = actor->x - x_before;
+		float moved_z = actor->z - z_before;
+		float going = SDL_sqrtf(moved_x * moved_x + moved_z * moved_z) / seconds;
+
+		// (its yaw set from outside since: a new spot, there)
+		if (SDL_fabsf(wrap_angle(yaw_before - actor->spot_yaw_radians)) > limit + 0.01f)
+		{
+			actor->spot_yaw_radians = yaw_before;
+		}
+		if (actor->moving || going >= SPOT_TURN_GOING_SPEED)
+		{
+			actor->spot_yaw_radians = actor->yaw_radians;
+		}
+		else
+		{
+			float off = wrap_angle(actor->yaw_radians - actor->spot_yaw_radians);
+
+			if (SDL_fabsf(off) > limit)
+			{
+				actor->yaw_radians = wrap_angle(actor->spot_yaw_radians + (off > 0.0f ? limit : -limit));
+			}
+		}
 	}
 	// How fast it turns, eased (a frame's jitter does not start a turn's
 	// animation): for choose_animation

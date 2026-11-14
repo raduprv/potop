@@ -57,6 +57,15 @@ plays it as it is at walking speed). Running water carries it, wading a
 little, swimming fully, moving or not; a current faster than it swims is
 a wall for its path.
 
+Animals that walk without the navigation grid (the farm's: cows, sheep,
+pigs, hens) turn going, not on the spot: in a sharp turn they keep
+`turn_walk_fraction` of their walk and go round an arc (0.4 by default for
+one on four legs, `ground_align` above 0). Standing, they turn at most
+`spot_turn_degrees` (20 by default on four legs; 0: no limit) from where
+they last went, whatever turns them: a look at a feeder, a step aside, a
+bump from another. Only where an arc's first step is blocked (a fence in
+front) do they still turn on the spot.
+
 The map changes under its feet, so it keeps an eye on the path: twice a
 second it looks at the stretch it can see (`vision_meters`). The map is
 split into regions of 128 m, built again when their terrain moved by more
