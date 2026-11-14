@@ -147,9 +147,6 @@ typedef struct
 	float ambient_occlusion_meters;   // how far round a point it looks (its radius)
 	float ambient_occlusion_strength; // how much of the sky's light it takes away (1: all it finds; up to 2)
 	float ambient_occlusion_distance; // how far from the eye it is drawn (faded out toward it)
-	bool indirect_light;          // with it, the light bounced off what it finds (screen space indirect light)
-	float indirect_light_strength;    // that light's strength (1: as found)
-	float indirect_light_meters;      // how far round a point it looks for that light (beyond the occlusion's radius)
 	float water_shallow_color[3];
 	float water_deep_color[3];
 	float water_clarity_meters;   // depth at which the deep color takes over

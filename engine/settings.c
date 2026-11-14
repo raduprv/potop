@@ -100,9 +100,6 @@ static const setting_field_t setting_fields[] =
 	FIELD("render", "ambient_occlusion_meters", SETTING_FLOAT, render.ambient_occlusion_meters),
 	FIELD("render", "ambient_occlusion_strength", SETTING_FLOAT, render.ambient_occlusion_strength),
 	FIELD("render", "ambient_occlusion_distance", SETTING_FLOAT, render.ambient_occlusion_distance),
-	FIELD("render", "indirect_light", SETTING_BOOL, render.indirect_light),
-	FIELD("render", "indirect_light_strength", SETTING_FLOAT, render.indirect_light_strength),
-	FIELD("render", "indirect_light_meters", SETTING_FLOAT, render.indirect_light_meters),
 	FIELD("render", "water_shallow_color", SETTING_COLOR, render.water_shallow_color),
 	FIELD("render", "water_deep_color", SETTING_COLOR, render.water_deep_color),
 	FIELD("render", "water_clarity_meters", SETTING_FLOAT, render.water_clarity_meters),
@@ -497,9 +494,6 @@ void settings_set_defaults(settings_t *settings)
 	settings->render.ambient_occlusion_meters = 1.0f;
 	settings->render.ambient_occlusion_strength = 1.0f;
 	settings->render.ambient_occlusion_distance = 150.0f;
-	settings->render.indirect_light = true;
-	settings->render.indirect_light_strength = 1.0f;
-	settings->render.indirect_light_meters = 3.0f;
 	settings->render.water_shallow_color[0] = 0.30f;
 	settings->render.water_shallow_color[1] = 0.55f;
 	settings->render.water_shallow_color[2] = 0.55f;

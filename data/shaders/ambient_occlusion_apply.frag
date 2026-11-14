@@ -10,21 +10,16 @@
 // its distance from the eye is to this pixel's (no blur across an edge onto
 // what is behind); then only the sky's share of the light here (against
 // the sun's, as the shadow maps leave it, by its facing) taken away.
-// Then the bounced light (step 1's second target): what it adds is the
-// pixel's own color times that light over the light it has (sun and sky,
-// as worked out for the share): its albedo times the bounced light, no
-// albedo needed (there is no surface buffer). Multiplied over the scene's
-// color (the blend: the color times this; over 1 where light comes in).
+// Multiplied over the scene's color (the blend: the color times this).
 
 layout(set = TEXTURE_SET, binding = 2) uniform sampler2D depth_texture;
 layout(set = TEXTURE_SET, binding = 3) uniform sampler2D occlusion_texture;
-layout(set = TEXTURE_SET, binding = 4) uniform sampler2D indirect_texture;
 
 layout(std140, set = UNIFORM_SET, binding = 1) uniform occlusion_block
 {
 	vec4 occlusion_parameters;     // x: radius (m), y: the distance it is gone at (m), z: strength, w: 1 if the shadow maps are bound
 	vec4 occlusion_size;           // the scene's width and height, the half size target's
-	vec4 occlusion_frame;          // x: the frame (0..15: the pattern's turn), y: 1 if there is a history, z: the bounced light's strength (0: none), w: its radius (m)
+	vec4 occlusion_frame;          // x: the frame (0..15: the pattern's turn), y: 1 if there is a history
 };
 
 layout(location = 0) in vec2 screen_point;
@@ -71,7 +66,6 @@ void main()
 	ivec2 half_pixel = pixel / 2;
 	float tolerance = 0.03 * distance_eye + 0.05;
 	float total = 0.0;
-	vec3 total_indirect = vec3(0.0);
 	float weights = 0.0;
 
 	for (int y = -1; y <= 2; y++)
@@ -88,7 +82,6 @@ void main()
 			float weight = exp(-abs(there.y - distance_eye) / tolerance);
 
 			total += there.x * weight;
-			total_indirect += texelFetch(indirect_texture, at, 0).rgb * weight;
 			weights += weight;
 		}
 	}
@@ -99,13 +92,12 @@ void main()
 	float occlusion = total / weights;
 
 	// (a history spoiled by a not-a-number before this was fixed: left open)
-	if (isnan(occlusion) || any(isnan(total_indirect)))
+	if (isnan(occlusion))
 	{
 		return;
 	}
-	vec3 indirect = total_indirect / weights * occlusion_frame.z;
 
-	if (occlusion >= 0.999 && dot(indirect, indirect) < 1e-8)
+	if (occlusion >= 0.999)
 	{
 		return;
 	}
@@ -137,8 +129,7 @@ void main()
 	}
 	// The light from round about as the scene's own shaders give it
 	// (prop_body.glsl's surroundings: the ground's below, the sky's above,
-	// by the facing): facing down, the ground's bounce, which the found
-	// ground's light would count again
+	// by the facing): facing down, the ground's bounce
 	vec3 sun_light = sun_color * facing * mapped * (sun_direction.y > 0.0 ? 1.0 : 0.0);
 	vec3 round_about = mix(ground_bounce_color(mapped), sky_color, normal.y * 0.5 + 0.5) * max(ambient_intensity, 0.05);
 	float sun = luminance(sun_light);
@@ -146,13 +137,5 @@ void main()
 	float share = sky / max(sun + sky, 1e-4);
 	float taken = (1.0 - occlusion) * occlusion_parameters.z * fade * share;
 
-	// The light it has, by the channel (the bounced light over it: how much
-	// more of its own color comes back); held: a pixel near black in the
-	// dark is not made a lamp
-	vec3 lit = sun_light + round_about;
-	// (below 0: what was found sends less than the scene's shaders took for
-	// it, beyond the occlusion's radius)
-	vec3 gained = clamp(indirect * fade / max(lit, vec3(0.02)), vec3(-0.5), vec3(1.5));
-
-	fragment_color = vec4(vec3(max(1.0 - taken, 0.0)) + gained, 1.0);
+	fragment_color = vec4(vec3(max(1.0 - taken, 0.0)), 1.0);
 }

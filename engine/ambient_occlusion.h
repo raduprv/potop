@@ -27,13 +27,7 @@
 // Faded out with the distance (render.ambient_occlusion_distance): far
 // off a pixel spans more than the radius. render.ambient_occlusion: off,
 // nothing drawn.
-//
-// Step 1 also gathers the light the points it finds send back (screen
-// space indirect light): each point that raises a horizon, its color in
-// the scene times the arc it newly hides; averaged over the frames with
-// the occlusion; step 2 adds the pixel's own color times that light over
-// the light it has. render.indirect_light (its strength:
-// render.indirect_light_strength).
+
 
 #ifndef AMBIENT_OCCLUSION_H
 #define AMBIENT_OCCLUSION_H
@@ -53,8 +47,6 @@ typedef struct
 	SDL_GPUGraphicsPipeline *apply_pipeline;       // step 2, over the scene's color
 	SDL_GPUTexture *occlusion_texture;             // half size, R16G16 float: the occlusion (1 open), the distance from the eye (m; below 0: the sky)
 	SDL_GPUTexture *history_textures[2];           // the same, averaged over the frames: written in turn, the other read
-	SDL_GPUTexture *indirect_texture;              // half size, RGBA16 float: the light bounced off what it finds (step 1's second target)
-	SDL_GPUTexture *indirect_history_textures[2];  // the same, averaged over the frames (with history_textures)
 	int history_written;                           // the one written last
 	bool history_valid;                            // the other one holds last frame's
 	float previous_view_projection[16];            // last frame's scene view_projection_relative and eye

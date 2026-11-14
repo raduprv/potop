@@ -9,14 +9,11 @@
 // the screen last frame (last frame's matrix, from last frame's eye); the
 // history's four pixels round there count only where their distance from
 // the eye is the point's then (else an edge come out, something moved:
-// this frame's alone). Out: the occlusion, this frame's distance; and the
-// bounced light, averaged the same way.
+// this frame's alone). Out: the occlusion, this frame's distance.
 
 layout(set = TEXTURE_SET, binding = 0) uniform sampler2D depth_texture;
 layout(set = TEXTURE_SET, binding = 1) uniform sampler2D occlusion_texture;
 layout(set = TEXTURE_SET, binding = 2) uniform sampler2D history_texture;
-layout(set = TEXTURE_SET, binding = 3) uniform sampler2D indirect_texture;          // this frame's bounced light
-layout(set = TEXTURE_SET, binding = 4) uniform sampler2D indirect_history_texture;  // ... and its history
 
 layout(std140, set = UNIFORM_SET, binding = 1) uniform temporal_block
 {
@@ -29,7 +26,6 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform temporal_block
 layout(location = 0) in vec2 screen_point;
 
 layout(location = 0) out vec4 fragment_color;
-layout(location = 1) out vec4 fragment_indirect;
 
 void main()
 {
@@ -37,10 +33,8 @@ void main()
 	ivec2 half_size = ivec2(temporal_size.zw);
 	ivec2 half_pixel = ivec2(gl_FragCoord.xy);
 	vec2 current = texelFetch(occlusion_texture, half_pixel, 0).rg;
-	vec3 current_indirect = texelFetch(indirect_texture, half_pixel, 0).rgb;
 
 	fragment_color = vec4(current, 0.0, 0.0);
-	fragment_indirect = vec4(current_indirect, 0.0);
 	if (current.y < 0.0 || temporal_history.y < 0.5)
 	{
 		return;
@@ -64,7 +58,6 @@ void main()
 	float expected = length(point);
 	float tolerance = 0.02 * expected + 0.05;
 	float total = 0.0;
-	vec3 total_indirect = vec3(0.0);
 	float weights = 0.0;
 
 	for (int y = 0; y < 2; y++)
@@ -79,14 +72,13 @@ void main()
 			}
 			vec2 there = texelFetch(history_texture, at, 0).rg;
 
-			if (there.y < 0.0 || abs(there.y - expected) > tolerance || isnan(there.x) || any(isnan(texelFetch(indirect_history_texture, at, 0).rgb)))
+			if (there.y < 0.0 || abs(there.y - expected) > tolerance || isnan(there.x))
 			{
 				continue;
 			}
 			float weight = (x == 0 ? 1.0 - fraction.x : fraction.x) * (y == 0 ? 1.0 - fraction.y : fraction.y);
 
 			total += there.x * weight;
-			total_indirect += texelFetch(indirect_history_texture, at, 0).rgb * weight;
 			weights += weight;
 		}
 	}
@@ -96,5 +88,4 @@ void main()
 		return;
 	}
 	fragment_color = vec4(mix(current.x, total / weights, temporal_history.x), current.y, 0.0, 0.0);
-	fragment_indirect = vec4(mix(current_indirect, total_indirect / weights, temporal_history.x), 0.0);
 }
