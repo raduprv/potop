@@ -79,7 +79,7 @@ make              # the engine, the game, the editor and the shaders
 make tools        # the desktop tools (plants, props, houses, textures, converters)
 ```
 
-The assets (textures, models) are not in the repository yet.
+The actors (characters and animals) are not in the repository: their models are under licenses that do not allow it.
 
 ## Documentation
 
