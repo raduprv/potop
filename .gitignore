@@ -1,5 +1,4 @@
-# Potop: the sources only for now (the assets come later: unignore their
-# directories under data/ then). Everything at the top is out unless named.
+# Potop. Everything at the top is out unless named.
 /*
 !/.gitignore
 !/Makefile
@@ -17,12 +16,11 @@
 !/props_plan/
 !/data/
 
-# data/: the ini files, the shaders' sources and the building modules
-/data/*
-!/data/*.ini
-!/data/shaders/
-!/data/modules/
-# (made by make shaders)
+# data/: all of it but what is made at run time (cache), what make shaders
+# makes (spirv) and the actors (models under a license that does not allow
+# them in a public repository)
+/data/cache/
+/data/actors/
 /data/shaders/spirv/
 
 # tools/: the sources and scripts, not what they build
