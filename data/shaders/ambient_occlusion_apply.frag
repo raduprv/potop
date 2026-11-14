@@ -58,7 +58,9 @@ void main()
 	}
 	vec3 point = eye_point(pixel, size);
 	float distance_eye = length(point);
-	float fade = 1.0 - smoothstep(occlusion_parameters.y * 0.6, occlusion_parameters.y, distance_eye);
+	// (and in from under a meter: the grass at the eye's feet, a blade a
+	// hand away, has no occlusion the screen can tell)
+	float fade = (1.0 - smoothstep(occlusion_parameters.y * 0.6, occlusion_parameters.y, distance_eye)) * smoothstep(0.4, 1.2, distance_eye);
 
 	if (fade <= 0.0)
 	{
@@ -95,6 +97,12 @@ void main()
 		return;
 	}
 	float occlusion = total / weights;
+
+	// (a history spoiled by a not-a-number before this was fixed: left open)
+	if (isnan(occlusion) || any(isnan(total_indirect)))
+	{
+		return;
+	}
 	vec3 indirect = total_indirect / weights * occlusion_frame.z;
 
 	if (occlusion >= 0.999 && dot(indirect, indirect) < 1e-8)
@@ -109,7 +117,9 @@ void main()
 	vec3 up = point - eye_point(pixel - ivec2(0, 1), size);
 	vec3 across = dot(right, right) < dot(left, left) ? right : left;
 	vec3 along = dot(down, down) < dot(up, up) ? down : up;
-	vec3 normal = normalize(cross(along, across));
+	vec3 facing_cross = cross(along, across);
+	// (no facing to be had, its neighbors in a line: taken as facing the eye)
+	vec3 normal = dot(facing_cross, facing_cross) > 1e-20 ? normalize(facing_cross) : -point / max(distance_eye, 1e-4);
 
 	if (dot(normal, point) > 0.0)
 	{

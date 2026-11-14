@@ -79,7 +79,7 @@ void main()
 			}
 			vec2 there = texelFetch(history_texture, at, 0).rg;
 
-			if (there.y < 0.0 || abs(there.y - expected) > tolerance)
+			if (there.y < 0.0 || abs(there.y - expected) > tolerance || isnan(there.x) || any(isnan(texelFetch(indirect_history_texture, at, 0).rgb)))
 			{
 				continue;
 			}

@@ -123,7 +123,15 @@ void main()
 		return;
 	}
 	vec3 view = -point / distance_eye;
-	vec3 normal = normalize(cross(along, across));
+	vec3 facing_cross = cross(along, across);
+
+	// (its neighbors in a line, a blade of grass edge on: no facing to be
+	// had either; normalized it was not a number, kept in the history)
+	if (dot(facing_cross, facing_cross) < 1e-20)
+	{
+		return;
+	}
+	vec3 normal = normalize(facing_cross);
 
 	if (dot(normal, view) < 0.0)
 	{

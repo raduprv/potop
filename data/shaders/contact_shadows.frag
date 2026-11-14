@@ -66,9 +66,16 @@ void main()
 	vec3 up = point - scene_point(pixel - ivec2(0, 1), size);
 	vec3 across = dot(right, right) < dot(left, left) ? right : left;
 	vec3 along = dot(down, down) < dot(up, up) ? down : up;
-	vec3 normal = normalize(cross(along, across));
-	// (on an edge both ways, its facing is not to be had: left alone)
+	vec3 facing_cross = cross(along, across);
+	// (on an edge both ways, or its neighbors in a line, its facing is not
+	// to be had: left alone; normalized it was not a number)
 	float pixel_meters = distance_eye * 2.0 / (abs(view_projection[1][1]) * float(size.y));
+
+	if (dot(facing_cross, facing_cross) < 1e-20)
+	{
+		return;
+	}
+	vec3 normal = normalize(facing_cross);
 
 	if (min(dot(across, across), dot(along, along)) > pixel_meters * pixel_meters * 36.0)
 	{

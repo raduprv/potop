@@ -1050,3 +1050,5 @@ tables, live):
   bounce below, the sky above): the occlusion did not take that arc away,
   so the full light would count it twice; the difference is the tint (a
   green meadow over a plain ground), and can be below 0.
+
+- 38z: a facing not to be had (the neighbors in a line: a blade of grass edge on) made normalize() not a number in step 1, step 2 and the contact shadows; kept in the history it showed as white or black spots (the screen's lower corners, grass at the feet). Guarded (cross length), the temporal pass and step 2 skip a not-a-number; step 2 fades in from 0.4 to 1.2 m from the eye.
