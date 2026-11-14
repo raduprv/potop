@@ -1,0 +1,73 @@
+# A well for tools/potop_house (workshop 13)
+preset = cottage
+workshop = 13
+seed = 13
+base_height = 0
+chimney = 0
+porch = 0
+annex = 0
+moss = 0.3
+lichen = 0.08
+wear = 0.5
+variants = 0
+plaster_tint = 0
+# (small and open: nothing hidden to leave out)
+interior = 1
+roof_meters = 3.0
+roof_color_texture = props/textures/house_roof_shingle_color.png
+roof_normal_texture = props/textures/house_roof_shingle_normal.png
+roof_arm_texture = props/textures/house_roof_shingle_arm.png
+timber_meters = 2.7
+timber_bands = 1
+timber_color_texture = props/textures/hewn_log_dark_color.png
+timber_normal_texture = props/textures/hewn_log_dark_normal.png
+timber_arm_texture = props/textures/hewn_log_dark_arm.png
+walls_meters = 1.2
+walls_color_texture = props/textures/house_board_wall_color.png
+walls_normal_texture = props/textures/house_board_wall_normal.png
+walls_arm_texture = props/textures/house_board_wall_arm.png
+base_meters = 1.6
+base_color_texture = props/textures/coursed_limestone_color.png
+base_normal_texture = props/textures/coursed_limestone_normal.png
+base_arm_texture = props/textures/coursed_limestone_arm.png
+# the fences' posts, rails and pickets: old split wood, gray, not bark
+log_meters = 1.8
+log_color_texture = props/textures/house_timber_old_color.png
+log_normal_texture = props/textures/house_timber_old_normal.png
+log_arm_texture = props/textures/house_timber_old_arm.png
+floor_meters = 2.0
+floor_color_texture = props/textures/smithy_floor_color.png
+floor_normal_texture = props/textures/smithy_floor_normal.png
+floor_arm_texture = props/textures/smithy_floor_arm.png
+iron_color_texture = props/textures/forged_iron_color.png
+iron_normal_texture = props/textures/forged_iron_normal.png
+iron_arm_texture = props/textures/forged_iron_arm.png
+
+# the boards of the doors, the ramp, the slats: weathered boards
+roof_timber_color_texture = props/textures/mill_weatherboard_color.png
+roof_timber_normal_texture = props/textures/mill_weatherboard_normal.png
+roof_timber_arm_texture = props/textures/mill_weatherboard_arm.png
+roof_timber_meters = 1.8
+
+# the curb and the coping: field stones
+stone_meters = 0.8
+stone_color_texture = props/textures/field_stone_color.png
+stone_normal_texture = props/textures/field_stone_normal.png
+stone_arm_texture = props/textures/field_stone_arm.png
+
+# the curb's body: dry laid stone, the church footing's (its face pushed
+# out by the texture's height picture, the joints darker)
+footing_relief = 0.06
+footing_joint_dark = 0.35
+footing_cell = 0.035
+footing_meters = 2.3
+footing_color_texture = props/textures/drystone_color.png
+footing_normal_texture = props/textures/drystone_normal.png
+footing_arm_texture = props/textures/drystone_arm.png
+
+# the coping: granite boulders, textured from the sides (no seams)
+millstone_triplanar = 1
+millstone_meters = 1.0
+millstone_color_texture = props/textures/granite_color.png
+millstone_normal_texture = props/textures/granite_normal.png
+millstone_arm_texture = props/textures/granite_arm.png

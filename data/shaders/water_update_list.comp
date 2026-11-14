@@ -1,0 +1,53 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "water_sim.glsl"
+
+// Between the passes, one thread per active tile: the tiles taking part in
+// pass 2 are the active ones plus every neighbor they asked for, which is
+// woken. A woken tile's own fluxes are zero, so for now it only receives
+// water; it works out its own outflow from the next substep on.
+
+layout(local_size_x = 64) in;
+
+void add_to_update_list(uint tile)
+{
+	if (atomicExchange(control[tile_word(tile, TILE_IN_UPDATE)], 1u) == 0u)
+	{
+		control[update_list_word(atomicAdd(control[HEADER_UPDATE_COUNT], 1u))] = tile;
+	}
+}
+
+void main()
+{
+	uint tile;
+	uint requests;
+
+	if (gl_GlobalInvocationID.x >= control[HEADER_ACTIVE_COUNT])
+	{
+		return;
+	}
+	tile = control[active_list_word(gl_GlobalInvocationID.x)];
+	requests = control[tile_word(tile, TILE_WAKE_REQUESTS)];
+	add_to_update_list(tile);
+	if ((requests & (1u << DIRECTION_LEFT)) != 0u)
+	{
+		wake_tile(tile - 1u, WAKE_NEIGHBOR);
+		add_to_update_list(tile - 1u);
+	}
+	if ((requests & (1u << DIRECTION_RIGHT)) != 0u)
+	{
+		wake_tile(tile + 1u, WAKE_NEIGHBOR);
+		add_to_update_list(tile + 1u);
+	}
+	if ((requests & (1u << DIRECTION_BACK)) != 0u)
+	{
+		wake_tile(tile - uint(tiles_per_side), WAKE_NEIGHBOR);
+		add_to_update_list(tile - uint(tiles_per_side));
+	}
+	if ((requests & (1u << DIRECTION_FRONT)) != 0u)
+	{
+		wake_tile(tile + uint(tiles_per_side), WAKE_NEIGHBOR);
+		add_to_update_list(tile + uint(tiles_per_side));
+	}
+}

@@ -1,0 +1,66 @@
+# A stone cabin for tools/potop_house (workshop 15, cabin_stone): the log
+# cabin's T, its walls dry laid river stone, log gables, a porch
+preset = cottage
+workshop = 15
+cabin_stone = 1
+seed = 17
+base_height = 0
+chimney = 0
+porch = 0
+annex = 0
+moss = 0.35
+lichen = 0.1
+wear = 0.4
+variants = 0
+plaster_tint = 0
+
+# the walls' logs: peeled, brown
+log_meters = 2.2
+log_color_texture = props/textures/house_timber_color.png
+log_normal_texture = props/textures/house_timber_normal.png
+log_arm_texture = props/textures/house_timber_arm.png
+
+roof_meters = 7.0
+roof_color_texture = props/textures/house_roof_shingle_dark_color.png
+roof_normal_texture = props/textures/house_roof_shingle_dark_normal.png
+roof_arm_texture = props/textures/house_roof_shingle_dark_arm.png
+
+# the frames, the door, the roofs' boards: old gray wood
+roof_timber_meters = 1.6
+roof_timber_color_texture = props/textures/house_timber_old_color.png
+roof_timber_normal_texture = props/textures/house_timber_old_normal.png
+roof_timber_arm_texture = props/textures/house_timber_old_arm.png
+timber_meters = 1.6
+timber_color_texture = props/textures/house_timber_old_color.png
+timber_normal_texture = props/textures/house_timber_old_normal.png
+timber_arm_texture = props/textures/house_timber_old_arm.png
+
+floor_meters = 2.0
+floor_color_texture = props/textures/porch_floor_oak_color.png
+floor_normal_texture = props/textures/porch_floor_oak_normal.png
+floor_arm_texture = props/textures/porch_floor_oak_arm.png
+iron_color_texture = props/textures/forged_iron_color.png
+iron_normal_texture = props/textures/forged_iron_normal.png
+iron_arm_texture = props/textures/forged_iron_arm.png
+
+# the footing and the chimney: dry laid stone, the church footing's
+footing_relief = 0.08
+footing_joint_dark = 0.3
+footing_cell = 0.06
+footing_meters = 2.6
+footing_color_texture = props/textures/drystone_color.png
+footing_normal_texture = props/textures/drystone_normal.png
+footing_arm_texture = props/textures/drystone_arm.png
+
+# the step and the porch's padstones: granite, triplanar
+millstone_triplanar = 1
+millstone_meters = 1.0
+millstone_color_texture = props/textures/granite_color.png
+millstone_normal_texture = props/textures/granite_normal.png
+millstone_arm_texture = props/textures/granite_arm.png
+
+# the walls: the same river stone, bigger (the footing's keys push it out)
+base_meters = 3.4
+base_color_texture = props/textures/drystone_color.png
+base_normal_texture = props/textures/drystone_normal.png
+base_arm_texture = props/textures/drystone_arm.png

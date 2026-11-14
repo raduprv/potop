@@ -1,0 +1,48 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "scene.glsl"
+
+// The sun's rays through the fog (see src/fog.h), their first pass: at half
+// the screen's size, how much of the sun's glow each place lets through:
+// the sky round the sun (strongest at it), nothing where something stands
+// in front of it.
+
+layout(set = TEXTURE_SET, binding = 0) uniform sampler2D depth_texture;
+layout(set = READWRITE_SET, binding = 0, r16f) uniform writeonly image2D mask_image;
+#include "fog.glsl"
+
+layout(local_size_x = 64) in;
+
+void main()
+{
+	ivec2 size = imageSize(mask_image);
+	uint index = gl_GlobalInvocationID.x;
+
+	if (index >= uint(size.x * size.y))
+	{
+		return;
+	}
+	ivec2 texel = ivec2(int(index) % size.x, int(index) / size.x);
+	ivec2 depth_size = textureSize(depth_texture, 0);
+	float sky = 0.0;
+
+	// The four pixels it covers: how many of them see the sky
+	for (int k = 0; k < 4; k++)
+	{
+		ivec2 pixel = min(texel * 2 + ivec2(k & 1, k >> 1), depth_size - 1);
+
+		sky += texelFetch(depth_texture, pixel, 0).r >= 1.0 ? 0.25 : 0.0;
+	}
+	// (the screen's first row is its top: clip space y up)
+	vec2 screen = (vec2(texel) + 0.5) / vec2(size) * 2.0 - 1.0;
+
+	screen.y = -screen.y;
+	vec3 direction = eye_direction(screen);
+	float towards = max(dot(direction, sun_direction), 0.0);
+	float glow = towards * towards;
+
+	glow *= glow;
+	glow *= glow;
+	imageStore(mask_image, texel, vec4(sky * glow, 0.0, 0.0, 0.0));
+}

@@ -1,0 +1,64 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_samplerless_texture_functions : require
+#include "common.glsl"
+
+// The depth pyramid in its buffer (see hiz.h), one level a dispatch: level
+// 0 copied from the image the fragment shader made (mode 0), or a level
+// made from the one before it (mode 1): each texel the farthest depth of
+// the texels it covers below. A source of odd size gives the last texel of
+// a row or column three texels, so nothing is left out.
+
+layout(local_size_x = 64) in;
+
+// A read-only storage texture: SDL_GPU binds those as sampled images (no
+// sampler), read texel by texel
+layout(set = READONLY_SET, binding = 0) uniform texture2D first_level;
+layout(std430, set = READWRITE_SET, binding = 0) buffer pyramid_buffer { float depths[]; };
+
+layout(std140, set = UNIFORM_SET, binding = 0) uniform build_block
+{
+	ivec2 source_size;
+	ivec2 destination_size;
+	int source_offset;              // where the level below starts in the buffer (mode 1)
+	int destination_offset;
+	int mode;                       // 0: level 0 from the image; 1: from the level below
+	int padding;
+};
+
+void main()
+{
+	int index = int(gl_GlobalInvocationID.x);
+	ivec2 texel = ivec2(index % destination_size.x, index / destination_size.x);
+	ivec2 first;
+	ivec2 last;
+	float farthest = 0.0;
+
+	if (texel.y >= destination_size.y)
+	{
+		return;
+	}
+	if (mode == 0)
+	{
+		depths[destination_offset + index] = texelFetch(first_level, texel, 0).r;
+		return;
+	}
+	first = texel * 2;
+	last = min(first + 1, source_size - 1);
+	if (texel.x == destination_size.x - 1)
+	{
+		last.x = source_size.x - 1;
+	}
+	if (texel.y == destination_size.y - 1)
+	{
+		last.y = source_size.y - 1;
+	}
+	for (int y = first.y; y <= last.y; y++)
+	{
+		for (int x = first.x; x <= last.x; x++)
+		{
+			farthest = max(farthest, depths[source_offset + y * source_size.x + x]);
+		}
+	}
+	depths[destination_offset + index] = farthest;
+}

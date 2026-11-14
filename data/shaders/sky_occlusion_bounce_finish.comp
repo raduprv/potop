@@ -1,0 +1,45 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// The light the land round sends back (sky_occlusion.h), the end: from the
+// sums (sky_occlusion_bounce.comp) each texel's way to what blocks its sky,
+// on the whole, and how far: RGBA8, rgb the way (* 0.5 + 0.5), a the
+// distance (sqrt of it over BOUNCE_FARTHEST; 0: nothing blocks it)
+
+layout(local_size_x = 256) in;
+
+layout(set = READWRITE_SET, binding = 0, r32f) uniform image2D sums_image;
+layout(set = READWRITE_SET, binding = 1, rgba8) uniform writeonly image2D bounce_image;
+
+layout(std140, set = UNIFORM_SET, binding = 0) uniform bounce_finish_block
+{
+	int bounce_size;
+	float farthest;                // meters a = 1 stands for
+	float padding_1;
+	float padding_2;
+};
+
+void main()
+{
+	int x = int(gl_GlobalInvocationID.x);
+	int y = int(gl_GlobalInvocationID.y);
+
+	if (x >= bounce_size || y >= bounce_size)
+	{
+		return;
+	}
+	float weight = imageLoad(sums_image, ivec2(x, y + 4 * bounce_size)).x;
+	vec4 result = vec4(0.5, 1.0, 0.5, 0.0);
+
+	if (weight > 1e-4)
+	{
+		vec3 way = vec3(imageLoad(sums_image, ivec2(x, y)).x, imageLoad(sums_image, ivec2(x, y + bounce_size)).x,
+			imageLoad(sums_image, ivec2(x, y + 2 * bounce_size)).x);
+		float distance = imageLoad(sums_image, ivec2(x, y + 3 * bounce_size)).x / weight;
+
+		way = length(way) > 1e-5 ? normalize(way) : vec3(0.0, 1.0, 0.0);
+		result = vec4(way * 0.5 + 0.5, max(sqrt(clamp(distance / farthest, 0.0, 1.0)), 1.0 / 255.0));
+	}
+	imageStore(bounce_image, ivec2(x, y), result);
+}

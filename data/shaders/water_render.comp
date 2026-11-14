@@ -1,0 +1,86 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// The water textures the renderer draws from (water.vert), one workgroup
+// per tile of the list (those that changed): the depth (RG32F: after the
+// last step, and after the step before, which the renderer blends between
+// so the water moves smoothly between steps), and the flow velocity,
+// sediment concentration and busiest pipe's speed (RGBA16F). Tiles listed
+// without RENDER_ENTRY_NEW only let their previous step catch up.
+
+#define WATER_RW_TEXTURES 2
+#include "water_sim.glsl"
+
+layout(local_size_x = 256) in;
+
+layout(set = READWRITE_SET, binding = 0, rg32f) uniform image2D water_image;
+layout(set = READWRITE_SET, binding = 1, rgba16f) uniform writeonly image2D flow_image;
+
+void main()
+{
+	if (gl_WorkGroupID.x >= control[HEADER_LIST_COUNT])
+	{
+		return;
+	}
+	uint entry = control[list_word(gl_WorkGroupID.x)];
+	uint tile = entry & ~RENDER_ENTRY_NEW;
+	int tile_x = int(tile) % tiles_per_side;
+	int tile_y = int(tile) / tiles_per_side;
+
+	if ((entry & RENDER_ENTRY_NEW) == 0u)
+	{
+		for (uint k = 0u; k < 16u; k++)
+		{
+			uint local_index = gl_LocalInvocationID.x + 256u * k;
+			ivec2 texel = ivec2(tile_x * TILE_SIZE + int(local_index & 63u), tile_y * TILE_SIZE + int(local_index >> 6));
+			float last = imageLoad(water_image, texel).x;
+
+			imageStore(water_image, texel, vec4(last, last, 0.0, 0.0));
+		}
+		return;
+	}
+
+	for (uint k = 0u; k < 16u; k++)
+	{
+		uint local_index = gl_LocalInvocationID.x + 256u * k;
+		int x = tile_x * TILE_SIZE + int(local_index & 63u);
+		int y = tile_y * TILE_SIZE + int(local_index >> 6);
+		uint cell = (tile << 12) | local_index;
+		int water_units = depths[cell];
+		float depth_meters = float(water_units) * METERS_PER_UNIT;
+		vec4 own = fluxes_of(cell);
+		float in_from_left = x > 0 ? fluxes_of(cell_of(x - 1, y)).y : 0.0;
+		float in_from_right = x < map_size - 1 ? fluxes_of(cell_of(x + 1, y)).x : 0.0;
+		float in_from_back = y > 0 ? fluxes_of(cell_of(x, y - 1)).w : 0.0;
+		float in_from_front = y < map_size - 1 ? fluxes_of(cell_of(x, y + 1)).z : 0.0;
+		// Net flow through the cell along each axis, averaged over both faces
+		float flow_x = 0.5 * (in_from_left - own.x + own.y - in_from_right);
+		float flow_y = 0.5 * (in_from_back - own.z + own.w - in_from_front);
+		// Thin films are clamped, so a few millimeters do not look like rapids
+		float cross_section = max(depth_meters, 0.1) * cell_size;
+		float largest = max(max(abs(own.x), abs(own.y)), max(abs(own.z), abs(own.w)));
+		bool wet = depth_meters > 0.0;
+		int obstacle = obstacle_units(cell);
+		float drawn_depth = depth_meters;
+		vec4 flow;
+
+		// Water over a wall (a roof) lies on its top; a film there is not
+		// drawn, or the house looks wrapped in water
+		if (obstacle > 0)
+		{
+			drawn_depth = depth_meters > 0.05 ? depth_meters + float(obstacle) * METERS_PER_UNIT : 0.0;
+		}
+		flow.x = wet ? flow_x / cross_section : 0.0;
+		flow.y = wet ? flow_y / cross_section : 0.0;
+		flow.z = water_units > 0 ? float(sediments[cell]) / float(water_units) : 0.0;
+		flow.w = wet ? largest / (max(depth_meters, speed_depth_meters) * cell_size) : 0.0;
+		{
+			// The old value becomes the previous step's (if a step was made)
+			float previous = render_stepped != 0 ? imageLoad(water_image, ivec2(x, y)).x : drawn_depth;
+
+			imageStore(water_image, ivec2(x, y), vec4(drawn_depth, previous, 0.0, 0.0));
+		}
+		imageStore(flow_image, ivec2(x, y), flow);
+	}
+}

@@ -1,0 +1,101 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// What the water leaves on things (water_marks.h), a texel per 2 x 2 cells,
+// a few times a second: RGBA8
+//   r  the flood's mark: the highest the water stood over the ground this
+//      flood (of MARK_RANGE meters)
+//   g  how fresh the mark is (up to 1 in MARK_SET_SECONDS under water .. 0
+//      washed off)
+//   b  algae: grows on what stays under water, fades once it is dry
+//   a  wet: 1 under water, drying once it went
+// The objects' shaders (ground_water.glsl) draw them below the mark.
+
+layout(local_size_x = 256) in;
+
+layout(set = TEXTURE_SET, binding = 0) uniform sampler2D water_texture;   // RG32F: the water's depth (m)
+
+layout(set = READWRITE_SET, binding = 0, rgba8) uniform image2D marks_image;
+
+layout(std140, set = UNIFORM_SET, binding = 0) uniform marks_block
+{
+	int map_size;                  // cells per side
+	int marks_size;                // texels per side (half)
+	float seconds;                 // game time to work in
+	float clock;                   // for the rounding's noise
+};
+
+// (ground_water.glsl's)
+const float MARK_RANGE = 4.0;
+// The mark washes off in this long, the wet dries in this long, the algae
+// grow in this long under water and fade in this long once dry (game
+// seconds)
+const float MARK_FADE_SECONDS = 1200.0;
+const float DRY_SECONDS = 240.0;
+const float ALGAE_GROW_SECONDS = 900.0;
+const float ALGAE_FADE_SECONDS = 2400.0;
+// The mark sets in this long under water; its top follows the water's
+// level this slowly (a passing wave leaves next to nothing)
+const float MARK_SET_SECONDS = 30.0;
+const float MARK_RISE_SECONDS = 10.0;
+// Water shallower than this leaves nothing
+const float LEAST_DEPTH = 0.02;
+
+float hash(uvec2 cell, float salt)
+{
+	uint value = cell.x * 73856093u ^ cell.y * 19349663u ^ uint(salt * 1000.0) * 83492791u;
+
+	value = (value ^ (value >> 16u)) * 0x45d9f3bu;
+	value = (value ^ (value >> 16u)) * 0x45d9f3bu;
+	return float((value ^ (value >> 16u)) >> 8u) * (1.0 / 16777216.0);
+}
+
+// Kept in bytes: a small change would round away every time, so it rounds
+// up or down at random, as often as it should on the whole
+float dithered(float value, float noise)
+{
+	return clamp(floor(value * 255.0 + noise) / 255.0, 0.0, 1.0);
+}
+
+void main()
+{
+	uint index = gl_GlobalInvocationID.x;
+
+	if (index >= uint(marks_size) * uint(marks_size))
+	{
+		return;
+	}
+	ivec2 texel = ivec2(int(index % uint(marks_size)), int(index / uint(marks_size)));
+	ivec2 cell = texel * 2;
+	int last = map_size - 1;
+	float depth = max(max(texelFetch(water_texture, min(cell, ivec2(last)), 0).x, texelFetch(water_texture, min(cell + ivec2(1, 0), ivec2(last)), 0).x),
+		max(texelFetch(water_texture, min(cell + ivec2(0, 1), ivec2(last)), 0).x, texelFetch(water_texture, min(cell + ivec2(1), ivec2(last)), 0).x));
+	vec4 marks = imageLoad(marks_image, texel);
+	float noise = hash(uvec2(texel), clock);
+
+	if (depth > LEAST_DEPTH)
+	{
+		// Under water: the mark rises towards where the water stands (it
+		// never sinks: the highest it stood a while), sets in over some
+		// time; wet; the algae grow
+		float level = min(depth / MARK_RANGE, 1.0);
+		float rise = max(level - marks.r, 0.0) * min(seconds / MARK_RISE_SECONDS, 1.0);
+
+		marks.r = dithered(marks.r + rise, fract(noise * 5.17));
+		marks.g = dithered(marks.g + seconds / MARK_SET_SECONDS, noise);
+		marks.a = 1.0;
+		marks.b = dithered(marks.b + seconds / ALGAE_GROW_SECONDS, noise);
+	}
+	else
+	{
+		marks.g = dithered(marks.g - seconds / MARK_FADE_SECONDS, noise);
+		marks.a = dithered(marks.a - seconds / DRY_SECONDS, fract(noise * 7.13));
+		marks.b = dithered(marks.b - seconds / ALGAE_FADE_SECONDS, fract(noise * 3.71));
+		if (marks.g <= 0.0)
+		{
+			marks.r = 0.0;
+		}
+	}
+	imageStore(marks_image, texel, marks);
+}

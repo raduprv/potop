@@ -1,0 +1,68 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#define WATER_CONTROL_KERNEL
+#include "water_sim.glsl"
+
+// Its own buffers: the control words, and the dispatch arguments
+layout(std430, set = READWRITE_SET, binding = 0) buffer control_buffer { uint control[]; };
+layout(std430, set = READWRITE_SET, binding = 1) buffer argument_buffer { uint arguments[]; };
+
+// Bookkeeping between the water passes, one thread: resets the list
+// counters, turns them into indirect dispatch arguments, starts a step,
+// clears the counters the CPU has read. What it does is the bits of mode.
+
+layout(local_size_x = 1) in;
+
+#define CONTROL_RESET_TILE_LISTS 1
+#define CONTROL_RESET_LIST 2
+#define CONTROL_ARGUMENTS 4
+#define CONTROL_STEP_BEGIN 8
+#define CONTROL_RESET_COUNTERS 16
+
+void write_arguments(int word, uint groups)
+{
+	arguments[word] = groups;
+	arguments[word + 1u] = 1u;
+	arguments[word + 2u] = 1u;
+}
+
+void main()
+{
+	if ((mode & CONTROL_RESET_TILE_LISTS) != 0)
+	{
+		control[HEADER_ACTIVE_COUNT] = 0u;
+		control[HEADER_UPDATE_COUNT] = 0u;
+	}
+	if ((mode & CONTROL_RESET_LIST) != 0)
+	{
+		control[HEADER_LIST_COUNT] = 0u;
+	}
+	if ((mode & CONTROL_ARGUMENTS) != 0)
+	{
+		uint active_count = control[HEADER_ACTIVE_COUNT];
+		uint update = control[HEADER_UPDATE_COUNT];
+		uint listed = control[HEADER_LIST_COUNT];
+
+		write_arguments(ARGUMENT_ACTIVE_TILES, active_count);
+		write_arguments(ARGUMENT_ACTIVE_THREADS, (active_count + 63u) / 64u);
+		write_arguments(ARGUMENT_UPDATE_TILES, update);
+		write_arguments(ARGUMENT_UPDATE_THREADS, (update + 63u) / 64u);
+		write_arguments(ARGUMENT_LIST_TILES, listed);
+		write_arguments(ARGUMENT_LIST_THREADS, (listed + 63u) / 64u);
+		control[HEADER_MOST_UPDATE_TILES] = max(control[HEADER_MOST_UPDATE_TILES], update);
+	}
+	if ((mode & CONTROL_STEP_BEGIN) != 0)
+	{
+		control[HEADER_LAST_FASTEST_DEEP_SPEED] = control[HEADER_FASTEST_DEEP_SPEED];
+		control[HEADER_FASTEST_DEEP_SPEED] = 0u;
+	}
+	if ((mode & CONTROL_RESET_COUNTERS) != 0)
+	{
+		for (int i = 0; i < COUNTER_COUNT * 2; i++)
+		{
+			control[HEADER_COUNTERS + i] = 0u;
+		}
+		control[HEADER_MOST_UPDATE_TILES] = 0u;
+	}
+}

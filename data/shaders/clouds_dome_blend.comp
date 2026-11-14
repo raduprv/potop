@@ -1,0 +1,6 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// The dome's march, blending each new one with what the texel held (where
+// the format can be read and written in the same shader; see clouds.c)
+#define DOME_BLEND
+#include "clouds_dome.glsl"

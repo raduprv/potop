@@ -1,0 +1,47 @@
+# A shepherds' fold (stana) for tools/potop_house (workshop 17): a log hut,
+# the cheese fire before it, a wattle pen with its milking gate
+preset = cottage
+workshop = 17
+seed = 17
+base_height = 0
+chimney = 0
+porch = 0
+annex = 0
+moss = 0.4
+lichen = 0.15
+wear = 0.6
+variants = 0
+plaster_tint = 0
+
+# the hut's logs, the poles, the wattle: old gray wood
+log_meters = 1.6
+log_color_texture = props/textures/house_timber_old_color.png
+log_normal_texture = props/textures/house_timber_old_normal.png
+log_arm_texture = props/textures/house_timber_old_arm.png
+
+roof_meters = 3.0
+roof_color_texture = props/textures/house_roof_shingle_dark_color.png
+roof_normal_texture = props/textures/house_roof_shingle_dark_normal.png
+roof_arm_texture = props/textures/house_roof_shingle_dark_arm.png
+
+roof_timber_meters = 1.8
+roof_timber_color_texture = props/textures/mill_weatherboard_color.png
+roof_timber_normal_texture = props/textures/mill_weatherboard_normal.png
+roof_timber_arm_texture = props/textures/mill_weatherboard_arm.png
+timber_meters = 1.6
+timber_color_texture = props/textures/house_timber_old_color.png
+timber_normal_texture = props/textures/house_timber_old_normal.png
+timber_arm_texture = props/textures/house_timber_old_arm.png
+walls_meters = 1.2
+walls_color_texture = props/textures/house_board_wall_color.png
+walls_normal_texture = props/textures/house_board_wall_normal.png
+walls_arm_texture = props/textures/house_board_wall_arm.png
+iron_color_texture = props/textures/forged_iron_color.png
+iron_normal_texture = props/textures/forged_iron_normal.png
+iron_arm_texture = props/textures/forged_iron_arm.png
+
+# the hut's footing and the fire's ring: granite field stones
+stone_meters = 1.0
+stone_color_texture = props/textures/granite_color.png
+stone_normal_texture = props/textures/granite_normal.png
+stone_arm_texture = props/textures/granite_arm.png

@@ -1,0 +1,196 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "water_sim.glsl"
+
+// Erosion and deposition, one workgroup per tile of the list (see
+// erode_tile in the history of erosion.c, and erosion.h): water faster
+// than a soil's critical speed picks material up, until it carries as much
+// as its speed and depth allow; silt goes first, then the soil, never the
+// bedrock. Water carrying more than it can drops the excess as silt, and
+// nearly still water drops everything quickly. Every amount moves between
+// the ground and the water of one cell: nothing is lost.
+
+layout(local_size_x = 256) in;
+
+// Faster than this the speed estimate is noise from a nearly dry cell
+#define MAXIMUM_SPEED 20.0
+// Water never carries more sediment than this fraction of its own volume
+#define MAXIMUM_CONCENTRATION 0.2
+// Tiles keep getting bank checks this many steps after a change
+#define SETTLE_STEPS 300u
+
+shared uint shared_eroded;
+shared uint shared_deposited;
+shared uint shared_max_change;
+shared uint shared_sediment_low;
+shared uint shared_sediment_high;
+
+void main()
+{
+	if (gl_WorkGroupID.x >= control[HEADER_LIST_COUNT])
+	{
+		return;
+	}
+	uint tile = control[list_word(gl_WorkGroupID.x)];
+	int tile_x = int(tile) % tiles_per_side;
+	int tile_y = int(tile) / tiles_per_side;
+	uint eroded = 0u;
+	uint deposited = 0u;
+	uint max_change = 0u;
+	uvec2 sediment_total = uvec2(0u);
+
+	if (gl_LocalInvocationID.x == 0u)
+	{
+		shared_eroded = 0u;
+		shared_deposited = 0u;
+		shared_max_change = 0u;
+		shared_sediment_low = 0u;
+		shared_sediment_high = 0u;
+	}
+	barrier();
+
+	for (uint k = 0u; k < 16u; k++)
+	{
+		uint local_index = gl_LocalInvocationID.x + 256u * k;
+		int x = tile_x * TILE_SIZE + int(local_index & 63u);
+		int y = tile_y * TILE_SIZE + int(local_index >> 6);
+		uint cell = (tile << 12) | local_index;
+		int water_units = depths[cell];
+		int sediment = sediments[cell];
+		int change = 0;
+
+		if (water_units <= 0 && sediment == 0)
+		{
+			continue;
+		}
+		// Water too thin to flow (or gone) drops everything it carries
+		if (water_units <= film_units)
+		{
+			if (sediment > 0)
+			{
+				heights[cell] += sediment;
+				layers[cell].y += sediment;
+				sediments[cell] = 0;
+				deposited += uint(sediment);
+				max_change = max(max_change, uint(sediment));
+			}
+			continue;
+		}
+
+		// The flow through the cell: what enters and leaves on each axis
+		vec4 own = fluxes_of(cell);
+		float flow_x = own.y - own.x;
+		float flow_y = own.w - own.z;
+
+		if (x > 0)
+		{
+			flow_x += fluxes_of(cell_of(x - 1, y)).y;
+		}
+		if (x < map_size - 1)
+		{
+			flow_x -= fluxes_of(cell_of(x + 1, y)).x;
+		}
+		if (y > 0)
+		{
+			flow_y += fluxes_of(cell_of(x, y - 1)).w;
+		}
+		if (y < map_size - 1)
+		{
+			flow_y -= fluxes_of(cell_of(x, y + 1)).z;
+		}
+		float depth_meters = float(water_units) * METERS_PER_UNIT;
+		// Thin superfluid water counts as deeper for its speed, or a fast
+		// film would dig like a torrent
+		float speed = min(0.5 * length(vec2(flow_x, flow_y)) / (max(depth_meters, speed_depth_meters) * cell_size), MAXIMUM_SPEED);
+		float maximum_units = float(water_units) * MAXIMUM_CONCENTRATION;
+		float transport_capacity_units = min(transport_capacity * depth_meters * speed * 100000.0, maximum_units);
+		ivec2 layer = layers[cell];
+		uint soil = layer.y > 0 ? SOIL_SILT : soil_of(cell);
+		float erodibility = erodibility_of(soil);
+		// Under flowing water the ground is soaked: it gives way at the wet
+		// critical speed
+		float critical_speed = critical_speed_of(soil) * wet_critical_speed_factor;
+
+		if (erodibility > 0.0 && speed > critical_speed)
+		{
+			float erosion_capacity_units = min(transport_capacity * depth_meters * (speed - critical_speed) * 100000.0, maximum_units);
+
+			if (float(sediment) < erosion_capacity_units)
+			{
+				int available = soil == SOIL_SILT ? layer.y : heights[cell] - layer.x - minimum_soil_units;
+				// A trickle does not dig (see erosion_minimum_depth_millimeters)
+				float depth_factor = water_units >= erosion_full_units ? 1.0
+					: clamp(float(water_units - erosion_start_units) / float(max(erosion_full_units - erosion_start_units, 1)), 0.0, 1.0);
+				int amount = min(int(erodibility * (erosion_capacity_units - float(sediment)) * step_seconds * depth_factor), available);
+
+				if (amount > 0)
+				{
+					heights[cell] -= amount;
+					layers[cell].y = layer.y - min(amount, layer.y);
+					sediment += amount;
+					eroded += uint(amount);
+					change = amount;
+				}
+			}
+		}
+
+		// Carrying more than the flow can: the excess settles, at least a
+		// unit a step, so still water clears completely; in nearly still
+		// water all of it, quickly
+		if (change == 0 && speed < still_speed && sediment > 0)
+		{
+			int amount = clamp(int(ceil(float(sediment) * min(still_deposition_rate * step_seconds, 1.0))), 1, sediment);
+
+			heights[cell] += amount;
+			layers[cell].y += amount;
+			sediment -= amount;
+			deposited += uint(amount);
+			change = amount;
+		}
+		else if (change == 0 && float(sediment) > transport_capacity_units)
+		{
+			int amount = clamp(int(deposition_rate * (float(sediment) - transport_capacity_units) * step_seconds), 1, sediment);
+
+			heights[cell] += amount;
+			layers[cell].y += amount;
+			sediment -= amount;
+			deposited += uint(amount);
+			change = amount;
+		}
+		sediments[cell] = sediment;
+		max_change = max(max_change, uint(change));
+		sediment_total = add_wide(sediment_total, uint(sediment));
+	}
+
+	atomicAdd(shared_eroded, eroded);
+	atomicAdd(shared_deposited, deposited);
+	atomicMax(shared_max_change, max_change);
+	{
+		uint old_low = atomicAdd(shared_sediment_low, sediment_total.x);
+		uint carry = old_low + sediment_total.x < old_low ? 1u : 0u;
+
+		if (sediment_total.y + carry != 0u)
+		{
+			atomicAdd(shared_sediment_high, sediment_total.y + carry);
+		}
+	}
+	barrier();
+	if (gl_LocalInvocationID.x == 0u)
+	{
+		store_wide(tile_word(tile, TILE_SEDIMENT), uvec2(shared_sediment_low, shared_sediment_high));
+		add_counter(COUNTER_ERODED, shared_eroded);
+		add_counter(COUNTER_DEPOSITED, shared_deposited);
+		if (shared_max_change > 0u)
+		{
+			// Changed ground: the CPU's copy follows, the banks keep being
+			// checked for a while, and the mud shows in the water
+			control[tile_word(tile, TILE_FLAGS)] |= TILE_FLAG_TERRAIN_DIRTY | TILE_FLAG_CPU_DIRTY | TILE_FLAG_RENDER_DIRTY | TILE_FLAG_GROUND_DIRTY;
+			control[tile_word(tile, TILE_SETTLE_STEPS)] = SETTLE_STEPS;
+		}
+		else if (shared_eroded == 0u && (shared_sediment_low | shared_sediment_high) != 0u)
+		{
+			control[tile_word(tile, TILE_FLAGS)] |= TILE_FLAG_CPU_DIRTY | TILE_FLAG_RENDER_DIRTY;
+		}
+	}
+}

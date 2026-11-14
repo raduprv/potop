@@ -1,0 +1,1 @@
+Box3D, https://github.com/erincatto/box3d, commit 5d83df83ab47172c2c745b44315e7538ead02397 (2026-10-07 14:48:58 -0700)

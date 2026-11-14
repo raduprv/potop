@@ -1,0 +1,154 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// New particles: one thread each. See particles.h.
+
+layout(local_size_x = 64) in;
+
+#include "particles_common.glsl"
+
+// Where on the shape, relative to its middle (before its turn)
+vec3 shape_point(int shape, vec3 extents, float radius, inout uint seed)
+{
+	float angle = 6.2831853 * random_float(seed);
+
+	if (shape == 1)
+	{
+		// Inside a ball: a direction, and a distance that fills it evenly
+		float y = random_float(seed) * 2.0 - 1.0;
+		float across = sqrt(max(1.0 - y * y, 0.0));
+		float distance = radius * pow(random_float(seed), 1.0 / 3.0);
+
+		return vec3(cos(angle) * across, y, sin(angle) * across) * distance;
+	}
+	if (shape == 2)
+	{
+		return vec3(cos(angle), 0.0, sin(angle)) * radius * sqrt(random_float(seed));
+	}
+	if (shape == 3)
+	{
+		return vec3(cos(angle), 0.0, sin(angle)) * radius;
+	}
+	if (shape == 4)
+	{
+		return (vec3(random_float(seed), random_float(seed), random_float(seed)) * 2.0 - 1.0) * extents;
+	}
+	if (shape == 5)
+	{
+		// On the four sides, evenly by length
+		float along = random_float(seed) * 4.0 * (extents.x + extents.z);
+		float height = (random_float(seed) * 2.0 - 1.0) * extents.y;
+
+		if (along < 2.0 * extents.x)
+		{
+			return vec3(along - extents.x, height, -extents.z);
+		}
+		along -= 2.0 * extents.x;
+		if (along < 2.0 * extents.z)
+		{
+			return vec3(extents.x, height, along - extents.z);
+		}
+		along -= 2.0 * extents.z;
+		if (along < 2.0 * extents.x)
+		{
+			return vec3(extents.x - along, height, extents.z);
+		}
+		along -= 2.0 * extents.x;
+		return vec3(-extents.x, height, extents.z - along);
+	}
+	return vec3(0.0);
+}
+
+// A direction within the cone around axis (cosine of its half angle)
+vec3 cone_direction(vec3 axis, float cosine_spread, inout uint seed)
+{
+	float cosine = mix(1.0, cosine_spread, random_float(seed));
+	float sine = sqrt(max(1.0 - cosine * cosine, 0.0));
+	float angle = 6.2831853 * random_float(seed);
+	vec3 side = abs(axis.y) < 0.9 ? normalize(cross(axis, vec3(0.0, 1.0, 0.0))) : normalize(cross(axis, vec3(1.0, 0.0, 0.0)));
+	vec3 other = cross(axis, side);
+
+	return axis * cosine + (side * cos(angle) + other * sin(angle)) * sine;
+}
+
+void main()
+{
+	uint thread = gl_GlobalInvocationID.x;
+	int low = 0;
+	int high = emit_count - 1;
+	uint free_before;
+	uint index;
+	uint seed;
+	int effect_index;
+	vec3 offset;
+	vec3 velocity;
+	float life;
+
+	if (thread >= uint(emit_total))
+	{
+		return;
+	}
+	// The request this thread belongs to: the last one starting at or before it
+	while (low < high)
+	{
+		int middle = (low + high + 1) / 2;
+
+		if (uint(emits[middle].range.x) <= thread)
+		{
+			low = middle;
+		}
+		else
+		{
+			high = middle - 1;
+		}
+	}
+	// A free slot (none left: the particle is not born). Taking one can
+	// briefly wrap the counter below zero: whoever sees that gives it back
+	free_before = atomicAdd(state[STATE_FREE_COUNT], 0xffffffffu);
+	if (free_before == 0u || free_before > uint(particle_capacity))
+	{
+		atomicAdd(state[STATE_FREE_COUNT], 1u);
+		return;
+	}
+	index = state[STATE_FREE_FIRST + free_before - 1u];
+	atomicMax(state[STATE_DRAW + 1u], index + 1u);
+
+	seed = hash_uint(uint(emits[low].range.z) * 747796405u + thread * 2891336453u);
+	effect_index = int(emits[low].position_effect.w);
+	offset = rotate_by(emits[low].rotation,
+		shape_point(int(emits[low].extents_shape.w), emits[low].extents_shape.xyz, emits[low].range.w, seed));
+	velocity = cone_direction(effects[effect_index].direction.xyz, effects[effect_index].direction.w, seed)
+		* mix(effects[effect_index].emission.z, effects[effect_index].emission.w, random_float(seed));
+	if (effects[effect_index].extra.x != 0.0)
+	{
+		// Away from the middle, flat (a ring opening out)
+		vec3 away = vec3(offset.x, 0.0, offset.z);
+
+		if (dot(away, away) < 1e-6)
+		{
+			float angle = 6.2831853 * random_float(seed);
+
+			away = vec3(cos(angle), 0.0, sin(angle));
+		}
+		velocity += normalize(away) * effects[effect_index].extra.x;
+	}
+	// (what the emitter adds: a push, a longer or shorter life)
+	velocity += emits[low].push.xyz;
+	life = mix(effects[effect_index].emission.x, effects[effect_index].emission.y, random_float(seed)) * max(emits[low].push.w, 0.01);
+
+	// Born at any moment of the frame, not all at its start: as far along
+	// as that (a frame's particles would move together in rows)
+	{
+		float lag = random_float(seed) * step_seconds;
+
+		offset += velocity * lag;
+		velocity.y -= effects[effect_index].motion.x * lag;
+		particles[index].position_age = vec4(emits[low].position_effect.xyz + offset, lag);
+	}
+	particles[index].velocity_life = vec4(velocity, max(life, 0.01));
+	particles[index].data = vec4(float(effect_index), random_float(seed),
+		effects[effect_index].extra.y >= 0.0 ? 6.2831853 * random_float(seed) : 0.0,
+		mix(effects[effect_index].collision.z, effects[effect_index].collision.w, random_float(seed)));
+	state[STATE_ALIVE_FIRST(list) + atomicAdd(state[STATE_LIST(list) + 1u], 1u)] = index;
+}

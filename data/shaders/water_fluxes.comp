@@ -1,0 +1,274 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#define WATER_SAMPLERS 1
+#include "water_sim.glsl"
+
+// The ice on the water (water_ice.h): RGBA16F per cell, r its thickness (m)
+layout(set = TEXTURE_SET, binding = 0) uniform sampler2D ice_texture;
+
+// Ice this thick holds the water under it still: no pipe in or out
+// (water_ice.h's WATER_ICE_LOCK_METERS)
+const float ICE_LOCK_METERS = 0.03;
+
+bool frozen_at(int x, int y)
+{
+	return ice_more.x != 0 && texelFetch(ice_texture, ivec2(x, y), 0).r >= ICE_LOCK_METERS;
+}
+
+// Pass 1 of a substep, one workgroup per active tile: every cell's new
+// outflow through its four pipes, from the current depths and fluxes (the
+// rules of compute_cell_fluxes in water.c), and the sediment concentration
+// its outflow carries. Along the tile's border it decides which sleeping or
+// dry neighbor tiles must take part (wake requests, bits by direction).
+
+layout(local_size_x = 256) in;
+
+shared uint shared_wake_requests;
+
+float depth_to_seven_thirds(float depth)
+{
+	return depth * depth * pow(depth, 1.0 / 3.0);
+}
+
+// A flux as a half float, rounded down (packHalf2x16 rounds to the
+// nearest): the outflow the scaling allowed is never exceeded by the
+// rounding, which for thin water (fluxes small enough for the half's
+// subnormals) could be more than its margin, the depths pass then taking
+// more than a cell held. Fluxes are never below zero.
+uint half_down(float flux)
+{
+	uint bits = packHalf2x16(vec2(flux, 0.0)) & 0xFFFFu;
+
+	if (bits != 0u && unpackHalf2x16(bits).x > flux)
+	{
+		bits -= 1u;
+	}
+	return bits;
+}
+
+uint pack_fluxes_down(float first, float second)
+{
+	return half_down(first) | (half_down(second) << 16);
+}
+
+void main()
+{
+	uint tile;
+	int tile_x;
+	int tile_y;
+
+	// Never past the list (whatever the dispatch arguments said)
+	if (gl_WorkGroupID.x >= control[HEADER_ACTIVE_COUNT])
+	{
+		return;
+	}
+	tile = control[active_list_word(gl_WorkGroupID.x)];
+	tile_x = int(tile) % tiles_per_side;
+	tile_y = int(tile) / tiles_per_side;
+
+	if (gl_LocalInvocationID.x == 0u)
+	{
+		shared_wake_requests = 0u;
+	}
+	barrier();
+
+	for (uint k = 0u; k < 16u; k++)
+	{
+		uint local_index = gl_LocalInvocationID.x + 256u * k;
+		int x = tile_x * TILE_SIZE + int(local_index & 63u);
+		int y = tile_y * TILE_SIZE + int(local_index >> 6);
+		uint cell = (tile << 12) | local_index;
+		int water_units = depths[cell];
+		uvec2 aux = auxes[cell];
+		float new_flux[4] = float[4](0.0, 0.0, 0.0, 0.0);
+		float concentration = 0.0;
+
+		if (water_units > film_units && !frozen_at(x, y))
+		{
+			int bed = bed_of(cell);
+			int level = bed + water_units;
+			float depth_meters = float(water_units) * METERS_PER_UNIT;
+			float friction_factor = friction_factor_of(cell);
+			vec4 old_flux = fluxes_of(cell);
+			bool inside[4] = bool[4](x > 0, x < map_size - 1, y > 0, y < map_size - 1);
+			int neighbor_x[4] = int[4](x - 1, x + 1, x, x);
+			int neighbor_y[4] = int[4](y, y, y - 1, y + 1);
+			// Thin water flowing on over wet ground is superfluid (see water.c)
+			float dry_friction_depth = max(depth_meters, MINIMUM_FRICTION_DEPTH);
+			float wet_friction_depth = max(dry_friction_depth, superfluid_depth);
+			float dry_manning_per_flux = 0.0;
+			float wet_manning_per_flux = 0.0;
+			float shore_factor = 1.0;
+			float dry_damping = 1.0 + friction_times_step * friction_factor / dry_friction_depth;
+			float wet_damping = 1.0 + friction_times_step * friction_factor / wet_friction_depth;
+			float total_outflow = 0.0;
+
+			if (manning_times_step > 0.0)
+			{
+				dry_manning_per_flux = manning_times_step * friction_factor / (depth_to_seven_thirds(dry_friction_depth) * cell_size);
+				wet_manning_per_flux = manning_times_step * friction_factor / (depth_to_seven_thirds(wet_friction_depth) * cell_size);
+			}
+			if (shore_damping_times_step > 0.0 && depth_meters < shore_depth)
+			{
+				float largest_flux = max(max(abs(old_flux.x), abs(old_flux.y)), max(abs(old_flux.z), abs(old_flux.w)));
+				float speed = largest_flux / (wet_friction_depth * cell_size);
+				float slowness = clamp(1.0 - speed / SHORE_DAMPING_SPEED, 0.0, 1.0);
+				float shallowness = 1.0 - depth_meters / shore_depth;
+
+				shore_factor = 1.0 / (1.0 + shore_damping_times_step * shallowness * slowness);
+			}
+
+			for (int direction = 0; direction < 4; direction++)
+			{
+				int neighbor_level = 0;
+				int neighbor_depth = 0;
+				int neighbor_bed = 0;
+				bool wet = false;
+				float factor;
+				float drop;
+				float push;
+				float value;
+
+				if (inside[direction])
+				{
+					uint neighbor = cell_of(neighbor_x[direction], neighbor_y[direction]);
+
+					neighbor_depth = depths[neighbor];
+					neighbor_bed = bed_of(neighbor);
+					neighbor_level = neighbor_bed + neighbor_depth;
+					wet = neighbor_depth > film_units;
+					drop = float(level - neighbor_level) * METERS_PER_UNIT;
+				}
+				else
+				{
+					// A drain edge is dry ground at our own height, a wall an
+					// infinitely high bank
+					drop = drain_edges != 0 ? depth_meters : -1.0;
+				}
+				factor = 1.0 / ((wet ? wet_damping : dry_damping) + (wet ? wet_manning_per_flux : dry_manning_per_flux) * abs(old_flux[direction]));
+				factor *= linear_damping_factor * shore_factor;
+				if (depth_scaled_pipes == 0)
+				{
+					push = gravity_times_cell;
+				}
+				else
+				{
+					float section = inside[direction]
+						? float(max(level, neighbor_level) - max(bed, neighbor_bed)) * METERS_PER_UNIT
+						: depth_meters;
+					float minimum = wet ? max(MINIMUM_PIPE_DEPTH, superfluid_depth) : MINIMUM_PIPE_DEPTH;
+
+					push = gravity_times_cell * clamp(section / pipe_depth_limit, min(minimum / pipe_depth_limit, 1.0), 1.0);
+				}
+				value = old_flux[direction] * factor + step_seconds * push * drop;
+
+				if (inside[direction])
+				{
+					int head = level - neighbor_level;
+
+					// (under the ice beside it the water stands still)
+					if (frozen_at(neighbor_x[direction], neighbor_y[direction]))
+					{
+						value = 0.0;
+					}
+					// The meniscus, the lip and the static friction (see water.c)
+					if (!wet && head < meniscus_units)
+					{
+						value = 0.0;
+					}
+					if (lip_units > 0 && water_units > thin_units && neighbor_depth <= thin_units && head < lip_units)
+					{
+						value = 0.0;
+					}
+					if (still_units > 0 && old_flux[direction] <= 0.0 && (aux.y & (1u << uint(direction))) != 0u && head < still_units)
+					{
+						value = 0.0;
+					}
+				}
+				else if (drain_edges == 0 || water_units < meniscus_units)
+				{
+					value = 0.0;
+				}
+				new_flux[direction] = max(value, 0.0);
+				total_outflow += new_flux[direction];
+			}
+
+			// Never send more water than the cell holds (the margin covers
+			// the half float rounding)
+			if (total_outflow > 0.0)
+			{
+				float available = depth_meters * cell_area * 0.998;
+				float wanted = total_outflow * step_seconds;
+
+				if (wanted > available)
+				{
+					float scale = available / wanted;
+
+					for (int direction = 0; direction < 4; direction++)
+					{
+						new_flux[direction] *= scale;
+					}
+				}
+			}
+
+			// Along the tile border: sleeping and dry neighbors (see
+			// CHECK_BORDER in water.c)
+			for (int direction = 0; direction < 4; direction++)
+			{
+				int neighbor_tile_x = neighbor_x[direction] >> 6;
+				int neighbor_tile_y = neighbor_y[direction] >> 6;
+				uint neighbor_tile;
+				uint state;
+				float sent_units;
+
+				if (!inside[direction] || (neighbor_tile_x == tile_x && neighbor_tile_y == tile_y))
+				{
+					continue;
+				}
+				neighbor_tile = uint(neighbor_tile_y * tiles_per_side + neighbor_tile_x);
+				state = tile_state(neighbor_tile);
+				sent_units = new_flux[direction] * units_per_flux;
+				if (state == TILE_SLEEPING)
+				{
+					uint neighbor = cell_of(neighbor_x[direction], neighbor_y[direction]);
+					int neighbor_depth = depths[neighbor];
+					int neighbor_level = bed_of(neighbor) + neighbor_depth;
+
+					if (sent_units >= asleep_wake_units || (neighbor_depth > film_units && neighbor_level - level > asleep_level_wake_units))
+					{
+						atomicOr(shared_wake_requests, 1u << uint(direction));
+					}
+				}
+				else if (state == TILE_DRY)
+				{
+					if (sent_units >= border_wake_units)
+					{
+						atomicOr(shared_wake_requests, 1u << uint(direction));
+					}
+					else if (sent_units > 0.0)
+					{
+						// A trickle of rounding size onto dry ground waits until
+						// the level difference pushes a real amount through
+						new_flux[direction] = 0.0;
+					}
+				}
+			}
+
+			// Sediment leaves with the water, at a ratio frozen for the
+			// whole substep (both cells of a pipe compute the same amount)
+			if (sediments[cell] > 0)
+			{
+				concentration = float(sediments[cell]) / float(water_units) * 0.999;
+			}
+		}
+		fluxes[cell] = uvec2(pack_fluxes_down(new_flux[0], new_flux[1]), pack_fluxes_down(new_flux[2], new_flux[3]));
+		auxes[cell] = uvec2(floatBitsToUint(concentration), aux.y);
+	}
+
+	barrier();
+	if (gl_LocalInvocationID.x == 0u)
+	{
+		control[tile_word(tile, TILE_WAKE_REQUESTS)] = shared_wake_requests;
+	}
+}

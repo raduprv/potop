@@ -1,0 +1,104 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "water_sim.glsl"
+
+// Water coming in or going out, one thread per cell touched. mode:
+//   0  the brush: a soft round brush adding (brush_adding) or removing
+//      water, brush.w units at its center
+//   1  springs: command_count springs, each pouring commands[i].z units
+//      into the 3 x 3 cells around commands[i].xy
+//   2  wakes command_count tiles (commands[i].x, reason commands[i].y)
+
+layout(local_size_x = 64) in;
+
+#define SOURCE_BRUSH 0
+#define SOURCE_SPRINGS 1
+#define SOURCE_WAKE 2
+
+shared uint shared_added;
+shared uint shared_removed;
+
+void touch(uint tile)
+{
+	wake_tile(tile, WAKE_SOURCE);
+	atomicOr(control[tile_word(tile, TILE_FLAGS)], TILE_FLAG_CPU_DIRTY | TILE_FLAG_RENDER_DIRTY);
+}
+
+void main()
+{
+	uint id = gl_GlobalInvocationID.x;
+
+	if (gl_LocalInvocationID.x == 0u)
+	{
+		shared_added = 0u;
+		shared_removed = 0u;
+	}
+	barrier();
+
+	if (mode == SOURCE_BRUSH && id < uint(brush_rectangle.z * brush_rectangle.w))
+	{
+		int x = brush_rectangle.x + int(id) % brush_rectangle.z;
+		int y = brush_rectangle.y + int(id) / brush_rectangle.z;
+		float distance = length(vec2(float(x), float(y)) - brush.xy);
+		float falloff = distance < brush.z ? 0.5 * (1.0 + cos(3.14159265 * distance / brush.z)) : 0.0;
+		int units = int(brush.w * falloff);
+
+		if (units > 0)
+		{
+			uint cell = cell_of(x, y);
+
+			if (brush_adding != 0)
+			{
+				depths[cell] += units;
+				atomicAdd(shared_added, uint(units));
+				touch(cell >> 12);
+			}
+			else if (depths[cell] > 0)
+			{
+				int removed = min(units, depths[cell]);
+
+				depths[cell] -= removed;
+				atomicAdd(shared_removed, uint(removed));
+				touch(cell >> 12);
+			}
+		}
+	}
+	else if (mode == SOURCE_SPRINGS && id < uint(command_count * 9))
+	{
+		ivec4 spring = commands[uint(command_first) + id / 9u];
+		int x = spring.x + int(id % 3u) - 1;
+		int y = spring.y + int((id / 3u) % 3u) - 1;
+
+		if (x >= 0 && y >= 0 && x < map_size && y < map_size && spring.z > 0)
+		{
+			uint cell = cell_of(x, y);
+
+			atomicAdd(depths[cell], spring.z);
+			atomicAdd(shared_added, uint(spring.z));
+			touch(cell >> 12);
+		}
+	}
+	else if (mode == SOURCE_WAKE && id < uint(command_count))
+	{
+		ivec4 command = commands[uint(command_first) + id];
+		uint tile = uint(command.x);
+
+		if (tile < uint(tile_count) && uint(command.y) == WAKE_GROUND_ONLY)
+		{
+			atomicOr(control[tile_word(tile, TILE_FLAGS)], TILE_FLAG_GROUND_DIRTY);
+		}
+		else if (tile < uint(tile_count))
+		{
+			wake_tile(tile, uint(command.y));
+			atomicOr(control[tile_word(tile, TILE_FLAGS)], TILE_FLAG_CPU_DIRTY | TILE_FLAG_RENDER_DIRTY);
+		}
+	}
+
+	barrier();
+	if (gl_LocalInvocationID.x == 0u)
+	{
+		add_counter(COUNTER_ADDED, shared_added);
+		add_counter(COUNTER_REMOVED, shared_removed);
+	}
+}

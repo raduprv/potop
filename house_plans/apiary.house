@@ -1,0 +1,62 @@
+# An apiary (prisaca) for tools/potop_house (workshop 18): two rows of box
+# hives on sleepers, two old log hives, a wattle fence, a bench by its gap
+preset = cottage
+workshop = 18
+seed = 18
+base_height = 0
+chimney = 0
+porch = 0
+annex = 0
+moss = 0.3
+lichen = 0.2
+wear = 0.5
+variants = 0
+plaster_tint = 0
+# everything kept: the culling of what cannot be seen from outside looks
+# from a man's height, and threw away the lids' undersides (seen low,
+# from the grass)
+interior = 1
+
+# the hives' boards: three woods, one hive this, the next that (walls,
+# carved: upright boards in the picture, laid level round the hive; the
+# roof's wood level as it is); the timbers: the planks, the bench, the lids
+walls_meters = 1.0
+walls_color_texture = props/textures/house_board_wall_color.png
+walls_normal_texture = props/textures/house_board_wall_normal.png
+walls_arm_texture = props/textures/house_board_wall_arm.png
+timber_meters = 1.2
+timber_color_texture = props/textures/house_timber_color.png
+timber_normal_texture = props/textures/house_timber_normal.png
+timber_arm_texture = props/textures/house_timber_arm.png
+carved_meters = 1.0
+carved_color_texture = props/textures/porch_floor_oak_color.png
+carved_normal_texture = props/textures/porch_floor_oak_normal.png
+carved_arm_texture = props/textures/porch_floor_oak_arm.png
+
+# the fence's stakes and wattle, the log hives, the sleepers, the stumps
+log_meters = 1.6
+log_color_texture = props/textures/house_timber_old_color.png
+log_normal_texture = props/textures/house_timber_old_normal.png
+log_arm_texture = props/textures/house_timber_old_arm.png
+
+# the gables' shingles
+roof_meters = 1.5
+roof_color_texture = props/textures/house_roof_shingle_dark_color.png
+roof_normal_texture = props/textures/house_roof_shingle_dark_normal.png
+roof_arm_texture = props/textures/house_roof_shingle_dark_arm.png
+roof_timber_meters = 1.0
+roof_timber_color_texture = props/textures/mill_weatherboard_color.png
+roof_timber_normal_texture = props/textures/mill_weatherboard_normal.png
+roof_timber_arm_texture = props/textures/mill_weatherboard_arm.png
+
+iron_color_texture = props/textures/rusty_iron_color.png
+iron_normal_texture = props/textures/rusty_iron_normal.png
+iron_arm_texture = props/textures/rusty_iron_arm.png
+
+# the stones on the lids, under and over the log hives: the hard stone,
+# textured from the sides (no seams round a stone)
+millstone_triplanar = 1
+millstone_meters = 1.0
+millstone_color_texture = props/textures/granite_color.png
+millstone_normal_texture = props/textures/granite_normal.png
+millstone_arm_texture = props/textures/granite_arm.png

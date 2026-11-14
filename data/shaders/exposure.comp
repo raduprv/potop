@@ -1,0 +1,85 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// The exposure (see post.h): from the smallest level of the bloom (the
+// scene averaged down to a few dozen texels a side), the mean of the
+// logarithm of the brightness, the way the eye takes it in; the exposure
+// that brings it to middle gray, moved towards from the last frame's as
+// the eye adapts. Without the automatic exposure, the one set. One group
+// does it all; the result is one texel for the tone mapping to read.
+
+layout(local_size_x = 64) in;
+
+layout(set = TEXTURE_SET, binding = 0) uniform sampler2D level_texture;     // the bloom's smallest level
+layout(set = TEXTURE_SET, binding = 1) uniform sampler2D previous_texture;  // last frame's exposure (1 x 1)
+layout(set = READWRITE_SET, binding = 0, r32f) uniform writeonly image2D exposure_image;
+
+layout(std140, set = UNIFORM_SET, binding = 0) uniform exposure_block
+{
+	ivec2 level_size;
+	float automatic;                // 1: from the picture, 0: the set one alone
+	float adaptation;               // how far towards the new one this frame (0..1; 1: at once)
+	float compensation;             // multiplies the exposure (2 ^ the setting's EV)
+	float minimum_exposure;
+	float maximum_exposure;
+	float exposure_padding;
+};
+
+shared float partial_sums[64];
+shared float partial_weights[64];
+
+void main()
+{
+	uint index = gl_LocalInvocationID.x;
+	int count = level_size.x * level_size.y;
+	float sum = 0.0;
+	float weight_sum = 0.0;
+
+	for (int k = int(index); k < count; k += 64)
+	{
+		ivec2 texel = ivec2(k % level_size.x, k / level_size.x);
+		vec3 color = texelFetch(level_texture, texel, 0).rgb;
+		float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
+		// The middle of the picture counts more than its edges
+		vec2 from_middle = (vec2(texel) + 0.5) / vec2(level_size) - 0.5;
+		float weight = 1.0 - 0.75 * clamp(length(from_middle) * 1.6, 0.0, 1.0);
+
+		sum += log2(max(luminance, 1e-4)) * weight;
+		weight_sum += weight;
+	}
+	partial_sums[index] = sum;
+	partial_weights[index] = weight_sum;
+	barrier();
+	for (uint half_count = 32u; half_count > 0u; half_count >>= 1u)
+	{
+		if (index < half_count)
+		{
+			partial_sums[index] += partial_sums[index + half_count];
+			partial_weights[index] += partial_weights[index + half_count];
+		}
+		barrier();
+	}
+	if (index == 0u)
+	{
+		float exposure = compensation;
+
+		if (automatic > 0.5)
+		{
+			float mean_luminance = exp2(partial_sums[0] / max(partial_weights[0], 1e-6));
+			float wanted = clamp(0.18 / max(mean_luminance, 1e-4), minimum_exposure, maximum_exposure) * compensation;
+			float previous = texelFetch(previous_texture, ivec2(0), 0).r;
+
+			// The eye adapts in its own terms: by the logarithm
+			if (previous > 0.0 && adaptation < 1.0)
+			{
+				exposure = exp2(mix(log2(previous), log2(wanted), adaptation));
+			}
+			else
+			{
+				exposure = wanted;
+			}
+		}
+		imageStore(exposure_image, ivec2(0), vec4(exposure, 0.0, 0.0, 0.0));
+	}
+}

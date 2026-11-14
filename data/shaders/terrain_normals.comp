@@ -1,0 +1,44 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// The terrain's normals from its heights, the whole map at once (a baked
+// map's load: terrain_renderer.c, upload_baked_whole), as fill_normals and
+// water_ground.comp make them: RGBA8, the surface normal's x and z from the
+// next cells, the material normal's from reach cells away
+
+// (a row of 256 cells a group: groups across, then one row of them a line)
+layout(local_size_x = 256) in;
+
+layout(set = TEXTURE_SET, binding = 0) uniform sampler2D height_texture;     // R32F: the ground (m)
+
+layout(set = READWRITE_SET, binding = 0, rgba8) uniform writeonly image2D normal_image;
+
+layout(std140, set = UNIFORM_SET, binding = 0) uniform normals_block
+{
+	int map_size;
+	int reach;
+	float cell_size;
+	float padding;
+};
+
+float height_at(int x, int y)
+{
+	return texelFetch(height_texture, clamp(ivec2(x, y), ivec2(0), ivec2(map_size - 1)), 0).x;
+}
+
+void main()
+{
+	int x = int(gl_GlobalInvocationID.x);
+	int y = int(gl_GlobalInvocationID.y);
+
+	if (x >= map_size || y >= map_size)
+	{
+		return;
+	}
+	vec3 sharp = normalize(vec3(height_at(x - 1, y) - height_at(x + 1, y), 2.0 * cell_size, height_at(x, y - 1) - height_at(x, y + 1)));
+	vec3 wide = normalize(vec3(height_at(x - reach, y) - height_at(x + reach, y), 2.0 * float(reach) * cell_size,
+		height_at(x, y - reach) - height_at(x, y + reach)));
+
+	imageStore(normal_image, ivec2(x, y), vec4(sharp.x, sharp.z, wide.x, wide.z) * 0.5 + 0.5);
+}

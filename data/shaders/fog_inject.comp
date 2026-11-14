@@ -1,0 +1,117 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "scene.glsl"
+
+// The volumetric fog's first pass (see src/fog.h): for each froxel (a cell
+// of the camera's view, the slices farther apart with the distance), the
+// fog in it and the light it sends towards the eye: the sun's, where the
+// shadow maps let it through (the trees' shafts), and the sky's.
+
+#include "shadows.glsl"
+layout(set = TEXTURE_SET, binding = 2) uniform sampler2D valley_texture;
+layout(set = TEXTURE_SET, binding = 3) uniform sampler3D history_texture;      // the froxels the frame before made
+layout(set = TEXTURE_SET, binding = 4) uniform sampler2D ground_height_texture;    // R32F: the ground (m)
+layout(set = TEXTURE_SET, binding = 5) uniform sampler2D sky_occlusion_texture;    // R8 a cell (sky_occlusion.h)
+layout(set = TEXTURE_SET, binding = 6) uniform sampler2D sky_layers_texture;       // R8: in the air (sky_occlusion.glsl)
+layout(set = READWRITE_SET, binding = 0, rgba16f) uniform writeonly image3D scatter_image;
+#include "fog.glsl"
+#include "sky_occlusion.glsl"
+
+layout(local_size_x = 64) in;
+
+void main()
+{
+	ivec3 size = ivec3(fog_grid.xy, fog_slices.z);
+	uint index = gl_GlobalInvocationID.x;
+
+	if (index >= uint(size.x * size.y * size.z))
+	{
+		return;
+	}
+	ivec3 cell = ivec3(int(index) % size.x, (int(index) / size.x) % size.y, int(index) / (size.x * size.y));
+	float ratio = fog_slices.y / fog_slices.x;
+	float slice_start = cell.z == 0 ? 0.0 : fog_slices.x * pow(ratio, float(cell.z) / float(size.z));
+	float slice_end = fog_slices.x * pow(ratio, float(cell.z + 1) / float(size.z));
+	float density = 0.0;
+	vec3 light = vec3(0.0);
+	float sunlit = 0.0;
+
+	if (underwater_color.a < 0.5)
+	{
+		// A few points in it, each in its own quarter of the froxel across
+		// and down and along the slice, a little elsewhere each frame (the
+		// frames build the froxel up between them): one frame's mean is
+		// already near the froxel's, so a thin top does not flicker. Each
+		// takes as much of the slice as lies low enough for fog
+		for (int k = 0; k < 4; k++)
+		{
+			vec2 quarter = vec2(float(k & 1), float(k >> 1)) * 0.5 - 0.25;
+			vec2 offset = quarter + fog_jitter.xy * 0.5;
+			// (the screen's first row is its top: clip space y up)
+			vec2 screen = (vec2(cell.xy) + 0.5 + offset) / vec2(size.xy) * 2.0 - 1.0;
+
+			screen.y = -screen.y;
+			vec3 direction = eye_direction(screen);
+			float enter;
+			float leave;
+
+			if (fog_span(direction, slice_end, enter, leave) && leave > slice_start)
+			{
+				float from = max(slice_start, enter);
+				float to = min(slice_end, leave);
+				float covered = (to - from) / max(slice_end - slice_start, 1e-3);
+				// (the quarters' places along the slice in turn: 1 3 0 2)
+				float along = fract((float((k * 3 + 1) & 3) + fog_jitter.z) / 4.0);
+				vec3 point = eye_position + direction * mix(from, to, along);
+
+				float here_density = valley_fog_density(point, valley_texture) * covered;
+
+				density += here_density;
+				// (how much of the froxel the sun reaches: its points'
+				// shadows, each by how much fog is there)
+				if (here_density > 0.0)
+				{
+					sunlit += here_density * fog_sun_visibility(point, shadow_texture);
+				}
+			}
+		}
+		density *= 0.25;
+		sunlit *= 0.25;
+	}
+	// The froxel's middle (no offset): where it was the frame before
+	vec2 center_screen = (vec2(cell.xy) + 0.5) / vec2(size.xy) * 2.0 - 1.0;
+
+	center_screen.y = -center_screen.y;
+	vec3 center_direction = eye_direction(center_screen);
+
+	if (density > 0.0)
+	{
+		vec3 middle_point = eye_position + center_direction * fog_slices.x * pow(ratio, (float(cell.z) + 0.5) / float(size.z));
+
+		light = fog_light(-center_direction, sunlit / density, object_sky_seen(middle_point));
+	}
+	vec4 here = vec4(light * density, density);
+
+	// With what the frames before made of the same place in the world (the
+	// slice's middle as the froxels count it: so standing still it is the
+	// very froxel, not smeared with its neighbors)
+	if (fog_previous_eye.w > 0.5)
+	{
+		vec3 middle = eye_position + center_direction * fog_slices.x * pow(ratio, (float(cell.z) + 0.5) / float(size.z));
+		vec4 clip = fog_previous_view_projection * vec4(middle - fog_previous_eye.xyz, 1.0);
+
+		if (clip.w > 1e-4)
+		{
+			vec2 ndc = clip.xy / clip.w;
+			vec3 before = vec3(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5,
+				log(max(length(middle - fog_previous_eye.xyz), fog_slices.x) / fog_slices.x) * fog_grid.z);
+
+			if (all(greaterThanEqual(before, vec3(0.0))) && all(lessThanEqual(before, vec3(1.0))))
+			{
+				here = mix(textureLod(history_texture, before, 0.0), here, fog_jitter.w);
+			}
+		}
+	}
+	imageStore(scatter_image, cell, here);
+}

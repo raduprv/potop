@@ -1,0 +1,44 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "scene.glsl"
+
+// The volumetric fog's second pass (see src/fog.h): along each column of
+// froxels, from the eye outwards, the light gathered so far and how much
+// of what is behind still shows, slice by slice.
+
+layout(set = TEXTURE_SET, binding = 0) uniform sampler3D scatter_texture;
+layout(set = READWRITE_SET, binding = 0, rgba16f) uniform writeonly image3D integrated_image;
+#include "fog.glsl"
+
+layout(local_size_x = 64) in;
+
+void main()
+{
+	ivec3 size = ivec3(fog_grid.xy, fog_slices.z);
+	uint index = gl_GlobalInvocationID.x;
+
+	if (index >= uint(size.x * size.y))
+	{
+		return;
+	}
+	ivec2 column = ivec2(int(index) % size.x, int(index) / size.x);
+	vec3 gathered = vec3(0.0);
+	float through = 1.0;
+	float ratio = fog_slices.y / fog_slices.x;
+	float start = 0.0;
+
+	for (int z = 0; z < size.z; z++)
+	{
+		vec4 here = texelFetch(scatter_texture, ivec3(column, z), 0);
+		float end = fog_slices.x * pow(ratio, float(z + 1) / float(size.z));
+		float extinction = max(here.a, 1e-6);
+		float slice_through = exp(-here.a * (end - start));
+
+		// The slice's light, as much of it as gets out of the slice
+		gathered += through * (here.rgb / extinction) * (1.0 - slice_through);
+		through *= slice_through;
+		imageStore(integrated_image, ivec3(column, z), vec4(gathered, through));
+		start = end;
+	}
+}

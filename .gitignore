@@ -1,0 +1,37 @@
+# Potop: the sources only for now (the assets come later: unignore their
+# directories under data/ then). Everything at the top is out unless named.
+/*
+!/.gitignore
+!/Makefile
+!/README.md
+!/TODO.md
+!/engine/
+!/game/
+!/editor/
+!/tools/
+!/docs/
+!/third_party/
+!/house_plans/
+!/plant_plans/
+!/props_plan/
+!/data/
+
+# data/: the ini files, the shaders' sources and the building modules
+/data/*
+!/data/*.ini
+!/data/shaders/
+!/data/modules/
+# (made by make shaders)
+/data/shaders/spirv/
+
+# tools/: the sources and scripts, not what they build
+/tools/*
+!/tools/*.c
+!/tools/*.h
+!/tools/*.sh
+!/tools/*.ini
+
+# Built anywhere
+*.o
+*.d
+__pycache__/

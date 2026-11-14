@@ -1,0 +1,72 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// The sky's occlusion (sky_occlusion.h) in the air above the ground, one
+// direction of it: four layers that follow the ground (layer_heights above
+// it), a texel every layer_size-th of the map, one under the other in the
+// textures (layer k: rows k * layer_size ..). Each point adds how visible it
+// is from the direction, weighted by how high the direction is (as a
+// surface facing up would: what lights a thing there from the sky).
+
+layout(local_size_x = 256) in;
+
+layout(set = TEXTURE_SET, binding = 0) uniform sampler2D height_texture;       // R32F: the ground (m)
+layout(set = TEXTURE_SET, binding = 1) uniform sampler2D view_texture;         // the direction's depth (0..1, exact texels)
+
+layout(set = READWRITE_SET, binding = 0, r32f) uniform image2D sum_image;
+layout(set = READWRITE_SET, binding = 1, r32f) uniform image2D weight_image;
+
+layout(std140, set = UNIFORM_SET, binding = 0) uniform layers_block
+{
+	mat4 light_view_projection;    // world to the direction's clip space
+	vec4 direction;                // xyz: towards the sky; w: 1 the first (the sums start)
+	vec4 layer_heights;            // meters above the ground
+	int map_size;
+	float cell_size;
+	float lift;                    // meters up (no acne where the ground is close)
+	int layer_size;                // texels per side of a layer
+};
+
+void main()
+{
+	int x = int(gl_GlobalInvocationID.x);
+	int row = int(gl_GlobalInvocationID.y);
+
+	if (x >= layer_size || row >= 4 * layer_size)
+	{
+		return;
+	}
+	int layer = row / layer_size;
+	float texel_meters = float(map_size) * cell_size / float(layer_size);
+	vec2 spot = (vec2(float(x), float(row - layer * layer_size)) + 0.5) * texel_meters;
+	ivec2 cell = clamp(ivec2(floor(spot / cell_size + 0.5)), ivec2(0), ivec2(map_size - 1));
+	float ground = texelFetch(height_texture, cell, 0).x;
+	float facing = max(direction.y, 0.0);
+	float seen = 1.0;
+	vec3 point = vec3(spot.x, ground + layer_heights[layer] + lift, spot.y);
+	vec4 clip = light_view_projection * vec4(point, 1.0);
+	vec3 position = clip.xyz / clip.w * 0.5 + 0.5;
+
+	// (a texture's first row is its top; outside the map, or above all of
+	// it: seen)
+	position.y = 1.0 - position.y;
+	if (position.x >= 0.0 && position.x <= 1.0 && position.y >= 0.0 && position.y <= 1.0 && position.z >= 0.0 && position.z <= 1.0)
+	{
+		ivec2 view_size = textureSize(view_texture, 0);
+		vec2 texel = position.xy * vec2(view_size) - 0.5;
+		ivec2 corner = ivec2(floor(texel));
+		vec2 blend = texel - vec2(corner);
+		float seen_00 = position.z <= texelFetch(view_texture, clamp(corner, ivec2(0), view_size - 1), 0).r ? 1.0 : 0.0;
+		float seen_10 = position.z <= texelFetch(view_texture, clamp(corner + ivec2(1, 0), ivec2(0), view_size - 1), 0).r ? 1.0 : 0.0;
+		float seen_01 = position.z <= texelFetch(view_texture, clamp(corner + ivec2(0, 1), ivec2(0), view_size - 1), 0).r ? 1.0 : 0.0;
+		float seen_11 = position.z <= texelFetch(view_texture, clamp(corner + ivec2(1, 1), ivec2(0), view_size - 1), 0).r ? 1.0 : 0.0;
+
+		seen = mix(mix(seen_00, seen_10, blend.x), mix(seen_01, seen_11, blend.x), blend.y);
+	}
+	float sum = direction.w > 0.5 ? 0.0 : imageLoad(sum_image, ivec2(x, row)).x;
+	float weight = direction.w > 0.5 ? 0.0 : imageLoad(weight_image, ivec2(x, row)).x;
+
+	imageStore(sum_image, ivec2(x, row), vec4(sum + seen * facing, 0.0, 0.0, 0.0));
+	imageStore(weight_image, ivec2(x, row), vec4(weight + facing, 0.0, 0.0, 0.0));
+}

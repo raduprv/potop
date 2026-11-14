@@ -1,0 +1,24 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// One thread: sizes the simulation pass from the living count, and empties
+// the list it fills. See particles.h.
+
+layout(local_size_x = 1) in;
+
+#include "particles_common.glsl"
+
+void main()
+{
+	uint count = state[STATE_LIST(list) + 1u];
+	uint other = STATE_LIST(1 - list);
+
+	state[STATE_LIST(list) + 4u] = (count + 63u) / 64u;
+	state[STATE_LIST(list) + 5u] = 1u;
+	state[STATE_LIST(list) + 6u] = 1u;
+	state[other] = 4u;
+	state[other + 1u] = 0u;
+	state[other + 2u] = 0u;
+	state[other + 3u] = 0u;
+}

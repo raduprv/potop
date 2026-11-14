@@ -1,0 +1,5 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// The dome's march, each new one replacing what the texel held (where
+// the format cannot be read and written in the same shader; see clouds.c)
+#include "clouds_dome.glsl"

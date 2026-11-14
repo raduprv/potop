@@ -1,0 +1,48 @@
+; A plant's recipe (tools/potop_plant --recipe, tools/plant_editor). Paths as seen from
+; the project's directory; 0 (-1 for leaves_per_branch and the crown's and the trunk's shape: crown_start
+; to wind_side; kind for fruit_hang and fruit_zone; nothing for branches) leaves a
+; setting to the kind.
+
+kind = weeping_willow
+seed = 749314
+height = 0
+output = data/objects/weeping_willow.pobj
+atlas = 
+
+bark = tree_leaves_dev/willow_bark.png | tree_leaves_dev/willow_bark_normal.png
+bark_meters = 1.5
+twig = tree_leaves_dev/willow_leaves_1.png
+twig = tree_leaves_dev/willow_leaves_2.png
+twig = tree_leaves_dev/willow_leaves_3.png
+
+leaf_size = 0.2
+leaves_per_branch = -1
+branches = 10, 8, 10
+branch_length = 0
+twig_scale = 2.25
+twig_share = 0.7
+loose_leaves = 0
+crown_start = -1
+leaves_from = -1
+droop = -1
+tip_lift = -1
+collar = -1
+root_flare = -1
+twig_length = 0.9
+stems = -1
+fork_height = -1
+extra_stem_chance = -1
+gnarl = -1
+kinks = 1.45
+lean_degrees = -1
+lean_length = -1
+straighten = -1
+wind_side = -1
+
+fruit_shape = sphere
+fruit_size = 0.03, 0
+fruit_hang = kind
+fruit_zone = kind
+fruit_stalk = 0
+fruit_cluster = 1, 1
+fruit_per_branch = 1

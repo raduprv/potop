@@ -1,0 +1,689 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// The cloud simulation of tools/cloud_bake on the GPU (the same physics as
+// its CPU code; see there): one shader, a step of the simulation per mode.
+// Every field lives in one storage buffer, at the offsets the uniforms give
+// (the C side swaps them for ping-pong). Each dispatch is its own compute
+// pass, so each step sees the one before it finished.
+//
+// Grids: cells (nx, ny, nz; y up), the flow on their faces (u: nx + 1
+// across x, v: ny + 1 up, w: nz + 1 across z). Index helpers below.
+
+layout(local_size_x = 64) in;
+
+// The picture the render mode draws (the viewer's, the PNGs')
+layout(set = READWRITE_SET, binding = 0, rgba8) uniform writeonly image2D picture;
+layout(std430, set = READWRITE_SET, binding = 1) buffer field_buffer { float fields[]; };
+
+layout(std140, set = UNIFORM_SET, binding = 0) uniform simulation_block
+{
+	ivec4 grid;          // nx, ny, nz, mode
+	vec4 cell;           // cell size (m), time step (s), time (s), vorticity strength
+	ivec4 velocity;      // offsets: u, v, w, the scalar being carried
+	ivec4 velocity_next; // offsets: u, v, w being written; the red-black color
+	ivec4 scalars;       // offsets: theta, vapor, water, light
+	ivec4 temporary;     // offsets: three cell sized buffers
+	ivec4 solver;        // offsets: pressure, divergence, curl (4 a cell), force (3 a cell)
+	ivec4 ambient;       // offsets (a value a level): theta, vapor, exner, pressure
+	vec4 thermal;        // warmth (K), humidity (0..1), radius (cells), patch size (cells)
+	                     // (lit render: the way to the sun, the sun march's step in cells)
+	vec4 thermal_more;   // burst number, burst seed, 1 while the ground heats, sponge layer (cells)
+	                     // (lit render: the sky's light, the sun's, exposure, unused)
+	vec4 wind;           // shear (m/s per km), confinement's cap (m/s^2), view extinction, view step (m)
+	vec4 view_origin;    // render: the picture's middle, far behind the domain
+	vec4 view_right;     // render: across the picture (meters to its edge)
+	vec4 view_up;        // render: up the picture (meters to its edge)
+	vec4 view_forward;   // render: the way the rays go; w: how far they go
+};
+
+#define MODE_FEED 0
+#define MODE_ADVECT_VELOCITY 1
+#define MODE_ADVECT_BACKWARD 2
+#define MODE_ADVECT_FORWARD 3
+#define MODE_ADVECT_CORRECT 4
+#define MODE_CONDENSE 5
+#define MODE_BUOYANCY 6
+#define MODE_SHEAR 7
+#define MODE_CURL 8
+#define MODE_CONFINE_FORCE 9
+#define MODE_CONFINE_APPLY 10
+#define MODE_SPONGE 11
+#define MODE_WALLS 12
+#define MODE_DIVERGENCE 13
+#define MODE_PRESSURE 14
+#define MODE_GRADIENT 15
+#define MODE_LIGHT 16
+#define MODE_RENDER 17
+// Looking at a cloud read from a file (cloud_bake --vdb): its light from a
+// sun anywhere, from the sky above, and a render with them
+#define MODE_SUN_DEPTH 18
+#define MODE_SKY_DEPTH 19
+#define MODE_RENDER_LIT 20
+
+#define GRAVITY 9.81
+#define HEAT_CAPACITY 1004.0
+#define VAPOR_GAS_CONSTANT 461.5
+#define LATENT_HEAT 2.5e6
+#define OVER_RELAXATION 1.8
+
+int nx;
+int ny;
+int nz;
+float h;
+
+int index_c(int i, int j, int k) { return (k * ny + j) * nx + i; }
+int index_u(int i, int j, int k) { return (k * ny + j) * (nx + 1) + i; }
+int index_v(int i, int j, int k) { return (k * (ny + 1) + j) * nx + i; }
+int index_w(int i, int j, int k) { return (k * ny + j) * nx + i; }
+
+// Trilinear: value n of the field (size_x x size_y x size_z from offset)
+// sits at (n + shift) * h
+float sample_field(int offset, int size_x, int size_y, int size_z, vec3 shift, vec3 position)
+{
+	vec3 f = clamp(position / h - shift, vec3(0.0), vec3(size_x - 1, size_y - 1, size_z - 1) - 1e-4);
+	ivec3 base = ivec3(f);
+	vec3 t = f - vec3(base);
+	float result = 0.0;
+
+	for (int c = 0; c < 8; c++)
+	{
+		ivec3 corner = base + ivec3(c & 1, (c >> 1) & 1, (c >> 2) & 1);
+		vec3 weights = mix(1.0 - t, t, vec3(corner - base));
+
+		result += weights.x * weights.y * weights.z * fields[offset + (corner.z * size_y + corner.y) * size_x + corner.x];
+	}
+	return result;
+}
+
+float sample_cells(int offset, vec3 position)
+{
+	return sample_field(offset, nx, ny, nz, vec3(0.5), position);
+}
+
+vec3 flow_at(vec3 position)
+{
+	return vec3(sample_field(velocity.x, nx + 1, ny, nz, vec3(0.0, 0.5, 0.5), position),
+		sample_field(velocity.y, nx, ny + 1, nz, vec3(0.5, 0.0, 0.5), position),
+		sample_field(velocity.z, nx, ny, nz + 1, vec3(0.5, 0.5, 0.0), position));
+}
+
+float saturation_vapor(float temperature, float pressure)
+{
+	float vapor_pressure = 611.2 * exp(17.67 * (temperature - 273.15) / (temperature - 29.65));
+
+	return 0.622 * vapor_pressure / max(pressure - vapor_pressure, 1.0);
+}
+
+// The C side's ground_noise (smooth value noise over the ground)
+float random_unit(uint state)
+{
+	state = state * 747796405u + 2891336453u;
+	state = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+	return float(((state >> 22u) ^ state) >> 8u) / 16777216.0;
+}
+
+float ground_noise(int i, int k, float period, uint seed)
+{
+	vec2 position = vec2(i, k) / period;
+	ivec2 base = ivec2(floor(position));
+	vec2 f = position - vec2(base);
+	float corners[4];
+
+	f = f * f * (3.0 - 2.0 * f);
+	for (int c = 0; c < 4; c++)
+	{
+		uint state = uint(base.x + (c & 1)) * 73856093u ^ uint(base.y + (c >> 1)) * 19349663u ^ seed * 83492791u;
+
+		corners[c] = random_unit(state);
+	}
+	return mix(mix(corners[0], corners[1], f.x), mix(corners[2], corners[3], f.x), f.y);
+}
+
+vec3 center_of(int i, int j, int k)
+{
+	return (vec3(i, j, k) + 0.5) * h;
+}
+
+// The face sized index space (nx + 1) * (ny + 1) * (nz + 1), for modes that
+// touch all three kinds of faces in one dispatch
+ivec3 face_cell(uint index)
+{
+	int i = int(index % uint(nx + 1));
+	int rest = int(index / uint(nx + 1));
+	int j = rest % (ny + 1);
+	int k = rest / (ny + 1);
+
+	return ivec3(i, j, k);
+}
+
+// The velocity at a cell's middle (averaged faces)
+vec3 cell_flow(int i, int j, int k)
+{
+	return vec3(0.5 * (fields[velocity.x + index_u(i, j, k)] + fields[velocity.x + index_u(i + 1, j, k)]),
+		0.5 * (fields[velocity.y + index_v(i, j, k)] + fields[velocity.y + index_v(i, j + 1, k)]),
+		0.5 * (fields[velocity.z + index_w(i, j, k)] + fields[velocity.z + index_w(i, j, k + 1)]));
+}
+
+void main()
+{
+	// Dispatches too big for one row of work groups come as several rows
+	uint index = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * gl_NumWorkGroups.x * 64u;
+	int mode = grid.w;
+	int cells;
+
+	nx = grid.x;
+	ny = grid.y;
+	nz = grid.z;
+	h = cell.x;
+	cells = nx * ny * nz;
+
+	if (mode == MODE_FEED)
+	{
+		// The thermals: warm patches over the ground (see feed_thermal)
+		if (index >= uint(nx * nz) || thermal_more.z < 0.5)
+		{
+			return;
+		}
+		int i = int(index) % nx;
+		int k = int(index) / nx;
+		vec2 offset = (vec2(i, k) + 0.5 - vec2(nx, nz) * 0.5) / thermal.z;
+		float middle = exp(-dot(offset, offset));
+		uint burst = uint(thermal_more.x);
+		uint seed = uint(thermal_more.y);
+		float patches = ground_noise(i, k, thermal.w, seed * 31u + burst) * 0.7 + ground_noise(i, k, thermal.w * 0.4, seed * 57u + burst * 3u) * 0.3;
+		float warmth = max(patches - 0.45, 0.0) * 2.0 * middle;
+		int depth = int(max(2.0, 60.0 / h));
+		float rate = min(0.05 * cell.y, 1.0);
+
+		for (int j = 0; j < depth; j++)
+		{
+			int c = index_c(i, j, k);
+			float ambient_temperature = fields[ambient.x + j] * fields[ambient.z + j];
+			float target_vapor = thermal.y * saturation_vapor(ambient_temperature, fields[ambient.w + j]);
+			float target_theta = fields[ambient.x + j] + thermal.x * warmth;
+
+			fields[scalars.x + c] += (target_theta - fields[scalars.x + c]) * rate;
+			fields[scalars.y + c] += (target_vapor - fields[scalars.y + c]) * rate * min(warmth * 2.0, 1.0);
+		}
+		return;
+	}
+	if (mode == MODE_ADVECT_VELOCITY)
+	{
+		ivec3 at = face_cell(index);
+		float dt = cell.y;
+
+		if (at.z > nz)
+		{
+			return;
+		}
+		if (at.x <= nx && at.y < ny && at.z < nz)
+		{
+			vec3 position = vec3(at.x, at.y + 0.5, at.z + 0.5) * h;
+			vec3 back = position - flow_at(position) * dt;
+
+			fields[velocity_next.x + index_u(at.x, at.y, at.z)] = sample_field(velocity.x, nx + 1, ny, nz, vec3(0.0, 0.5, 0.5), back);
+		}
+		if (at.x < nx && at.y <= ny && at.z < nz)
+		{
+			vec3 position = vec3(at.x + 0.5, at.y, at.z + 0.5) * h;
+			vec3 back = position - flow_at(position) * dt;
+
+			fields[velocity_next.y + index_v(at.x, at.y, at.z)] = sample_field(velocity.y, nx, ny + 1, nz, vec3(0.5, 0.0, 0.5), back);
+		}
+		if (at.x < nx && at.y < ny && at.z <= nz)
+		{
+			vec3 position = vec3(at.x + 0.5, at.y + 0.5, at.z) * h;
+			vec3 back = position - flow_at(position) * dt;
+
+			fields[velocity_next.z + index_w(at.x, at.y, at.z)] = sample_field(velocity.z, nx, ny, nz + 1, vec3(0.5, 0.5, 0.0), back);
+		}
+		return;
+	}
+	if (mode == MODE_LIGHT)
+	{
+		// Each cell's light from a sun overhead: the cloud water above it
+		if (index >= uint(nx * nz))
+		{
+			return;
+		}
+		int i = int(index) % nx;
+		int k = int(index) / nx;
+		float above = 0.0;
+
+		for (int j = ny - 1; j >= 0; j--)
+		{
+			int c = index_c(i, j, k);
+
+			fields[scalars.w + c] = exp(-above * wind.z * h);
+			above += fields[scalars.z + c];
+		}
+		return;
+	}
+	if (mode == MODE_SUN_DEPTH)
+	{
+		// How much cloud there is between each cell and the sun (optical
+		// depth), the cells from velocity.w on (it comes in pieces)
+		uint c = index + uint(velocity.w);
+
+		if (c >= uint(cells))
+		{
+			return;
+		}
+		int i = int(c) % nx;
+		int j = (int(c) / nx) % ny;
+		int k = int(c) / (nx * ny);
+		vec3 step = normalize(thermal.xyz) * thermal.w;
+		vec3 at = vec3(i, j, k) + 0.5 + step * 0.5;
+		float depth = 0.0;
+
+		while (all(greaterThanEqual(at, vec3(0.0))) && all(lessThan(at, vec3(nx, ny, nz))))
+		{
+			// Trilinear, or the shadows come out in stripes
+			depth += sample_cells(scalars.z, at * h);
+			at += step;
+		}
+		fields[scalars.w + int(c)] = depth * wind.z * h * thermal.w;
+		return;
+	}
+	if (mode == MODE_SKY_DEPTH)
+	{
+		// How much cloud is above each cell: the sky's light comes from there
+		if (index >= uint(nx * nz))
+		{
+			return;
+		}
+		int i = int(index) % nx;
+		int k = int(index) / nx;
+		float above = 0.0;
+
+		for (int j = ny - 1; j >= 0; j--)
+		{
+			int c = index_c(i, j, k);
+			float here = fields[scalars.z + c] * wind.z * h;
+
+			fields[temporary.x + c] = above + here * 0.5;
+			above += here;
+		}
+		return;
+	}
+	if (mode == MODE_RENDER_LIT)
+	{
+		ivec2 size = imageSize(picture);
+		ivec2 pixel = ivec2(int(index) % size.x, int(index) / size.x);
+
+		if (pixel.y >= size.y)
+		{
+			return;
+		}
+		vec2 uv = (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
+		vec3 origin = view_origin.xyz + view_right.xyz * uv.x - view_up.xyz * uv.y;
+		vec3 direction = view_forward.xyz;
+		vec3 to_sun = normalize(thermal.xyz);
+		vec3 extent = vec3(nx, ny, nz) * h;
+		vec3 inverse = 1.0 / direction;
+		vec3 near = (vec3(0.0) - origin) * inverse;
+		vec3 far = (extent - origin) * inverse;
+		float enter = max(max(min(near.x, far.x), min(near.y, far.y)), min(near.z, far.z));
+		float leave = min(min(max(near.x, far.x), max(near.y, far.y)), max(near.z, far.z));
+		vec3 sun_color = vec3(1.0, 0.95, 0.88) * thermal_more.y;
+		vec3 sky_color = vec3(0.42, 0.58, 0.85) * thermal_more.x;
+		float cosine = dot(direction, to_sun);
+		// Water droplets throw most light forward (the silver lining with the
+		// sun behind the cloud), a little back: two Henyey-Greenstein lobes
+		float forward_g = 0.8;
+		float back_g = -0.3;
+		vec3 light = vec3(0.0);
+		float transmittance = 1.0;
+		// A different start for each pixel, so the steps do not band
+		float jitter = fract(sin(dot(vec2(pixel), vec2(12.9898, 78.233))) * 43758.5453);
+		float step_length = wind.w;
+
+		for (float t = max(enter, 0.0) + jitter * step_length; t < leave && transmittance > 0.003; t += step_length)
+		{
+			vec3 position = origin + direction * t;
+			float extinction = sample_cells(scalars.z, position) * wind.z;
+
+			if (extinction < 1e-6)
+			{
+				continue;
+			}
+			float sun_depth = sample_cells(scalars.w, position);
+			float sky_depth = sample_cells(temporary.x, position);
+			// Light scattered many times inside the cloud, in octaves (each
+			// fainter, less shadowed, less forward: Wrenninge's approximation)
+			float scattered = 0.0;
+			float strength = 1.0;
+			float attenuation = 1.0;
+			float spread = 1.0;
+
+			for (int octave = 0; octave < 4; octave++)
+			{
+				float g_forward = forward_g * spread;
+				float g_back = back_g * spread;
+				float phase_forward = (1.0 - g_forward * g_forward) / pow(1.0 + g_forward * g_forward - 2.0 * g_forward * cosine, 1.5);
+				float phase_back = (1.0 - g_back * g_back) / pow(1.0 + g_back * g_back - 2.0 * g_back * cosine, 1.5);
+				float phase = mix(phase_forward, phase_back, 0.3) / (4.0 * 3.14159265);
+
+				scattered += strength * phase * exp(-sun_depth * attenuation);
+				strength *= 0.5;
+				attenuation *= 0.4;
+				spread *= 0.5;
+			}
+			// The sky lights the cloud from above, less where more cloud is
+			// over it; the ground a little from below
+			float height = position.y / extent.y;
+			vec3 ambient = sky_color * exp(-sky_depth * 0.15) * (0.6 + 0.4 * height) + vec3(0.25, 0.27, 0.22) * thermal_more.x * 0.15 * (1.0 - height);
+			vec3 source = sun_color * scattered * 4.0 * 3.14159265 * 0.25 + ambient;
+			// What a step adds, integrated over the step (energy kept with
+			// big steps through thick cloud)
+			float step_transmittance = exp(-extinction * step_length);
+
+			light += transmittance * source * (1.0 - step_transmittance);
+			transmittance *= step_transmittance;
+		}
+		{
+			// Behind the cloud: the sky (brighter towards the sun and the
+			// horizon), the domain's floor when seen from above
+			float elevation = direction.y - uv.y * 0.35;
+			vec3 background = mix(vec3(0.75, 0.82, 0.92), vec3(0.28, 0.45, 0.78), clamp(elevation * 1.5 + 0.3, 0.0, 1.0)) * thermal_more.x * 2.2;
+
+			background += sun_color * 0.4 * pow(max(cosine, 0.0), 64.0) + sun_color * 20.0 * smoothstep(0.9995, 0.9998, cosine);
+			if (origin.y > 0.0 && direction.y < 0.0)
+			{
+				float floor_distance = -origin.y / direction.y;
+				vec3 ground = origin + direction * floor_distance;
+
+				if (ground.x > 0.0 && ground.z > 0.0 && ground.x < extent.x && ground.z < extent.z)
+				{
+					background = vec3(0.16, 0.2, 0.12) * (thermal_more.x * 0.6 + thermal_more.y * max(to_sun.y, 0.0) * 0.5);
+				}
+			}
+			light += background * transmittance;
+		}
+		// Exposure and a soft shoulder, then to the screen's gamma
+		vec3 color = 1.0 - exp(-light * thermal_more.z);
+
+		imageStore(picture, pixel, vec4(pow(color, vec3(1.0 / 2.2)), 1.0));
+		return;
+	}
+	if (mode == MODE_RENDER)
+	{
+		ivec2 size = imageSize(picture);
+		ivec2 pixel = ivec2(int(index) % size.x, int(index) / size.x);
+
+		if (pixel.y >= size.y)
+		{
+			return;
+		}
+		vec2 uv = (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
+		vec3 origin = view_origin.xyz + view_right.xyz * uv.x - view_up.xyz * uv.y;
+		vec3 direction = view_forward.xyz;
+		vec3 extent = vec3(nx, ny, nz) * h;
+		// Where the ray is inside the domain's box
+		vec3 inverse = 1.0 / direction;
+		vec3 near = (vec3(0.0) - origin) * inverse;
+		vec3 far = (extent - origin) * inverse;
+		float enter = max(max(min(near.x, far.x), min(near.y, far.y)), min(near.z, far.z));
+		float leave = min(min(max(near.x, far.x), max(near.y, far.y)), max(near.z, far.z));
+		float transmittance = 1.0;
+		float brightness = 0.0;
+		float sky = 0.55 + 0.25 * -uv.y;
+
+		for (float t = max(enter, 0.0); t < leave && transmittance > 0.02; t += wind.w)
+		{
+			vec3 position = origin + direction * t;
+			float water = sample_cells(scalars.z, position);
+
+			if (water > 1e-6)
+			{
+				float alpha = 1.0 - exp(-water * wind.z * wind.w);
+
+				brightness += transmittance * alpha * (0.35 + 0.65 * sample_cells(scalars.w, position));
+				transmittance *= 1.0 - alpha;
+			}
+		}
+		// The domain's floor, so up and down are clear (seen from above
+		// only: from below the clouds are against the sky, as from the ground)
+		{
+			float floor_distance = -origin.y / direction.y;
+			vec3 ground = origin + direction * floor_distance;
+			vec3 background = vec3(0.55, 0.7, 1.0) * sky;
+
+			if (origin.y > 0.0 && floor_distance > 0.0 && ground.x > 0.0 && ground.z > 0.0 && ground.x < extent.x && ground.z < extent.z)
+			{
+				background = vec3(0.32, 0.38, 0.28);
+			}
+			imageStore(picture, pixel, vec4(min(vec3(brightness) + background * transmittance, vec3(1.0)), 1.0));
+		}
+		return;
+	}
+	if (mode == MODE_WALLS || mode == MODE_GRADIENT || mode == MODE_CONFINE_APPLY || mode == MODE_SHEAR || mode == MODE_BUOYANCY)
+	{
+		ivec3 at = face_cell(index);
+
+		if (at.z > nz)
+		{
+			return;
+		}
+		if (mode == MODE_WALLS)
+		{
+			if (at.y < ny && at.z < nz && (at.x == 0 || at.x == nx))
+			{
+				fields[velocity.x + index_u(at.x, at.y, at.z)] = 0.0;
+			}
+			if (at.x < nx && at.z < nz && (at.y == 0 || at.y == ny))
+			{
+				fields[velocity.y + index_v(at.x, at.y, at.z)] = 0.0;
+			}
+			if (at.x < nx && at.y < ny && (at.z == 0 || at.z == nz))
+			{
+				fields[velocity.z + index_w(at.x, at.y, at.z)] = 0.0;
+			}
+			return;
+		}
+		if (mode == MODE_GRADIENT)
+		{
+			if (at.x >= 1 && at.x < nx && at.y < ny && at.z < nz)
+			{
+				fields[velocity.x + index_u(at.x, at.y, at.z)] -= (fields[solver.x + index_c(at.x, at.y, at.z)] - fields[solver.x + index_c(at.x - 1, at.y, at.z)]) / h;
+			}
+			if (at.y >= 1 && at.y < ny && at.x < nx && at.z < nz)
+			{
+				fields[velocity.y + index_v(at.x, at.y, at.z)] -= (fields[solver.x + index_c(at.x, at.y, at.z)] - fields[solver.x + index_c(at.x, at.y - 1, at.z)]) / h;
+			}
+			if (at.z >= 1 && at.z < nz && at.x < nx && at.y < ny)
+			{
+				fields[velocity.z + index_w(at.x, at.y, at.z)] -= (fields[solver.x + index_c(at.x, at.y, at.z)] - fields[solver.x + index_c(at.x, at.y, at.z - 1)]) / h;
+			}
+			return;
+		}
+		if (mode == MODE_CONFINE_APPLY)
+		{
+			float dt = cell.y;
+
+			if (at.x >= 1 && at.x < nx - 1 && at.y >= 1 && at.y < ny - 1 && at.z >= 1 && at.z < nz - 1)
+			{
+				int c = index_c(at.x, at.y, at.z);
+
+				fields[velocity.x + index_u(at.x, at.y, at.z)] += 0.5 * (fields[solver.w + c * 3] + fields[solver.w + index_c(at.x - 1, at.y, at.z) * 3]) * dt;
+				fields[velocity.y + index_v(at.x, at.y, at.z)] += 0.5 * (fields[solver.w + c * 3 + 1] + fields[solver.w + index_c(at.x, at.y - 1, at.z) * 3 + 1]) * dt;
+				fields[velocity.z + index_w(at.x, at.y, at.z)] += 0.5 * (fields[solver.w + c * 3 + 2] + fields[solver.w + index_c(at.x, at.y, at.z - 1) * 3 + 2]) * dt;
+			}
+			return;
+		}
+		if (mode == MODE_SHEAR)
+		{
+			if (at.x >= 1 && at.x < nx && at.y < ny && at.z < nz)
+			{
+				float target = wind.x * (float(at.y) + 0.5) * h * 0.001;
+				int f = velocity.x + index_u(at.x, at.y, at.z);
+
+				fields[f] += (target - fields[f]) * min(0.01 * cell.y, 1.0);
+			}
+			return;
+		}
+		// Buoyancy, on the faces between a cell and the one above it
+		if (at.x < nx && at.y >= 1 && at.y < ny && at.z < nz)
+		{
+			int below = index_c(at.x, at.y - 1, at.z);
+			int above = index_c(at.x, at.y, at.z);
+			float b_below = (fields[scalars.x + below] - fields[ambient.x + at.y - 1]) / fields[ambient.x + at.y - 1]
+				+ 0.61 * (fields[scalars.y + below] - fields[ambient.y + at.y - 1]) - fields[scalars.z + below];
+			float b_above = (fields[scalars.x + above] - fields[ambient.x + at.y]) / fields[ambient.x + at.y]
+				+ 0.61 * (fields[scalars.y + above] - fields[ambient.y + at.y]) - fields[scalars.z + above];
+
+			fields[velocity.y + index_v(at.x, at.y, at.z)] += GRAVITY * 0.5 * (b_below + b_above) * cell.y;
+		}
+		return;
+	}
+
+	// The rest work on cells
+	if (index >= uint(cells))
+	{
+		return;
+	}
+	int i = int(index) % nx;
+	int j = (int(index) / nx) % ny;
+	int k = int(index) / (nx * ny);
+	int c = int(index);
+
+	if (mode == MODE_ADVECT_BACKWARD || mode == MODE_ADVECT_FORWARD || mode == MODE_ADVECT_CORRECT)
+	{
+		// MacCormack (see advect_scalar): back, forward, corrected
+		vec3 position = center_of(i, j, k);
+		vec3 flow = cell_flow(i, j, k);
+		float dt = cell.y;
+
+		if (mode == MODE_ADVECT_BACKWARD)
+		{
+			fields[temporary.x + c] = sample_cells(velocity.w, position - flow * dt);
+		}
+		else if (mode == MODE_ADVECT_FORWARD)
+		{
+			fields[temporary.y + c] = sample_cells(temporary.x, position + flow * dt);
+		}
+		else
+		{
+			vec3 back = clamp((position - flow * dt) / h - 0.5, vec3(0.0), vec3(nx - 1, ny - 1, nz - 1) - 1e-4);
+			ivec3 base = ivec3(back);
+			float low = 1e30;
+			float high = -1e30;
+
+			for (int n = 0; n < 8; n++)
+			{
+				ivec3 corner = base + ivec3(n & 1, (n >> 1) & 1, (n >> 2) & 1);
+				float value = fields[velocity.w + index_c(corner.x, corner.y, corner.z)];
+
+				low = min(low, value);
+				high = max(high, value);
+			}
+			fields[temporary.z + c] = clamp(fields[temporary.x + c] + 0.5 * (fields[velocity.w + c] - fields[temporary.y + c]), low, high);
+		}
+		return;
+	}
+	if (mode == MODE_CONDENSE)
+	{
+		float exner = fields[ambient.z + j];
+		float temperature = fields[scalars.x + c] * exner;
+		float saturated = saturation_vapor(temperature, fields[ambient.w + j]);
+		float excess = fields[scalars.y + c] - saturated;
+		float share = 1.0 / (1.0 + LATENT_HEAT * LATENT_HEAT * saturated / (HEAT_CAPACITY * VAPOR_GAS_CONSTANT * temperature * temperature));
+		float change = excess * share;
+
+		if (change < 0.0)
+		{
+			change = max(change, -fields[scalars.z + c]);
+		}
+		fields[scalars.y + c] -= change;
+		fields[scalars.z + c] += change;
+		fields[scalars.x + c] += LATENT_HEAT / (HEAT_CAPACITY * exner) * change;
+		return;
+	}
+	if (mode == MODE_CURL)
+	{
+		vec4 result = vec4(0.0);
+
+		if (i >= 1 && j >= 1 && k >= 1 && i < nx - 1 && j < ny - 1 && k < nz - 1)
+		{
+			float wx = (cell_flow(i, j + 1, k).z - cell_flow(i, j - 1, k).z - cell_flow(i, j, k + 1).y + cell_flow(i, j, k - 1).y) / (2.0 * h);
+			float wy = (cell_flow(i, j, k + 1).x - cell_flow(i, j, k - 1).x - cell_flow(i + 1, j, k).z + cell_flow(i - 1, j, k).z) / (2.0 * h);
+			float wz = (cell_flow(i + 1, j, k).y - cell_flow(i - 1, j, k).y - cell_flow(i, j + 1, k).x + cell_flow(i, j - 1, k).x) / (2.0 * h);
+
+			result = vec4(wx, wy, wz, sqrt(wx * wx + wy * wy + wz * wz));
+		}
+		fields[solver.z + c * 4] = result.x;
+		fields[solver.z + c * 4 + 1] = result.y;
+		fields[solver.z + c * 4 + 2] = result.z;
+		fields[solver.z + c * 4 + 3] = result.w;
+		return;
+	}
+	if (mode == MODE_CONFINE_FORCE)
+	{
+		vec3 force = vec3(0.0);
+
+		if (i >= 2 && j >= 2 && k >= 2 && i < nx - 2 && j < ny - 2 && k < nz - 2)
+		{
+			vec3 gradient = vec3(fields[solver.z + index_c(i + 1, j, k) * 4 + 3] - fields[solver.z + index_c(i - 1, j, k) * 4 + 3],
+				fields[solver.z + index_c(i, j + 1, k) * 4 + 3] - fields[solver.z + index_c(i, j - 1, k) * 4 + 3],
+				fields[solver.z + index_c(i, j, k + 1) * 4 + 3] - fields[solver.z + index_c(i, j, k - 1) * 4 + 3]);
+			vec3 vorticity = vec3(fields[solver.z + c * 4], fields[solver.z + c * 4 + 1], fields[solver.z + c * 4 + 2]);
+			float magnitude;
+
+			gradient /= length(gradient) + 1e-12;
+			force = cell.w * h * cross(gradient, vorticity);
+			magnitude = length(force);
+			if (magnitude > wind.y)
+			{
+				force *= wind.y / magnitude;
+			}
+		}
+		fields[solver.w + c * 3] = force.x;
+		fields[solver.w + c * 3 + 1] = force.y;
+		fields[solver.w + c * 3 + 2] = force.z;
+		return;
+	}
+	if (mode == MODE_SPONGE)
+	{
+		int layer = int(thermal_more.w);
+
+		if (j >= ny - layer)
+		{
+			float damping = min(0.05 * cell.y * float(j - (ny - layer)) / float(layer), 1.0);
+
+			fields[velocity.x + index_u(i, j, k)] *= 1.0 - damping;
+			fields[velocity.y + index_v(i, j, k)] *= 1.0 - damping;
+			fields[velocity.z + index_w(i, j, k)] *= 1.0 - damping;
+			fields[scalars.x + c] += (fields[ambient.x + j] - fields[scalars.x + c]) * damping;
+		}
+		return;
+	}
+	if (mode == MODE_DIVERGENCE)
+	{
+		fields[solver.y + c] = (fields[velocity.x + index_u(i + 1, j, k)] - fields[velocity.x + index_u(i, j, k)]
+			+ fields[velocity.y + index_v(i, j + 1, k)] - fields[velocity.y + index_v(i, j, k)]
+			+ fields[velocity.z + index_w(i, j, k + 1)] - fields[velocity.z + index_w(i, j, k)]) * h;
+		return;
+	}
+	if (mode == MODE_PRESSURE)
+	{
+		// Red-black: this pass only the cells of one color
+		if (((i + j + k) & 1) != velocity_next.w)
+		{
+			return;
+		}
+		float sum = 0.0;
+		float neighbors = 0.0;
+		int p = solver.x;
+
+		if (i > 0) { sum += fields[p + c - 1]; neighbors += 1.0; }
+		if (i < nx - 1) { sum += fields[p + c + 1]; neighbors += 1.0; }
+		if (j > 0) { sum += fields[p + c - nx]; neighbors += 1.0; }
+		if (j < ny - 1) { sum += fields[p + c + nx]; neighbors += 1.0; }
+		if (k > 0) { sum += fields[p + c - nx * ny]; neighbors += 1.0; }
+		if (k < nz - 1) { sum += fields[p + c + nx * ny]; neighbors += 1.0; }
+		fields[p + c] += OVER_RELAXATION * ((sum - fields[solver.y + c]) / neighbors - fields[p + c]);
+		return;
+	}
+}

@@ -1,0 +1,284 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#define GROUND_COHERENT coherent
+#include "water_sim.glsl"
+
+// Bank collapse and smoothing, one workgroup per tile of one checkerboard
+// color (see erosion.h): wet banks steeper than the soil's wet talus slope
+// slide into the water, loose silt never stands steeper than its slope,
+// and under water one cell teeth are evened out. A tile's pairs reach one
+// cell into its neighbors and no further, so tiles of one color (two tiles
+// apart) never touch the same cell.
+//
+// Within the tile the work goes in phases whose pieces never share a cell,
+// so the threads run them side by side: the pairs along x starting on an
+// even column, then on an odd one, the same along y; then the lines of
+// three for smoothing, by column modulo 3, then by row modulo 3. Each move
+// is between two cells only, so the material is conserved exactly.
+
+layout(local_size_x = 256) in;
+
+shared uint shared_mask;
+shared uint shared_collapsed;
+
+#define SETTLE_STEPS 300u
+#define CHANGED_OWN 1u
+#define CHANGED_LEFT 2u
+#define CHANGED_RIGHT 4u
+#define CHANGED_BACK 8u
+#define CHANGED_FRONT 16u
+
+// Moves material from the higher of two neighbors to the lower if the
+// slope between them is steeper than the wet talus slope: off the top of
+// the high cell (silt first, never bedrock), landing as silt. A quarter of
+// the excess per check, so slopes slump instead of snapping.
+int collapse_pair(uint first, uint second)
+{
+	uint high = heights[first] >= heights[second] ? first : second;
+	uint low = high == first ? second : first;
+	int drop = heights[high] - heights[low];
+	int talus_units;
+	int movable;
+	int amount;
+	ivec2 high_layer;
+
+	if (drop <= 0)
+	{
+		return 0;
+	}
+	talus_units = int(min(talus_slope_of(surface_layer_of(high)) * cell_size * 100000.0, 1e9));
+	if (drop <= talus_units)
+	{
+		return 0;
+	}
+	high_layer = layers[high];
+	// Wet banks slide: under water, or water at the foot
+	if (depths[high] >= submerged_units || depths[low] >= submerged_units)
+	{
+		movable = heights[high] - high_layer.x;
+	}
+	else if (high_layer.y > 0)
+	{
+		// Silt is loose mud: it never stands steeper than its slope, wet
+		// or dry; dry, only the silt itself moves
+		movable = high_layer.y;
+	}
+	else
+	{
+		return 0;
+	}
+	amount = min((drop - talus_units) / 4, movable);
+	if (amount <= 0)
+	{
+		return 0;
+	}
+	heights[high] -= amount;
+	layers[high].y = high_layer.y - min(amount, high_layer.y);
+	heights[low] += amount;
+	layers[low].y += amount;
+	return amount;
+}
+
+// Moves up to amount from one cell to a neighbor, landing as silt: silt
+// first, then soil, and bedrock only if allowed (its top then goes down)
+int move_material(uint from, uint to, int amount, bool allow_bedrock)
+{
+	ivec2 from_layer = layers[from];
+
+	if (!allow_bedrock)
+	{
+		amount = min(amount, heights[from] - from_layer.x);
+	}
+	amount = min(amount, heights[from]);
+	if (amount <= 0)
+	{
+		return 0;
+	}
+	heights[from] -= amount;
+	from_layer.y -= min(amount, from_layer.y);
+	from_layer.x = min(from_layer.x, heights[from]);
+	layers[from] = from_layer;
+	heights[to] += amount;
+	layers[to].y += amount;
+	return amount;
+}
+
+// A cell above both its neighbors on a line gives each a share of the
+// difference; one below both takes a share from each
+int smooth_spike(float rate, uint first, uint cell, uint second)
+{
+	int height = heights[cell];
+	int first_height = heights[first];
+	int second_height = heights[second];
+	int moved = 0;
+
+	if (height > first_height && height > second_height)
+	{
+		moved = max(moved, move_material(cell, first, int(rate * 0.25 * float(height - first_height)), true));
+		moved = max(moved, move_material(cell, second, int(rate * 0.25 * float(height - second_height)), true));
+	}
+	else if (height < first_height && height < second_height)
+	{
+		moved = max(moved, move_material(first, cell, int(rate * 0.25 * float(first_height - height)), false));
+		moved = max(moved, move_material(second, cell, int(rate * 0.25 * float(second_height - height)), false));
+	}
+	return moved;
+}
+
+void mark_changed(uint tile)
+{
+	atomicOr(control[tile_word(tile, TILE_FLAGS)], TILE_FLAG_TERRAIN_DIRTY | TILE_FLAG_CPU_DIRTY | TILE_FLAG_RENDER_DIRTY | TILE_FLAG_GROUND_DIRTY);
+	control[tile_word(tile, TILE_SETTLE_STEPS)] = SETTLE_STEPS;
+}
+
+// Waits for the whole workgroup's writes of the phase before
+void next_phase()
+{
+	memoryBarrierBuffer();
+	barrier();
+}
+
+void main()
+{
+	if (gl_WorkGroupID.x >= control[HEADER_LIST_COUNT])
+	{
+		return;
+	}
+	uint tile = control[list_word(gl_WorkGroupID.x)];
+	int start_x = (int(tile) % tiles_per_side) * TILE_SIZE;
+	int start_y = (int(tile) / tiles_per_side) * TILE_SIZE;
+	uint mask = 0u;
+	uint collapsed = 0u;
+	int moved;
+
+	if (gl_LocalInvocationID.x == 0u)
+	{
+		shared_mask = 0u;
+		shared_collapsed = 0u;
+	}
+	barrier();
+
+	// The pairs: along x from start_x - 1 (the pair across the left border)
+	// to start_x + 63 (across the right one), the same along y; by parity
+	for (int phase = 0; phase < 4; phase++)
+	{
+		bool along_x = phase < 2;
+		int parity = phase & 1;
+
+		for (uint item = gl_LocalInvocationID.x; item < uint(TILE_SIZE * (TILE_SIZE + 1)); item += 256u)
+		{
+			int along = start_x - 1 + int(item % uint(TILE_SIZE + 1));
+			int across = int(item / uint(TILE_SIZE + 1));
+			int x;
+			int y;
+
+			if (!along_x)
+			{
+				along = start_y - 1 + int(item % uint(TILE_SIZE + 1));
+			}
+			if ((along & 1) != parity || along < 0 || along + 1 >= map_size)
+			{
+				continue;
+			}
+			x = along_x ? along : start_x + across;
+			y = along_x ? start_y + across : along;
+			moved = along_x ? collapse_pair(cell_of(x, y), cell_of(x + 1, y)) : collapse_pair(cell_of(x, y), cell_of(x, y + 1));
+			if (moved > 0)
+			{
+				int start = along_x ? start_x : start_y;
+
+				collapsed += uint(moved);
+				mask |= CHANGED_OWN;
+				if (along < start)
+				{
+					mask |= along_x ? CHANGED_LEFT : CHANGED_BACK;
+				}
+				if (along + 1 >= start + TILE_SIZE)
+				{
+					mask |= along_x ? CHANGED_RIGHT : CHANGED_FRONT;
+				}
+			}
+		}
+		next_phase();
+	}
+
+	// Then the sawtooth: under water or on mud, cells sticking out of (or
+	// dipping into) a line of three are evened out; lines along x by
+	// column modulo 3, then along y by row modulo 3
+	if (erosion_smoothing > 0.0)
+	{
+		float rate = min(erosion_smoothing, 1.0);
+
+		for (int phase = 0; phase < 6; phase++)
+		{
+			bool along_x = phase < 3;
+			int remainder = phase % 3;
+
+			for (uint item = gl_LocalInvocationID.x; item < uint(TILE_SIZE * TILE_SIZE); item += 256u)
+			{
+				int x = start_x + int(item & 63u);
+				int y = start_y + int(item >> 6);
+				int along = along_x ? x : y;
+				uint cell;
+
+				if (along % 3 != remainder || along <= 0 || along >= map_size - 1)
+				{
+					continue;
+				}
+				cell = cell_of(x, y);
+				if (depths[cell] <= film_units && layers[cell].y == 0)
+				{
+					continue;
+				}
+				moved = along_x ? smooth_spike(rate, cell_of(x - 1, y), cell, cell_of(x + 1, y))
+					: smooth_spike(rate, cell_of(x, y - 1), cell, cell_of(x, y + 1));
+				if (moved > 0)
+				{
+					int start = along_x ? start_x : start_y;
+
+					mask |= CHANGED_OWN;
+					if (along == start)
+					{
+						mask |= along_x ? CHANGED_LEFT : CHANGED_BACK;
+					}
+					if (along == start + TILE_SIZE - 1)
+					{
+						mask |= along_x ? CHANGED_RIGHT : CHANGED_FRONT;
+					}
+				}
+			}
+			next_phase();
+		}
+	}
+
+	atomicOr(shared_mask, mask);
+	atomicAdd(shared_collapsed, collapsed);
+	barrier();
+	if (gl_LocalInvocationID.x != 0u)
+	{
+		return;
+	}
+	mask = shared_mask;
+	add_counter(COUNTER_COLLAPSED, shared_collapsed);
+	if ((mask & CHANGED_OWN) != 0u)
+	{
+		mark_changed(tile);
+	}
+	if ((mask & CHANGED_LEFT) != 0u)
+	{
+		mark_changed(tile - 1u);
+	}
+	if ((mask & CHANGED_RIGHT) != 0u)
+	{
+		mark_changed(tile + 1u);
+	}
+	if ((mask & CHANGED_BACK) != 0u)
+	{
+		mark_changed(tile - uint(tiles_per_side));
+	}
+	if ((mask & CHANGED_FRONT) != 0u)
+	{
+		mark_changed(tile + uint(tiles_per_side));
+	}
+}

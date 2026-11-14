@@ -1,0 +1,392 @@
+// Navigation: finding paths for actors over the changing map.
+//
+// The map is seen through a grid of 1 m cells. A cell has one or more
+// surfaces an actor may stand on: the terrain, and the tops of big objects
+// (a bridge's deck, a dock, a flat rock), each with the free height above
+// it up to the next solid thing. So a bear can cross a canyon on the bridge
+// and a duck can swim under it, while the bear, too tall, cannot.
+//
+// The surfaces come from the big solid objects' collision triangles (what
+// the physics uses, see object_model.h), turned and scaled as placed, and
+// sampled every eighth of a meter: upward facing triangles give surfaces,
+// the rest only take room. A surface keeps its height per quarter meter of
+// the cell too (where a foot stands: beside a rock is the ground, not the
+// rock's top), and one covering less than a quarter of its cell (a cone's
+// tip) is no surface: the cell is in the way. Only the lowest NAVIGATION_OBJECT_HEIGHT_METERS of
+// an object count (a tree's crown is no obstacle, its trunk is). Small
+// objects (under [simulation] navigation_object_meters across, 0.3 m by
+// default) are left out: actors walk through pebbles. Small ones (up to
+// small_object_meters, a stone) are neither surfaces nor room taken, only a
+// height per cell: each actor steps over, goes around (at a price, through
+// when it must) or is stopped by them, by its own size.
+//
+// Whether an actor can be on a surface, and what it costs, depends on the
+// actor (an agent: how tall it is, how high it steps, how steep it climbs,
+// how deep it wades, whether it swims) and is worked out when needed, with
+// the water as it is at that moment.
+//
+// A* runs over the surfaces (8 directions; a neighbor's surface is
+// reachable if within a step, or within the slope the actor climbs; no
+// cutting the corner of a blocked cell), with a cap on the surfaces it may
+// expand: past it, or when the goal cannot be reached, the path leads to
+// the reached cell nearest the goal. The path is then pulled tight into a
+// few waypoints: straight lines wherever the ground along them is no worse.
+//
+// What changes: the map is split into regions of 64 m. A region is built
+// again when the objects in it changed (moved, added, removed, broken; a
+// standing one's height counts in steps of 15 cm), and is then stamped with
+// a new generation number. The terrain moving alone (the water wearing it)
+// builds nothing: the cells that moved more than 15 cm take their new
+// height (the objects over them as they were), and the region is stamped
+// newer only then. It is built lazily: only when a
+// search is about to go through it (the regions along the straight line
+// towards the goal and one either side), or an actor checks the stretch of
+// path ahead of it. Erosion far from anybody costs nothing. An actor checks
+// the stretch of path it can see when a region along it is newer than its
+// last look, or has running water; only if the way there is actually
+// blocked does it search again.
+//
+// Flyers (a falcon) see the map differently: per cell, the highest thing
+// there, terrain or any standing object whole (a tree's crown too, from
+// its box). They go anywhere under their ceiling; a flight path is the
+// straight line when nothing on it rises above the ceiling, else A* over
+// blocks of 4 x 4 cells around what does (a mountain), climbing costing a
+// little. How high they fly along the way is theirs (see actors.h).
+//
+// The search's working memory belongs to the navigation and is reused
+// between searches without clearing (nodes carry the number of the search
+// that last touched them). Searches only read the map; for searches on
+// several threads, each would get working memory of its own.
+
+#ifndef NAVIGATION_H
+#define NAVIGATION_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include "objects.h"
+#include "terrain.h"
+#include "water.h"
+
+#define NAVIGATION_CELL_METERS 1.0f
+#define NAVIGATION_REGION_METERS 64.0f
+#define NAVIGATION_MAX_WAYPOINTS 32
+#define NAVIGATION_SLOPE_UNIT_DEGREES (90.0f / 255.0f)
+// The walks' open list (see navigation_t): its buckets, how much priority
+// each spans (meters; within one the order is the last pushed first: no
+// path comes out more than about this much worse than the best), how many
+// (the ring spans NAVIGATION_BUCKETS times that: farther ones wait in the
+// last)
+#define NAVIGATION_BUCKET_METERS 0.125f
+#define NAVIGATION_BUCKETS 8192
+#define NAVIGATION_MAX_EXTRA_SURFACES 3       // per cell, above the terrain's
+#define NAVIGATION_REGION_EXTRA_SLOTS 4096    // extra surfaces per region
+#define NAVIGATION_OBJECT_HEIGHT_METERS 4.0f  // the part of an object that can be in the way
+#define NAVIGATION_CLEARANCE_UNIT_METERS 0.05f
+#define NAVIGATION_CLEARANCE_OPEN 255         // nothing above, as far as anyone cares
+#define NAVIGATION_OBJECT_TOP_UNIT_METERS 0.25f // object heights for flying, up to 63.75 m
+
+// How an actor gets around (from its type, see actors.ini)
+typedef struct
+{
+	float height_meters;               // needs this much free room above a surface
+	float step_meters;                 // climbs this much from one cell to the next, however steep
+	float maximum_slope;               // rise per meter it can still climb
+	float wade_depth_meters;           // deeper than this slows it down
+	float swim_depth_meters;           // deeper than this it swims (or cannot pass)
+	bool can_swim;
+	float swim_meters_per_second;      // a current faster than this is a wall
+	float radius_meters;               // half its width: straight stretches of a path keep this far from what is in the way
+	uint8_t groups;                    // bits: a blocker for one of these stops it (navigation_set_blockers; 0: none does)
+} navigation_agent_t;
+
+// A blocker: a rectangle no one of its groups goes through (a locked
+// gate, a fallen tree, a ward), whatever is there. The game sets them
+// (the map's areas that block: areas.h); flyers go over them
+enum
+{
+	NAVIGATION_BLOCKERS_MAX = 256
+};
+
+typedef struct
+{
+	float x;                           // its middle, meters
+	float z;
+	float half_width_meters;
+	float half_depth_meters;
+	float yaw_radians;                 // as areas.h's
+	uint8_t groups;                    // bits: whom it stops (navigation_agent_t.groups)
+} navigation_blocker_t;
+
+typedef enum
+{
+	NAVIGATION_PATH_NONE = 0,          // not even a step could be made
+	NAVIGATION_PATH_FOUND,             // to the goal
+	NAVIGATION_PATH_PARTIAL            // as near the goal as it could get
+} navigation_result_t;
+
+// A surface above the terrain's
+#define NAVIGATION_SUBCELLS 4                  // per side of a cell, for exact heights (feet)
+#define NAVIGATION_SUBCELL_UNIT_METERS 0.02f
+#define NAVIGATION_SUBCELL_NONE 255            // the surface does not reach this part of the cell
+
+typedef struct
+{
+	float height;                      // meters: the highest of it in the cell (what paths go by)
+	int32_t cell;
+	uint8_t clearance;                 // free room above, NAVIGATION_CLEARANCE_UNIT_METERS each
+	// Per quarter meter of the cell (row by row, x first): how far under
+	// height it is there, NAVIGATION_SUBCELL_UNIT_METERS each, or
+	// NAVIGATION_SUBCELL_NONE where it is not (a rock's top covers part of
+	// a cell): where a foot stands
+	uint8_t below[NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS];
+} navigation_surface_t;
+
+// A node waiting in the search's open list, and its priority (the cost so
+// far and the estimate of the rest): side by side, a heap's level in few
+// cache lines
+typedef struct
+{
+	float priority;
+	int32_t node;
+} navigation_heap_entry_t;
+
+// What a search knows of a node: all of it side by side (one cache line,
+// not three)
+typedef struct
+{
+	uint32_t tag;                      // search_number * 2 when reached, + 1 when closed
+	float cost;                        // the cost so far
+	int32_t came_from;                 // the node it was entered from
+} navigation_search_node_t;
+
+// An object as a region's signature last saw it (what changed is told
+// when the region is built again for its objects)
+typedef struct
+{
+	uint32_t id;
+	int type;
+	int model;                         // which of its models (whole, damaged)
+	float fields[8];                   // x, z, its base's height step (0 for those the navigation does not stand on), scale, rotation
+	float reach_meters;                // how far round x, z it reaches (not in the signature)
+} navigation_object_print_t;
+
+typedef struct
+{
+	navigation_surface_t *surfaces;    // NAVIGATION_REGION_EXTRA_SLOTS of them
+	navigation_object_print_t *prints; // its objects as its signature last saw them (by id)
+	int32_t print_count;
+	int32_t print_capacity;
+	int32_t surface_count;
+	uint64_t objects_signature;        // of the standing objects in it, to notice changes
+	uint32_t objects_generation_checked; // objects_t.generation when the signature was last compared
+	bool objects_touched;              // an object in it (or near) added, gone, come loose since (objects_changes_since): compared again
+	bool stale;                        // to be built again before it is used
+	bool terrain_touched;              // the terrain under it changed: by enough to matter?
+	bool dirty;                        // being built right now
+	// Stale for a few of its objects only: just the cells round them (x, z
+	// first and last, inclusive) are built again
+	bool partial;
+	int32_t partial_box[4];
+} navigation_region_t;
+
+typedef struct
+{
+	int32_t size;                      // cells per side
+	int32_t region_size;               // cells per side of a region
+	int32_t regions_per_side;
+	navigation_region_t *regions;
+	// Per cell: the free room above the terrain (0: something stands
+	// there), and the extra surfaces (in the cell's region, from first on)
+	float *ground_height;              // the terrain at the cell's center (as of the region's last build)
+	uint8_t *terrain_clearance;
+	int16_t *terrain_blocker;          // the object type that takes the room above the terrain, -1 none
+	// How far above the cell's ground_height the highest object reaches,
+	// all of it (a tree's crown too), NAVIGATION_OBJECT_TOP_UNIT_METERS each:
+	// what a bird flies over
+	uint8_t *object_top;
+	// How steep the ground of each cell is, NAVIGATION_SLOPE_UNIT_DEGREES
+	// each (worked out with its region): what walking on it costs, by
+	// walk_factors (a road up a hill is hard whichever way it goes)
+	uint8_t *ground_slope;
+	float walk_factors[256];           // per ground_slope: what a meter on such ground costs (1: flat)
+	// Small objects (navigation_object_meters to small_object_meters across,
+	// a stone) are neither surfaces nor room taken: per cell, the height of
+	// the highest one above the ground, 5 cm each. An actor steps over one
+	// lower than its step, goes around one lower than itself if that is
+	// less than small_detour_meters longer (else through it), and never
+	// through one taller than itself
+	uint8_t *small_height;
+	// Per cell: the groups the blockers there stop (navigation_set_blockers)
+	uint8_t *blocked;
+	navigation_blocker_t blockers[NAVIGATION_BLOCKERS_MAX];
+	int blocker_count;
+	float small_object_meters;
+	float small_detour_meters;
+	uint8_t *extra_count;
+	uint16_t *extra_first;
+	uint32_t generation;               // the newest stamp
+	uint32_t *region_generation;
+	float object_minimum_meters;       // smaller objects are left out
+	bool build_everything;             // a new map: every region now, not when used
+	bool whole_terrain_seen;           // the last update saw every chunk changed
+	// What the regions are built from (navigation_update keeps these)
+	const terrain_t *terrain;
+	const objects_t *objects;
+	float object_margin_meters;        // the farthest an object reaches from its center
+	uint32_t object_change_serial;     // the object list's changes heard of so far (objects_changes_since)
+	int32_t *build_list;               // scratch: regions to build
+	int32_t *object_scratch;           // scratch: objects near a region
+	int32_t object_scratch_capacity;
+	int32_t last_rebuilt_regions;      // statistics
+	int64_t rebuilt_region_total;
+	int64_t partial_region_total;      // of those, built in part only (the cells round a few objects that changed)
+
+	// Search working memory, grown on first use. Nodes are the cells'
+	// terrain surfaces (node = cell) and then the regions' extra surfaces
+	// (node = cells + region * NAVIGATION_REGION_EXTRA_SLOTS + slot)
+	uint32_t search_number;
+	navigation_search_node_t *search;  // per node, what the searches know of it
+	navigation_heap_entry_t *heap;     // the flights' open list: a 4-ary heap, cheapest first
+	int32_t heap_count;
+	// The walks' open list: buckets of NAVIGATION_BUCKET_METERS of priority,
+	// in a ring (each a list of entries, the last pushed first)
+	int32_t *bucket_heads;             // NAVIGATION_BUCKETS, -1: empty
+	int32_t *bucket_entry_nodes;
+	int32_t *bucket_entry_next;
+	int32_t bucket_entry_count;
+	int32_t bucket_entry_capacity;
+	int32_t bucket_open_count;         // entries in the buckets
+	int64_t bucket_current;            // the cheapest bucket that may hold any (not wrapped)
+	int32_t heap_capacity;
+	int32_t *node_path;                // the nodes of the found path, end first
+	int32_t node_path_capacity;
+	int32_t maximum_expansions;
+	int32_t last_expansions;           // statistics: the last search
+	// The water's cells per navigation cell, when whole (0: not), for the
+	// water's cell size it was worked out for
+	int32_t water_cells_per_cell;
+	float water_cells_for_size;
+	uint64_t last_search_ticks;        // its A* (performance counter ticks)
+	uint64_t last_pull_ticks;          // and pulling its path tight
+} navigation_t;
+
+bool navigation_create(navigation_t *navigation, const terrain_t *terrain);
+void navigation_destroy(navigation_t *navigation);
+
+// Follows the map once per frame: a new size, a new map (everything is
+// built at once) and changed terrain chunks (call before the terrain is
+// uploaded, which clears their flags) mark their regions, to be looked at
+// when they are used. Keeps the terrain and the objects for that.
+void navigation_update(navigation_t *navigation, const terrain_t *terrain, const objects_t *objects, double now_seconds);
+
+// The height of the surface at (x, z) an agent at near_height would be on:
+// the terrain (smooth, between cells) or an object's top, preferring one
+// with room for it within its reach, then the nearest (agent may be NULL:
+// just the nearest)
+float navigation_surface_height(const navigation_t *navigation, const terrain_t *terrain, const navigation_agent_t *agent, float x,
+	float z, float near_height);
+// The same, and whether that is an object's top (not the terrain)
+float navigation_surface_height_on(const navigation_t *navigation, const terrain_t *terrain, const navigation_agent_t *agent, float x,
+	float z, float near_height, bool *object_out);
+
+// Can the agent stand at this point without swimming: a surface with room
+// for it (at any height), dry or shallow enough to wade? (a goal worth
+// searching a way to; its region is brought up to date first)
+bool navigation_standable(navigation_t *navigation, const terrain_t *terrain, const water_t *water,
+	const navigation_agent_t *agent, float x, float z);
+
+// Can the agent be at this point: is there a surface with room for it,
+// within its reach of near_height?
+bool navigation_passable(const navigation_t *navigation, const terrain_t *terrain, const water_t *water,
+	const navigation_agent_t *agent, float x, float z, float near_height);
+
+// A path from (from_x, from_z), on the surface nearest from_height, towards
+// (to_x, to_z): at most NAVIGATION_MAX_WAYPOINTS points (x, z), the start
+// not included. If the path needs more, the first ones are given and
+// *complete_out is false (search again from the last one).
+navigation_result_t navigation_find_path(navigation_t *navigation, const terrain_t *terrain, const water_t *water,
+	const navigation_agent_t *agent, float from_x, float from_z, float from_height, float to_x, float to_z,
+	float waypoints_out[NAVIGATION_MAX_WAYPOINTS][2], int *waypoint_count_out, bool *complete_out);
+
+// Flying. The highest thing at (x, z): the terrain, or the top of any
+// object standing there (loose ones aside), crowns and roofs included, as
+// of the region's last build (the terrain as it is now)
+float navigation_obstacle_height(const navigation_t *navigation, const terrain_t *terrain, float x, float z);
+
+// True if a flyer can go straight from one point to the other without
+// meeting anything higher than ceiling_height (meters, absolute)
+bool navigation_flight_line_clear(const navigation_t *navigation, const terrain_t *terrain, float from_x, float from_z, float to_x,
+	float to_z, float ceiling_height);
+
+// A flight path from (from_x, from_z) towards (to_x, to_z) that keeps under
+// ceiling_height: around what rises above it (a mountain), over the rest.
+// The straight line when it is clear, else A* over blocks of
+// FLIGHT_BLOCK_CELLS cells, climbing costing a little, pulled tight. Same
+// output as navigation_find_path.
+navigation_result_t navigation_find_flight_path(navigation_t *navigation, const terrain_t *terrain, float from_x, float from_z,
+	float to_x, float to_z, float ceiling_height, float waypoints_out[NAVIGATION_MAX_WAYPOINTS][2], int *waypoint_count_out,
+	bool *complete_out);
+
+// Debugging: what the agent finds at (x, z) on the surface nearest
+// near_height, in words (room, what object takes it, water, steepness to
+// the neighbors). Returns true if it can stand there.
+bool navigation_describe(navigation_t *navigation, const terrain_t *terrain, const water_t *water, const objects_t *objects,
+	const navigation_agent_t *agent, float x, float z, float near_height, char *text_out, size_t text_size);
+
+// The overlay (F8): per cell, what the agent finds there
+typedef enum
+{
+	NAVIGATION_OVERLAY_FREE = 0,
+	NAVIGATION_OVERLAY_BLOCKED,        // an object stands there (no room at all)
+	NAVIGATION_OVERLAY_LOW,            // room, but too little for the agent
+	NAVIGATION_OVERLAY_STEEP,          // every neighbor is out of reach (a cliff)
+	NAVIGATION_OVERLAY_SURFACE,        // an object's top it can stand on (a bridge)
+	NAVIGATION_OVERLAY_WATER,          // water it cannot pass
+	NAVIGATION_OVERLAY_PATH,           // filled in by the caller
+	NAVIGATION_OVERLAY_WAYPOINT,
+	NAVIGATION_OVERLAY_STEEP_SOME,     // some neighbors are out of reach (along a slope only)
+	NAVIGATION_OVERLAY_SMALL           // a small object: around it if it can, through if it must
+} navigation_overlay_t;
+
+// Fills size * size bytes of navigation_overlay_t for the agent
+void navigation_fill_overlay(navigation_t *navigation, const terrain_t *terrain, const water_t *water,
+	const navigation_agent_t *agent, uint8_t *overlay_out);
+
+// True if a region the box touches changed after the generation, or has
+// running water in it (the regions are brought up to date first)
+bool navigation_changed_since(navigation_t *navigation, const water_t *water, float minimum_x, float minimum_z,
+	float maximum_x, float maximum_z, uint32_t generation);
+
+// True if the agent can walk the straight line, starting on the surface
+// nearest from_height (every cell passable, every step within reach). If
+// not, and blocked_x is not NULL: the center of the first cell it cannot
+// step into, and the height it was at
+bool navigation_line_passable(const navigation_t *navigation, const terrain_t *terrain, const water_t *water,
+	const navigation_agent_t *agent, float from_x, float from_z, float from_height, float to_x, float to_z, float *blocked_x,
+	float *blocked_z, float *blocked_height);
+
+// A loaded map: every region built again, lazily, when a search or an
+// actor first goes through it (not all of it at once, as build_all)
+void navigation_forget(navigation_t *navigation, const terrain_t *terrain, const objects_t *objects);
+
+// Every region built now, each on a thread of its own (a new map: the
+// start does it, on the loading screen)
+void navigation_build_all(navigation_t *navigation, const terrain_t *terrain, const objects_t *objects);
+
+// The regions around a point (its own and the eight next to it) brought
+// up to date if they are stale: where somebody stands, whose feet the
+// surface queries read (they do not build anything themselves)
+void navigation_prepare_around(navigation_t *navigation, float x, float z);
+
+// The blockers as they are now (each frame: only a change costs anything;
+// the paths through where it changed are looked at again)
+void navigation_set_blockers(navigation_t *navigation, const navigation_blocker_t *blockers, int count);
+// What walking on slopes costs: a meter of ground full_degrees steep or
+// steeper costs 1 + extra_cost meters of flat ground, gentler ones less
+// (in proportion to the slope); the steepness each actor can climb at all
+// is its own (navigation_agent_t)
+void navigation_set_slope_cost(navigation_t *navigation, float full_degrees, float extra_cost);
+
+#endif

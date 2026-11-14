@@ -1,0 +1,256 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "water_sim.glsl"
+
+// Pass 2 of a substep, one workgroup per tile of the update list: every
+// cell takes in what its neighbors send through their pipes towards it and
+// gives what its own pipes send (whole units, see flux_units), and its
+// sediment travels the same way. What flows off the map is drained; what
+// flows into a neighbor tile not taking part (a sleeping one a trickle was
+// let into) is thrown away. Also the tile's statistics, which decide its
+// sleep (water_finish.comp).
+
+layout(local_size_x = 256) in;
+
+shared uint shared_total_depth_low;
+shared uint shared_total_depth_high;
+shared uint shared_sediment_low;
+shared uint shared_sediment_high;
+shared uint shared_max_depth;
+shared uint shared_max_speed;
+shared uint shared_max_deep_speed;
+shared uint shared_max_change;
+shared uint shared_steep;
+shared uint shared_drained;
+shared uint shared_corrections;
+shared uint shared_sediment_drained;
+shared uint shared_sediment_corrections;
+shared uint shared_discarded;
+shared uint shared_sediment_discarded;
+
+// A 64 bit sum kept in two shared words (atomics need the variables
+// themselves, not function parameters)
+#define ADD_SHARED_WIDE(low, high, value) \
+	{ \
+		uvec2 wide_value = (value); \
+		uint old_low = atomicAdd(low, wide_value.x); \
+		uint carry_in = old_low + wide_value.x < old_low ? 1u : 0u; \
+		if (wide_value.y + carry_in != 0u) \
+		{ \
+			atomicAdd(high, wide_value.y + carry_in); \
+		} \
+	}
+
+void main()
+{
+	// Never past the list (whatever the dispatch arguments said)
+	if (gl_WorkGroupID.x >= control[HEADER_UPDATE_COUNT])
+	{
+		return;
+	}
+	uint tile = control[update_list_word(gl_WorkGroupID.x)];
+	int tile_x = int(tile) % tiles_per_side;
+	int tile_y = int(tile) / tiles_per_side;
+	uvec2 total_depth = uvec2(0u);
+	uvec2 total_sediment = uvec2(0u);
+	uint max_depth = 0u;
+	uint max_speed = 0u;
+	uint max_deep_speed = 0u;
+	uint max_change = 0u;
+	uint drained = 0u;
+	uint corrections = 0u;
+	uint sediment_drained = 0u;
+	uint sediment_corrections = 0u;
+	uint discarded = 0u;
+	uint sediment_discarded = 0u;
+	// Now and then: the cells a waterfall's lip could be (waterfalls.c)
+	bool count_steep = (step_number % STEEP_COUNT_STEPS) == 0;
+	int steep_units = int(STEEP_RISE_CELLS * cell_size / METERS_PER_UNIT);
+	uint steep = 0u;
+	// Neighbor tiles not taking part in this pass
+	bool skip_left = tile_x > 0 && control[tile_word(tile - 1u, TILE_IN_UPDATE)] == 0u;
+	bool skip_right = tile_x < tiles_per_side - 1 && control[tile_word(tile + 1u, TILE_IN_UPDATE)] == 0u;
+	bool skip_back = tile_y > 0 && control[tile_word(tile - uint(tiles_per_side), TILE_IN_UPDATE)] == 0u;
+	bool skip_front = tile_y < tiles_per_side - 1 && control[tile_word(tile + uint(tiles_per_side), TILE_IN_UPDATE)] == 0u;
+
+	if (gl_LocalInvocationID.x == 0u)
+	{
+		shared_total_depth_low = 0u;
+		shared_total_depth_high = 0u;
+		shared_sediment_low = 0u;
+		shared_sediment_high = 0u;
+		shared_max_depth = 0u;
+		shared_max_speed = 0u;
+		shared_max_deep_speed = 0u;
+		shared_max_change = 0u;
+		shared_steep = 0u;
+		shared_drained = 0u;
+		shared_corrections = 0u;
+		shared_sediment_drained = 0u;
+		shared_sediment_corrections = 0u;
+		shared_discarded = 0u;
+		shared_sediment_discarded = 0u;
+	}
+	barrier();
+
+	for (uint k = 0u; k < 16u; k++)
+	{
+		uint local_index = gl_LocalInvocationID.x + 256u * k;
+		int local_x = int(local_index & 63u);
+		int local_y = int(local_index >> 6);
+		int x = tile_x * TILE_SIZE + local_x;
+		int y = tile_y * TILE_SIZE + local_y;
+		uint cell = (tile << 12) | local_index;
+		vec4 own = fluxes_of(cell);
+		int out_flow[4] = int[4](flux_units(own.x), flux_units(own.y), flux_units(own.z), flux_units(own.w));
+		bool inside[4] = bool[4](x > 0, x < map_size - 1, y > 0, y < map_size - 1);
+		int neighbor_x[4] = int[4](x - 1, x + 1, x, x);
+		int neighbor_y[4] = int[4](y, y, y - 1, y + 1);
+		uvec2 aux = auxes[cell];
+		float own_concentration = uintBitsToFloat(aux.x);
+		uint inbound = aux.y;
+		int old_depth = depths[cell];
+		int inflow = 0;
+		int sediment_in = 0;
+		int sediment_out = 0;
+		int new_depth;
+		int new_sediment;
+		int largest_out;
+
+		for (int direction = 0; direction < 4; direction++)
+		{
+			sediment_out += sediment_units(out_flow[direction], own_concentration);
+			if (inside[direction])
+			{
+				uint neighbor = cell_of(neighbor_x[direction], neighbor_y[direction]);
+				vec4 theirs = fluxes_of(neighbor);
+				// Their pipe towards us: the opposite direction
+				int received = flux_units(theirs[direction ^ 1]);
+
+				inflow += received;
+				sediment_in += sediment_units(received, uintBitsToFloat(auxes[neighbor].x));
+				// Which way water last went through the pipe (static friction)
+				if (received > out_flow[direction])
+				{
+					inbound |= 1u << uint(direction);
+				}
+				else if (out_flow[direction] > 0)
+				{
+					inbound &= ~(1u << uint(direction));
+				}
+			}
+			else
+			{
+				drained += uint(out_flow[direction]);
+				sediment_drained += uint(sediment_units(out_flow[direction], own_concentration));
+			}
+		}
+		// Sent to a tile not taking part: gone
+		if ((local_x == 0 && skip_left) || (local_x == 63 && skip_right) || (local_y == 0 && skip_back) || (local_y == 63 && skip_front))
+		{
+			int lost = 0;
+
+			lost += local_x == 0 && skip_left ? out_flow[DIRECTION_LEFT] : 0;
+			lost += local_x == 63 && skip_right ? out_flow[DIRECTION_RIGHT] : 0;
+			lost += local_y == 0 && skip_back ? out_flow[DIRECTION_BACK] : 0;
+			lost += local_y == 63 && skip_front ? out_flow[DIRECTION_FRONT] : 0;
+			discarded += uint(lost);
+			sediment_discarded += uint(sediment_units(lost, own_concentration));
+		}
+		auxes[cell] = uvec2(aux.x, inbound);
+
+		new_sediment = sediments[cell] + sediment_in - sediment_out;
+		if (new_sediment < 0)
+		{
+			sediment_corrections += uint(-new_sediment);
+			new_sediment = 0;
+		}
+		sediments[cell] = new_sediment;
+		total_sediment = add_wide(total_sediment, uint(new_sediment));
+
+		new_depth = old_depth + inflow - (out_flow[0] + out_flow[1] + out_flow[2] + out_flow[3]);
+		if (new_depth < 0)
+		{
+			// Cannot happen if the outflow scaling works; counted, so a bug
+			// shows instead of silently making water
+			corrections += uint(-new_depth);
+			new_depth = 0;
+		}
+		depths[cell] = new_depth;
+		total_depth = add_wide(total_depth, uint(new_depth));
+		max_depth = max(max_depth, uint(new_depth));
+		max_change = max(max_change, uint(abs(new_depth - old_depth)));
+		// Its surface far above a wet neighbor's (theirs as it is: before
+		// or after this pass, near enough for a hint)
+		if (count_steep && new_depth >= STEEP_WET_UNITS)
+		{
+			int surface = heights[cell] + new_depth;
+
+			for (int direction = 0; direction < 4; direction++)
+			{
+				if (inside[direction])
+				{
+					uint neighbor = cell_of(neighbor_x[direction], neighbor_y[direction]);
+					int their_depth = depths[neighbor];
+
+					if (their_depth >= STEEP_WET_UNITS && surface - (heights[neighbor] + their_depth) >= steep_units)
+					{
+						steep++;
+						break;
+					}
+				}
+			}
+		}
+
+		// The speed through the busiest pipe, by what it really moves
+		largest_out = max(max(out_flow[0], out_flow[1]), max(out_flow[2], out_flow[3])) - FLOW_DEAD_BAND_UNITS;
+		if (largest_out > 0)
+		{
+			float depth_meters = max(float(old_depth) * METERS_PER_UNIT, speed_depth_meters);
+			float speed = (float(largest_out) / units_per_flux) / (depth_meters * cell_size);
+			uint speed_bits = floatBitsToUint(speed);
+
+			max_speed = max(max_speed, speed_bits);
+			if (old_depth >= deep_flow_units)
+			{
+				max_deep_speed = max(max_deep_speed, speed_bits);
+			}
+		}
+	}
+
+	ADD_SHARED_WIDE(shared_total_depth_low, shared_total_depth_high, total_depth)
+	ADD_SHARED_WIDE(shared_sediment_low, shared_sediment_high, total_sediment)
+	atomicMax(shared_max_depth, max_depth);
+	atomicMax(shared_max_speed, max_speed);
+	atomicMax(shared_max_deep_speed, max_deep_speed);
+	atomicMax(shared_max_change, max_change);
+	atomicAdd(shared_steep, steep);
+	atomicAdd(shared_drained, drained);
+	atomicAdd(shared_corrections, corrections);
+	atomicAdd(shared_sediment_drained, sediment_drained);
+	atomicAdd(shared_sediment_corrections, sediment_corrections);
+	atomicAdd(shared_discarded, discarded);
+	atomicAdd(shared_sediment_discarded, sediment_discarded);
+	barrier();
+
+	if (gl_LocalInvocationID.x == 0u)
+	{
+		store_wide(tile_word(tile, TILE_TOTAL_DEPTH), uvec2(shared_total_depth_low, shared_total_depth_high));
+		store_wide(tile_word(tile, TILE_SEDIMENT), uvec2(shared_sediment_low, shared_sediment_high));
+		control[tile_word(tile, TILE_MAX_DEPTH)] = shared_max_depth;
+		control[tile_word(tile, TILE_MAX_SPEED)] = shared_max_speed;
+		control[tile_word(tile, TILE_MAX_DEEP_SPEED)] = shared_max_deep_speed;
+		control[tile_word(tile, TILE_MAX_CHANGE)] = shared_max_change;
+		if (count_steep)
+		{
+			control[tile_word(tile, TILE_STEEP_CELLS)] = shared_steep;
+		}
+		control[tile_word(tile, TILE_FLAGS)] |= TILE_FLAG_CPU_DIRTY | TILE_FLAG_RENDER_DIRTY;
+		add_counter(COUNTER_DRAINED, shared_drained);
+		add_counter(COUNTER_CORRECTIONS, shared_corrections);
+		add_counter(COUNTER_SEDIMENT_DRAINED, shared_sediment_drained + shared_sediment_discarded);
+		add_counter(COUNTER_SEDIMENT_CORRECTIONS, shared_sediment_corrections);
+		add_counter(COUNTER_DISCARDED, shared_discarded);
+	}
+}

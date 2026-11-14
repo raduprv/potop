@@ -1,0 +1,4 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// The materials worked out per blade (render.material_map off)
+#include "grass_body.glsl"

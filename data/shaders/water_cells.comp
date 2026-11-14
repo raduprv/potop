@@ -1,0 +1,159 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "water_sim.glsl"
+
+// Work on whole tiles, one workgroup per tile. mode:
+//   0  rain: rain_units on every cell of every tile (one group per tile)
+//   1  evaporation, on the tiles of the list (the wet ones): films
+//      evaporate, and thin water left behind in sleeping tiles (see
+//      evaporate_films in water.c)
+//   2  clears every tile: no water, no mud, no flow
+
+layout(local_size_x = 256) in;
+
+#define CELLS_RAIN 0
+#define CELLS_EVAPORATE 1
+#define CELLS_CLEAR 2
+
+shared uint shared_evaporated;
+shared uint shared_total_low;
+shared uint shared_total_high;
+shared uint shared_max_depth;
+
+void main()
+{
+	if (mode == CELLS_EVAPORATE && gl_WorkGroupID.x >= control[HEADER_LIST_COUNT])
+	{
+		return;
+	}
+	uint tile = mode == CELLS_EVAPORATE ? control[list_word(gl_WorkGroupID.x)] : gl_WorkGroupID.x;
+	int tile_x = int(tile) % tiles_per_side;
+	int tile_y = int(tile) / tiles_per_side;
+
+	if (gl_LocalInvocationID.x == 0u)
+	{
+		shared_evaporated = 0u;
+		shared_total_low = 0u;
+		shared_total_high = 0u;
+		shared_max_depth = 0u;
+	}
+	barrier();
+
+	if (mode == CELLS_RAIN)
+	{
+		for (uint k = 0u; k < 16u; k++)
+		{
+			depths[(tile << 12) | (gl_LocalInvocationID.x + 256u * k)] += rain_units;
+		}
+		if (gl_LocalInvocationID.x == 0u)
+		{
+			add_counter(COUNTER_ADDED, uint(rain_units) * uint(TILE_CELLS));
+			wake_tile(tile, WAKE_SOURCE);
+			control[tile_word(tile, TILE_FLAGS)] |= TILE_FLAG_CPU_DIRTY | TILE_FLAG_RENDER_DIRTY;
+		}
+	}
+	else if (mode == CELLS_CLEAR)
+	{
+		for (uint k = 0u; k < 16u; k++)
+		{
+			uint cell = (tile << 12) | (gl_LocalInvocationID.x + 256u * k);
+
+			depths[cell] = 0;
+			sediments[cell] = 0;
+			fluxes[cell] = uvec2(0u);
+			auxes[cell] = uvec2(0u);
+		}
+		if (gl_LocalInvocationID.x < uint(TILE_WORDS))
+		{
+			control[tile_word(tile, gl_LocalInvocationID.x)] = 0u;
+		}
+		barrier();
+		if (gl_LocalInvocationID.x == 0u)
+		{
+			control[tile_word(tile, TILE_FLAGS)] = TILE_FLAG_CPU_DIRTY | TILE_FLAG_RENDER_DIRTY;
+		}
+	}
+	else if (mode == CELLS_EVAPORATE)
+	{
+		// Thin water dries only once still: in an active tile the holes it
+		// left would draw water after them
+		int tile_thin_units = tile_state(tile) == TILE_SLEEPING ? thin_evaporation_units : 0;
+		uint evaporated = 0u;
+		uvec2 total = uvec2(0u);
+		uint deepest = 0u;
+
+		for (uint k = 0u; k < 16u; k++)
+		{
+			uint local_index = gl_LocalInvocationID.x + 256u * k;
+			int x = tile_x * TILE_SIZE + int(local_index & 63u);
+			int y = tile_y * TILE_SIZE + int(local_index >> 6);
+			uint cell = (tile << 12) | local_index;
+			int units = depths[cell];
+
+			if (units > 0 && units <= film_units)
+			{
+				int removed = min(units, evaporation_units);
+
+				units -= removed;
+				evaporated += uint(removed);
+				depths[cell] = units;
+			}
+			else if (units > film_units && units <= thin_units && tile_thin_units > 0)
+			{
+				// Shores are spared: deep water next to them would only
+				// follow the evaporation forever
+				bool shore = (x > 0 && depths[cell_of(x - 1, y)] > thin_units) || (x < map_size - 1 && depths[cell_of(x + 1, y)] > thin_units)
+					|| (y > 0 && depths[cell_of(x, y - 1)] > thin_units) || (y < map_size - 1 && depths[cell_of(x, y + 1)] > thin_units);
+
+				if (!shore)
+				{
+					int removed = min(units, tile_thin_units);
+
+					units -= removed;
+					evaporated += uint(removed);
+					depths[cell] = units;
+				}
+			}
+			total = add_wide(total, uint(units));
+			deepest = max(deepest, uint(units));
+		}
+		atomicAdd(shared_evaporated, evaporated);
+		{
+			uint old_low = atomicAdd(shared_total_low, total.x);
+
+			if (old_low + total.x < old_low || total.y != 0u)
+			{
+				atomicAdd(shared_total_high, total.y + (old_low + total.x < old_low ? 1u : 0u));
+			}
+		}
+		atomicMax(shared_max_depth, deepest);
+		barrier();
+		if (shared_total_low == 0u && shared_total_high == 0u)
+		{
+			// Dry now: no flow left either
+			for (uint k = 0u; k < 16u; k++)
+			{
+				uint cell = (tile << 12) | (gl_LocalInvocationID.x + 256u * k);
+
+				fluxes[cell] = uvec2(0u);
+				auxes[cell] = uvec2(0u);
+			}
+		}
+		if (gl_LocalInvocationID.x == 0u)
+		{
+			store_wide(tile_word(tile, TILE_TOTAL_DEPTH), uvec2(shared_total_low, shared_total_high));
+			control[tile_word(tile, TILE_MAX_DEPTH)] = shared_max_depth;
+			if (shared_evaporated > 0u)
+			{
+				add_counter(COUNTER_EVAPORATED, shared_evaporated);
+				control[tile_word(tile, TILE_FLAGS)] |= TILE_FLAG_CPU_DIRTY | TILE_FLAG_RENDER_DIRTY;
+			}
+			if (shared_total_low == 0u && shared_total_high == 0u)
+			{
+				control[tile_word(tile, TILE_STATE)] = TILE_DRY;
+				control[tile_word(tile, TILE_IDLE_STEPS)] = 0u;
+			}
+		}
+	}
+}

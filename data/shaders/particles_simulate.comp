@@ -1,0 +1,210 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// Every living particle: one thread each. See particles.h.
+
+layout(local_size_x = 64) in;
+
+#define PARTICLE_SAMPLERS 2
+layout(set = TEXTURE_SET, binding = 0) uniform sampler2D height_texture;      // the ground, meters a cell
+layout(set = TEXTURE_SET, binding = 1) uniform sampler2D water_texture;       // the water's depth on it
+#include "particles_common.glsl"
+
+float gradient(vec4 values, vec4 times, int count, float t)
+{
+	float result = values.x;
+
+	for (int i = 1; i < 4; i++)
+	{
+		if (i < count && t >= times[i - 1])
+		{
+			float span = max(times[i] - times[i - 1], 1e-4);
+
+			result = mix(values[i - 1], values[i], clamp((t - times[i - 1]) / span, 0.0, 1.0));
+		}
+	}
+	return result;
+}
+
+vec4 color_gradient(int effect_index, float t)
+{
+	int count = int(effects[effect_index].extra.z);
+	vec4 times = effects[effect_index].color_times;
+	vec4 result = effects[effect_index].colors[0];
+
+	for (int i = 1; i < 4; i++)
+	{
+		if (i < count && t >= times[i - 1])
+		{
+			float span = max(times[i] - times[i - 1], 1e-4);
+
+			result = mix(effects[effect_index].colors[i - 1], effects[effect_index].colors[i], clamp((t - times[i - 1]) / span, 0.0, 1.0));
+		}
+	}
+	return result;
+}
+
+// What stops a particle at a cell: the ground, or the water on it
+float cell_surface(ivec2 cell)
+{
+	cell = clamp(cell, ivec2(0), ivec2(map_cells - 1));
+	float ground = texelFetch(height_texture, cell, 0).r;
+
+	if (has_water != 0)
+	{
+		float depth = texelFetch(water_texture, cell, 0).r;
+
+		if (depth > 0.02)
+		{
+			ground += depth;
+		}
+	}
+	return ground;
+}
+
+// ...at a point: between the four cells round it (cell centers sit at whole
+// multiples of the cell size), so a slope is a slope and not steps a cell
+// wide (what slides down it would drop from one to the next)
+float surface_height(vec3 position)
+{
+	vec2 grid = position.xz / cell_size_meters;
+	ivec2 corner = ivec2(floor(grid));
+	vec2 fraction = grid - vec2(corner);
+	float near_row = mix(cell_surface(corner), cell_surface(corner + ivec2(1, 0)), fraction.x);
+	float far_row = mix(cell_surface(corner + ivec2(0, 1)), cell_surface(corner + ivec2(1, 1)), fraction.x);
+
+	return mix(near_row, far_row, fraction.y);
+}
+
+void main()
+{
+	uint thread = gl_GlobalInvocationID.x;
+	uint index;
+	int effect_index;
+	vec3 position;
+	vec3 velocity;
+	float age;
+	float life;
+	float t;
+	uint slot;
+
+	if (thread >= state[STATE_LIST(list) + 1u])
+	{
+		return;
+	}
+	index = state[STATE_ALIVE_FIRST(list) + thread];
+	effect_index = int(particles[index].data.x);
+	position = particles[index].position_age.xyz;
+	age = particles[index].position_age.w + step_seconds;
+	velocity = particles[index].velocity_life.xyz;
+	life = particles[index].velocity_life.w;
+	if (age >= life)
+	{
+		state[STATE_FREE_FIRST + atomicAdd(state[STATE_FREE_COUNT], 1u)] = index;
+		renders[index].position_size.w = 0.0;
+		renders[index].color = vec4(0.0);
+		return;
+	}
+
+	if (step_seconds > 0.0)
+	{
+		vec4 motion = effects[effect_index].motion;
+
+		velocity.y -= motion.x * step_seconds;
+		velocity *= exp(-motion.y * step_seconds);
+		if (motion.z > 0.0)
+		{
+			// Swirls: smooth, slowly changing, a different phase per particle
+			vec3 p = position * motion.w;
+			float phase = particles[index].data.y * 6.2831853;
+			vec3 push = vec3(sin(p.y * 1.7 + time_seconds * 1.3 + phase) + sin(p.z * 2.3 - time_seconds * 0.7),
+				sin(p.z * 1.9 + time_seconds * 1.1 + phase * 0.5) * 0.5,
+				sin(p.x * 2.1 + time_seconds * 0.9 - phase) + sin(p.y * 1.3 + time_seconds * 1.7));
+
+			velocity += push * 0.5 * motion.z * step_seconds;
+		}
+		position += velocity * step_seconds;
+
+		if (effects[effect_index].collision.x > 0.5)
+		{
+			float surface = surface_height(position);
+
+			if (position.y < surface)
+			{
+				if (effects[effect_index].collision.x < 1.5)
+				{
+					state[STATE_FREE_FIRST + atomicAdd(state[STATE_FREE_COUNT], 1u)] = index;
+					renders[index].position_size.w = 0.0;
+					renders[index].color = vec4(0.0);
+					return;
+				}
+				if (effects[effect_index].collision.x > 2.5)
+				{
+					// Sliding: on the surface, what went into it taken away,
+					// the rest kept (gravity takes it down a slope), a little
+					// friction (bounce: per second)
+					float cell = cell_size_meters;
+					vec3 normal = normalize(vec3(surface_height(position - vec3(cell, 0.0, 0.0)) - surface_height(position + vec3(cell, 0.0, 0.0)),
+						2.0 * cell, surface_height(position - vec3(0.0, 0.0, cell)) - surface_height(position + vec3(0.0, 0.0, cell))));
+					float into = dot(velocity, normal);
+
+					position.y = surface + 0.03;
+					if (into < 0.0)
+					{
+						velocity -= normal * into;
+					}
+					velocity *= exp(-effects[effect_index].collision.y * step_seconds);
+				}
+				else
+				{
+					position.y = surface;
+					if (velocity.y < 0.0)
+					{
+						velocity.y = -velocity.y * effects[effect_index].collision.y;
+						velocity.xz *= 0.7;
+					}
+				}
+			}
+		}
+		particles[index].position_age = vec4(position, age);
+		particles[index].velocity_life.xyz = velocity;
+		particles[index].data.z += particles[index].data.w * step_seconds;
+	}
+
+	// Alive: into the other list, and what is drawn of it
+	slot = atomicAdd(state[STATE_LIST(1 - list) + 1u], 1u);
+	state[STATE_ALIVE_FIRST(1 - list) + slot] = index;
+	t = clamp(age / life, 0.0, 1.0);
+	{
+		vec4 look = effects[effect_index].look;
+		float frames = max(look.y, 1.0);
+		float frame = look.z > 0.0 ? mod(floor(age * look.z + particles[index].data.y * frames), frames) : min(floor(t * frames), frames - 1.0);
+
+		renders[index].position_size = vec4(position, gradient(effects[effect_index].sizes, effects[effect_index].size_times,
+			int(effects[effect_index].extra.w), t));
+		renders[index].color = color_gradient(effect_index, t);
+		// Flashing (fireflies): lit only in its bursts' flashes, all of
+		// them at once as far as it is in sync
+		{
+			vec4 flash = effects[effect_index].flash;
+
+			if (flash.x > 0.0)
+			{
+				float moment = time_seconds + (1.0 - flash.w) * particles[index].data.y * flash.x
+					+ flash.w * (particles[index].data.y - 0.5) * 0.08;
+				float into_burst = mod(moment, flash.x);
+				float which = floor(into_burst / flash.y);
+				float into_flash = fract(into_burst / flash.y);
+				// Quick to light, a little slower to go out, dark for the rest of the flash
+				float lit = which < flash.z ? smoothstep(0.0, 0.08, into_flash) * (1.0 - smoothstep(0.12, 0.4, into_flash)) : 0.0;
+
+				renders[index].color.a *= lit;
+			}
+		}
+		float stretch = effects[effect_index].extra.y;
+
+		renders[index].extra = vec4(particles[index].data.z, look.x + frame, look.w, surface_height(position));
+		renders[index].velocity = vec4(velocity, stretch >= 0.0 ? stretch : -1.0 - stretch);
+	}
+}

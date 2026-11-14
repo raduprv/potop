@@ -1,0 +1,72 @@
+# A cow farm for tools/potop_house (workshop 16): a byre of stone and logs
+# under thatch, a hayloft with a pulley, a yard of 20 by 15 m behind rails
+preset = cottage
+workshop = 16
+seed = 16
+base_height = 0
+chimney = 0
+porch = 0
+annex = 0
+moss = 0.45
+lichen = 0.12
+wear = 0.5
+variants = 0
+plaster_tint = 0
+thatch = 1
+
+# the byre's logs, the fences' posts and rails: old split gray wood
+log_meters = 1.8
+log_color_texture = props/textures/house_timber_old_color.png
+log_normal_texture = props/textures/house_timber_old_normal.png
+log_arm_texture = props/textures/house_timber_old_arm.png
+
+# the roof: reed thatch
+roof_meters = 2.5
+roof_color_texture = props/textures/house_thatch_color.png
+roof_normal_texture = props/textures/house_thatch_normal.png
+roof_arm_texture = props/textures/house_thatch_arm.png
+
+# frames, doors, gates, the rack: weathered boards
+roof_timber_meters = 1.8
+roof_timber_color_texture = props/textures/mill_weatherboard_color.png
+roof_timber_normal_texture = props/textures/mill_weatherboard_normal.png
+roof_timber_arm_texture = props/textures/mill_weatherboard_arm.png
+timber_meters = 1.6
+timber_color_texture = props/textures/house_timber_old_color.png
+timber_normal_texture = props/textures/house_timber_old_normal.png
+timber_arm_texture = props/textures/house_timber_old_arm.png
+walls_meters = 1.2
+walls_color_texture = props/textures/house_board_wall_color.png
+walls_normal_texture = props/textures/house_board_wall_normal.png
+walls_arm_texture = props/textures/house_board_wall_arm.png
+
+# the dung heap: Radu's dung texture
+floor_meters = 1.3
+floor_color_texture = props/textures/dung_color.png
+floor_normal_texture = props/textures/dung_normal.png
+floor_arm_texture = props/textures/dung_arm.png
+iron_color_texture = props/textures/forged_iron_color.png
+iron_normal_texture = props/textures/forged_iron_normal.png
+iron_arm_texture = props/textures/forged_iron_arm.png
+
+# the byre's stone (its picture's height the footing's)
+footing_relief = 0.08
+footing_joint_dark = 0.3
+footing_cell = 0.06
+footing_meters = 2.6
+footing_color_texture = props/textures/drystone_color.png
+footing_normal_texture = props/textures/drystone_normal.png
+footing_arm_texture = props/textures/drystone_arm.png
+base_meters = 3.0
+base_color_texture = props/textures/drystone_color.png
+base_normal_texture = props/textures/drystone_normal.png
+base_arm_texture = props/textures/drystone_arm.png
+
+# the hay (rick, rack, hayloft): Radu's hay texture
+ceiling_meters = 1.4
+ceiling_color_texture = props/textures/hay_color.png
+ceiling_normal_texture = props/textures/hay_normal.png
+ceiling_arm_texture = props/textures/hay_arm.png
+# (both laid on from the sides: no stretching on the rick or the heap)
+floor_triplanar = 1
+ceiling_triplanar = 1

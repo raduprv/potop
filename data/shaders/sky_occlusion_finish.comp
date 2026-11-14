@@ -1,0 +1,37 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// The sky's occlusion (sky_occlusion.h), the end: each cell's sum over the
+// directions against what it would be with nothing in the way (the same
+// cosines, all of them seen): how much of its sky it sees, 0..1 (the
+// ground's cells, or the layers above it)
+
+layout(local_size_x = 256) in;
+
+layout(set = READWRITE_SET, binding = 0, r32f) uniform image2D sum_image;
+layout(set = READWRITE_SET, binding = 1, r32f) uniform image2D weight_image;
+layout(set = READWRITE_SET, binding = 2, r8) uniform writeonly image2D occlusion_image;
+
+layout(std140, set = UNIFORM_SET, binding = 0) uniform finish_block
+{
+	int width;                         // texels
+	int height;
+	int padding_1;
+	int padding_2;
+};
+
+void main()
+{
+	int x = int(gl_GlobalInvocationID.x);
+	int y = int(gl_GlobalInvocationID.y);
+
+	if (x >= width || y >= height)
+	{
+		return;
+	}
+	float all_seen = imageLoad(weight_image, ivec2(x, y)).x;
+	float seen = all_seen > 1e-4 ? clamp(imageLoad(sum_image, ivec2(x, y)).x / all_seen, 0.0, 1.0) : 1.0;
+
+	imageStore(occlusion_image, ivec2(x, y), vec4(seen, 0.0, 0.0, 0.0));
+}

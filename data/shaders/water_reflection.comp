@@ -1,0 +1,86 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "scene.glsl"
+
+// The water's reflections at half the screen's size (see water_renderer.h):
+// for each texel, the one of its four pixels that mirrors the most (as the
+// water drew them: water_split.frag) marches its reflected ray over the
+// copy of the scene drawn before the water (water_ssr.glsl). What it finds
+// (its color, how sure) goes to seen_image, the pixel's distance along the
+// view to distance_image, for water_reflection_apply.frag to spread over
+// the full size without carrying a reflection across an edge.
+
+layout(set = TEXTURE_SET, binding = 0) uniform sampler2D ray_texture;          // full size: the ray's direction, its weight
+layout(set = TEXTURE_SET, binding = 1) uniform sampler2D sky_texture;          // full size: the sky it mirrors, its distance along the view
+layout(set = TEXTURE_SET, binding = 2) uniform sampler2D scene_color_texture;  // the scene before the water (linear light)
+layout(set = TEXTURE_SET, binding = 3) uniform sampler2D scene_depth_texture;  // its depth (0..1)
+layout(set = READWRITE_SET, binding = 0, rgba16f) uniform writeonly image2D seen_image;
+layout(set = READWRITE_SET, binding = 1, r32f) uniform writeonly image2D distance_image;
+
+layout(std140, set = UNIFORM_SET, binding = 1) uniform reflection_block
+{
+	vec4 depth_to_distance;         // x, y: the scene's depth to the distance along the view, y / (depth - x); zw: 1 / its size
+};
+
+#include "water_ssr.glsl"
+
+layout(local_size_x = 64) in;
+
+// 0..1, a different one for every texel (the march's start, so the steps'
+// bands turn into a fine grain)
+float texel_hash(ivec2 texel)
+{
+	uint value = uint(texel.x) * 1973u + uint(texel.y) * 9277u + 26699u;
+
+	value = (value ^ (value >> 16)) * 0x45d9f3bu;
+	value = (value ^ (value >> 16)) * 0x45d9f3bu;
+	value = value ^ (value >> 16);
+	return float(value & 0xffffu) / 65536.0;
+}
+
+void main()
+{
+	ivec2 size = imageSize(seen_image);
+	uint index = gl_GlobalInvocationID.x;
+
+	if (index >= uint(size.x * size.y))
+	{
+		return;
+	}
+	ivec2 texel = ivec2(int(index) % size.x, int(index) / size.x);
+	ivec2 full_size = textureSize(ray_texture, 0);
+	ivec2 chosen = texel * 2;
+	float best = 0.0;
+
+	for (int k = 0; k < 4; k++)
+	{
+		ivec2 pixel = min(texel * 2 + ivec2(k & 1, k >> 1), full_size - 1);
+		float weight = texelFetch(ray_texture, pixel, 0).w;
+
+		if (weight > best)
+		{
+			best = weight;
+			chosen = pixel;
+		}
+	}
+	if (best <= 0.0)
+	{
+		imageStore(seen_image, texel, vec4(0.0));
+		imageStore(distance_image, texel, vec4(0.0));
+		return;
+	}
+	vec3 direction = normalize(texelFetch(ray_texture, chosen, 0).xyz);
+	float distance_along = texelFetch(sky_texture, chosen, 0).w;
+	// Where the water is at that pixel: along its view ray (the screen's
+	// first row is its top: clip space y up)
+	vec2 screen = (vec2(chosen) + 0.5) / vec2(full_size) * 2.0 - 1.0;
+
+	screen.y = -screen.y;
+	vec3 view_ray = eye_direction(screen);
+	vec3 origin = eye_position + view_ray * distance_along + vec3(0.0, 0.02, 0.0);
+	vec4 seen = screen_reflection(origin, direction, texel_hash(texel));
+
+	imageStore(seen_image, texel, seen);
+	imageStore(distance_image, texel, vec4(distance_along, 0.0, 0.0, 0.0));
+}

@@ -1,0 +1,127 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// The terrain's textures, straight from the ground the simulation holds
+// (its heights, bedrock, silt, soils, the water on it), one workgroup per
+// tile of the list (those whose ground or water changed, or whose silt and
+// bare rock shown are still fading; water_tiles.comp, TILES_GROUND):
+//
+//   height_image   R32F, the ground in meters (terrain.vert, the water, the
+//                  grass, the shadows)
+//   normal_image   RGBA8: the surface normal's x and z from the next cells,
+//                  the material normal's from ground_more.x cells away
+//   surface_image  RGBA8: silt cover, wetness (the CPU's, moisture_buffer),
+//                  bare bedrock, water on it (terrain.frag)
+//
+// The silt and the bare rock shown follow the ground at most
+// ground_shown.w a frame (all the way in a second or two), so a film of
+// silt laid and washed away again and again under running water does not
+// flicker; a tile still on its way asks to be drawn again
+// (TILE_FLAG_GROUND_SETTLING). This was the CPU's work, on its copy of the
+// ground brought back from here.
+
+#define WATER_RW_TEXTURES 3
+#include "water_sim.glsl"
+
+layout(local_size_x = 256) in;
+
+layout(set = READWRITE_SET, binding = 0, r32f) uniform writeonly image2D height_image;
+layout(set = READWRITE_SET, binding = 1, rgba8) uniform writeonly image2D normal_image;
+layout(set = READWRITE_SET, binding = 2, rgba8) uniform image2D surface_image;
+
+#define SOIL_ROCK 3u
+
+shared uint shared_settling;
+
+int height_at(int x, int y)
+{
+	return heights[cell_of(clamp(x, 0, map_size - 1), clamp(y, 0, map_size - 1))];
+}
+
+float wetness_of(uint cell)
+{
+	return float((moistures[cell >> 2] >> ((cell & 3u) * 8u)) & 0xFFu) / 255.0;
+}
+
+// The shown value moved towards the wanted one by at most the fade
+float follow(float shown, float wanted, inout bool settling)
+{
+	if (ground_more.z != 0 || abs(wanted - shown) <= ground_shown.w)
+	{
+		return wanted;
+	}
+	settling = true;
+	return shown + clamp(wanted - shown, -ground_shown.w, ground_shown.w);
+}
+
+void main()
+{
+	if (gl_WorkGroupID.x >= control[HEADER_LIST_COUNT])
+	{
+		return;
+	}
+	uint tile = control[list_word(gl_WorkGroupID.x)];
+	int tile_x = int(tile) % tiles_per_side;
+	int tile_y = int(tile) / tiles_per_side;
+	int reach = max(ground_more.x, 1);
+	float sharp_y = 2.0 * cell_size;
+	float wide_y = 2.0 * float(reach) * cell_size;
+	bool settling = false;
+
+	if (gl_LocalInvocationID.x == 0u)
+	{
+		shared_settling = 0u;
+	}
+	barrier();
+	for (uint k = 0u; k < 16u; k++)
+	{
+		uint local_index = gl_LocalInvocationID.x + 256u * k;
+		int x = tile_x * TILE_SIZE + int(local_index & 63u);
+		int y = tile_y * TILE_SIZE + int(local_index >> 6);
+		uint cell = (tile << 12) | local_index;
+		ivec2 texel = ivec2(x, y);
+		int height = heights[cell];
+		ivec2 layer = layers[cell];
+
+		imageStore(height_image, texel, vec4(float(height) * METERS_PER_UNIT, 0.0, 0.0, 0.0));
+
+		// Normals: central differences, near and far (as fill_normals did)
+		{
+			float sharp_x = float(height_at(x - 1, y) - height_at(x + 1, y)) * METERS_PER_UNIT;
+			float sharp_z = float(height_at(x, y - 1) - height_at(x, y + 1)) * METERS_PER_UNIT;
+			float wide_x = float(height_at(x - reach, y) - height_at(x + reach, y)) * METERS_PER_UNIT;
+			float wide_z = float(height_at(x, y - reach) - height_at(x, y + reach)) * METERS_PER_UNIT;
+			vec3 sharp = normalize(vec3(sharp_x, sharp_y, sharp_z));
+			vec3 wide = normalize(vec3(wide_x, wide_y, wide_z));
+
+			imageStore(normal_image, texel, vec4(sharp.x, sharp.z, wide.x, wide.z) * 0.5 + 0.5);
+		}
+
+		// The surface: silt that shows, the rock through the last of the
+		// soil (not under silt that shows), the water on it
+		{
+			vec4 shown = imageLoad(surface_image, texel);
+			float silt = smoothstep(ground_shown.y, ground_shown.z, float(layer.y));
+			float bare = 0.0;
+			float water_meters = float(depths[cell]) * METERS_PER_UNIT;
+
+			if (soil_of(cell) != SOIL_ROCK)
+			{
+				bare = (1.0 - smoothstep(0.0, ground_shown.x, float(height - layer.x))) * (1.0 - silt);
+			}
+			silt = follow(shown.r, silt, settling);
+			bare = follow(shown.b, bare, settling);
+			imageStore(surface_image, texel, vec4(silt, wetness_of(cell), bare, smoothstep(0.005, 0.03, water_meters)));
+		}
+	}
+	if (settling)
+	{
+		atomicOr(shared_settling, 1u);
+	}
+	barrier();
+	if (gl_LocalInvocationID.x == 0u && shared_settling != 0u)
+	{
+		atomicOr(control[tile_word(tile, TILE_FLAGS)], TILE_FLAG_GROUND_SETTLING);
+	}
+}

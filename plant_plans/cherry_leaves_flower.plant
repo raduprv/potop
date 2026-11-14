@@ -1,0 +1,48 @@
+; A plant's recipe (tools/potop_plant --recipe, tools/plant_editor). Paths as seen from
+; the project's directory; 0 (-1 for leaves_per_branch and the crown's and the trunk's shape: crown_start
+; to wind_side; kind for fruit_hang and fruit_zone; nothing for branches) leaves a
+; setting to the kind.
+
+kind = cherry
+seed = 1
+height = 6.9
+output = data/objects/cherry_leaves_flower.pobj
+atlas = 
+
+bark = data/textures/cherry_bark.png | data/textures/cherry_bark_normal.png
+bark_meters = 1.5
+twig = tree_leaves_dev/cherry_leaf_2.png
+twig = tree_leaves_dev/cherry_leaf_3.png
+twig = tree_leaves_dev/cheey_flower_3.png
+
+leaf_size = 0
+leaves_per_branch = 15
+branches = 10, 7, 14
+branch_length = 2.3
+twig_scale = 1.55
+twig_share = 0.7
+loose_leaves = 0
+crown_start = -1
+leaves_from = -1
+droop = -1
+tip_lift = -1
+collar = 0.65
+root_flare = -1
+twig_length = -1
+stems = 1
+fork_height = -1
+extra_stem_chance = -1
+gnarl = 0.7
+kinks = 1
+lean_degrees = -1
+lean_length = -1
+straighten = -1
+wind_side = -1
+
+fruit_shape = sphere
+fruit_size = 0.03, 0
+fruit_hang = kind
+fruit_zone = kind
+fruit_stalk = 0
+fruit_cluster = 1, 1
+fruit_per_branch = 1

@@ -1,0 +1,123 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "constants.glsl"
+
+// What settles on the ground and goes again, per cell (ground_overlay.h):
+// snow and petals, in amounts (0..1), a few times a second.
+
+layout(local_size_x = 256) in;
+
+layout(set = TEXTURE_SET, binding = 0) uniform sampler2D material_map_texture; // RGBA8: base, cover, overlay ids, (unused)
+layout(set = TEXTURE_SET, binding = 1) uniform sampler2D normal_texture;       // RGBA8: surface normal x, z; material normal x, z
+layout(set = TEXTURE_SET, binding = 2) uniform sampler2D water_texture;        // RG32F: the water's depth (m), ...
+layout(set = TEXTURE_SET, binding = 3) uniform sampler2D sky_texture;          // R8: how much sky the cell sees (sky_occlusion.h)
+
+layout(set = READWRITE_SET, binding = 0, rgba16f) uniform image2D overlay_image;
+
+layout(std140, set = UNIFORM_SET, binding = 0) uniform overlay_block
+{
+	int map_size;
+	int reset;                     // 1: as the season says, at once
+	float seconds;                 // game time to work in
+	float snowfall;                // 0..1
+	float winter;                  // 0 it melts .. 1 it stays
+	float bloom;                   // 0 .. 1 of the petals
+	float sun_height;              // its elevation's sine
+	int no_water;                  // 1: no water texture
+	vec4 sun;                      // x, z towards it (horizontal); cell size (m); the snow on things (main.c: a reset starts from it)
+	vec4 sky;                      // x: 1 no sky texture (all of it seen)
+};
+
+// Heavy snow covers all of the open ground in this long; it melts away in
+// this long once the winter is over (the sun on a slope facing it, and
+// water, faster)
+const float SNOW_FILL_SECONDS = 60.0;
+const float SNOW_MELT_SECONDS = 240.0;
+// (through the winter this much of it: some mild days; main.c's)
+const float SNOW_WINTER_MELT_SHARE = 0.15;
+const float SNOW_SUN_MELT_SECONDS = 900.0;
+const float WATER_CLEARS_SECONDS = 2.0;
+const float PETALS_SECONDS = 90.0;
+// How sheltered a cell is, from how much sky it sees: this much or more
+// is open ground (a valley's floor sees a little less than all of it),
+// this little or less is under a roof; a crown is in between
+const float SKY_OPEN = 0.9;
+const float SKY_ROOFED = 0.3;
+
+float hash_2d(vec2 position)
+{
+	vec3 value = fract(vec3(position.xyx) * 0.1031);
+
+	value += dot(value, value.yzx + 33.33);
+	return fract((value.x + value.y) * value.z);
+}
+
+float value_noise(vec2 position)
+{
+	vec2 cell = floor(position);
+	vec2 fraction = fract(position);
+	vec2 blend = fraction * fraction * (3.0 - 2.0 * fraction);
+
+	return mix(mix(hash_2d(cell), hash_2d(cell + vec2(1.0, 0.0)), blend.x),
+		mix(hash_2d(cell + vec2(0.0, 1.0)), hash_2d(cell + vec2(1.0, 1.0)), blend.x), blend.y);
+}
+
+void main()
+{
+	uint index = gl_GlobalInvocationID.x;
+
+	if (index >= uint(map_size) * uint(map_size))
+	{
+		return;
+	}
+	ivec2 cell = ivec2(int(index % uint(map_size)), int(index / uint(map_size)));
+	vec4 map_cell = texelFetch(material_map_texture, cell, 0);
+	int overlay_id = int(map_cell.b * 255.0 + 0.5);
+	float sky_seen = sky.x > 0.5 ? 1.0 : texelFetch(sky_texture, cell, 0).r;
+	float shelter = clamp((SKY_OPEN - sky_seen) / (SKY_OPEN - SKY_ROOFED), 0.0, 1.0);
+	vec4 encoded = texelFetch(normal_texture, cell, 0) * 2.0 - 1.0;
+	vec3 smooth_normal = normalize(vec3(encoded.z, sqrt(max(1.0 - dot(encoded.zw, encoded.zw), 0.0)), encoded.w));
+	float slope = 1.0 - smooth_normal.y;
+	float depth = no_water == 1 ? 0.0 : texelFetch(water_texture, cell, 0).x;
+	vec4 amounts = reset == 1 ? vec4(0.0) : imageLoad(overlay_image, cell);
+	vec2 world_xz = vec2(cell) * sun.z;
+	// Snow does not stay on steep faces (past some 30 degrees it slides off);
+	// it drifts, more here than there
+	float stick = 1.0 - smoothstep(0.22, 0.45, slope + (value_noise(world_xz / 3.0) - 0.5) * 0.12);
+	float drift = 0.55 + 0.6 * value_noise(world_xz / 7.0) + 0.2 * value_noise(world_xz / 1.7);
+	float open_sky = 1.0 - 0.95 * shelter;
+	// (under a roof none, under a crown of 0.7 a third at most: in patches
+	// round its edge)
+	float most = 1.0 - shelter;
+	float under_water = depth > 0.01 ? 1.0 : 0.0;
+
+	if (reset == 1)
+	{
+		// As the snow on things says (a thin layer as a winter starts)
+		amounts.r = clamp(sun.w * stick * open_sky * drift, 0.0, most);
+		amounts.g = overlay_id == MATERIAL_PETALS ? bloom : 0.0;
+	}
+	else
+	{
+		// Snow: falls, melts after the winter (and in the sun on a slope
+		// facing it), gone under water
+		float sun_facing = max(dot(smooth_normal.xz, sun.xy), 0.0) * max(sun_height, 0.0);
+		float gain = snowfall * stick * open_sky * drift * seconds / SNOW_FILL_SECONDS;
+		float melt = (1.0 - (1.0 - SNOW_WINTER_MELT_SHARE) * winter) * seconds / SNOW_MELT_SECONDS + sun_facing * seconds / SNOW_SUN_MELT_SECONDS
+			+ under_water * seconds / WATER_CLEARS_SECONDS;
+
+		amounts.r = clamp(amounts.r + gain - melt, 0.0, most);
+		// Petals: towards how far the bloom is, where the map has them;
+		// carried off by water
+		{
+			float wanted = overlay_id == MATERIAL_PETALS ? bloom : 0.0;
+			float step_size = seconds / PETALS_SECONDS;
+
+			amounts.g = amounts.g + clamp(wanted - amounts.g, -step_size, step_size);
+			amounts.g *= 1.0 - under_water;
+		}
+	}
+	amounts.ba = vec2(0.0);
+	imageStore(overlay_image, cell, amounts);
+}

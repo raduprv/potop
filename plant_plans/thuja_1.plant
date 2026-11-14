@@ -1,0 +1,58 @@
+; A plant's recipe (tools/potop_plant --recipe, tools/plant_editor). Paths as seen from
+; the project's directory; 0 (-1 for leaves_per_branch and the crown's and the trunk's shape: crown_start
+; to wind_side; kind for fruit_hang and fruit_zone; nothing for branches) leaves a
+; setting to the kind.
+
+kind = thuja
+seed = 158409
+height = 0
+output = data/objects/thuja_1.pobj
+atlas = 
+
+bark = data/textures/tuja_bark.png | data/textures/tuja_bark_normal.png
+bark_meters = 2.2
+twig = tree_leaves_dev/thuja_leaf_1.png | m1 = tree_leaves_dev/thuja_leaf_1_m1.png | m2 = tree_leaves_dev/thuja_leaf_1_m12.png | m3 = tree_leaves_dev/thuja_leaf_1_m11.png
+twig = tree_leaves_dev/thuja_leaf_2.png | m2 = tree_leaves_dev/thuja_leaf_2_m12.png | m3 = tree_leaves_dev/thuja_leaf_2_m11.png
+twig = tree_leaves_dev/thuja_leaf_3.png | m2 = tree_leaves_dev/thuja_leaf_3_m12.png | m3 = tree_leaves_dev/fir_leaves_3_m11.png
+
+leaf_size = 0
+leaves_per_branch = 3
+branches = 13, 3
+branch_length = 3.65
+twig_scale = 1.5
+twig_share = 0.7
+loose_leaves = 0
+crown_start = 0.2
+leaves_from = 0.35
+droop = 0.05
+tip_lift = 0.3
+collar = 0.45
+root_flare = 0.2
+twig_length = -1
+trunk_thickness = 0.034
+trunk_taper = -1
+branch_thickness = -1
+branch_taper = 0.14
+thinnest_branch = 0.024
+stems = 1
+fork_height = -1
+extra_stem_chance = -1
+gnarl = 0.25
+kinks = 1.25
+lean_degrees = 0
+lean_length = -1
+straighten = 0.0499998
+wind_side = 0.35
+moss = -1
+tips = -1
+autumn = -1
+falls = -1
+snow_sag = -1
+
+fruit_shape = sphere
+fruit_size = 0.03, 0
+fruit_hang = kind
+fruit_zone = kind
+fruit_stalk = 0
+fruit_cluster = 1, 1
+fruit_per_branch = 1

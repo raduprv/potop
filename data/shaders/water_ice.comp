@@ -1,0 +1,152 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// The ice on the water, per cell (water_ice.h), a few times a second:
+// RGBA16F
+//   r  its thickness (m)
+//   g  the snow on it (0..1)
+//
+// Through the winter still water freezes: first at the shore and where it
+// is shallow, then on out over the water from the ice there, a ragged
+// front, the thicker the slower (the ice keeps the cold from the water
+// under it: its thickness grows with the square root of the time); water
+// running fast does not freeze, and wears what ice it has away. Once the
+// winter is over it melts. Water rising at its edge (a flood coming) breaks
+// it. Snow lies on ice thick enough to hold it. Without water, no ice.
+
+layout(local_size_x = 256) in;
+
+layout(set = TEXTURE_SET, binding = 0) uniform sampler2D water_texture;   // RG32F: the water's depth (m), after the last step, ...
+layout(set = TEXTURE_SET, binding = 1) uniform sampler2D flow_texture;    // RGBA16F: its velocity (m/s, x and z), ...
+layout(set = TEXTURE_SET, binding = 2) uniform sampler2D height_texture;  // R32F: the ground (m)
+
+layout(set = READWRITE_SET, binding = 0, rgba16f) uniform image2D ice_image;
+
+layout(std140, set = UNIFORM_SET, binding = 0) uniform ice_block
+{
+	int map_size;
+	int reset;                     // 1: as the season says, at once
+	float seconds;                 // game time to work in
+	float winter;                  // 0: it melts .. 1: deep winter
+	float snowfall;                // 0..1
+	float clock;                   // for the ragged front
+	float frozen;                  // 1: all of the water held still (the cold): it freezes everywhere, running or not
+	float padding;
+};
+
+// Thickness grows as the square root of the time: 2 cm in a minute of deep
+// winter, some 15 cm in an hour (h * dh = ICE_GROWTH * dt)
+const float ICE_GROWTH = 3.3e-6;
+const float ICE_MOST = 0.4;
+// It melts this fast once the winter is over (m/s), running water wears it
+// this fast besides
+const float ICE_MELT = 0.15 / 600.0;
+const float ICE_WEAR = 0.01;
+// Water this fast does not freeze; between, slower
+const float STILL_SPEED = 0.15;
+const float RUNNING_SPEED = 0.5;
+// Freezing starts where it is this shallow (a shore), and spreads from
+// ice this thick to its neighbors, each step this likely (deep winter)
+const float SHORE_DEPTH = 0.25;
+const float SPREAD_FROM = 0.01;
+const float SPREAD_CHANCE = 0.06;
+// Water at its edge this much higher than it breaks it
+const float BREAK_RISE = 0.12;
+// Snow lies on it from this thick; fills in this long, goes in this long
+const float SNOW_HOLDS = 0.05;
+const float SNOW_FILL_SECONDS = 60.0;
+const float SNOW_MELT_SECONDS = 240.0;
+const float WET_DEPTH = 0.003;
+
+float hash(ivec2 cell, float salt)
+{
+	uint value = uint(cell.x) * 73856093u ^ uint(cell.y) * 19349663u ^ uint(salt * 4096.0) * 83492791u;
+
+	value = (value ^ (value >> 16u)) * 0x45d9f3bu;
+	value = (value ^ (value >> 16u)) * 0x45d9f3bu;
+	return float((value ^ (value >> 16u)) >> 8u) * (1.0 / 16777216.0);
+}
+
+void main()
+{
+	uint index = gl_GlobalInvocationID.x;
+
+	if (index >= uint(map_size) * uint(map_size))
+	{
+		return;
+	}
+	ivec2 cell = ivec2(int(index % uint(map_size)), int(index / uint(map_size)));
+	ivec2 last = ivec2(map_size - 1);
+	float depth = texelFetch(water_texture, cell, 0).x;
+	float speed = length(texelFetch(flow_texture, cell, 0).xy);
+	float level = texelFetch(height_texture, cell, 0).x + depth;
+	vec4 ice = reset == 1 ? vec4(0.0) : imageLoad(ice_image, cell);
+	// (all of it held still: its last flow is not flowing)
+	float slow = frozen > 0.5 ? 1.0 : 1.0 - smoothstep(STILL_SPEED, RUNNING_SPEED, speed);
+	ivec2 neighbors[4] = ivec2[4](ivec2(-1, 0), ivec2(1, 0), ivec2(0, -1), ivec2(0, 1));
+	bool shore = depth < SHORE_DEPTH;
+	float most_beside = 0.0;
+	bool broken = false;
+
+	if (depth < WET_DEPTH)
+	{
+		imageStore(ice_image, cell, vec4(0.0));
+		return;
+	}
+	for (int k = 0; k < 4; k++)
+	{
+		ivec2 other = clamp(cell + neighbors[k], ivec2(0), last);
+		float other_depth = texelFetch(water_texture, other, 0).x;
+		float other_level = texelFetch(height_texture, other, 0).x + other_depth;
+		float other_ice = imageLoad(ice_image, other).r;
+
+		// (dry beside it: a shore)
+		shore = shore || other_depth < WET_DEPTH;
+		most_beside = max(most_beside, other_ice);
+		// Open water beside it standing higher: a flood coming, it breaks
+		broken = broken || (other_depth >= WET_DEPTH && other_ice < SPREAD_FROM && other_level > level + BREAK_RISE);
+	}
+	if (reset == 1)
+	{
+		// As the season says (a new map, a jump in the month): the still
+		// water frozen as far as the winter has gone, its snow on it
+		ice.r = slow > 0.99 ? min(winter * 0.15, min(depth, ICE_MOST)) : 0.0;
+		ice.g = 0.0;
+		imageStore(ice_image, cell, ice);
+		return;
+	}
+	if (broken && ice.r > 0.0)
+	{
+		imageStore(ice_image, cell, vec4(0.0));
+		return;
+	}
+	// Freezing: where there is ice already, at the shore, or spreading out
+	// from the ice beside it (a ragged front)
+	if (winter > 0.0 && slow > 0.0)
+	{
+		// (all of it held still: everywhere at once, a little here and there first)
+		bool starts = ice.r > 0.0 || shore || (most_beside >= SPREAD_FROM && hash(cell, clock) < SPREAD_CHANCE * winter)
+			|| (frozen > 0.5 && hash(cell, clock + 17.0) < 0.2);
+
+		if (starts)
+		{
+			ice.r = min(ice.r + ICE_GROWTH * winter * slow * seconds / max(ice.r, 0.005), min(depth, ICE_MOST));
+		}
+	}
+	// Melting after the winter, and wearing where the water runs
+	ice.r -= (1.0 - smoothstep(0.0, 0.15, winter)) * ICE_MELT * seconds + (1.0 - slow) * ICE_WEAR * seconds;
+	ice.r = max(ice.r, 0.0);
+	// The snow on it (none for now: the renderer does not draw it)
+	if (false && ice.r >= SNOW_HOLDS)
+	{
+		ice.g = clamp(ice.g + snowfall * seconds / SNOW_FILL_SECONDS - (1.0 - smoothstep(0.0, 0.15, winter)) * seconds / SNOW_MELT_SECONDS,
+			0.0, 1.0);
+	}
+	else
+	{
+		ice.g = 0.0;
+	}
+	ice.ba = vec2(0.0);
+	imageStore(ice_image, cell, ice);
+}

@@ -1,0 +1,44 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// Puts the objects the CPU changed into their slots (see objects_cull.comp
+// for a slot's layout): one thread per entry of the update list, each the
+// slot's number, its ten record words and its cell word.
+
+layout(local_size_x = 256) in;
+
+#define RECORD_WORDS 10u
+#define UPDATE_WORDS 12u
+
+layout(std430, set = READONLY_SET, binding = 0) readonly buffer update_buffer { uint updates[]; };
+
+layout(std430, set = READWRITE_SET, binding = 0) buffer record_buffer { uint records[]; };
+layout(std430, set = READWRITE_SET, binding = 1) buffer slot_cell_buffer { uint slot_cells[]; };
+
+layout(std140, set = UNIFORM_SET, binding = 0) uniform update_block
+{
+	int update_count;
+	int padding_0;
+	int padding_1;
+	int padding_2;
+};
+
+void main()
+{
+	uint entry = gl_GlobalInvocationID.x;
+	uint word;
+	uint slot;
+
+	if (entry >= uint(update_count))
+	{
+		return;
+	}
+	word = entry * UPDATE_WORDS;
+	slot = updates[word];
+	for (uint k = 0u; k < RECORD_WORDS; k++)
+	{
+		records[slot * RECORD_WORDS + k] = updates[word + 1u + k];
+	}
+	slot_cells[slot] = updates[word + 1u + RECORD_WORDS];
+}

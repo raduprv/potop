@@ -1,0 +1,121 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "water_sim.glsl"
+
+// One thread per tile of the map: builds the tile lists the other passes
+// run on. mode:
+//   0  the active tiles (and clears last substep's wake requests and
+//      update marks)
+//   1  the wet tiles (not dry), for the evaporation
+//   2  the tiles whose water textures are out of date (clearing the flag)
+//   3  wakes every tile (rain)
+//   4  clears the CPU's dirty flags (after it copied them)
+//   5  the tiles erosion works on: flowing water, mud in the water, or
+//      banks still settling after a change (counting the settling down)
+//   6  those of them of one checkerboard color (collapse_color)
+
+layout(local_size_x = 64) in;
+
+#define TILES_ACTIVE 0
+#define TILES_WET 1
+#define TILES_RENDER 2
+#define TILES_WAKE_ALL 3
+#define TILES_CLEAR_CPU_FLAGS 4
+#define TILES_EROSION 5
+#define TILES_EROSION_COLOR 6
+#define TILES_GROUND 7
+
+bool erosion_works_on(uint tile)
+{
+	return tile_state(tile) == TILE_ACTIVE || control[tile_word(tile, TILE_SEDIMENT)] != 0u
+		|| control[tile_word(tile, TILE_SEDIMENT + 1)] != 0u || control[tile_word(tile, TILE_SETTLE_STEPS)] > 0u;
+}
+
+void main()
+{
+	uint tile = gl_GlobalInvocationID.x;
+
+	if (tile >= uint(tile_count))
+	{
+		return;
+	}
+	if (mode == TILES_ACTIVE)
+	{
+		control[tile_word(tile, TILE_WAKE_REQUESTS)] = 0u;
+		control[tile_word(tile, TILE_IN_UPDATE)] = 0u;
+		if (tile_state(tile) == TILE_ACTIVE)
+		{
+			control[active_list_word(atomicAdd(control[HEADER_ACTIVE_COUNT], 1u))] = tile;
+		}
+	}
+	else if (mode == TILES_WET)
+	{
+		if (tile_state(tile) != TILE_DRY)
+		{
+			control[list_word(atomicAdd(control[HEADER_LIST_COUNT], 1u))] = tile;
+		}
+	}
+	else if (mode == TILES_RENDER)
+	{
+		uint flags = control[tile_word(tile, TILE_FLAGS)];
+
+		// Changed: new values (after a step, the old ones become the
+		// previous step, which then has to catch up one step later).
+		// Unchanged since the step before: the previous step catches up.
+		if ((flags & TILE_FLAG_RENDER_DIRTY) != 0u)
+		{
+			// (the ground's textures show the water on it too)
+			flags &= ~(TILE_FLAG_RENDER_DIRTY | TILE_FLAG_RENDER_PREVIOUS);
+			control[tile_word(tile, TILE_FLAGS)] = flags | TILE_FLAG_GROUND_DIRTY | (render_stepped != 0 ? TILE_FLAG_RENDER_PREVIOUS : 0u);
+			control[list_word(atomicAdd(control[HEADER_LIST_COUNT], 1u))] = tile | RENDER_ENTRY_NEW;
+		}
+		else if (render_stepped != 0 && (flags & TILE_FLAG_RENDER_PREVIOUS) != 0u)
+		{
+			control[tile_word(tile, TILE_FLAGS)] = flags & ~TILE_FLAG_RENDER_PREVIOUS;
+			control[list_word(atomicAdd(control[HEADER_LIST_COUNT], 1u))] = tile;
+		}
+	}
+	else if (mode == TILES_WAKE_ALL)
+	{
+		wake_tile(tile, uint(wake_reason));
+		control[tile_word(tile, TILE_FLAGS)] |= TILE_FLAG_CPU_DIRTY | TILE_FLAG_RENDER_DIRTY;
+	}
+	else if (mode == TILES_CLEAR_CPU_FLAGS)
+	{
+		control[tile_word(tile, TILE_FLAGS)] &= ~(TILE_FLAG_CPU_DIRTY | TILE_FLAG_TERRAIN_DIRTY);
+	}
+	else if (mode == TILES_EROSION)
+	{
+		uint settle = control[tile_word(tile, TILE_SETTLE_STEPS)];
+
+		if (settle > 0u)
+		{
+			control[tile_word(tile, TILE_SETTLE_STEPS)] = settle - 1u;
+		}
+		if (erosion_works_on(tile))
+		{
+			control[list_word(atomicAdd(control[HEADER_LIST_COUNT], 1u))] = tile;
+		}
+	}
+	else if (mode == TILES_GROUND)
+	{
+		// The tiles whose terrain textures are out of date or still fading
+		uint flags = control[tile_word(tile, TILE_FLAGS)];
+
+		if (ground_more.y != 0 || (flags & (TILE_FLAG_GROUND_DIRTY | TILE_FLAG_GROUND_SETTLING)) != 0u)
+		{
+			control[tile_word(tile, TILE_FLAGS)] = flags & ~(TILE_FLAG_GROUND_DIRTY | TILE_FLAG_GROUND_SETTLING);
+			control[list_word(atomicAdd(control[HEADER_LIST_COUNT], 1u))] = tile;
+		}
+	}
+	else if (mode == TILES_EROSION_COLOR)
+	{
+		int color = (int(tile) % tiles_per_side & 1) + 2 * (int(tile) / tiles_per_side & 1);
+
+		if (color == collapse_color && erosion_works_on(tile))
+		{
+			control[list_word(atomicAdd(control[HEADER_LIST_COUNT], 1u))] = tile;
+		}
+	}
+}

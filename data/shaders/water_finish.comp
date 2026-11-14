@@ -1,0 +1,66 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "water_sim.glsl"
+
+// After pass 2, one thread per tile of the update list: a tile without
+// water goes dry; one whose water has been still (slow, its level hardly
+// changing) for sleep_after_substeps substeps in a row goes to sleep; the
+// others stay awake. Dry and sleeping tiles forget their flow.
+
+layout(local_size_x = 64) in;
+
+void forget_flow(uint tile)
+{
+	for (uint i = 0u; i < uint(TILE_CELLS); i++)
+	{
+		fluxes[(tile << 12) | i] = uvec2(0u);
+		auxes[(tile << 12) | i] = uvec2(0u);
+	}
+}
+
+void main()
+{
+	uint tile;
+	bool empty;
+	float max_speed;
+	uint max_change;
+
+	if (gl_GlobalInvocationID.x >= control[HEADER_UPDATE_COUNT])
+	{
+		return;
+	}
+	tile = control[update_list_word(gl_GlobalInvocationID.x)];
+	empty = control[tile_word(tile, TILE_TOTAL_DEPTH)] == 0u && control[tile_word(tile, TILE_TOTAL_DEPTH + 1)] == 0u;
+	max_speed = uintBitsToFloat(control[tile_word(tile, TILE_MAX_SPEED)]);
+	max_change = control[tile_word(tile, TILE_MAX_CHANGE)];
+	atomicMax(control[HEADER_FASTEST_DEEP_SPEED], control[tile_word(tile, TILE_MAX_DEEP_SPEED)]);
+
+	if (empty)
+	{
+		control[tile_word(tile, TILE_STATE)] = TILE_DRY;
+		control[tile_word(tile, TILE_IDLE_STEPS)] = 0u;
+		forget_flow(tile);
+	}
+	else if (max_speed < sleep_speed && max_change <= uint(sleep_change_units))
+	{
+		uint idle = min(control[tile_word(tile, TILE_IDLE_STEPS)] + 1u, 255u);
+
+		control[tile_word(tile, TILE_IDLE_STEPS)] = idle;
+		if (idle >= uint(max(1, sleep_after_substeps)))
+		{
+			control[tile_word(tile, TILE_STATE)] = TILE_SLEEPING;
+			forget_flow(tile);
+		}
+		else
+		{
+			control[tile_word(tile, TILE_STATE)] = TILE_ACTIVE;
+		}
+	}
+	else
+	{
+		control[tile_word(tile, TILE_STATE)] = TILE_ACTIVE;
+		control[tile_word(tile, TILE_IDLE_STEPS)] = 0u;
+		add_counter(max_speed >= sleep_speed ? COUNTER_KEPT_AWAKE_BY_FLOW : COUNTER_KEPT_AWAKE_BY_LEVEL, 1u);
+	}
+}

@@ -1,0 +1,658 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// The objects' culling on the GPU (see objects.h). Every object has a fixed
+// slot in the record buffer, kept up to date by the CPU (only what changed
+// goes up). For each pass (the camera, the far shadow map, the near one)
+// these kernels pick the objects the pass draws and write them, grouped by
+// model, into the pass's instance buffer, in the layout object.vert reads,
+// and the indirect draw arguments of every model's materials:
+//
+//   MODE_CLEAR    one thread per model: its count back to zero
+//   MODE_COUNT    one thread per object looked at: counts the visible
+//                 objects per model
+//   MODE_OFFSETS  one thread: each model's place in the instance buffer,
+//                 and the draw arguments
+//   MODE_SCATTER  one thread per object looked at: writes the visible ones
+//
+// The objects looked at are not all the slots: the CPU gives the pass
+// ranges of the order (the list's order, sorted by grid cell: each one's
+// slot), the visible cells' objects within their draw distance, the loose
+// ones and the tail (those added since the sort, the strays). A stray is
+// in the order twice (where the sort left it and in the tail): looked at
+// in the tail only (FLAG_STRAY)
+//
+// COUNT decides for each object and keeps the decision (decision_buffer);
+// SCATTER writes what COUNT decided, so the counts match what is written.
+// (Deciding again in SCATTER, from the same inputs, did not always come out
+// the same: the two copies of the arithmetic may round differently. An
+// object counted but not written left its place in the instance buffer as
+// the frame before had it: another object's, drawn for a frame with this
+// model; one written but not counted was missing.)
+
+layout(local_size_x = 256) in;
+
+#define MODE_CLEAR 1
+#define MODE_COUNT 2
+#define MODE_OFFSETS 3
+#define MODE_SCATTER 4
+
+#define PASS_CAMERA 0
+#define PASS_FAR_SHADOW 1
+#define PASS_NEAR_SHADOW 2
+
+#define SHADOW_NONE 0
+#define SHADOW_NEAR 1
+#define SHADOW_ALL 2
+
+#define CELL_NONE 0x00FFFFFFu      // free objects: no grid cell, tested one by one
+#define FLAG_TUMBLES 0x01000000u   // free or laid down: turned any way, boxed by its whole reach
+#define FLAG_SPINS 0x02000000u     // turning all the time (a mill's wheel): not in the far map nor the sky's occlusion, which are kept
+#define FLAG_STRAY 0x04000000u     // a stray: looked at in the order's tail only
+#define ORDER_NONE 0xFFFFFFFFu     // the order's: no slot there
+#define MODEL_NONE 0xFFFFu
+#define IMPOSTOR 8.0
+// A record's flags: the water's marks left on the spot are not drawn on it
+// (it floats, or was moved: objects.c); NO_MARKS_FADE added to its fade
+#define RECORD_NO_MARKS 0x01u
+#define NO_MARKS_FADE 4096.0
+
+#define RECORD_WORDS 10u
+#define INSTANCE_FLOATS 15u
+#define DRAW_ARGUMENT_WORDS 5u
+// Levels of detail (object_format.h, OBJECT_MATERIAL_LODS): the objects of
+// a model are counted and written per level (level * model_count + model),
+// its impostors after all of them (LOD_LEVELS * model_count + model)
+#define LOD_LEVELS 4u
+#define MODEL_WORDS 6u
+#define DRAW_SHUFFLED 0x100u
+#define DRAW_POOLED 0x200u            // drawn from the shared buffers in the shadows (objects.c)
+#define DRAW_POOLED_CAMERA 0x400u     // ...and by the camera (a building's)
+
+
+// A slot: x, y (origin), z, size; the rotation (four signed 16 bit
+// fractions); drawn model (low 16 bits, MODEL_NONE: an empty slot) and
+// type (high 16 bits); flags (RECORD_NO_MARKS); its emissive groups put
+// out (two words: object_format.h, OBJECT_FILE_EMISSIVE_GROUPS)
+layout(std430, set = READONLY_SET, binding = 0) readonly buffer record_buffer { uint records[]; };
+// Per slot: its grid cell (CELL_NONE) and FLAG_TUMBLES
+layout(std430, set = READONLY_SET, binding = 1) readonly buffer slot_cell_buffer { uint slot_cells[]; };
+// Per type: draw distance (m), shadow (SHADOW_), its model, the share of its objects there now (its season: objects_update_seasons)
+layout(std430, set = READONLY_SET, binding = 2) readonly buffer type_buffer { vec4 types[]; };
+// Per model, four each: horizontal radius, lowest and highest point (y),
+// the farthest any point is from the origin; its impostor's bounding sphere
+// (center, radius; radius 0: it has none, see impostors.h); 1 if it has
+// levels of detail, and its height; its box across (least x and z, most x
+// and z)
+layout(std430, set = READONLY_SET, binding = 3) readonly buffer model_buffer { vec4 models[]; };
+// Per draw (a material of a model at a level of detail): its count's place
+// (level * model_count + model, see LOD_LEVELS), index count, first index,
+// unused
+layout(std430, set = READONLY_SET, binding = 4) readonly buffer draw_buffer { uvec4 draws[]; };
+// The pass's visible grid cells, a bit each; from work.w on, the pass's
+// ranges of the order, two words each: where it starts in the order, and in
+// the work (the objects looked at, one after the other). (One buffer: SDL_GPU
+// allows 8 read-only storage buffers a stage)
+layout(std430, set = READONLY_SET, binding = 5) readonly buffer cell_buffer { uint cell_words[]; };
+// The depth pyramid of the frame before (see hiz.h): the camera's pass
+// leaves out what a mountain or a house hid. Every level, one after the
+// other, row by row
+layout(std430, set = READONLY_SET, binding = 6) readonly buffer hiz_buffer { float hiz_depths[]; };
+// The order: per instance (in the list's order), its slot (ORDER_NONE:
+// none), then the strays' slots
+layout(std430, set = READONLY_SET, binding = 7) readonly buffer order_buffer { uint order_slots[]; };
+
+// Per model, then per model's impostor (model_count + model): the count,
+// the next free place, the first place
+layout(std430, set = READWRITE_SET, binding = 0) buffer count_buffer { uint counts[]; };
+layout(std430, set = READWRITE_SET, binding = 1) buffer instance_buffer { float instances[]; };
+layout(std430, set = READWRITE_SET, binding = 2) buffer argument_buffer { uint arguments[]; };
+// Per slot, two each: COUNT's decision, its fade (below 0: not drawn;
+// IMPOSTOR added: drawn as its impostor); its level of detail, and how much
+// of what the next level leaves out is still there (1 .. 0 as it nears it)
+layout(std430, set = READWRITE_SET, binding = 3) buffer decision_buffer { float decisions[]; };
+// The occlusion culling seen (objects_t.occlusion_shown): the boxes the
+// camera's pass hid, three vec4s each: the box's outline on screen (0..1
+// from the top left: x, y the least, z, w the most); the pyramid's texels
+// read for it (the same); its nearest depth, the farthest of the texels,
+// the level read, the slot. occlusion_debug.frag draws them
+layout(std430, set = READWRITE_SET, binding = 4) buffer occlusion_buffer
+{
+	uint occlusion_count;
+	uint occlusion_unused[3];
+	vec4 occlusion_records[];
+};
+
+layout(std140, set = UNIFORM_SET, binding = 0) uniform cull_block
+{
+	vec4 planes[6];                // the pass's frustum (inside: dot(plane.xyz, p) + plane.w >= 0)
+	vec4 eye;                      // xyz; w: draw distance scale
+	int mode;
+	int pass_kind;
+	int slot_count;                // slots to look at (or updates, MODE_UPDATE)
+	int model_count;
+	int draw_count;
+	int capacity;                  // instances the pass's buffer holds
+	int highlight_slot;            // -1: none
+	int has_frustum;
+	float fade_fraction;
+	float impostor_factor;         // camera: an object whose radius over its distance, times this, is below 1 is drawn as its impostor (0: never)
+	float least_height;            // the far shadow map: things lower than this (m) left out (the sky's occlusion: no plant shading itself; 0 all)
+	int free_filter;               // the near shadow map: 0 all, 1 those standing still (in a grid cell), 2 only the loose ones (objects_shadow_layer_t)
+	mat4 view_projection;          // the camera's the pyramid was made with, depth 0..1 as drawn
+	vec4 hiz_size;                 // level 0's width and height, the level count, 1 if the pyramid is there
+	// Levels of detail: x the focal length times the scene's height in
+	// pixels (0: none, all at level 0); y the share of the distance to the
+	// next level over which what it leaves out fades; z the coarsest level
+	// first (the shadow maps: their objects at least so coarse); w the share of a shuffled foliage drawn at level 3 (halfway at 2)
+	vec4 lod;
+	vec4 lod_pixels;               // a model's height on screen (pixels) below which it is drawn at levels 1, 2, 3; w: a prop's levels' error (pixels, objects.prop_lod_pixels)
+	vec4 debug;                    // x: 1 the camera's pass keeps the boxes it hid (occlusion_buffer)
+	ivec4 work;                    // x: the objects looked at, y: the ranges, z: where the strays start in the order, w: where the ranges start in cell_words
+};
+
+// The most boxes kept (objects.c's OCCLUSION_DEBUG_RECORDS)
+const uint OCCLUSION_RECORDS = 4096u;
+
+vec4 unpack_rotation(uvec2 packed)
+{
+	return vec4(unpackSnorm2x16(packed.x), unpackSnorm2x16(packed.y));
+}
+
+bool box_visible(vec3 minimum, vec3 maximum)
+{
+	if (has_frustum == 0)
+	{
+		return true;
+	}
+	for (int i = 0; i < 6; i++)
+	{
+		vec3 corner = vec3(planes[i].x >= 0.0 ? maximum.x : minimum.x, planes[i].y >= 0.0 ? maximum.y : minimum.y,
+			planes[i].z >= 0.0 ? maximum.z : minimum.z);
+
+		if (dot(planes[i].xyz, corner) + planes[i].w < 0.0)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+// Whether what was drawn the frame before hides a box from the camera,
+// whole (its eight corners, as it stands): its nearest point is farther
+// than the farthest depth over its outline on screen (read from the
+// pyramid's level where the outline spans at most four texels: five read
+// across; coarser, the texels at its edges reach far past it, into what
+// is beside the house in front, the sky)
+bool hidden_by_terrain(vec3 corners[8], uint slot)
+{
+	vec2 screen_minimum = vec2(1.0);
+	vec2 screen_maximum = vec2(0.0);
+	float nearest = 1.0;
+	float level;
+	vec2 level_size;
+	ivec2 first;
+	ivec2 last;
+	float farthest = 0.0;
+
+	for (int corner = 0; corner < 8; corner++)
+	{
+		vec4 clip = view_projection * vec4(corners[corner], 1.0);
+
+		// Reaching behind the eye: no outline to speak of
+		if (clip.w <= 0.01)
+		{
+			return false;
+		}
+		vec3 ndc = clip.xyz / clip.w;
+		// Texture space: y down
+		vec2 uv = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+
+		screen_minimum = min(screen_minimum, uv);
+		screen_maximum = max(screen_maximum, uv);
+		nearest = min(nearest, ndc.z);
+	}
+	screen_minimum = clamp(screen_minimum, vec2(0.0), vec2(1.0));
+	screen_maximum = clamp(screen_maximum, vec2(0.0), vec2(1.0));
+	if (nearest <= 0.0)
+	{
+		return false;
+	}
+	{
+		vec2 extent = (screen_maximum - screen_minimum) * hiz_size.xy;
+
+		level = clamp(ceil(log2(max(max(extent.x, extent.y), 1.0))) - 2.0, 0.0, hiz_size.z - 1.0);
+	}
+	// Where the level starts in the buffer: the levels below it before it
+	int level_offset = 0;
+	ivec2 size = ivec2(hiz_size.xy);
+
+	for (int i = 0; i < int(level); i++)
+	{
+		level_offset += size.x * size.y;
+		size = max(size / 2, ivec2(1));
+	}
+	level_size = vec2(size);
+	// The texels over the outline: by level 0's texels, halved level by
+	// level (a level is its size's floor: each texel covers 2^level of level
+	// 0's, the last of a row or column the rest besides; by the outline's
+	// share of the level's size, the texels read lay off where they are,
+	// up to one whole texel short of the outline's far side)
+	{
+		ivec2 base_size = ivec2(hiz_size.xy);
+		ivec2 base_first = clamp(ivec2(floor(screen_minimum * hiz_size.xy)), ivec2(0), base_size - 1);
+		ivec2 base_last = clamp(ivec2(floor(screen_maximum * hiz_size.xy)), ivec2(0), base_size - 1);
+
+		first = clamp(base_first >> int(level), ivec2(0), size - 1);
+		last = clamp(base_last >> int(level), ivec2(0), size - 1);
+	}
+	// At most five texels across at that level (a texel at the end of a row
+	// or column may cover more than its share: never more read)
+	for (int y = first.y; y <= last.y && y <= first.y + 4; y++)
+	{
+		for (int x = first.x; x <= last.x && x <= first.x + 4; x++)
+		{
+			farthest = max(farthest, hiz_depths[level_offset + y * size.x + x]);
+		}
+	}
+	if (last.x > first.x + 4 || last.y > first.y + 4)
+	{
+		return false;
+	}
+	// Kept for the debug view: what was hidden, where, against what (and,
+	// asked for, what was not)
+	if ((nearest > farthest && debug.x > 0.5) || debug.x > 1.5)
+	{
+		uint record = atomicAdd(occlusion_count, 1u);
+
+		if (record < OCCLUSION_RECORDS)
+		{
+			occlusion_records[3u * record] = vec4(screen_minimum, screen_maximum);
+			// (the texels read, where they lie: from 2^level level 0's texels
+			// each, the last of a row or column to its end)
+			ivec2 read_last = min(last, first + 4);
+			vec2 read_minimum = vec2(first << int(level)) / hiz_size.xy;
+			vec2 read_maximum = vec2((read_last + 1) << int(level)) / hiz_size.xy;
+
+			read_maximum = vec2(read_last.x == size.x - 1 ? 1.0 : read_maximum.x, read_last.y == size.y - 1 ? 1.0 : read_maximum.y);
+			occlusion_records[3u * record + 1u] = vec4(read_minimum, read_maximum);
+			occlusion_records[3u * record + 2u] = vec4(nearest, farthest, level, nearest > farthest ? 1.0 : 0.0);
+		}
+	}
+	return nearest > farthest;
+}
+
+// Whether the pass draws the slot's object, its model and how faded it
+// is, and whether as its impostor (small on the camera's screen)
+bool visible(uint slot, out uint model, out float fade, out bool impostor, out uint level, out float level_fade)
+{
+	uint cell_word = slot_cells[slot];
+	uint cell = cell_word & CELL_NONE;
+	uint base = slot * RECORD_WORDS;
+	uint model_type = records[base + 6u];
+	uint type;
+	vec4 placement;
+	vec4 type_data;
+	vec4 model_data;
+
+	model = model_type & 0xFFFFu;
+	fade = 1.0;
+	impostor = false;
+	level = 0u;
+	level_fade = 1.0;
+	if (model == MODEL_NONE)
+	{
+		return false;
+	}
+	// The near shadow map's layers: the still one, the moving one
+	if (pass_kind == PASS_NEAR_SHADOW && ((free_filter == 1 && cell == CELL_NONE) || (free_filter == 2 && cell != CELL_NONE)))
+	{
+		return false;
+	}
+	// The grid cell first: most objects are in cells nobody sees
+	if (cell != CELL_NONE && (cell_words[cell >> 5] & (1u << (cell & 31u))) == 0u)
+	{
+		return false;
+	}
+	type = model_type >> 16;
+	type_data = types[type];
+	// (the far map and the sky's occlusion are drawn once and kept: a
+	// turning one frozen in them shaded itself as it turned, its parts
+	// lit all at once as they rose past where it had stood)
+	if (pass_kind == PASS_FAR_SHADOW && (cell_word & FLAG_SPINS) != 0u)
+	{
+		return false;
+	}
+	if (pass_kind == PASS_FAR_SHADOW && int(type_data.y) != SHADOW_ALL)
+	{
+		return false;
+	}
+	placement = vec4(uintBitsToFloat(records[base]), uintBitsToFloat(records[base + 1u]), uintBitsToFloat(records[base + 2u]),
+		uintBitsToFloat(records[base + 3u]));
+	if (pass_kind == PASS_FAR_SHADOW && least_height > 0.0 && models[MODEL_WORDS * model].z * placement.w < least_height)
+	{
+		return false;
+	}
+	// Out of its season (or under the snow): each one there while the share
+	// is above a number of its own, from where it stands (it keeps it)
+	if (type_data.w < 1.0)
+	{
+		uvec2 spot = floatBitsToUint(placement.xz);
+		uint hash = spot.x * 73856093u ^ spot.y * 19349663u;
+
+		hash = (hash ^ (hash >> 16u)) * 0x45d9f3bu;
+		hash = (hash ^ (hash >> 16u)) * 0x45d9f3bu;
+		hash ^= hash >> 16u;
+		if (float(hash >> 8u) * (1.0 / 16777216.0) >= type_data.w)
+		{
+			return false;
+		}
+	}
+	if (pass_kind != PASS_FAR_SHADOW)
+	{
+		float draw_distance = type_data.x * eye.w;
+		float distance = length(placement.xyz - eye.xyz);
+
+		if (distance >= draw_distance || (pass_kind == PASS_NEAR_SHADOW && int(type_data.y) == SHADOW_NONE))
+		{
+			return false;
+		}
+		fade = min((draw_distance - distance) / (fade_fraction * draw_distance), 1.0);
+		// Smaller on screen than a picture of its impostor: the impostor
+		// (not what tumbles: its pictures are taken upright)
+		if (impostor_factor > 0.0 && (cell_word & FLAG_TUMBLES) == 0u)
+		{
+			float impostor_radius = models[MODEL_WORDS * model + 1u].w * placement.w;
+
+			impostor = impostor_radius > 0.0 && impostor_radius * impostor_factor < distance;
+		}
+	}
+	// Its level of detail: the smaller it is on screen, the coarser (the
+	// shadow maps at least lod.z); near the next level, what that one
+	// leaves out fades (level_fade)
+	if (models[MODEL_WORDS * model + 2u].x > 0.5)
+	{
+		level = uint(lod.z);
+		if (lod.x > 0.0 && pass_kind != PASS_FAR_SHADOW)
+		{
+			vec4 levels = models[MODEL_WORDS * model + 2u];
+			float distance = max(length(placement.xyz - eye.xyz), 0.01);
+			uint seen = 0u;
+
+			if (levels.x > 1.5)
+			{
+				// A prop's: each level once how far off it is (meters,
+				// levels.yzw) is less than lod_pixels.w on screen
+				vec3 errors = levels.yzw * placement.w;
+
+				for (int k = 0; k < 3; k++)
+				{
+					seen += errors[k] * lod.x / distance < lod_pixels.w ? 1u : 0u;
+				}
+				level = max(level, seen);
+			}
+			else
+			{
+				float height = levels.y * placement.w;
+				float pixels = height * lod.x / distance;
+
+				for (int k = 0; k < 3; k++)
+				{
+					seen += pixels < lod_pixels[k] ? 1u : 0u;
+				}
+				level = max(level, seen);
+				if (level < 3u)
+				{
+					// Where the next level starts (meters), and how far before it
+					float next = height * lod.x / max(lod_pixels[level], 1.0);
+
+					level_fade = clamp((next - distance) / max(lod.y * next, 0.01), 0.0, 1.0);
+				}
+			}
+		}
+	}
+	model_data = models[MODEL_WORDS * model];
+	{
+		bool tumbles = (cell_word & FLAG_TUMBLES) != 0u;
+		float reach = (tumbles ? max(model_data.x, model_data.w) : model_data.x) * placement.w;
+		float bottom = tumbles ? placement.y - reach : placement.y + model_data.y * placement.w;
+		float top = tumbles ? placement.y + reach : placement.y + model_data.z * placement.w;
+
+		vec3 box_minimum = vec3(placement.x - reach, bottom, placement.z - reach);
+		vec3 box_maximum = vec3(placement.x + reach, top, placement.z + reach);
+
+		if (!box_visible(box_minimum, box_maximum))
+		{
+			return false;
+		}
+		if (pass_kind != PASS_CAMERA || hiz_size.w < 0.5)
+		{
+			return true;
+		}
+		// The occlusion test's box: the model's own, turned and scaled as it
+		// stands (what tumbles: the box round its sphere, as above)
+		vec3 corners[8];
+
+		if (tumbles)
+		{
+			for (int corner = 0; corner < 8; corner++)
+			{
+				corners[corner] = vec3((corner & 1) != 0 ? box_maximum.x : box_minimum.x, (corner & 2) != 0 ? box_maximum.y : box_minimum.y,
+					(corner & 4) != 0 ? box_maximum.z : box_minimum.z);
+			}
+		}
+		else
+		{
+			vec4 across = models[MODEL_WORDS * model + 3u];
+			vec4 rotation = unpack_rotation(uvec2(records[base + 4u], records[base + 5u]));
+
+			rotation /= max(length(rotation), 1e-6);
+			for (int corner = 0; corner < 8; corner++)
+			{
+				vec3 local = vec3((corner & 1) != 0 ? across.z : across.x, (corner & 2) != 0 ? model_data.z : model_data.y,
+					(corner & 4) != 0 ? across.w : across.y) * placement.w;
+
+				corners[corner] = placement.xyz + local + 2.0 * cross(rotation.xyz, cross(rotation.xyz, local) + rotation.w * local);
+			}
+		}
+		return !hidden_by_terrain(corners, slot);
+	}
+}
+
+// The slot of the work's object number 'item' (ORDER_NONE: none to look at)
+uint slot_of_work(uint item)
+{
+	// The last range starting at or before it
+	uint low = 0u;
+	uint high = uint(work.y);
+
+	while (high - low > 1u)
+	{
+		uint middle = (low + high) >> 1u;
+
+		if (cell_words[uint(work.w) + 2u * middle + 1u] <= item)
+		{
+			low = middle;
+		}
+		else
+		{
+			high = middle;
+		}
+	}
+	uint order = cell_words[uint(work.w) + 2u * low] + (item - cell_words[uint(work.w) + 2u * low + 1u]);
+	uint slot = order_slots[order];
+
+	if (slot == ORDER_NONE)
+	{
+		return ORDER_NONE;
+	}
+	// (a stray where the sort left it: the tail has it)
+	if (order < uint(work.z) && (slot_cells[slot] & FLAG_STRAY) != 0u)
+	{
+		return ORDER_NONE;
+	}
+	return slot;
+}
+
+void main()
+{
+	uint stride = gl_NumWorkGroups.x * 256u;
+
+	if (mode == MODE_CLEAR)
+	{
+		if (gl_GlobalInvocationID.x == 0u && pass_kind == PASS_CAMERA)
+		{
+			occlusion_count = 0u;
+		}
+		for (uint m = gl_GlobalInvocationID.x; m < (LOD_LEVELS + 1u) * uint(model_count); m += stride)
+		{
+			counts[3u * m] = 0u;
+		}
+	}
+	else if (mode == MODE_COUNT)
+	{
+		for (uint item = gl_GlobalInvocationID.x; item < uint(work.x); item += stride)
+		{
+			uint slot = slot_of_work(item);
+			uint model;
+			float fade;
+			bool impostor;
+			uint level;
+			float level_fade;
+
+			if (slot == ORDER_NONE)
+			{
+				continue;
+			}
+			if (visible(slot, model, fade, impostor, level, level_fade))
+			{
+				atomicAdd(counts[3u * (impostor ? LOD_LEVELS * uint(model_count) + model : level * uint(model_count) + model)], 1u);
+				decisions[2u * slot] = fade + (impostor ? IMPOSTOR : 0.0);
+				decisions[2u * slot + 1u] = float(level) + 0.5 * level_fade;
+			}
+			else
+			{
+				decisions[2u * slot] = -1.0;
+			}
+		}
+	}
+	else if (mode == MODE_OFFSETS)
+	{
+		if (gl_GlobalInvocationID.x != 0u)
+		{
+			return;
+		}
+		uint total = 0u;
+
+		for (int m = 0; m < int(LOD_LEVELS + 1u) * model_count; m++)
+		{
+			// Whatever does not fit is not drawn (the CPU sizes the buffer
+			// so that this does not happen)
+			uint count = min(counts[3u * uint(m)], uint(max(capacity, 0)) - min(total, uint(max(capacity, 0))));
+
+			counts[3u * uint(m)] = count;
+			counts[3u * uint(m) + 1u] = total;
+			counts[3u * uint(m) + 2u] = total;
+			total += count;
+		}
+		for (int d = 0; d < draw_count; d++)
+		{
+			uvec4 draw = draws[d];
+			uint word = uint(d) * DRAW_ARGUMENT_WORDS;
+
+			uint index_count = draw.y;
+
+			// A shuffled foliage thinned out at levels 2 and 3 (any first
+			// part of it, in whole cards, is the whole thinned out evenly)
+			if ((draw.w & DRAW_SHUFFLED) != 0u && (draw.w & 0xFFu) >= 2u && lod.w < 1.0)
+			{
+				float kept = (draw.w & 0xFFu) >= 3u ? lod.w : 0.5 * (1.0 + lod.w);
+
+				index_count = max(uint(float(index_count / 6u) * kept), 1u) * 6u;
+			}
+			arguments[word] = index_count;
+			arguments[word + 1u] = counts[3u * draw.x];
+			arguments[word + 2u] = draw.z;
+			arguments[word + 3u] = 0u;
+			arguments[word + 4u] = counts[3u * draw.x + 2u];
+			// The shadows draw it from the shared buffers (objects.h): its
+			// model's first index and vertex there
+			if ((draw.w & (pass_kind == PASS_CAMERA ? DRAW_POOLED_CAMERA : DRAW_POOLED)) != 0u)
+			{
+				vec4 pool = models[MODEL_WORDS * (draw.x % uint(model_count)) + 4u];
+
+				arguments[word + 2u] = draw.z + floatBitsToUint(pool.x);
+				arguments[word + 3u] = floatBitsToUint(pool.y);
+			}
+		}
+	}
+	else if (mode == MODE_SCATTER)
+	{
+		for (uint item = gl_GlobalInvocationID.x; item < uint(work.x); item += stride)
+		{
+			uint slot = slot_of_work(item);
+			uint model;
+			float fade;
+			uint place;
+			uint base;
+			uint record;
+
+			if (slot == ORDER_NONE)
+			{
+				continue;
+			}
+			fade = decisions[2u * slot];
+			if (fade < 0.0)
+			{
+				continue;
+			}
+			model = records[slot * RECORD_WORDS + 6u] & 0xFFFFu;
+			vec4 look = models[MODEL_WORDS * model + 5u];
+			// What the next level of detail leaves out, faded: 4 times how
+			// much of it is gone (0 .. 255) added to the fade (object.frag)
+			float level_value = decisions[2u * slot + 1u];
+			uint level = uint(floor(level_value));
+			float level_gone = round((1.0 - clamp((level_value - float(level)) * 2.0, 0.0, 1.0)) * 255.0);
+
+			if (fade >= IMPOSTOR)
+			{
+				fade -= IMPOSTOR;
+				model += LOD_LEVELS * uint(model_count);
+				level_gone = 0.0;
+			}
+			else
+			{
+				model += level * uint(model_count);
+			}
+			place = atomicAdd(counts[3u * model + 1u], 1u);
+			if (place >= counts[3u * model + 2u] + counts[3u * model])
+			{
+				continue;
+			}
+			base = place * INSTANCE_FLOATS;
+			record = slot * RECORD_WORDS;
+			vec4 rotation = unpack_rotation(uvec2(records[record + 4u], records[record + 5u]));
+
+			instances[base] = uintBitsToFloat(records[record]);
+			instances[base + 1u] = uintBitsToFloat(records[record + 1u]);
+			instances[base + 2u] = uintBitsToFloat(records[record + 2u]);
+			instances[base + 3u] = uintBitsToFloat(records[record + 3u]);
+			instances[base + 4u] = rotation.x;
+			instances[base + 5u] = rotation.y;
+			instances[base + 6u] = rotation.z;
+			instances[base + 7u] = rotation.w;
+			// Highlighted: the fade carries it (see object.frag), and the
+			// flags (not for impostors: they take no marks)
+			bool no_marks = (records[record + 7u] & RECORD_NO_MARKS) != 0u && model < LOD_LEVELS * uint(model_count);
+			instances[base + 8u] = fade + (int(slot) == highlight_slot ? 2.0 : 0.0) + 4.0 * level_gone + (no_marks ? NO_MARKS_FADE : 0.0);
+			instances[base + 9u] = uintBitsToFloat(records[record + 8u]);
+			instances[base + 10u] = uintBitsToFloat(records[record + 9u]);
+			// (its model's look, a building's: prop_body.glsl)
+			instances[base + 11u] = look.x;
+			instances[base + 12u] = look.y;
+			instances[base + 13u] = look.z;
+			instances[base + 14u] = look.w;
+		}
+	}
+}
