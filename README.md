@@ -2,21 +2,69 @@
 
 *"Potop" means "flood" in Romanian, the biblical kind.*
 
-A sandbox for floods: procedural terrain, water that behaves like water, and
-things for it to wreck. Written in C11 with SDL3; it draws through SDL_GPU
-(Vulkan on Linux, Android and Windows; Metal on Macs, once the shaders are
-translated for it). Compute shaders run the particles, and soon the water.
+A game engine for big outdoor worlds, written from scratch in C11 on SDL3:
+forests, rivers, villages and mountains several kilometers across, water
+that really flows, villagers with lives of their own, and physically based
+rendering. It is meant mainly for role playing games and first person
+shooters; the engine is a library (`engine/`, its API in `engine/potop.h`)
+that a game's own `main` calls.
 
-Current state (**step 4g**): procedural terrain with soil types over bedrock,
-textured materials at two scales, sun shadows, fog, an orbit camera, terrain
-brushes and stamps (crater, dam, hill, channel, lake, plateau), a water
-simulation with springs, a water brush and a sponge, rain that wets the
-ground, and water that erodes the ground, carries mud and drops it as silt
-(all of it on the GPU since step 7b2). Dams
-break. Vegetation and village layouts (homesteads, camps, mills...) grow on
-new maps and can be planted and placed by hand. An interface (brush panel,
-settings, diagnostics) and saved maps. Objects are rigid bodies (Box3D) the
-water floats, pushes, tears loose and carries off; houses split a flood.
+It draws through SDL_GPU: Vulkan on Linux, Android and Windows; Metal on
+Macs once the shaders are translated for it. Linux is where it is made and
+tested; Android comes next.
+
+## What it does
+
+**Terrain and water**
+
+* Procedural terrain with soil types over bedrock, terrain brushes and
+  stamps (crater, dam, hill, channel, lake, plateau), materials painted by
+  slope, height and soil.
+* A water simulation on the GPU: springs, rain, a water brush and a sponge;
+  rivers and lakes find their own way down, the water erodes the ground,
+  carries mud and drops it as silt. Dams break.
+* Baked maps: the water frozen where it settled, for game worlds that do
+  not need it moving; active maps keep it simulated.
+* Maps of 4096 x 4096 cells (4 x 4 km at 1 m a cell) with about a million
+  objects.
+
+**Objects and physics**
+
+* Rigid bodies (Box3D): the water floats, pushes, tears loose and carries
+  off what stands in it; houses split a flood.
+* Physics bodies made around the player, the water and the actors as they
+  are needed; the objects in a grid, so the cost per frame follows what is
+  near and seen, not the size of the map.
+* Vegetation and village layouts (homesteads, hamlets, camps, mills,
+  fields) grown on new maps, or planted and placed by hand.
+
+**Rendering**
+
+* Physically based materials, sun shadows (a far map and a near one),
+  contact shadows, sky occlusion baked over the map, ambient occlusion and
+  bounced light from the screen (GTAO, with its own temporal filter).
+* Volumetric clouds and fog, rain, snow, a rainbow, the seasons and a day
+  and night cycle with the moon and the stars.
+* GPU culling with occlusion, impostors for distant objects, temporal
+  anti-aliasing on the buildings, everything drawn relative to the eye (no
+  shimmer kilometers from the origin).
+
+**The world's people and the game side**
+
+* Actors with skeletal animation, path finding on a navigation grid built
+  where it is needed, and animals that roam by their bodies.
+* Villagers with a day of their own on the game clock (the smith works,
+  eats at the inn, goes home), simulated even out of sight.
+* Weapons with physical projectiles, explosives, an inventory, picking
+  things off the map, dialogs, a journal, a compass and a map.
+
+**Tools** (in `tools/`, all in C)
+
+* A tree and plant generator and editor, a prop generator (stones,
+  barrels, tools), a procedural PBR texture generator, a medieval building
+  generator (from hovels and cottages to inns, smithies, mills and
+  churches) and a converter for glTF models and older formats.
+* A separate map editor (`editor/`).
 
 ## Building
 
