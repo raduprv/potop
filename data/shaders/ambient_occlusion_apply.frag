@@ -24,7 +24,7 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform occlusion_block
 {
 	vec4 occlusion_parameters;     // x: radius (m), y: the distance it is gone at (m), z: strength, w: 1 if the shadow maps are bound
 	vec4 occlusion_size;           // the scene's width and height, the half size target's
-	vec4 occlusion_frame;          // x: the frame (0..15: the pattern's turn), y: 1 if there is a history, z: the bounced light's strength (0: none)
+	vec4 occlusion_frame;          // x: the frame (0..15: the pattern's turn), y: 1 if there is a history, z: the bounced light's strength (0: none), w: its radius (m)
 };
 
 layout(location = 0) in vec2 screen_point;
@@ -125,17 +125,24 @@ void main()
 		mapped = occlusion_parameters.w > 0.5 ? sun_visibility(light_view_projection * vec4(lifted, 1.0),
 			near_light_view_projection * vec4(lifted, 1.0)) : 1.0;
 	}
-	float sun = luminance(sun_color) * facing * mapped * (sun_direction.y > 0.0 ? 1.0 : 0.0);
-	float sky = luminance(sky_color) * max(ambient_intensity, 0.05) + luminance(ground_bounce_color(mapped)) * max(ambient_intensity, 0.05) * 0.3;
+	// The light from round about as the scene's own shaders give it
+	// (prop_body.glsl's surroundings: the ground's below, the sky's above,
+	// by the facing): facing down, the ground's bounce, which the found
+	// ground's light would count again
+	vec3 sun_light = sun_color * facing * mapped * (sun_direction.y > 0.0 ? 1.0 : 0.0);
+	vec3 round_about = mix(ground_bounce_color(mapped), sky_color, normal.y * 0.5 + 0.5) * max(ambient_intensity, 0.05);
+	float sun = luminance(sun_light);
+	float sky = luminance(round_about);
 	float share = sky / max(sun + sky, 1e-4);
 	float taken = (1.0 - occlusion) * occlusion_parameters.z * fade * share;
 
 	// The light it has, by the channel (the bounced light over it: how much
 	// more of its own color comes back); held: a pixel near black in the
 	// dark is not made a lamp
-	vec3 lit = sun_color * facing * mapped * (sun_direction.y > 0.0 ? 1.0 : 0.0)
-		+ (sky_color + ground_bounce_color(mapped) * 0.3) * max(ambient_intensity, 0.05);
-	vec3 gained = min(indirect * fade / max(lit, vec3(0.02)), vec3(3.0));
+	vec3 lit = sun_light + round_about;
+	// (below 0: what was found sends less than the scene's shaders took for
+	// it, beyond the occlusion's radius)
+	vec3 gained = clamp(indirect * fade / max(lit, vec3(0.02)), vec3(-0.5), vec3(1.5));
 
 	fragment_color = vec4(vec3(max(1.0 - taken, 0.0)) + gained, 1.0);
 }

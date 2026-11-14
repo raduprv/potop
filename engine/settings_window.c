@@ -357,6 +357,7 @@ static const ui_setting_t ui_settings[] = {
 		"The light bounced off what is near (sunlit grass on a wall, under the eaves), from the scene on the screen; with the ambient occlusion",
 		false },
 	{ TAB_RENDER, "render", "indirect_light_strength", "Bounced strength", 0, 3.0f, 0.05f, EFFECT_LIVE, "%.2f", NULL, NULL, false },
+	{ TAB_RENDER, "render", "indirect_light_meters", "Bounced reach", 0.25f, 10.0f, 0.25f, EFFECT_LIVE, "%.2f m", NULL, NULL, false },
 	HEADING(TAB_RENDER, "Sky occlusion"),
 	{ TAB_RENDER, "render", "sky_occlusion", "Sky occlusion", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
 		"Hollows, the ground under trees and round rocks see less of the sky (worked out once per map, kept with it)", false },

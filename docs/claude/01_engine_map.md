@@ -1033,3 +1033,20 @@ tables, live):
   surface buffer needed). Faded with the occlusion's distance.
 - Not known: the found point's facing (no normals there): a wall's back
   lights too. Only what is on the screen sends light.
+
+## The bounced light, fixed (38y)
+
+- ambient_occlusion_apply.frag: the pixel's own light from round about as
+  prop_body.glsl's surroundings give it, mix(ground_bounce_color, sky,
+  normal.y * 0.5 + 0.5) * ambient: facing down (a stone's foot) it is the
+  ground's bounce, not 30 % of it; both the occlusion's share and the
+  bounced light's divisor use it. The gain held in [-0.5, 1.5] (was 3:
+  the orange rings round stones on sunlit ground).
+- ambient_occlusion.frag: the bounced light has its own radius,
+  render.indirect_light_meters (3 m), with BOUNCE_STEPS 3 more steps
+  beyond the occlusion's radius (up to BOUNCE_MAXIMUM_PIXELS 320) and its
+  own horizons. Beyond the occlusion's radius a found point counts only
+  its light minus what the shaders took for that direction (the ground's
+  bounce below, the sky above): the occlusion did not take that arc away,
+  so the full light would count it twice; the difference is the tint (a
+  green meadow over a plain ground), and can be below 0.

@@ -9,7 +9,7 @@ typedef struct
 {
 	float parameters[4];           // x: radius (m), y: the distance it is gone at (m), z: strength, w: 1 if the shadow maps are bound
 	float size[4];                 // the scene's width and height, the half size target's
-	float frame[4];                // x: the frame (the pattern's turn), y: 1 if there is a history, z: the bounced light's strength (0: none)
+	float frame[4];                // x: the frame (the pattern's turn), y: 1 if there is a history, z: the bounced light's strength (0: none), w: its radius (m)
 } occlusion_uniforms_t;
 
 // Step 1b's own block
@@ -216,7 +216,7 @@ void ambient_occlusion_draw(ambient_occlusion_t *occlusion, SDL_GPUTexture *colo
 	uniforms.frame[0] = (float)(occlusion->frame & 15u);
 	uniforms.frame[1] = occlusion->history_valid ? 1.0f : 0.0f;
 	uniforms.frame[2] = settings->indirect_light ? SDL_clamp(settings->indirect_light_strength, 0.0f, 3.0f) : 0.0f;
-	uniforms.frame[3] = 0.0f;
+	uniforms.frame[3] = SDL_clamp(settings->indirect_light_meters, 0.25f, 10.0f);
 
 	// 1. The occlusion at half size
 	{
