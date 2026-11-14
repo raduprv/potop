@@ -267,7 +267,14 @@ void main()
 				// hides is where its light comes from
 				if (bounce)
 				{
-					float weight = clamp(there_length * bounce_falloff_multiplier + bounce_falloff_add, 0.0, 1.0);
+					// (within the occlusion's steps, by the occlusion's own
+					// falloff: the arc the occlusion takes away only in part,
+					// a point 0.4 .. 1 radius off, gives back only that part;
+					// by its own, three times as far, it gave all its light
+					// back where the occlusion took little, and under the
+					// eaves the occlusion was gone)
+					float weight = k < OCCLUSION_STEPS ? clamp(there_length * falloff_multiplier + falloff_add, 0.0, 1.0)
+						: clamp(there_length * bounce_falloff_multiplier + bounce_falloff_add, 0.0, 1.0);
 					float raised = mix(lowest, there_cosine, weight);
 					float horizon = way == 0 ? bounce_toward : bounce_away;
 
