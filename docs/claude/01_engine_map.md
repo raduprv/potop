@@ -1,6 +1,6 @@
 # Engine map
 
-About 142 000 lines of C (November 2026). README.md's "How it fits
+About 142 000 lines of C (November 2026). docs/manual/architecture.md ("How it fits
 together" lists the older modules; this file adds the rest and the order of
 a frame. Every header starts with a paragraph saying what the module is:
 read the header first, then the .c.
@@ -26,7 +26,7 @@ read the header first, then the .c.
 - `house_plans/`, `plant_plans/`, `props_plan/`: recipes for the generators.
 - `third_party/`: Box3D, Nuklear, miniz, stb, cgltf...
 
-## Modules README.md does not list
+## Modules the manual does not list
 
 - World: `world.c` (the struct), `world_create.c` (init, land, populate,
   destroy), `world_frame.c` (begin_frame, update_actors, simulate,

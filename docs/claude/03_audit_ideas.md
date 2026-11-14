@@ -91,7 +91,7 @@ Ordered by value for effort, roughly.
 
 - TODO.md lists finished work as planned (water on the GPU, SDL_GPU, Hi-Z
   culling). Worth a cleanup pass so it stays useful.
-- README.md's module table predates about 40 modules (listed in
+- docs/manual/architecture.md's module table predates about 40 modules (listed in
   01_engine_map.md).
 - settings.ini has an unknown key: `[render] height_blend_depth` (line 65)
   is warned about at every start.

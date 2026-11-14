@@ -10,13 +10,13 @@ Files here:
 - `00_START_HERE.md`: this file. Setup of a fresh container, how to work
   with Radu, the pitfalls.
 - `01_engine_map.md`: where things are in the engine, what a frame does, in
-  what order; what README.md does not list.
+  what order; what the manual does not list.
 - `02_house_generator.md`: tools/house_grow.c (17 600 lines): materials,
   levels, recipes, the special buildings (church, mills, workshops).
 - `03_audit_ideas.md`: optimization candidates and eye candy worth adding,
   with where in the code they would go. Unverified ideas, not decisions.
 
-The big README.md at the root is good and current for most systems (water,
+The manual in docs/manual/ (the big README.md until Nov 14 2026) is good and current for most systems (water,
 sky, clouds, objects, actors, plants, props, houses, physics, the material
 map, sky occlusion). TODO.md is partly stale: the water and erosion on the
 GPU, SDL_GPU and Hi-Z culling are done although it still lists them.
