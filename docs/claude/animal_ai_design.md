@@ -94,3 +94,19 @@ event from the new walk for each of these.
 - Not done yet: the split into cow.c / pig.c / sheep.c / hen.c (cows still
   in animals.c, only their walk is new); needs (hunger, thirst...);
   hens, pigs, sheep on the new walk.
+
+## Next (agreed 2026-11-15, waiting for Radu's 6 models, hen included)
+
+- All animals get walk_left / walk_right: same length and stride as walk,
+  in place (no root motion), a fixed angle per cycle (walk_turn_degrees in
+  actors.ini, ~15 asked). Switching walk <-> walk_left/right keeps the
+  step's phase (no restart at 0), plus the crossfade; a continuous mix by
+  the turn's size maybe later.
+- Turning while walking at the clip's rate (no more yaw spun under a
+  straight walk: "they float"); lookahead ~2.5 m so the curve starts in
+  time; in a corner (nothing free within ±40) a stop and turn_left/right
+  on the spot before any step back.
+- When the models come: convert, then check the bones per clip: per-frame
+  jumps (angular speed/acceleration spikes), the loop seam (last frame vs
+  first), walk vs walk_left/right phase (feet down at the same moments),
+  measured turn per cycle. Then the sim.
