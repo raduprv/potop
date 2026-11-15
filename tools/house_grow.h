@@ -274,6 +274,7 @@ typedef struct
 	int watermill;                         // a water mill: 1 its house, 2 its wheel (a model of its own), 3 both
 	int workshop;                          // a trade's yard: 1 smelter, 2 lumber yard, 3 carpenter, 4 stonecutter, 5 quarry works
 	int module_piece;                      // 0: the building; N: only the Nth of its module's moving pieces, its origin what it turns or hangs from (the module's parts)
+	int module_doors;                      // 1: its doors and gates are its module's parts, swung on their hinges (states closed / open); with module
 	int charcoal_open;                     // a charcoal burner's clamp (workshop 6): 1 burnt out and being opened, its charcoal raked out
 	int crib_size;                         // a corn crib (workshop 12): 1 a household's (4.8 m), 2 a village's (12 by 4 m, a landing, hatches)
 	float watermill_stone_height;          // its stone ground floor (meters)

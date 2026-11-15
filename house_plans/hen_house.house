@@ -48,3 +48,7 @@ roof_timber_color_texture = props/textures/mill_weatherboard_color.png
 roof_timber_normal_texture = props/textures/mill_weatherboard_normal.png
 roof_timber_arm_texture = props/textures/mill_weatherboard_arm.png
 roof_timber_meters = 1.8
+
+# its doors and gates: the module's parts, swung on their hinges (closed / open)
+module = hen_house
+module_doors = 1

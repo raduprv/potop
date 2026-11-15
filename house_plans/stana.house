@@ -45,3 +45,7 @@ stone_meters = 1.0
 stone_color_texture = props/textures/granite_color.png
 stone_normal_texture = props/textures/granite_normal.png
 stone_arm_texture = props/textures/granite_arm.png
+
+# its doors and gates: the module's parts, swung on their hinges (closed / open)
+module = stana
+module_doors = 1

@@ -436,3 +436,29 @@ Cabins' doors: door_spot as before (no stairs). Regenerated the 13 framed
 houses with doors (barn, cottage, craftsman, gallery_house, hip_house,
 hovel*, inn, stone_house, tall_house, thatched_cottage, town_house).
 
+
+## Doors as module parts (39n)
+
+`module_doors = 1` (with `module = NAME`): every door and gate leaf the
+building makes becomes a part of its module, swung 90 degrees on its
+hinges (house_grow.c door_leaf_begin / door_leaf_end round each leaf:
+hut_door (hinges on its -along side, where its straps start; cabin doors
+go through it, made shut when moving: half doors and open doors too),
+picket_gate (made shut, swung the way it stood ajar), farm_gate (each
+leaf), the pigsty's pen gates). Building (module_piece 0): the leaf is
+not made, a part door1, door2, ... at its hinge (axis +Y, MOVES|SHADOW,
+recipe `;module_piece=100+N;interior=1`), poses closed 0 / open +-90
+(toward out: + round +Y turns along toward up x along); a hut door on a
+wall without a hole gets the dark of a doorway behind it (door_dark).
+The piece (module_piece 100+N): the whole house is made (the same order,
+the same random draws up to that leaf), the leaf's vertex and index
+ranges kept (door_piece_keep at `built:`), moved so the hinge is the
+origin, spots/anchors/effects/lit groups dropped. house_doors_move also
+holds for a piece whose recipe potop_house cleared the module of.
+States: closed and open, 1.5 s swing, each held 10 s then the other (a
+test: the farmer will drive them). cow_farm: 5 (the byre's two front
+doors, its back door, the yard gate's two leaves), pigsty 3 (the man's
+door, the two pen gates; the pigs' holes have no leaves), hen_house 2
+(the door, the run's gate), stana 1 (the hut's door; the strunga is an
+opening). objects.ini: `module = NAME` in place of `model = NAME`.
+Moving parts have no body yet: the doors do not stop anyone.

@@ -70,3 +70,7 @@ ceiling_arm_texture = props/textures/hay_arm.png
 # (both laid on from the sides: no stretching on the rick or the heap)
 floor_triplanar = 1
 ceiling_triplanar = 1
+
+# its doors and gates: the module's parts, swung on their hinges (closed / open)
+module = cow_farm
+module_doors = 1

@@ -1414,6 +1414,20 @@ typedef struct
 	// 0..1, square), while the church is made; NULL: none, the generator's own
 	float *footing_height;
 	int footing_height_size;
+	// Its doors as its module's parts (recipe.module_doors): the leaves
+	// counted as they are made (the same order every time it is made); the
+	// module's two states once made; making a door's piece, that leaf's
+	// vertices and indices, kept alone once the house is made
+	int door_leaf_count;
+	int door_state_closed;
+	int door_state_open;
+	bool door_capturing;
+	bool door_captured;
+	vec_t door_hinge;
+	size_t door_vertex_first;
+	size_t door_vertex_end;
+	size_t door_index_first[HOUSE_MATERIAL_COUNT][HOUSE_LEVELS];
+	size_t door_index_end[HOUSE_MATERIAL_COUNT][HOUSE_LEVELS];
 } house_t;
 
 // The timbers made from now on of the roof's old wood, or (on: false) of
@@ -2281,6 +2295,156 @@ static void church_footprint(house_t *house);
 static void mill_footprint(house_t *house);
 static void watermill_footprint_of(house_t *house);
 static void workshop_footprint(house_t *house);
+
+// ---------------------------------------------------------------------------
+// Doors and gates as the module's parts (recipe.module_doors)
+
+#define HOUSE_DOOR_PIECE_BASE 100       // a door's piece: module_piece 101, 102, ... (the house's other pieces below)
+#define HOUSE_DOOR_SWING_SECONDS 1.5f   // a door swung open or shut in this long
+#define HOUSE_DOOR_HOLD_SECONDS 10.0f   // held so long open, then shut, and so on (for now: the test; the game will drive them)
+
+static bool house_doors_move(const house_t *house)
+{
+	// (a door's piece is grown with no module of its own: potop_house
+	// clears it in a part's recipe)
+	return house->recipe->module_doors != 0 && (house->recipe->module[0] != '\0' || house->recipe->module_piece > HOUSE_DOOR_PIECE_BASE);
+}
+
+// Before a door's or a gate's leaf is made: hinge, the point on its hinges'
+// line (its foot) it turns round; along, from the hinges across the leaf
+// (shut); out, the way it swings open. Without moving doors: made as ever
+// (true). The building (module_piece 0): the leaf becomes a part of the
+// module there (its piece made apart, round its hinge), shut, then swung
+// 90 degrees toward out; not made here (false). Its own piece: made, kept
+// (door_leaf_end), the rest of the house dropped once it is made
+static bool door_leaf_begin(house_t *house, vec_t hinge, vec_t along, vec_t out)
+{
+	const house_recipe_t *recipe = house->recipe;
+	builder_t *builder = house->builder;
+	vec_t up = vec(0.0f, 1.0f, 0.0f);
+	int index;
+
+	if (!house_doors_move(house))
+	{
+		return true;
+	}
+	index = ++house->door_leaf_count;
+	if (recipe->module_piece == 0)
+	{
+		char name[32];
+		char piece_recipe[64];
+		int part;
+		// (+ round +Y turns along toward up x along)
+		float angle = dot(cross(up, along), out) >= 0.0f ? 90.0f : -90.0f;
+
+		if (house->door_leaf_count == 1)
+		{
+			house->door_state_closed = module_state(house, "closed", HOUSE_DOOR_SWING_SECONDS, HOUSE_DOOR_HOLD_SECONDS, -1);
+			house->door_state_open = module_state(house, "open", HOUSE_DOOR_SWING_SECONDS, HOUSE_DOOR_HOLD_SECONDS, -1);
+			if (house_module(house) != NULL && house->door_state_closed >= 0 && house->door_state_open >= 0)
+			{
+				house_module(house)->file.states[house->door_state_closed].next = house->door_state_open;
+				house_module(house)->file.states[house->door_state_open].next = house->door_state_closed;
+			}
+		}
+		snprintf(name, sizeof(name), "door%d", index);
+		snprintf(piece_recipe, sizeof(piece_recipe), ";module_piece=%d;interior=1", HOUSE_DOOR_PIECE_BASE + index);
+		part = module_part(house, name, piece_recipe, hinge, 0.0f, up, 0.0f, MODULE_PART_MOVES | MODULE_PART_SHADOW);
+		module_pose(house, house->door_state_closed, part, vec(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0);
+		module_pose(house, house->door_state_open, part, vec(0.0f, 0.0f, 0.0f), angle, 0.0f, 0);
+		return false;
+	}
+	if (recipe->module_piece == HOUSE_DOOR_PIECE_BASE + index)
+	{
+		house->door_capturing = true;
+		house->door_hinge = hinge;
+		house->door_vertex_first = builder->mesh->vertex_count;
+		for (int m = 0; m < HOUSE_MATERIAL_COUNT; m++)
+		{
+			for (int level = 0; level < HOUSE_LEVELS; level++)
+			{
+				house->door_index_first[m][level] = builder->lists[m][level].count;
+			}
+		}
+	}
+	return true;
+}
+
+// After the leaf: its piece's (if this was it) vertices and indices
+static void door_leaf_end(house_t *house)
+{
+	builder_t *builder = house->builder;
+
+	if (!house->door_capturing)
+	{
+		return;
+	}
+	house->door_capturing = false;
+	house->door_captured = true;
+	house->door_vertex_end = builder->mesh->vertex_count;
+	for (int m = 0; m < HOUSE_MATERIAL_COUNT; m++)
+	{
+		for (int level = 0; level < HOUSE_LEVELS; level++)
+		{
+			house->door_index_end[m][level] = builder->lists[m][level].count;
+		}
+	}
+}
+
+// A door's piece made: the house dropped but its leaf, moved so its hinge
+// is the origin (the module turns it there); its spots, anchors and
+// effects the building's, not the leaf's
+static void door_piece_keep(house_t *house)
+{
+	builder_t *builder = house->builder;
+	house_mesh_t *mesh = builder->mesh;
+	size_t first = house->door_vertex_first;
+	size_t count = house->door_vertex_end - first;
+
+	for (size_t i = 0; i < count; i++)
+	{
+		object_file_vertex_t *vertex = &mesh->vertices[first + i];
+
+		mesh->vertices[i] = *vertex;
+		mesh->weathering[i] = mesh->weathering[first + i];
+		mesh->vertices[i].position[0] -= house->door_hinge.x;
+		mesh->vertices[i].position[1] -= house->door_hinge.y;
+		mesh->vertices[i].position[2] -= house->door_hinge.z;
+	}
+	mesh->vertex_count = count;
+	for (int m = 0; m < HOUSE_MATERIAL_COUNT; m++)
+	{
+		for (int level = 0; level < HOUSE_LEVELS; level++)
+		{
+			index_list_t *list = &builder->lists[m][level];
+			size_t from = house->door_index_first[m][level];
+			size_t to = house->door_index_end[m][level];
+
+			for (size_t k = from; k < to; k++)
+			{
+				list->indices[k - from] = list->indices[k] - (uint32_t)first;
+			}
+			list->count = to - from;
+		}
+	}
+	mesh->spot_count = 0;
+	mesh->anchor_count = 0;
+	mesh->effect_count = 0;
+	mesh->emissive_group_count = 0;
+}
+
+// A door on a wall with no hole behind it (a hut's door painted on its
+// boards): moving, the dark of a doorway behind it, a little in from its
+// foot (where it was), so it swings open on something
+static void door_dark(house_t *house, vec_t foot, vec_t along, vec_t out, float width, float height)
+{
+	vec_t at = add(foot, scale(out, 0.004f));
+	vec_t p[4] = { add(at, scale(along, -width * 0.5f)), add(at, scale(along, width * 0.5f)), add(add(at, scale(along, width * 0.5f)), vec(0.0f, height, 0.0f)),
+		add(add(at, scale(along, -width * 0.5f)), vec(0.0f, height, 0.0f)) };
+	float uv[4][2] = { { 0.0f, 0.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f }, { 0.0f, 1.0f } };
+
+	quad_outward(house->builder, HOUSE_MATERIAL_GLASS, LEVEL_FULL | LEVEL_MEDIUM | LEVEL_LOW, p, uv, sub(at, out));
+}
 
 // Where the house covers the ground: its base, or its walls standing on it
 // (the ground inside never seen), the terrain left undrawn there and no
@@ -16088,6 +16252,13 @@ static void hut_door(house_t *house, vec_t foot, vec_t along, vec_t out, float w
 	vec_t up = vec(0.0f, 1.0f, 0.0f);
 	int boards = maximum_of(3, (int)(width / 0.14f));
 
+	// (moving doors: its hinges on its -along side, where the straps
+	// start; swung out; the dark of a doorway behind it)
+	if (!door_leaf_begin(house, sub(foot, scale(along, width * 0.5f)), along, out))
+	{
+		door_dark(house, foot, along, out, width, height);
+		return;
+	}
 	roof_wood(house, true);
 	for (int b = 0; b < boards; b++)
 	{
@@ -16107,6 +16278,7 @@ static void hut_door(house_t *house, vec_t foot, vec_t along, vec_t out, float w
 		box(builder, HOUSE_MATERIAL_IRON, LEVEL_FULL, &hinge, 0.0f, 0, 0.5f, 0.0f, 0.0f);
 	}
 	roof_wood(house, false);
+	door_leaf_end(house);
 }
 
 // A light fence of thin poles: posts every so often, three laths along,
@@ -16211,10 +16383,22 @@ static void hen_feeder(house_t *house, vec_t at, float half_length)
 static void picket_gate(house_t *house, vec_t hinge, float swing, float width, float height)
 {
 	vec_t up = vec(0.0f, 1.0f, 0.0f);
-	vec_t along = vec(cosf(swing), 0.0f, sinf(swing));
-	vec_t across = cross(along, up);
+	vec_t along;
+	vec_t across;
 	int pickets = maximum_of(4, (int)(width / 0.09f));
+	// (moving doors: made shut, swung the way it stood ajar)
+	vec_t swing_way = vec(0.0f, 0.0f, swing >= 0.0f ? 1.0f : -1.0f);
 
+	if (house_doors_move(house))
+	{
+		swing = 0.0f;
+	}
+	along = vec(cosf(swing), 0.0f, sinf(swing));
+	across = cross(along, up);
+	if (!door_leaf_begin(house, hinge, along, swing_way))
+	{
+		return;
+	}
 	roof_wood(house, true);
 	for (int l = 0; l < 2; l++)
 	{
@@ -16235,6 +16419,7 @@ static void picket_gate(house_t *house, vec_t hinge, float swing, float width, f
 
 		yard_log(house, LEVEL_FULL, add(at, vec(0.0f, 0.04f, 0.0f)), add(at, vec(0.0f, height, 0.0f)), 0.016f, 5);
 	}
+	door_leaf_end(house);
 }
 
 // The hen house: a farm's, a man walks into it: a long box of boards on
@@ -16552,6 +16737,11 @@ static void workshop_pigsty(house_t *house)
 			vec_t out = vec(0.0f, 0.0f, 1.0f);
 			float width = 0.9f;
 
+			// (moving doors: each a part, swung out)
+			if (!door_leaf_begin(house, hinge, along, out))
+			{
+				continue;
+			}
 			roof_wood(house, true);
 			for (int b = 0; b < 4; b++)
 			{
@@ -16573,6 +16763,7 @@ static void workshop_pigsty(house_t *house)
 				timber(house, LEVEL_FULL | LEVEL_MEDIUM, &brace, 0);
 			}
 			roof_wood(house, false);
+			door_leaf_end(house);
 		}
 		yard_trough(house, vec(-3.0f, 0.0f, z1 - 0.45f), vec(1.0f, 0.0f, 0.0f), 1.6f);
 		yard_trough(house, vec(3.0f, 0.0f, z1 - 0.45f), vec(1.0f, 0.0f, 0.0f), 1.6f);
@@ -17528,7 +17719,12 @@ static void cabin_opening_frame(house_t *house, const cabin_t *cabin, vec_t orig
 	{
 		door_spot(house, add(middle, add(vec(0.0f, bottom, 0.0f), scale(out, cabin->door_forward))), out);
 	}
-	if (opening->door && opening->half_door)
+	if (opening->door && (opening->half_door || opening->open) && house_doors_move(house))
+	{
+		// (moving doors: shut, swung by the module)
+		hut_door(house, add(middle, add(vec(0.0f, bottom, 0.0f), scale(out, cabin->door_forward))), along, out, opening->half_width * 2.0f, top - bottom);
+	}
+	else if (opening->door && opening->half_door)
 	{
 		// (the lower leaf shut; the upper swung out flat to the wall on its
 		// hinges' side)
@@ -18643,12 +18839,17 @@ static void farm_gate(house_t *house, vec_t a, vec_t along, float width)
 
 		yard_log(house, LEVEL_FULL | LEVEL_MEDIUM | LEVEL_LOW, add(at, vec(0.0f, -0.4f, 0.0f)), add(at, vec(0.0f, 1.5f, 0.0f)), 0.1f, 8);
 	}
-	roof_wood(house, true);
 	for (int l = 0; l < 2; l++)
 	{
 		vec_t hinge = add(a, scale(along, l == 0 ? 0.0f : width));
 		vec_t dir = scale(along, l == 0 ? 1.0f : -1.0f);
 
+		// (moving doors: each leaf a part, swung out)
+		if (!door_leaf_begin(house, hinge, dir, out))
+		{
+			continue;
+		}
+		roof_wood(house, true);
 		for (int b = 0; b < 5; b++)
 		{
 			float y = 0.2f + 0.24f * (float)b;
@@ -18668,8 +18869,9 @@ static void farm_gate(house_t *house, vec_t a, vec_t along, float width)
 
 			timber(house, LEVEL_FULL | LEVEL_MEDIUM, &brace, 0);
 		}
+		roof_wood(house, false);
+		door_leaf_end(house);
 	}
-	roof_wood(house, false);
 }
 
 // The dung heap against a wall (its face at wall_x, out toward -X), its
@@ -22516,6 +22718,11 @@ static bool grow(const house_recipe_t *recipe, const char *data_directory, house
 		ivy(&house);
 	}
 built:
+	// (a door's piece: its leaf alone)
+	if (house.door_captured)
+	{
+		door_piece_keep(&house);
+	}
 	footprints(&house);
 	collision_shell(&house);
 	if (!recipe->interior && bake)
@@ -23268,6 +23475,7 @@ static const setting_t settings[] =
 	{ "mill_height", SETTING_FLOAT, offsetof(house_recipe_t, mill_height), "a mill's body's floor over the ground (meters)" },
 	{ "crib_size", SETTING_INT, offsetof(house_recipe_t, crib_size), "a corn crib (workshop 12): 1 a household's, 4.8 m long; 2 the village's, 12 by 4 m on three rows of posts, doors at both ends, a landing with steps, three hatches along its front" },
 	{ "charcoal_open", SETTING_INT, offsetof(house_recipe_t, charcoal_open), "a charcoal burner's clamp (workshop 6): 1 burnt out and being opened (its cover off the front, the charcoal raked out in a heap, rakes, no smoke but a wisp)" },
+	{ "module_doors", SETTING_INT, offsetof(house_recipe_t, module_doors), "1: its doors and gates its module's parts, each swung 90 degrees on its hinges (states closed, open: each held 10 s, then the other); needs module" },
 	{ "module_piece", SETTING_INT, offsetof(house_recipe_t, module_piece), "0: the building; N: only the Nth of its module's moving pieces (a quarry's crane: 1 its wheel, 2 a length of its rope, 3 its load), its origin what it turns round or hangs from (potop_house makes these for a module's parts)" },
 	{ "workshop", SETTING_INT, offsetof(house_recipe_t, workshop), "a trade's yard, not a house: an open shed and what the trade leaves round it: 1 a smelter (a bloomery, its bellows, charcoal, ore, slag), 2 a lumber yard (a sawing trestle, log piles, planks seasoning), 3 a carpenter's (benches, a timber rack, sawhorses, a cart wheel in the making), 4 a stonecutter's (bankers, a grindstone, blocks, shear legs), 5 a quarry's works (scaffolds, a treadwheel crane, blocks, a sledge); walls the sheds' boards, base the stone, floor the heaps' (charcoal, slag), log the logs' bark" },
 	{ "watermill", SETTING_INT, offsetof(house_recipe_t, watermill), "a water mill, not a house: 1 its house (a stone ground floor, a weatherboarded floor over it, a shingled roof, the sack hoist; the wheel's pier and bearing and the sluice gate out on its +X side), 2 its undershot wheel alone, a model of its own, its origin its middle (objects.ini spin round X through the watermill_hub anchor), 3 both standing still (to look at); width and depth the house's, floors and floor_height its timber floor's" },
