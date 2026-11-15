@@ -48,6 +48,9 @@
 //           edge over the next: the grain round its knots, checks, hand
 //           made nails and their rust, lichen along the edges, mold (and
 //           NAME_height.png, NAME_arm.png; --color: the wood's)
+//   timber  one face of worked wood (a beam's, a log's): fibers along it,
+//           lighter and darker bands, knots, long checks, a worm's holes
+//           (and NAME_height.png, NAME_arm.png; --color: the wood's)
 //
 // Options:
 //   --data DIR         the game's data directory (data)
@@ -4466,12 +4469,321 @@ static bool make_weatherboard(const texture_settings_t *settings, field_t *field
 }
 
 // ---------------------------------------------------------------------------
+// Timber: one face of worked wood all over the picture (a beam's, a log's,
+// a post's), its grain across it: fibers of every length (the long dark
+// lines where they have parted, fine ones between), broad lighter and
+// darker bands, the grain flowing round a few knots; long checks that
+// bend a little across the grain; a worm's hole here and there. It
+// repeats both ways: nothing in it knows where the picture ends.
+
+#define TIMBER_KNOTS 24
+#define TIMBER_CHECKS 64
+
+typedef struct
+{
+	float x;                           // meters
+	float y;                           // meters
+	float radius;                      // meters
+	float turn;                        // its rings' and checks' turn (radians)
+	float dead;                        // 0 a sound knot .. 1 a dead one
+} timber_knot_t;
+
+typedef struct
+{
+	float x;                           // its middle (meters)
+	float y;                           // which line of the grain it follows at its middle (meters)
+	float half_length;                 // meters
+	float width;                       // at its middle (meters)
+	float bend;                        // how far it bows across the grain (meters)
+	float sway;                        // and winds (meters)
+	float phase;                       // radians
+} timber_check_t;
+
+typedef struct
+{
+	float meters;
+	uint32_t seed;
+	int knot_count;
+	timber_knot_t knots[TIMBER_KNOTS];
+	int check_count;
+	timber_check_t checks[TIMBER_CHECKS];
+} timber_face_t;
+
+static void timber_lay(timber_face_t *face, const texture_settings_t *settings, float meters)
+{
+	uint32_t seed = hash_u32(settings->seed * 6151u + 29u);
+	int knots = (int)fminf(fmaxf(roundf(meters * meters * 0.55f), 1.0f), (float)TIMBER_KNOTS);
+	int checks = (int)fminf(fmaxf(roundf(meters * meters * 2.2f), 2.0f), (float)TIMBER_CHECKS);
+
+	face->meters = meters;
+	face->seed = settings->seed;
+	for (int k = 0; k < knots; k++)
+	{
+		timber_knot_t *knot = &face->knots[face->knot_count];
+		bool clear = true;
+
+		knot->x = hash_unit(k, 1, seed) * meters;
+		knot->y = hash_unit(k, 2, seed) * meters;
+		knot->radius = fminf(0.018f + 0.02f * powf(hash_unit(k, 3, seed), 1.5f), meters * 0.04f);
+		knot->turn = hash_unit(k, 4, seed) * 2.0f * PI_F;
+		knot->dead = hash_unit(k, 5, seed) < 0.3f ? 0.5f + 0.5f * hash_unit(k, 6, seed) : 0.3f * hash_unit(k, 6, seed);
+		// (not beside another one)
+		for (int other = 0; other < face->knot_count; other++)
+		{
+			if (fabsf(wrap_difference(face->knots[other].x, knot->x, meters)) < 0.3f
+				&& fabsf(wrap_difference(face->knots[other].y, knot->y, meters)) < 0.15f)
+			{
+				clear = false;
+			}
+		}
+		if (clear)
+		{
+			face->knot_count++;
+		}
+	}
+	for (int k = 0; k < checks; k++)
+	{
+		timber_check_t *check = &face->checks[face->check_count++];
+		float size = powf(hash_unit(k, 13, seed), 1.6f);
+
+		check->x = hash_unit(k, 11, seed) * meters;
+		check->y = hash_unit(k, 12, seed) * meters;
+		check->half_length = fminf(0.08f + 0.42f * size, meters * 0.3f);
+		check->width = 0.0018f + 0.004f * size;
+		check->bend = (hash_unit(k, 14, seed) * 2.0f - 1.0f) * 0.06f * (0.3f + size);
+		check->sway = (hash_unit(k, 15, seed) * 2.0f - 1.0f) * 0.02f;
+		check->phase = hash_unit(k, 16, seed) * 2.0f * PI_F;
+	}
+}
+
+// The face at a point: its height (meters), color and roughness
+static void timber_sample(const timber_face_t *face, const float wood[3], float x, float y, float *height_out, float color_out[3], float *roughness_out)
+{
+	float meters = face->meters;
+	uint32_t seed = face->seed;
+	float u = x / meters;
+	float v = y / meters;
+	// The grain's lines: across the picture, winding a little, pushed
+	// aside round each knot
+	float grain = y + 0.03f * stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.8f), 1.0f), (int)fmaxf(roundf(meters / 0.3f), 2.0f), 2, seed + 1u)
+		+ 0.006f * stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.22f), 2.0f), (int)fmaxf(roundf(meters / 0.07f), 4.0f), 2, seed + 2u);
+	float knot_body = 0.0f;
+	float knot_rim = 0.0f;
+	float knot_rings = 0.0f;
+	float knot_star = 0.0f;
+	float knot_dead = 0.0f;
+	float knot_eye = 0.0f;
+	float knot_middle = 0.0f;
+	float grain_v;
+	float check = 0.0f;
+	float check_near = 0.0f;
+	float height;
+	float color[3];
+	float roughness;
+
+	for (int k = 0; k < face->knot_count; k++)
+	{
+		const timber_knot_t *knot = &face->knots[k];
+		float dx = wrap_difference(knot->x, x, meters);
+		float dy = wrap_difference(knot->y, y, meters);
+		float reach = knot->radius * 2.2f;
+		float along = dx / 2.8f;
+		float window = (1.0f - smooth_step(0.2f * meters, 0.45f * meters, fabsf(dx))) * (1.0f - smooth_step(0.2f * meters, 0.45f * meters, fabsf(dy)));
+		float from = sqrtf(dx * dx / (1.25f * 1.25f) + dy * dy) / knot->radius;
+		float far = (along * along + dy * dy) / (reach * reach);
+
+		grain -= dy * window / (far + 1.0f);
+		// (the eye round it: the wood darker where the grain is pressed
+		// together above and under the knot, out to its points)
+		knot_eye = fmaxf(knot_eye, expf(-far * 0.9f));
+		if (from < 1.4f)
+		{
+			float angle = atan2f(dy, dx) + knot->turn;
+			float lumpy = cell_noise(dx / knot->radius * 1.7f + 9.0f, dy / knot->radius * 1.7f + 9.0f, 64, seed + 50u + (uint32_t)k);
+			float wobbled = from * (1.0f + 0.03f * sinf(2.0f * angle) + 0.1f * lumpy);
+			float body = 1.0f - smooth_step(0.7f, 1.0f, wobbled);
+			float rim = expf(-powf((wobbled - 1.0f) / 0.07f, 2.0f));
+			float rings = 0.5f + 0.5f * cosf(2.0f * PI_F * wobbled * knot->radius / 0.003f);
+			float star = 0.0f;
+
+			for (int j = 0; j < 4; j++)
+			{
+				float ray = angle - (float)j * 1.6f - 0.5f * sinf(knot->turn * 7.0f + (float)j);
+				float width = 0.001f * (1.0f - 0.7f * from);
+
+				if (cosf(ray) > 0.0f && width > 0.0f)
+				{
+					star = fmaxf(star, (1.0f - smooth_step(0.4f * width, width, from * knot->radius * fabsf(sinf(ray))))
+						* smooth_step(0.03f, 0.15f, from) * (1.0f - smooth_step(0.5f, 0.85f, from)));
+				}
+			}
+			if (body > knot_body)
+			{
+				knot_body = body;
+				knot_rings = rings;
+				knot_dead = knot->dead;
+				knot_middle = 1.0f - smooth_step(0.0f, 0.6f, wobbled);
+			}
+			knot_rim = fmaxf(knot_rim, rim * (0.45f + 0.55f * knot->dead));
+			knot_star = fmaxf(knot_star, star * (0.5f + 0.5f * knot->dead));
+		}
+	}
+	grain_v = grain / meters;
+	// Checks: each along the grain at its middle, bowing and winding
+	// across it, widest there, drawn out to nothing
+	for (int k = 0; k < face->check_count; k++)
+	{
+		const timber_check_t *crack = &face->checks[k];
+		float dx = wrap_difference(crack->x, x, meters);
+		float part;
+		float width;
+		float off;
+
+		if (fabsf(dx) >= crack->half_length)
+		{
+			continue;
+		}
+		part = dx / crack->half_length;
+		width = crack->width * powf(1.0f - part * part, 0.7f);
+		off = fabsf(wrap_difference(crack->y, grain, meters) - crack->bend * (part * part - 0.4f) - crack->sway * sinf(2.5f * part + crack->phase));
+		check = fmaxf(check, 1.0f - smooth_step(0.25f * width, width, off));
+		check_near = fmaxf(check_near, (1.0f - smooth_step(width, width * 5.0f, off)) * (1.0f - part * part));
+	}
+	{
+		// Its wood: bands, streaks, fibers, each finer than the last, all
+		// along the grain; the long dark lines and the fine ones where
+		// the fibers have parted; furrows between the rings, running into
+		// each other
+		float bands = stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 1.5f), 1.0f), (int)fmaxf(roundf(meters / 0.14f), 2.0f), 3, seed + 11u);
+		float streaks = stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 1.2f), 1.0f), (int)fmaxf(roundf(meters / 0.03f), 8.0f), 4, seed + 12u);
+		float fibers = stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 0.35f), 2.0f), (int)fmaxf(roundf(meters / 0.006f), 16.0f), 3, seed + 13u);
+		float fine = stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 0.04f), 8.0f), (int)fmaxf(roundf(meters / 0.0014f), 16.0f), 2, seed + 14u);
+		float long_lines = 1.0f - smooth_step(0.01f, 0.07f, fabsf(stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 1.4f), 1.0f),
+			(int)fmaxf(roundf(meters / 0.022f), 8.0f), 4, seed + 15u)));
+		// (and whole dark streaks, a few fibers wide)
+		float dark_streaks = smooth_step(0.1f, 0.5f, stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 2.0f), 1.0f),
+			(int)fmaxf(roundf(meters / 0.045f), 4.0f), 4, seed + 20u));
+		float short_lines = 1.0f - smooth_step(0.0f, 0.1f, fabsf(stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 0.1f), 4.0f),
+			(int)fmaxf(roundf(meters / 0.004f), 16.0f), 3, seed + 16u)));
+		float ring_count = fmaxf(roundf(meters / 0.018f), 4.0f);
+		float phase = grain_v * ring_count + 3.0f * stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 1.6f), 1.0f),
+			(int)fmaxf(roundf(meters / 0.05f), 4.0f), 2, seed + 17u);
+		float within = phase - floorf(phase);
+		float furrow = 1.0f - smooth_step(0.04f, 0.15f, fminf(within, 1.0f - within));
+		float grit = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.003f), 16.0f), 2, 0.6f, seed + 18u);
+		// (blotches that follow nothing: stains, wear, the weather's side)
+		float mottle = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.2f), 2.0f), 4, 0.6f, seed + 21u);
+		float pale = smooth_step(0.05f, 0.6f, stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 1.0f), 1.0f), (int)fmaxf(roundf(meters / 0.2f), 2.0f),
+			2, seed + 19u));
+		// (a worm's holes: few, small, black)
+		int hole_cells = (int)fmaxf(roundf(meters / 0.09f), 4.0f);
+		cells_t hole = tiling_cells(u, v, hole_cells, 0.9f, seed + 30u);
+		float hole_radius = (0.0009f + 0.0016f * hash_unit(hole.cell_x, hole.cell_y, seed + 31u)) * (float)hole_cells / meters;
+		float pit = hash_unit(hole.cell_x, hole.cell_y, seed + 32u) < 0.3f ? 1.0f - smooth_step(0.5f * hole_radius, hole_radius, hole.nearest) : 0.0f;
+		float open = 1.0f - knot_body;
+		float tone = (1.0f + 0.3f * bands) * (1.0f + 0.26f * streaks) * (1.0f + 0.24f * fibers) * (1.0f + 0.22f * fine)
+			* (1.0f - 0.5f * long_lines * open) * (1.0f - 0.3f * short_lines * open) * (1.0f - 0.25f * furrow * open) * (1.0f + 0.14f * grit)
+			* (1.0f + 0.2f * mottle)
+			* (1.0f - 0.3f * dark_streaks) * (1.0f - 0.4f * knot_eye) * (1.0f - 0.25f * check_near);
+		// (the dark wood redder, the light yellower and duller: the red
+		// falls slowest as it darkens, the blue fastest)
+		float luminance;
+
+		tone = powf(fmaxf(tone, 0.05f), 1.1f);
+		color[0] = wood[0] * powf(tone, 0.85f);
+		color[1] = wood[1] * tone;
+		color[2] = wood[2] * powf(tone, 1.3f);
+		// (weathered pale in patches: toward a dull straw)
+		luminance = color[0] * 0.3f + color[1] * 0.59f + color[2] * 0.11f;
+		color[0] = mix_float(color[0], luminance * 1.32f, 0.5f * pale);
+		color[1] = mix_float(color[1], luminance * 1.12f, 0.5f * pale);
+		color[2] = mix_float(color[2], luminance * 0.86f, 0.5f * pale);
+		height = 0.0015f * bands + 0.001f * streaks + 0.0007f * fibers + 0.0002f * fine + 0.0001f * grit - 0.0006f * dark_streaks
+			- (0.0008f * long_lines + 0.0003f * short_lines + 0.0006f * furrow) * open - 0.004f * check - 0.002f * pit
+			+ knot_body * (0.0006f + 0.0003f * knot_rings) - 0.0014f * knot_rim - 0.0012f * knot_star;
+		roughness = 0.8f + 0.06f * long_lines + 0.05f * grit - 0.04f * fine;
+		if (knot_body > 0.0f || knot_rim > 0.0f)
+		{
+			float dark = mix_float(0.62f, 0.36f, knot_dead) * (0.7f + 0.45f * knot_rings) * (1.0f - 0.35f * knot_middle) * (1.0f + 0.3f * mottle + 0.2f * grit);
+			float knot_color[3] = { wood[0] * dark * 1.04f, wood[1] * dark * 0.9f, wood[2] * dark * 0.78f };
+
+			for (int k = 0; k < 3; k++)
+			{
+				color[k] = mix_float(color[k], knot_color[k], knot_body) * (1.0f - 0.6f * knot_rim) * (1.0f - 0.7f * knot_star);
+			}
+			roughness = mix_float(roughness, 0.7f, knot_body);
+		}
+		for (int k = 0; k < 3; k++)
+		{
+			color[k] *= (1.0f - 0.85f * check) * (1.0f - 0.8f * pit);
+		}
+	}
+	*height_out = height;
+	memcpy(color_out, color, sizeof(color));
+	*roughness_out = clamp_unit(roughness);
+}
+
+static bool make_timber(const texture_settings_t *settings, field_t *field)
+{
+	int size = field->size;
+	float pixel_meters = field->meters / (float)size;
+	timber_face_t *face = calloc(1, sizeof(timber_face_t));
+
+	if (face == NULL)
+	{
+		fprintf(stderr, "potop_texture: out of memory\n");
+		return false;
+	}
+	timber_lay(face, settings, field->meters);
+	// (each pixel the average of four points in it: the fibers and the
+	// checks are finer than a pixel)
+#pragma omp parallel for schedule(dynamic, 8)
+	for (int y = 0; y < size; y++)
+	{
+		for (int x = 0; x < size; x++)
+		{
+			int index = y * size + x;
+			float height_sum = 0.0f;
+			float color_sum[3] = { 0.0f, 0.0f, 0.0f };
+			float roughness_sum = 0.0f;
+
+			for (int s = 0; s < 4; s++)
+			{
+				float height;
+				float color[3];
+				float roughness;
+
+				timber_sample(face, settings->color, ((float)x + 0.25f + 0.5f * (float)(s & 1)) * pixel_meters,
+					((float)y + 0.25f + 0.5f * (float)(s >> 1)) * pixel_meters, &height, color, &roughness);
+				height_sum += height;
+				roughness_sum += roughness;
+				for (int k = 0; k < 3; k++)
+				{
+					color_sum[k] += color[k];
+				}
+			}
+			field->height[index] = height_sum * 0.25f;
+			field->roughness[index] = roughness_sum * 0.25f;
+			for (int k = 0; k < 3; k++)
+			{
+				field->color[index * 3 + k] = color_sum[k] * 0.25f;
+			}
+		}
+	}
+	free(face);
+	shade_hollows(field, (int)fminf(fmaxf(0.003f / pixel_meters, 2.0f), 6.0f), 0.003f, 0.45f);
+	bake_light(field, settings->baked_light);
+	match_average(field, settings->color);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
 
 static void usage(void)
 {
 	fprintf(stderr, "potop_texture [--data DIR] [--size N] [--meters M] [--seed N] [--color R,G,B]\n"
 		"              [--grain MM] [--ripples M] [--ripple-height M] [--plates M] [--boards M] [--moss A] [--baked-light A] [--puddles A] [--height]\n"
-		"              sand|clay|mud|grass|rock|canyon|granite|stone|dirt|relief|wet_sand|wet_dirt|needles|leaves|trampled|petals|snow|drystone|coursed|weatherboard NAME\n");
+		"              sand|clay|mud|grass|rock|canyon|granite|stone|dirt|relief|wet_sand|wet_dirt|needles|leaves|trampled|petals|snow|drystone|coursed|weatherboard|timber NAME\n");
 }
 
 int main(int argument_count, char **arguments)
@@ -4578,6 +4890,7 @@ int main(int argument_count, char **arguments)
 			{ "drystone", 3.0f, { 0.49f, 0.446f, 0.384f } },
 			{ "coursed", 3.0f, { 0.87f, 0.845f, 0.81f } },
 			{ "weatherboard", 1.8f, { 0.30f, 0.245f, 0.20f } },
+			{ "timber", 2.0f, { 0.464f, 0.304f, 0.168f } },
 		};
 		bool known = false;
 
@@ -4598,7 +4911,7 @@ int main(int argument_count, char **arguments)
 		}
 		if (!known)
 		{
-			fprintf(stderr, "potop_texture: no kind '%s' (sand, clay, mud, grass, rock, canyon, granite, stone, dirt, relief, wet_sand, wet_dirt, needles, leaves, trampled, petals, snow, drystone, coursed, weatherboard)\n", kind);
+			fprintf(stderr, "potop_texture: no kind '%s' (sand, clay, mud, grass, rock, canyon, granite, stone, dirt, relief, wet_sand, wet_dirt, needles, leaves, trampled, petals, snow, drystone, coursed, weatherboard, timber)\n", kind);
 			return 1;
 		}
 	}
@@ -4697,12 +5010,17 @@ int main(int argument_count, char **arguments)
 	{
 		ok = make_weatherboard(&settings, &field);
 	}
+	else if (strcmp(kind, "timber") == 0)
+	{
+		ok = make_timber(&settings, &field);
+	}
 	else
 	{
 		ok = make_dirt(&settings, &field);
 	}
 	{
-		bool drystone = strcmp(kind, "drystone") == 0 || strcmp(kind, "coursed") == 0 || strcmp(kind, "weatherboard") == 0;
+		bool drystone = strcmp(kind, "drystone") == 0 || strcmp(kind, "coursed") == 0 || strcmp(kind, "weatherboard") == 0
+			|| strcmp(kind, "timber") == 0;
 
 		ok = ok && write_field(&field, data_directory, name, settings.write_height || drystone || strcmp(kind, "relief") == 0,
 			strcmp(kind, "relief") != 0 && !drystone, drystone);
