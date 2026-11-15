@@ -275,7 +275,13 @@ static void pick_door(game_t *game, potop_t *potop)
 				int gate = shut_door_on_way(game, potop, &gate_swing_side);
 				potop_door_info_t gate_info;
 
-				if (gate >= 0 && gate != pick && potop_door_info(potop, farmer->doors[gate].building, farmer->doors[gate].door, &gate_info))
+				// (the way to this side goes through the door itself, shut:
+				// not this side; a shut door is not walked through)
+				if (gate == pick)
+				{
+					continue;
+				}
+				if (gate >= 0 && potop_door_info(potop, farmer->doors[gate].building, farmer->doors[gate].door, &gate_info))
 				{
 					door_spot(&gate_info, true, gate_swing_side, &farmer->spot_x, &farmer->spot_z, &farmer->spot_yaw, &farmer->approach_x,
 						&farmer->approach_z);
