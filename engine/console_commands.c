@@ -257,6 +257,34 @@ void console_run_command(console_t *console, potop_t *potop, const char *line, c
 		camera_go_to(&potop->camera, &potop->world.terrain, x, height, z);
 		say_where(potop);
 	}
+	else if (SDL_strcmp(command, "path") == 0)
+	{
+		// (from where you stand to x z, for an actor type: the points its
+		// walk would take)
+		float x;
+		float z;
+		float points[256][2];
+		bool complete = false;
+		int count;
+
+		if (!has_third || !read_number(second, &x) || !read_number(third, &z))
+		{
+			SDL_Log("path <actor type> <x> <z>  (from where you stand)");
+			return;
+		}
+		count = potop_find_path(potop, first, potop->camera.walker_x, potop->camera.walker_z, x, z, points, 256, &complete);
+		SDL_Log("path for %s from %.2f %.2f to %.2f %.2f: %d points%s", first, potop->camera.walker_x, potop->camera.walker_z, x, z, count,
+			complete ? "" : " (not all the way)");
+		for (int k = 0; k < count; k++)
+		{
+			int type = actors_find_type(&potop->world.actors, first);
+			navigation_agent_t agent = actors_agent(&potop->world.actors, type);
+			float ground = terrain_sample_height_meters(&potop->world.terrain, points[k][0], points[k][1]);
+
+			SDL_Log("  %.2f %.2f  (ground %.2f, its surface %.2f)", points[k][0], points[k][1], ground,
+				navigation_surface_height(&potop->world.navigation, &potop->world.terrain, &agent, points[k][0], points[k][1], ground + 0.5f));
+		}
+	}
 	else if (SDL_strcmp(command, "module") == 0)
 	{
 		objects_t *objects = &potop->world.objects;
