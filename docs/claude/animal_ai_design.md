@@ -65,8 +65,8 @@ ONLY about the boredom walk; the other activities come later.
 
 ## Still to discuss
 
-- 4: the herd (a "lonely" need biasing the heading choice toward the
-  group: big for sheep, small for cows, none for the bear).
+- 4: the herd: NOT needed now (Radu: the yards are tiny, they are never
+  alone in them). Maybe later for open pasture or wild herds.
 - 5: how the engine takes "walk this way" (a point 1-2 m ahead each tick,
   or a heading and speed given to actors.c straight).
 - 6: staggering (agreed in principle).
