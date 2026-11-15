@@ -71,6 +71,19 @@ const module_file_t *objects_module_of(const objects_t *objects, int instance_in
 	return &objects->types.modules[type->module];
 }
 
+// A door part's state: the module's "open" or "closed" (failing that its
+// second or its first)
+static int door_state(const module_file_t *module, bool open)
+{
+	int state = module_file_find_state(module, open ? "open" : "closed");
+
+	if (state < 0)
+	{
+		state = open ? SDL_min(1, module->state_count - 1) : module->first_state;
+	}
+	return state;
+}
+
 // How far a change of state got, eased in and out
 static float eased(float progress)
 {
@@ -82,14 +95,16 @@ static float eased(float progress)
 // Where a part stands as its module stands now: its place, its turn,
 // whether it is there, how fast it spins (a share of its rpm)
 static void part_pose(const objects_t *objects, const object_instance_t *module_instance, const module_file_t *module, int part,
-	double turns, float position_out[3], float rotation_out[4], bool *hidden_out, float *spin_out)
+	const object_instance_t *part_instance, double turns, float position_out[3], float rotation_out[4], bool *hidden_out, float *spin_out)
 {
 	const module_file_part_t *file_part = &module->parts[part];
-	int from = SDL_min((int)module_instance->module_state, module->state_count - 1);
-	int to = SDL_min((int)module_instance->module_target, module->state_count - 1);
+	// (a door: its own state, closed or open, in the part's own fields)
+	const object_instance_t *stater = (file_part->flags & MODULE_PART_DOOR) != 0 && part_instance != NULL ? part_instance : module_instance;
+	int from = SDL_min((int)stater->module_state, module->state_count - 1);
+	int to = SDL_min((int)stater->module_target, module->state_count - 1);
 	const module_file_pose_t *a = &module->poses[from][part];
 	const module_file_pose_t *b = &module->poses[to][part];
-	float t = from == to ? 1.0f : eased(module_instance->module_progress);
+	float t = from == to ? 1.0f : eased(stater->module_progress);
 	float local[3];
 	float turned[3];
 	float yaw[4];
@@ -131,7 +146,7 @@ static void place_part(objects_t *objects, int module_index, int part_index)
 	{
 		return;
 	}
-	part_pose(objects, module_instance, module, part->module_part, part->module_turns, position, rotation, &hidden, &spin);
+	part_pose(objects, module_instance, module, part->module_part, part, part->module_turns, position, rotation, &hidden, &spin);
 	part->x = position[0];
 	part->z = position[2];
 	part->ground_height = module_instance->ground_height;
@@ -199,7 +214,7 @@ void object_modules_place_parts(objects_t *objects, const terrain_t *terrain, in
 		}
 		// (the list may move as it grows: the module looked up again each time)
 		module_instance = &objects->instances[module_index];
-		part_pose(objects, module_instance, module, p, 0.0, position, rotation, &hidden, &spin);
+		part_pose(objects, module_instance, module, p, NULL, 0.0, position, rotation, &hidden, &spin);
 		if (!objects_add_lifted(objects, terrain, type, position[0], position[2], module_instance->yaw_radians, module_instance->scale, group, 0.0f))
 		{
 			continue;
@@ -214,6 +229,15 @@ void object_modules_place_parts(objects_t *objects, const terrain_t *terrain, in
 		part->module_id = module_id;
 		part->module_part = (uint8_t)p;
 		part->module_turns = 0.0;
+		// (a door: shut to begin with, its own state from then on)
+		if ((module->parts[p].flags & MODULE_PART_DOOR) != 0)
+		{
+			int closed = door_state(module, false);
+
+			part->module_state = (uint8_t)closed;
+			part->module_target = (uint8_t)closed;
+			part->module_progress = 1.0f;
+		}
 		place_part(objects, module_index, index);
 	}
 }
@@ -476,6 +500,28 @@ void objects_update_modules(objects_t *objects, float seconds)
 			{
 				continue;
 			}
+			// A door: swinging on its own, to its own state
+			if ((module->parts[part->module_part].flags & MODULE_PART_DOOR) != 0)
+			{
+				if (part->module_target != part->module_state)
+				{
+					float length = module->states[SDL_min((int)part->module_target, module->state_count - 1)].seconds;
+
+					part->module_progress = length > 1e-4f ? part->module_progress + seconds / length : 1.0f;
+					if (part->module_progress >= 1.0f)
+					{
+						part->module_state = part->module_target;
+						part->module_progress = 1.0f;
+					}
+					place_part(objects, module_index, part_index);
+					moved = true;
+				}
+				else if (follow)
+				{
+					place_part(objects, module_index, part_index);
+				}
+				continue;
+			}
 			if (moves)
 			{
 				const module_file_part_t *file_part = &module->parts[part->module_part];
@@ -576,4 +622,173 @@ int objects_nearest_module(const objects_t *objects, float x, float z, float rad
 		}
 	}
 	return nearest;
+}
+
+// A module's door part (MODULE_PART_DOOR) by its module's id and its part
+// number; -1 if it is none
+static int find_door(objects_t *objects, uint32_t module_id, int door_part)
+{
+	int module_index = objects_find_id(objects, module_id);
+	const module_file_t *module = objects_module_of(objects, module_index);
+
+	if (module == NULL || door_part <= 0 || door_part >= module->part_count || (module->parts[door_part].flags & MODULE_PART_DOOR) == 0)
+	{
+		return -1;
+	}
+	for (int i = 0; i < objects->instance_count; i++)
+	{
+		const object_instance_t *part = &objects->instances[i];
+
+		if ((part->state & OBJECT_STATE_PART) != 0 && part->module_id == module_id && part->module_part == door_part)
+		{
+			return i;
+		}
+	}
+	return -1;
+}
+
+bool objects_set_door(objects_t *objects, uint32_t module_id, int door_part, bool open)
+{
+	int part_index = find_door(objects, module_id, door_part);
+	const module_file_t *module;
+	object_instance_t *part;
+	int state;
+
+	if (part_index < 0)
+	{
+		return false;
+	}
+	module = objects_module_of(objects, objects_find_id(objects, module_id));
+	part = &objects->instances[part_index];
+	state = door_state(module, open);
+	if (part->module_target == (uint8_t)state)
+	{
+		return true;
+	}
+	// (turned back on the way: back from where it got)
+	if (part->module_target != part->module_state)
+	{
+		part->module_state = part->module_target;
+		part->module_progress = 1.0f - part->module_progress;
+	}
+	else
+	{
+		part->module_progress = 0.0f;
+	}
+	part->module_target = (uint8_t)state;
+	return true;
+}
+
+int objects_door(objects_t *objects, uint32_t module_id, int door_part)
+{
+	int part_index = find_door(objects, module_id, door_part);
+	const module_file_t *module;
+
+	if (part_index < 0)
+	{
+		return -1;
+	}
+	module = objects_module_of(objects, objects_find_id(objects, module_id));
+	return objects->instances[part_index].module_target == (uint8_t)door_state(module, true) ? 1 : 0;
+}
+
+int objects_door_find(objects_t *objects, uint32_t module_id, const char *name)
+{
+	const module_file_t *module = objects_module_of(objects, objects_find_id(objects, module_id));
+
+	if (module == NULL || name == NULL)
+	{
+		return -1;
+	}
+	for (int p = 1; p < module->part_count; p++)
+	{
+		if ((module->parts[p].flags & MODULE_PART_DOOR) != 0 && SDL_strcmp(module->parts[p].name, name) == 0)
+		{
+			return p;
+		}
+	}
+	return -1;
+}
+
+bool objects_door_at(objects_t *objects, vec3_t origin, vec3_t direction, float maximum_distance, uint32_t *module_id_out, int *door_part_out,
+	float *distance_out)
+{
+	float best = maximum_distance;
+	bool found = false;
+
+	if (!objects->module_list_valid || objects->module_generation != objects->generation)
+	{
+		rebuild_list(objects);
+	}
+	for (int m = 0; m < objects->module_count; m++)
+	{
+		int first = objects->module_entries[m];
+		int last = objects->module_entries[m + 1];
+		int module_index = objects->module_indices[first];
+		const module_file_t *module = objects_module_of(objects, module_index);
+
+		if (module == NULL)
+		{
+			continue;
+		}
+		for (int k = first + 1; k < last; k++)
+		{
+			const object_instance_t *part = &objects->instances[objects->module_indices[k]];
+			const object_type_t *type = &objects->types.types[part->type];
+			const object_model_t *model;
+			float inverse[4] = { -part->rotation[0], -part->rotation[1], -part->rotation[2], part->rotation[3] };
+			float from[3];
+			float way[3];
+			float local_from[3];
+			float local_way[3];
+			float near = 0.0f;
+			float far = best;
+			bool through = true;
+
+			if (part->module_part >= module->part_count || (module->parts[part->module_part].flags & MODULE_PART_DOOR) == 0 || type->model < 0
+				|| part->scale <= 0.0f)
+			{
+				continue;
+			}
+			model = &objects->models[type->model];
+			// The ray in the part's own frame (unturned, unscaled): its
+			// model's bounds a box there
+			from[0] = (origin.x - part->x) / part->scale;
+			from[1] = (origin.y - part->y) / part->scale;
+			from[2] = (origin.z - part->z) / part->scale;
+			way[0] = direction.x;
+			way[1] = direction.y;
+			way[2] = direction.z;
+			quaternion_rotate(inverse, from, local_from);
+			quaternion_rotate(inverse, way, local_way);
+			for (int axis = 0; axis < 3 && through; axis++)
+			{
+				float minimum = (&model->bounds_minimum.x)[axis] - 0.03f;
+				float maximum = (&model->bounds_maximum.x)[axis] + 0.03f;
+
+				if (SDL_fabsf(local_way[axis]) < 1e-6f)
+				{
+					through = local_from[axis] >= minimum && local_from[axis] <= maximum;
+				}
+				else
+				{
+					float t0 = (minimum - local_from[axis]) / local_way[axis] * part->scale;
+					float t1 = (maximum - local_from[axis]) / local_way[axis] * part->scale;
+
+					near = SDL_max(near, SDL_min(t0, t1));
+					far = SDL_min(far, SDL_max(t0, t1));
+					through = near <= far;
+				}
+			}
+			if (through && near < best)
+			{
+				best = near;
+				found = true;
+				*module_id_out = objects->instances[module_index].id;
+				*door_part_out = part->module_part;
+				*distance_out = near;
+			}
+		}
+	}
+	return found;
 }

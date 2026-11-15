@@ -678,7 +678,8 @@ typedef enum
 	POTOP_TARGET_HARVEST,          // something to pick from (a plant, a tree): item, any_left
 	POTOP_TARGET_GROUND_ITEM,      // something lying there: container (what it holds)
 	POTOP_TARGET_ACTOR,            // actor_id, actor_dead
-	POTOP_TARGET_OBJECT            // something on the map the game can do something with (a door, a chest): object_id
+	POTOP_TARGET_OBJECT,           // something on the map the game can do something with (a chest, a mine): object_id
+	POTOP_TARGET_DOOR              // a building's door or gate: object_id (the building's), door, door_open
 } potop_target_kind_t;
 
 typedef struct
@@ -691,7 +692,9 @@ typedef struct
 	uint32_t object_id;            // HARVEST, GROUND_ITEM, OBJECT: the object's id
 	uint32_t actor_id;             // ACTOR
 	bool actor_dead;
-	uint32_t owner;                // HARVEST, GROUND_ITEM, OBJECT: whose it is (an actor's game number; 0: no one's)
+	uint32_t owner;                // HARVEST, GROUND_ITEM, OBJECT, DOOR: whose it is (an actor's game number; 0: no one's)
+	int door;                      // DOOR: which of the building's doors (for potop_door_set)
+	bool door_open;                // DOOR: open (or opening)
 } potop_target_t;
 
 typedef enum
@@ -749,6 +752,18 @@ typedef struct
 
 // What the eye is on now (looked for again by each call)
 void potop_player_find_target(potop_t *potop, potop_target_t *target_out);
+
+// Doors and gates: a building's (a module's parts made doors: a farm's
+// byre, pigsty, hen house, stana), each closed or open on its own; by the
+// building's object id and which door (potop_target_t.door, or
+// potop_door_find). The player's E and any actor (a farmer) the same way.
+// Set: it swings there; false if there is no such door
+bool potop_door_set(potop_t *potop, uint32_t object_id, int door, bool open);
+// 1 open (or opening), 0 closed (or closing), -1 no such door
+int potop_door_get(potop_t *potop, uint32_t object_id, int door);
+// A building's door by its name ("door1", "door2", ... in the order the
+// house generator made them); -1 if none
+int potop_door_find(potop_t *potop, uint32_t object_id, const char *name);
 // Picks from the target found last (POTOP_TARGET_HARVEST) into the pack;
 // the item and how many went in
 potop_pick_result_t potop_player_pick(potop_t *potop, int *item_out, int *count_out);

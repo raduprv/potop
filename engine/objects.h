@@ -603,6 +603,20 @@ const module_file_t *objects_module_of(const objects_t *objects, int instance_in
 int objects_module_state(objects_t *objects, uint32_t id, int *going_to);
 // The module nearest (x, z) within radius (an instance index, -1: none)
 int objects_nearest_module(const objects_t *objects, float x, float z, float radius);
+
+// Doors (a module's parts flagged MODULE_PART_DOOR: a farm's doors and
+// gates), each closed or open on its own, by its module's id and its part
+// number. Set: it swings there (its state's seconds; turned back on the
+// way, back from where it got); false if there is no such door
+bool objects_set_door(objects_t *objects, uint32_t module_id, int door_part, bool open);
+// 1 open (or opening), 0 closed (or closing), -1 no such door
+int objects_door(objects_t *objects, uint32_t module_id, int door_part);
+// A module's door by its part's name ("door1"); -1 if none
+int objects_door_find(objects_t *objects, uint32_t module_id, const char *name);
+// The nearest door along a ray (its model's bounds as it stands now),
+// within maximum_distance: its module's id, its part, how far; false if none
+bool objects_door_at(objects_t *objects, vec3_t origin, vec3_t direction, float maximum_distance, uint32_t *module_id_out, int *door_part_out,
+	float *distance_out);
 // (objects.c's: the parts placed after a module's body was added, at the
 // end of the list; a removal grown to whole modules; parts put back on
 // their module's ground)

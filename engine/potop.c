@@ -1012,12 +1012,29 @@ void potop_player_find_target(potop_t *potop, potop_target_t *target_out)
 	target_out->object_id = target->object_id;
 	target_out->actor_id = target->actor_id;
 	target_out->actor_dead = target->actor_dead;
+	target_out->door = target->door;
+	target_out->door_open = target->door_open;
 	if (target->object_id != 0)
 	{
 		int index = objects_find_id(&potop->world.objects, target->object_id);
 
 		target_out->owner = index >= 0 ? potop->world.objects.instances[index].owner : 0;
 	}
+}
+
+bool potop_door_set(potop_t *potop, uint32_t object_id, int door, bool open)
+{
+	return objects_set_door(&potop->world.objects, object_id, door, open);
+}
+
+int potop_door_get(potop_t *potop, uint32_t object_id, int door)
+{
+	return objects_door(&potop->world.objects, object_id, door);
+}
+
+int potop_door_find(potop_t *potop, uint32_t object_id, const char *name)
+{
+	return objects_door_find(&potop->world.objects, object_id, name);
 }
 
 potop_pick_result_t potop_player_pick(potop_t *potop, int *item_out, int *count_out)

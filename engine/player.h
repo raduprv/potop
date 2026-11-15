@@ -32,7 +32,8 @@ typedef enum
 	PLAYER_TARGET_HARVEST,         // an object to pick from (harvest.h): instance, item, any_left
 	PLAYER_TARGET_GROUND_ITEM,     // something lying there (ground_items.h): ground_item, its container
 	PLAYER_TARGET_ACTOR,           // an actor: actor_id, actor_dead
-	PLAYER_TARGET_OBJECT           // something the game can do something with (OBJECT_STATE_INTERACTIVE): instance
+	PLAYER_TARGET_OBJECT,          // something the game can do something with (OBJECT_STATE_INTERACTIVE): instance
+	PLAYER_TARGET_DOOR             // a module's door or gate: object_id (the module's), door (its part)
 } player_target_kind_t;
 
 typedef struct
@@ -47,6 +48,8 @@ typedef struct
 	uint32_t container;            // GROUND_ITEM: what it holds (inventories_t)
 	uint32_t actor_id;             // ACTOR
 	bool actor_dead;
+	int door;                      // DOOR: the module's part
+	bool door_open;                // DOOR: open (or opening)
 } player_target_t;
 
 typedef struct

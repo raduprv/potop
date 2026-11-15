@@ -462,3 +462,17 @@ door, the two pen gates; the pigs' holes have no leaves), hen_house 2
 (the door, the run's gate), stana 1 (the hut's door; the strunga is an
 opening). objects.ini: `module = NAME` in place of `model = NAME`.
 Moving parts have no body yet: the doors do not stop anyone.
+
+39o: the doors one by one, no cycle. MODULE_PART_DOOR (module_format.h,
+0x10): such a part keeps its own state in its own instance's
+module_state / module_target / module_progress (unused on parts before),
+poses from the module's "closed" and "open" states, swung over the target
+state's seconds (object_modules.c part_pose / objects_update_modules);
+shut when placed. objects_set_door / objects_door / objects_door_find /
+objects_door_at (the nearest door leaf along a ray: its model's bounds in
+the part's own frame, as it stands). potop_door_set / get / find for the
+game and any actor (the farmer). player_find_target: a door within reach,
+nearer than the object or the actor hit, is PLAYER_TARGET_DOOR (object_id
+the building's, door its part, door_open); game.c interact: "[E] Open" /
+"[E] Close", E toggles. The generator's doors: states with no hold and
+no next (no cycle), parts MOVES|SHADOW|DOOR.

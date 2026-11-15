@@ -324,6 +324,16 @@ static void interact(game_t *game, potop_t *potop, bool pressed)
 			}
 		}
 	}
+	else if (target.kind == POTOP_TARGET_DOOR)
+	{
+		// A door or a gate: E opens or shuts it (this game's rule: always;
+		// a lock, the owner's say, would go here)
+		SDL_strlcpy(prompt, target.door_open ? "[E] Close" : "[E] Open", sizeof(prompt));
+		if (pressed)
+		{
+			potop_door_set(potop, target.object_id, target.door, !target.door_open);
+		}
+	}
 	else if (is_mine)
 	{
 		// A mine: E takes it back (disarmed; this game's rule: always works)

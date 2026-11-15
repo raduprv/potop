@@ -310,10 +310,17 @@ void player_find_target(player_t *player, session_t *session, world_t *world, co
 	actor_hit_t hit;
 	bool actor_hit = actors_hit_test(&world->actors, eye, forward, SDL_max(player->reach_meters, player->talk_reach_meters), &hit);
 
+	uint32_t door_module = 0;
+	int door_part = -1;
+	float door_distance = 0.0f;
+	// (a door or a gate of a module within reach: its leaf as it stands)
+	bool door_hit = objects_door_at(&world->objects, eye, forward, player->reach_meters, &door_module, &door_part, &door_distance);
+
 	SDL_zerop(target);
 	target->ground_item = -1;
 	target->instance = -1;
 	target->item = -1;
+	target->door = -1;
 	if (actor_hit)
 	{
 		bool dead = actors_is_dead(&world->actors, hit.id);
@@ -338,6 +345,10 @@ void player_find_target(player_t *player, session_t *session, world_t *world, co
 		{
 			break;
 		}
+		if (door_hit && door_distance < object_hits[i].distance)
+		{
+			break;
+		}
 		target->distance = object_hits[i].distance;
 		target->instance = object_hits[i].instance;
 		target->object_id = world->objects.instances[object_hits[i].instance].id;
@@ -357,6 +368,16 @@ void player_find_target(player_t *player, session_t *session, world_t *world, co
 		{
 			target->kind = PLAYER_TARGET_OBJECT;
 		}
+		return;
+	}
+	if (door_hit && (!actor_hit || door_distance < hit.distance))
+	{
+		target->kind = PLAYER_TARGET_DOOR;
+		target->distance = door_distance;
+		target->object_id = door_module;
+		target->instance = objects_find_id(&world->objects, door_module);
+		target->door = door_part;
+		target->door_open = objects_door(&world->objects, door_module, door_part) == 1;
 		return;
 	}
 	if (actor_hit)

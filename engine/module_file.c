@@ -272,7 +272,7 @@ bool module_file_read(const char *path, module_file_t *out, char *error, size_t 
 
 void module_file_dump(const module_file_t *module, FILE *stream)
 {
-	static const char *const part_flags[] = { "collision", "shadow", "moves", "impostor" };
+	static const char *const part_flags[] = { "collision", "shadow", "moves", "impostor", "door" };
 
 	fprintf(stream, "%d parts, %d states, placed in '%s'\n", module->part_count, module->state_count,
 		module->first_state >= 0 && module->first_state < module->state_count ? module->states[module->first_state].name : "?");
@@ -283,7 +283,7 @@ void module_file_dump(const module_file_t *module, FILE *stream)
 		fprintf(stream, "part %d '%s': model '%s' at (%.3f, %.3f, %.3f), yaw %.1f, axis (%.4f, %.4f, %.4f), %.2f rpm,", p, part->name,
 			part->model, (double)part->position[0], (double)part->position[1], (double)part->position[2], (double)part->yaw_degrees,
 			(double)part->axis[0], (double)part->axis[1], (double)part->axis[2], (double)part->spin_rpm);
-		for (int f = 0; f < 4; f++)
+		for (int f = 0; f < 5; f++)
 		{
 			if ((part->flags & (1u << f)) != 0)
 			{

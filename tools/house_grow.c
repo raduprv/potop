@@ -2301,7 +2301,6 @@ static void workshop_footprint(house_t *house);
 
 #define HOUSE_DOOR_PIECE_BASE 100       // a door's piece: module_piece 101, 102, ... (the house's other pieces below)
 #define HOUSE_DOOR_SWING_SECONDS 1.5f   // a door swung open or shut in this long
-#define HOUSE_DOOR_HOLD_SECONDS 10.0f   // held so long open, then shut, and so on (for now: the test; the game will drive them)
 
 static bool house_doors_move(const house_t *house)
 {
@@ -2339,17 +2338,14 @@ static bool door_leaf_begin(house_t *house, vec_t hinge, vec_t along, vec_t out)
 
 		if (house->door_leaf_count == 1)
 		{
-			house->door_state_closed = module_state(house, "closed", HOUSE_DOOR_SWING_SECONDS, HOUSE_DOOR_HOLD_SECONDS, -1);
-			house->door_state_open = module_state(house, "open", HOUSE_DOOR_SWING_SECONDS, HOUSE_DOOR_HOLD_SECONDS, -1);
-			if (house_module(house) != NULL && house->door_state_closed >= 0 && house->door_state_open >= 0)
-			{
-				house_module(house)->file.states[house->door_state_closed].next = house->door_state_open;
-				house_module(house)->file.states[house->door_state_open].next = house->door_state_closed;
-			}
+			// (the doors' two poses; each door in one or the other on its
+			// own, set by the game: objects_set_door)
+			house->door_state_closed = module_state(house, "closed", HOUSE_DOOR_SWING_SECONDS, 0.0f, -1);
+			house->door_state_open = module_state(house, "open", HOUSE_DOOR_SWING_SECONDS, 0.0f, -1);
 		}
 		snprintf(name, sizeof(name), "door%d", index);
 		snprintf(piece_recipe, sizeof(piece_recipe), ";module_piece=%d;interior=1", HOUSE_DOOR_PIECE_BASE + index);
-		part = module_part(house, name, piece_recipe, hinge, 0.0f, up, 0.0f, MODULE_PART_MOVES | MODULE_PART_SHADOW);
+		part = module_part(house, name, piece_recipe, hinge, 0.0f, up, 0.0f, MODULE_PART_MOVES | MODULE_PART_SHADOW | MODULE_PART_DOOR);
 		module_pose(house, house->door_state_closed, part, vec(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0);
 		module_pose(house, house->door_state_open, part, vec(0.0f, 0.0f, 0.0f), angle, 0.0f, 0);
 		return false;
