@@ -2862,6 +2862,14 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 			}
 		}
 	}
+	// A one-shot of its own playing (eating, getting up, lying down, a
+	// flinch): it does not go meanwhile, or it slid a meter eating; it goes
+	// once that is over (choose_animation lets such a clip play out)
+	if (actor->action >= 0 && !walking_action(type, actor->action) && !is_dying(actors, actor)
+		&& (model_of(actors, actor)->actions[actor->action].flags & ACTOR_ACTION_LOOP) == 0 && actor->backing_meters <= 0.0f)
+	{
+		wanted_speed = 0.0f;
+	}
 	// Speed up and slow down gently
 	if (actor->speed < wanted_speed)
 	{

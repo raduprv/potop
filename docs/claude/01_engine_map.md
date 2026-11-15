@@ -1068,3 +1068,5 @@ The render.indirect_light* settings are gone.
 ## Animals turn going, not on the spot (39d)
 
 actors.c: spot_turn_degrees (actors.ini; default 20 for ground_align > 0, else 0): standing, a straight walker turns no farther than that from spot_yaw_radians (where it last went; taken while moving or going 0.1 m/s), clamped at the end of move_actor (looks, sidesteps, bumps). Such a type with no turn_walk_fraction gets 0.4 (the cow had none: it span on the spot). Tried first: held while walking too, backing out at the limit: --sim walking in place 3x..30x (cow 176, pig 138, ram 380 vs 60, 5, 52); so walking is not held (blocked arcs still turn on the spot). Now: cow 21, pig 4, ram 28.
+
+- 39h: a one-shot action of its own playing (eat, get_up, lie_down, pain; not dying, not backing) holds a walker still (wanted_speed 0): it slid a meter eating. --sim with the new models (old ini scales): ram walking in place 132 vs 203 without, pig 30 vs 11, cow 37 vs 36; pigs in for the night later (they finish eating).
