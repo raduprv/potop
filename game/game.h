@@ -174,7 +174,8 @@ typedef enum
 	FARMER_RESTING = 0,            // a breather (seconds: left of it)
 	FARMER_GOING,                  // to a door, by his paths
 	FARMER_STEPPING,               // onto his spot by it, turning to it
-	FARMER_WORKING                 // swinging it (door_pull / door_push)
+	FARMER_WORKING,                // swinging it (door_pull / door_push)
+	FARMER_LEAVING                 // back out to where he came onto his spot from
 } farmer_state_t;
 
 typedef struct
@@ -191,6 +192,7 @@ typedef struct
 	int door_count;
 	int current;                   // the door he is at (-1: none)
 	bool opening;                  // opening it (else shutting)
+	bool pulling;                  // door_pull (else door_push)
 	bool door_set;                 // set swinging this time
 	float spot_x;                  // where he stands to do it, facing spot_yaw
 	float spot_z;

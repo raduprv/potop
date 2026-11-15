@@ -1183,3 +1183,19 @@ farmer_opened / farmer_shut / farmer_no_way / farmer_lost /
 farmer_step_short / farmer_door (his doors, at the start).
 farmer_travel.json (root motion per frame) not used: his clips are in
 place like the smith's.
+
+39q (Radu: he walks through fences; at the hens he tries a door that is
+not there): the door's along was taken as the leaf's X always (a door in
+a wall along Z came out 6 cm wide, its swing side wrong: the hen hut's
+door "beside the wattle"); now the longer of X and Z. The farmer: a door
+is picked only if his paths reach a side of it (potop_find_path, ending
+within 0.8 m; the walk's end then where they end, on open ground), the
+swing side first (opened by pulling, shut by pushing), else the other
+(opened by pushing); stopped short of it (more than 1.5 m): another door,
+never a straight walk on from wherever he is (that walked him through
+fences); after the clip he backs out to where he came from (LEAVING);
+no way to any door (his paths do not start where he stands): a step or
+two out to where they do (farmer_steps_out). Still: the doors have no
+body and the paths do not know them, so he walks through a shut gate.
+1200 s sim: 22 doors, steps_out 43 times (by the hen hut), 3.8% of the
+samples inside a grid obstacle.

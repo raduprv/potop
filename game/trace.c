@@ -76,6 +76,12 @@ void game_trace_update(game_t *game, potop_t *potop, float seconds)
 	{
 		sample(game, potop, game->bears[i].actor_id, "bear", game_bear_state_name(game->bears[i].state));
 	}
+	if (game->farmer.actor != 0)
+	{
+		static const char *const states[] = { "resting", "going", "stepping", "working", "leaving" };
+
+		sample(game, potop, game->farmer.actor, "farmer", states[game->farmer.state]);
+	}
 }
 
 void game_trace_event(game_t *game, potop_t *potop, uint32_t actor_id, const char *text)
