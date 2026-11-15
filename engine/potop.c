@@ -1052,6 +1052,7 @@ bool potop_door_info(potop_t *potop, uint32_t object_id, int door, potop_door_in
 	info_out->height = info.height;
 	info_out->open = info.open;
 	info_out->moving = info.moving;
+	info_out->passage = info.passage;
 	return true;
 }
 

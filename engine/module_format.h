@@ -40,6 +40,7 @@
 #define MODULE_PART_IMPOSTOR 0x08u     // far away, drawn as a picture of itself (if its model is worth one)
 #define MODULE_PART_DOOR 0x10u         // a door or a gate: closed or open each on its own (objects_set_door), not by the module's state; its poses
                                        // in the states named "closed" and "open" (with MODULES_PART_MOVES)
+#define MODULE_PART_WALL_DOOR 0x20u    // a door drawn on a wall with no way through behind it (a hut's): opens, but nothing passes
 
 // module_file_pose_t.flags
 #define MODULE_POSE_HIDDEN 0x01u       // not there in this state

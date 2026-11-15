@@ -242,6 +242,10 @@ static bool load_key(void *user_data, const char *section, const char *key, cons
 	{
 		return ini_value_to_bool(value, &type->can_swim);
 	}
+	if (SDL_strcmp(key, "opens_doors") == 0)
+	{
+		return ini_value_to_bool(value, &type->opens_doors);
+	}
 	if (SDL_strcmp(key, "path_groups") == 0)
 	{
 		int groups = 0;
@@ -1626,6 +1630,7 @@ static navigation_agent_t agent_of(const actor_type_t *type)
 	agent.swim_meters_per_second = type->swim_meters_per_second;
 	agent.radius_meters = 0.5f * type->width_meters;
 	agent.groups = type->path_groups;
+	agent.opens_doors = type->opens_doors;
 	return agent;
 }
 

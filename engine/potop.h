@@ -774,6 +774,7 @@ typedef struct
 	float height;
 	bool open;                     // open or opening
 	bool moving;                   // swinging now
+	bool passage;                  // a way through when open (not a door drawn on a wall)
 } potop_door_info_t;
 
 // Where a building's door is and how it swings (for someone to stand by

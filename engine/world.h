@@ -258,6 +258,9 @@ bool world_generate(world_t *world, uint32_t seed);
 // One step of the simulation: the water (unless frozen or iced), the
 // erosion, the physics
 void world_step(world_t *world, float step_seconds);
+// The modules' doors as ways through for the navigation (navigation_set_links):
+// each frame, before the actors move
+void world_update_door_links(world_t *world);
 
 // A frame, in its order: world_begin_frame (the clocks, the hour, the
 // light, the rain, models changed on disk), then the application's input,

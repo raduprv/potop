@@ -54,8 +54,52 @@ void world_begin_frame(world_t *world, double frame_seconds)
 	trace_mark("the ground under the buildings");
 }
 
+
+#define DOOR_LINK_OUT_METERS 0.9f       // a door's way through: its ends this far out before and behind its leaf
+
+void world_update_door_links(world_t *world)
+{
+	// The doors as ways through what they stand in (navigation_link_t): each
+	// its two ends a little out before and behind its leaf's middle, open
+	// or shut as it is now
+	{
+		static uint32_t module_ids[NAVIGATION_LINKS_MAX];
+		static int door_parts[NAVIGATION_LINKS_MAX];
+		static navigation_link_t links[NAVIGATION_LINKS_MAX];
+		int door_count = objects_door_list(&world->objects, module_ids, door_parts, NAVIGATION_LINKS_MAX);
+		int link_count = 0;
+
+		for (int k = 0; k < door_count; k++)
+		{
+			objects_door_info_t door;
+			float middle_x;
+			float middle_z;
+
+			// (a door drawn on a wall: no way through it)
+			if (!objects_door_info(&world->objects, module_ids[k], door_parts[k], &door) || !door.passage)
+			{
+				continue;
+			}
+			middle_x = door.hinge[0] + door.along[0] * door.width * 0.5f;
+			middle_z = door.hinge[2] + door.along[2] * door.width * 0.5f;
+			links[link_count].a[0] = middle_x + door.swing[0] * DOOR_LINK_OUT_METERS;
+			links[link_count].a[1] = middle_z + door.swing[2] * DOOR_LINK_OUT_METERS;
+			links[link_count].b[0] = middle_x - door.swing[0] * DOOR_LINK_OUT_METERS;
+			links[link_count].b[1] = middle_z - door.swing[2] * DOOR_LINK_OUT_METERS;
+			links[link_count].open = door.open && !door.moving;
+			link_count++;
+		}
+		if (link_count > 0 || world->navigation.link_count > 0)
+		{
+			navigation_set_links(&world->navigation, links, link_count);
+		}
+	}
+}
+
 void world_update_actors(world_t *world, float seconds)
 {
+	// (the doors as they are now, for the ways the actors find)
+	world_update_door_links(world);
 	actors_move(&world->actors, &world->navigation, &world->terrain, &world->water, seconds);
 	actors_update(&world->actors, seconds);
 }

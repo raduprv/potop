@@ -285,6 +285,31 @@ void console_run_command(console_t *console, potop_t *potop, const char *line, c
 				navigation_surface_height(&potop->world.navigation, &potop->world.terrain, &agent, points[k][0], points[k][1], ground + 0.5f));
 		}
 	}
+	else if (SDL_strcmp(command, "cell") == 0)
+	{
+		// (what an actor type finds at x z: navigation_describe)
+		float x;
+		float z;
+		char text[512];
+		int type;
+		navigation_agent_t agent;
+
+		if (!has_third || !read_number(second, &x) || !read_number(third, &z) || (type = actors_find_type(&potop->world.actors, first)) < 0)
+		{
+			SDL_Log("cell <actor type> <x> <z>");
+			return;
+		}
+		agent = actors_agent(&potop->world.actors, type);
+		// (the surface nearest the ground, then any above it, a meter at a time)
+		for (int up = 0; up <= 4; up++)
+		{
+			float near = terrain_sample_height_meters(&potop->world.terrain, x, z) + (float)up;
+
+			navigation_describe(&potop->world.navigation, &potop->world.terrain, &potop->world.water, &potop->world.objects, &agent, x, z, near,
+				text, sizeof(text));
+			SDL_Log("cell %.2f %.2f near %.1f: %s", x, z, near, text);
+		}
+	}
 	else if (SDL_strcmp(command, "module") == 0)
 	{
 		objects_t *objects = &potop->world.objects;

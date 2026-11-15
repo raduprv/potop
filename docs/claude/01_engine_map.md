@@ -1199,3 +1199,40 @@ two out to where they do (farmer_steps_out). Still: the doors have no
 body and the paths do not know them, so he walks through a shut gate.
 1200 s sim: 22 doors, steps_out 43 times (by the hen hut), 3.8% of the
 samples inside a grid obstacle.
+
+## Fences' tops and doors in the navigation (39r)
+
+The farmer went into the hen run over its back corner: the fences' tops
+(object surfaces a meter up, 10 cm wide) were nodes, and a step onto one
+from the ground was allowed by the slope rule (0.84 m a cell, 1.19 m
+diagonally at a 40 degree slope): up diagonally, along the top, down
+inside. navigation.c step_allowed: between the ground and an object's
+top only step_meters; the slope only ground to ground or top to top (a
+deck, a ramp). Console: "path <type> <x> <z>" (the way, with surfaces)
+and "cell <type> <x> <z>" (navigation_describe at the ground and a meter
+at a time above).
+
+Doors as links (navigation_link_t, navigation_set_links, up to 512): a
+way from the cell of one end to the cell of the other, across what is in
+the way (a 0.84 m gate falls in taken 1 m cells: never a way before).
+Open: anyone; shut: only an agent with opens_doors (actors.ini
+opens_doors = true: the farmer). A shut one costs 3 m more. Only from a
+terrain node to the other end's terrain (within max(step, 0.6 m)). The
+pulled path's waypoints of a link: its exact ends (lined up with the
+gap). world_frame.c world_update_door_links (each frame, before the
+actors move; in the sim too, render_frame is not every step): every
+module door (objects_door_list) but a MODULE_PART_WALL_DOOR one, its ends
+DOOR_LINK_OUT_METERS (0.9) out before and behind its leaf's middle, open
+when open and not swinging. house_grow.c: a hut_door not in a cabin's
+opening (door_hole_next) is a wall door (no way through: the pigsty's
+man's door, the hen hut's door), flagged so. The farmer: only doors with
+a passage; his spot asked of the bodies (potop_actor_can_stand: by a
+fence it is in a taken cell); a shut door of his on the way to the
+approach (its two link ends one after the other in the path):
+that one first, opened from his side (farmer_gate_first). 1200 s sim:
+36 doors swung, all four farms but the stana's hut (unreached: to see),
+0.9% of the samples in a grid obstacle, nothing over a fence.
+Walkers on a path still do not collide with bodies (the cow yard's
+collision has its gate shut: the farmer walks through that box when the
+gate is open, as he should; when doors get bodies the collision's gates
+must open).

@@ -154,6 +154,7 @@ typedef struct
 	float sight_degrees;               // how wide it looks (all of it: 360 sees behind too)
 	bool can_swim;
 	uint8_t path_groups;               // bits: the blockers (navigation_set_blockers) that stop it are those for one of these (1 by default)
+	bool opens_doors;                  // its ways go through shut doors too (it opens them: a person); else only open ones
 	float swim_meters_per_second;
 	float wade_depth_meters;           // deeper water slows it
 	float swim_depth_meters;           // deeper water lifts it: it swims, its body this deep

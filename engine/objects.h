@@ -622,10 +622,13 @@ typedef struct
 	float height;
 	bool open;                     // open or opening
 	bool moving;                   // swinging now
+	bool passage;                  // a way through when open (not a door drawn on a wall)
 } objects_door_info_t;
 
 // Where a door is and how it swings; false if there is no such door
 bool objects_door_info(objects_t *objects, uint32_t module_id, int door_part, objects_door_info_t *info_out);
+// Every door on the map (its module's id, its part), at most maximum; how many
+int objects_door_list(objects_t *objects, uint32_t *module_ids_out, int *door_parts_out, int maximum);
 // The nearest door along a ray (its model's bounds as it stands now),
 // within maximum_distance: its module's id, its part, how far; false if none
 bool objects_door_at(objects_t *objects, vec3_t origin, vec3_t direction, float maximum_distance, uint32_t *module_id_out, int *door_part_out,

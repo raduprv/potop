@@ -877,5 +877,44 @@ bool objects_door_info(objects_t *objects, uint32_t module_id, int door_part, ob
 	info_out->swing[2] = -sign * info_out->along[0];
 	info_out->open = objects_door(objects, module_id, door_part) == 1;
 	info_out->moving = part->module_state != part->module_target;
+	info_out->passage = (file_part->flags & MODULE_PART_WALL_DOOR) == 0;
 	return true;
+}
+
+int objects_door_list(objects_t *objects, uint32_t *module_ids_out, int *door_parts_out, int maximum)
+{
+	int count = 0;
+
+	if (objects->types.module_count == 0)
+	{
+		return 0;
+	}
+	if (!objects->module_list_valid || objects->module_generation != objects->generation)
+	{
+		rebuild_list(objects);
+	}
+	for (int m = 0; m < objects->module_count && count < maximum; m++)
+	{
+		int first = objects->module_entries[m];
+		int last = objects->module_entries[m + 1];
+		int module_index = objects->module_indices[first];
+		const module_file_t *module = objects_module_of(objects, module_index);
+
+		if (module == NULL)
+		{
+			continue;
+		}
+		for (int k = first + 1; k < last && count < maximum; k++)
+		{
+			const object_instance_t *part = &objects->instances[objects->module_indices[k]];
+
+			if (part->module_part < module->part_count && (module->parts[part->module_part].flags & MODULE_PART_DOOR) != 0)
+			{
+				module_ids_out[count] = objects->instances[module_index].id;
+				door_parts_out[count] = part->module_part;
+				count++;
+			}
+		}
+	}
+	return count;
 }

@@ -1419,6 +1419,7 @@ typedef struct
 	// module's two states once made; making a door's piece, that leaf's
 	// vertices and indices, kept alone once the house is made
 	int door_leaf_count;
+	bool door_hole_next;               // the next hut_door is in an opening (a cabin's): a way through behind it
 	int door_state_closed;
 	int door_state_open;
 	bool door_capturing;
@@ -2316,7 +2317,7 @@ static bool house_doors_move(const house_t *house)
 // module there (its piece made apart, round its hinge), shut, then swung
 // 90 degrees toward out; not made here (false). Its own piece: made, kept
 // (door_leaf_end), the rest of the house dropped once it is made
-static bool door_leaf_begin(house_t *house, vec_t hinge, vec_t along, vec_t out)
+static bool door_leaf_begin(house_t *house, vec_t hinge, vec_t along, vec_t out, bool wall_door)
 {
 	const house_recipe_t *recipe = house->recipe;
 	builder_t *builder = house->builder;
@@ -2345,7 +2346,8 @@ static bool door_leaf_begin(house_t *house, vec_t hinge, vec_t along, vec_t out)
 		}
 		snprintf(name, sizeof(name), "door%d", index);
 		snprintf(piece_recipe, sizeof(piece_recipe), ";module_piece=%d;interior=1", HOUSE_DOOR_PIECE_BASE + index);
-		part = module_part(house, name, piece_recipe, hinge, 0.0f, up, 0.0f, MODULE_PART_MOVES | MODULE_PART_SHADOW | MODULE_PART_DOOR);
+		part = module_part(house, name, piece_recipe, hinge, 0.0f, up, 0.0f,
+			MODULE_PART_MOVES | MODULE_PART_SHADOW | MODULE_PART_DOOR | (wall_door ? MODULE_PART_WALL_DOOR : 0u));
 		module_pose(house, house->door_state_closed, part, vec(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0);
 		module_pose(house, house->door_state_open, part, vec(0.0f, 0.0f, 0.0f), angle, 0.0f, 0);
 		return false;
@@ -16250,9 +16252,17 @@ static void hut_door(house_t *house, vec_t foot, vec_t along, vec_t out, float w
 
 	// (moving doors: its hinges on its -along side, where the straps
 	// start; swung out; the dark of a doorway behind it)
-	if (!door_leaf_begin(house, sub(foot, scale(along, width * 0.5f)), along, out))
+	bool hole = house->door_hole_next;
+
+	house->door_hole_next = false;
+	// (no opening behind it, a door drawn on a wall: no way through, the
+	// dark of a doorway behind it when it swings)
+	if (!door_leaf_begin(house, sub(foot, scale(along, width * 0.5f)), along, out, !hole))
 	{
-		door_dark(house, foot, along, out, width, height);
+		if (!hole)
+		{
+			door_dark(house, foot, along, out, width, height);
+		}
 		return;
 	}
 	roof_wood(house, true);
@@ -16391,7 +16401,7 @@ static void picket_gate(house_t *house, vec_t hinge, float swing, float width, f
 	}
 	along = vec(cosf(swing), 0.0f, sinf(swing));
 	across = cross(along, up);
-	if (!door_leaf_begin(house, hinge, along, swing_way))
+	if (!door_leaf_begin(house, hinge, along, swing_way, false))
 	{
 		return;
 	}
@@ -16734,7 +16744,7 @@ static void workshop_pigsty(house_t *house)
 			float width = 0.9f;
 
 			// (moving doors: each a part, swung out)
-			if (!door_leaf_begin(house, hinge, along, out))
+			if (!door_leaf_begin(house, hinge, along, out, false))
 			{
 				continue;
 			}
@@ -17718,6 +17728,7 @@ static void cabin_opening_frame(house_t *house, const cabin_t *cabin, vec_t orig
 	if (opening->door && (opening->half_door || opening->open) && house_doors_move(house))
 	{
 		// (moving doors: shut, swung by the module)
+		house->door_hole_next = true;
 		hut_door(house, add(middle, add(vec(0.0f, bottom, 0.0f), scale(out, cabin->door_forward))), along, out, opening->half_width * 2.0f, top - bottom);
 	}
 	else if (opening->door && opening->half_door)
@@ -17742,6 +17753,8 @@ static void cabin_opening_frame(house_t *house, const cabin_t *cabin, vec_t orig
 	}
 	else if (opening->door)
 	{
+		// (a cabin's doorway: a way through behind it)
+		house->door_hole_next = true;
 		hut_door(house, add(middle, add(vec(0.0f, bottom, 0.0f), scale(out, cabin->door_forward))), along, out, opening->half_width * 2.0f, top - bottom);
 	}
 	else if (!opening->hatch)
@@ -18841,7 +18854,7 @@ static void farm_gate(house_t *house, vec_t a, vec_t along, float width)
 		vec_t dir = scale(along, l == 0 ? 1.0f : -1.0f);
 
 		// (moving doors: each leaf a part, swung out)
-		if (!door_leaf_begin(house, hinge, dir, out))
+		if (!door_leaf_begin(house, hinge, dir, out, false))
 		{
 			continue;
 		}

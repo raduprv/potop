@@ -15,6 +15,7 @@ const console_command_t console_commands[] =
 	{ "where", "", "where the eye is and where it looks" },
 	{ "goto", "<x> <z> [height]", "goes to a point of the map (meters; on foot: stands there)" },
 	{ "look", "<yaw> [pitch]", "turns the eye (degrees, as where shows them; pitch up is positive)" },
+	{ "cell", "<actor type> <x> <z>", "what an actor of that type finds at x z for its ways (room, what takes it, water, steepness)" },
 	{ "path", "<actor type> <x> <z>", "the way an actor of that type would walk from where you stand to x z (its points)" },
 	{ "module", "[state]", "the module (a building whose parts move: a mill, a quarry's crane) nearest where you look or stand, within 40 m: its states; with one, sent to it" },
 	{ "camera", "<x> <y> <z> [<at x> <at y> <at z>] | off", "first person: the eye put there (meters, y its height, even in the ground), looking at the point if given; off: back to the walker" },

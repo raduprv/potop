@@ -26,6 +26,7 @@
 #define FARMER_CLIP_SECONDS 2.667f     // door_pull, door_push: their length
 #define FARMER_HANDS_SECONDS 0.6f      // ...his hands on the leaf this far in: the door set swinging
 #define FARMER_REACH_METERS 0.8f      // a point his paths end this near: reached
+#define FARMER_LINK_OUT_METERS 0.9f    // a door's way through, its ends this far out (as world_render.c's DOOR_LINK_OUT_METERS)
 #define FARMER_PATH_MAX 2048          // a way found this long at most (its points)
 #define FARMER_REST_LEAST 2.0f         // a breather between doors (seconds)
 #define FARMER_REST_MOST 6.0f
@@ -66,7 +67,8 @@ static void gather_doors(game_t *game, potop_t *potop)
 
 			SDL_snprintf(name, sizeof(name), "door%d", d);
 			door = potop_door_find(potop, building, name);
-			if (door < 0 || !potop_door_info(potop, building, door, &info))
+			// (a door drawn on a wall leads nowhere: not his)
+			if (door < 0 || !potop_door_info(potop, building, door, &info) || !info.passage)
 			{
 				continue;
 			}
@@ -125,14 +127,18 @@ static void door_spot(const potop_door_info_t *info, bool open_it, bool from_swi
 // Whether his paths reach a point from where he is (or come within
 // FARMER_REACH_METERS of it: a point by a wall is off them, his width
 // off it); where they end, on open ground, into end_x, end_z
+static float path_points[FARMER_PATH_MAX][2];   // the last way reachable found
+static int path_count;
+
 static bool reachable(potop_t *potop, const potop_actor_info_t *actor, float x, float z, float *end_x, float *end_z)
 {
-	static float points[FARMER_PATH_MAX][2];
+	float (*points)[2] = path_points;
 	bool complete = false;
 	int count = potop_find_path(potop, FARMER_ACTOR_TYPE, actor->x, actor->z, x, z, points, FARMER_PATH_MAX, &complete);
 	float dx;
 	float dz;
 
+	path_count = count;
 	if (count <= 0)
 	{
 		return false;
@@ -142,6 +148,66 @@ static bool reachable(potop_t *potop, const potop_actor_info_t *actor, float x, 
 	*end_x = points[count - 1][0];
 	*end_z = points[count - 1][1];
 	return dx * dx + dz * dz < FARMER_REACH_METERS * FARMER_REACH_METERS;
+}
+
+// A shut door of his that the last way found goes through (its two ends,
+// a little before and behind its leaf, one after the other: as the
+// engine's links have them, world_render.c); which, -1 none; from_swing_side_out:
+// he comes to it from the side it swings to
+static int shut_door_on_way(game_t *game, potop_t *potop, bool *from_swing_side_out)
+{
+	farmer_t *farmer = &game->farmer;
+
+	for (int d = 0; d < farmer->door_count; d++)
+	{
+		potop_door_info_t info;
+		float middle_x;
+		float middle_z;
+		float swing_end[2];
+		float other_end[2];
+
+		if (!potop_door_info(potop, farmer->doors[d].building, farmer->doors[d].door, &info) || info.open)
+		{
+			continue;
+		}
+		middle_x = info.hinge[0] + info.along[0] * info.width * 0.5f;
+		middle_z = info.hinge[2] + info.along[2] * info.width * 0.5f;
+		swing_end[0] = middle_x + info.swing[0] * FARMER_LINK_OUT_METERS;
+		swing_end[1] = middle_z + info.swing[2] * FARMER_LINK_OUT_METERS;
+		other_end[0] = middle_x - info.swing[0] * FARMER_LINK_OUT_METERS;
+		other_end[1] = middle_z - info.swing[2] * FARMER_LINK_OUT_METERS;
+		for (int k = 0; k + 1 < path_count; k++)
+		{
+			bool at_swing = SDL_fabsf(path_points[k][0] - swing_end[0]) < 0.05f && SDL_fabsf(path_points[k][1] - swing_end[1]) < 0.05f;
+			bool at_other = SDL_fabsf(path_points[k][0] - other_end[0]) < 0.05f && SDL_fabsf(path_points[k][1] - other_end[1]) < 0.05f;
+			bool next_swing = SDL_fabsf(path_points[k + 1][0] - swing_end[0]) < 0.05f && SDL_fabsf(path_points[k + 1][1] - swing_end[1]) < 0.05f;
+			bool next_other = SDL_fabsf(path_points[k + 1][0] - other_end[0]) < 0.05f && SDL_fabsf(path_points[k + 1][1] - other_end[1]) < 0.05f;
+
+			if ((at_swing && next_other) || (at_other && next_swing))
+			{
+				*from_swing_side_out = at_swing;
+				return d;
+			}
+		}
+	}
+	return -1;
+}
+
+// Off to a door: its spot (door_spot), the walk to the approach (already
+// made to end where his paths end), the clip to come
+static void go_to_door(game_t *game, potop_t *potop, int pick, bool opening, bool from_swing_side)
+{
+	farmer_t *farmer = &game->farmer;
+
+	farmer->current = pick;
+	farmer->opening = opening;
+	// (pulled open from the swing side, pushed from the other; pushed shut)
+	farmer->pulling = opening && from_swing_side;
+	potop_actor_stop_looking(potop, farmer->actor);
+	potop_actor_play(potop, farmer->actor, "idle");
+	potop_actor_go_to(potop, farmer->actor, farmer->approach_x, farmer->approach_z);
+	farmer->state = FARMER_GOING;
+	farmer->seconds = 0.0f;
 }
 
 // The next door: any of his but the last one, shut or open, that his
@@ -183,17 +249,48 @@ static void pick_door(game_t *game, potop_t *potop)
 			// where his next walk can start from)
 			if (!reachable(potop, &actor, farmer->approach_x, farmer->approach_z, &farmer->approach_x, &farmer->approach_z))
 			{
+				char text[128];
+
+				SDL_snprintf(text, sizeof(text), "farmer_unreached %u/%d side %d from %.1f %.1f to %.1f %.1f: %d points end %.1f %.1f", farmer->doors[pick].building,
+					farmer->doors[pick].door, side, actor.x, actor.z, farmer->approach_x, farmer->approach_z, path_count,
+					path_count > 0 ? path_points[path_count - 1][0] : 0.0f, path_count > 0 ? path_points[path_count - 1][1] : 0.0f);
+				game_trace_event(game, potop, farmer->actor, text);
 				continue;
 			}
-			farmer->current = pick;
-			farmer->opening = !info.open;
-			// (pulled open from the swing side, pushed from the other; pushed shut)
-			farmer->pulling = farmer->opening && from_swing_side;
-			potop_actor_stop_looking(potop, farmer->actor);
-			potop_actor_play(potop, farmer->actor, "idle");
-			potop_actor_go_to(potop, farmer->actor, farmer->approach_x, farmer->approach_z);
-			farmer->state = FARMER_GOING;
-			farmer->seconds = 0.0f;
+			// (room for him on his spot: by a fence it is in the paths'
+			// taken cells, a meter each, so the bodies there are asked)
+			if (!potop_actor_can_stand(potop, farmer->actor, farmer->spot_x, farmer->spot_z))
+			{
+				char text[96];
+
+				SDL_snprintf(text, sizeof(text), "farmer_no_room %u/%d side %d at %.2f %.2f", farmer->doors[pick].building, farmer->doors[pick].door, side,
+					farmer->spot_x, farmer->spot_z);
+				game_trace_event(game, potop, farmer->actor, text);
+				continue;
+			}
+			// A shut gate on his way there: that one first, opened from
+			// his side of it (then on from there, another time)
+			{
+				bool gate_swing_side = true;
+				int gate = shut_door_on_way(game, potop, &gate_swing_side);
+				potop_door_info_t gate_info;
+
+				if (gate >= 0 && gate != pick && potop_door_info(potop, farmer->doors[gate].building, farmer->doors[gate].door, &gate_info))
+				{
+					door_spot(&gate_info, true, gate_swing_side, &farmer->spot_x, &farmer->spot_z, &farmer->spot_yaw, &farmer->approach_x,
+						&farmer->approach_z);
+					if (reachable(potop, &actor, farmer->approach_x, farmer->approach_z, &farmer->approach_x, &farmer->approach_z))
+					{
+						game_trace_event(game, potop, farmer->actor, "farmer_gate_first");
+						go_to_door(game, potop, gate, true, gate_swing_side);
+						return;
+					}
+					// (its side not reachable either: this door not now)
+					game_trace_event(game, potop, farmer->actor, "farmer_gate_unreachable");
+					continue;
+				}
+			}
+			go_to_door(game, potop, pick, !info.open, from_swing_side);
 			return;
 		}
 		{

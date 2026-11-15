@@ -313,13 +313,23 @@ static void node_info(const navigation_t *navigation, const terrain_t *terrain, 
 	node_info_at(navigation, terrain, water, agent, node, cell, cell % navigation->size, cell / navigation->size, info);
 }
 
+#define LINK_SHUT_METERS 3.0f         // a shut door costs this much more than its length (its opening)
+
 // Can a step go from one surface to the next, distance apart? Within a step
-// up or down, or the slope it climbs; anything goes swimming
+// up or down, or the slope it climbs; anything goes swimming. Between the
+// ground and an object's top only a step: the slope is the ground's (or a
+// deck's, a ramp's, from its top to its next), not a way up the side of a
+// thing (a fence's top a meter up was climbed onto diagonally, its 1.4 m
+// at the steepest slope, walked along and left on the other side)
 static bool step_allowed(const navigation_agent_t *agent, const node_info_t *from, const node_info_t *to, float distance)
 {
 	if (from->water_class == CLASS_SWIM && to->water_class == CLASS_SWIM)
 	{
 		return true;
+	}
+	if (from->surface != to->surface)
+	{
+		return fabsf(to->height - from->height) <= agent->step_meters;
 	}
 	return fabsf(to->height - from->height) <= SDL_max(agent->step_meters, agent->maximum_slope * distance);
 }
@@ -1526,6 +1536,32 @@ static void touch_blocker(navigation_t *navigation, const navigation_blocker_t *
 	}
 }
 
+static bool cell_of_point(const navigation_t *navigation, float x, float z, int32_t *cell_out);
+
+void navigation_set_links(navigation_t *navigation, const navigation_link_t *links, int count)
+{
+	navigation->link_count = 0;
+	for (int k = 0; k < count && navigation->link_count < NAVIGATION_LINKS_MAX; k++)
+	{
+		int32_t cell_a;
+		int32_t cell_b;
+		float dx = links[k].b[0] - links[k].a[0];
+		float dz = links[k].b[1] - links[k].a[1];
+
+		cell_of_point(navigation, links[k].a[0], links[k].a[1], &cell_a);
+		cell_of_point(navigation, links[k].b[0], links[k].b[1], &cell_b);
+		if (cell_a == cell_b)
+		{
+			continue;
+		}
+		navigation->links[navigation->link_count] = links[k];
+		navigation->link_cells[navigation->link_count][0] = cell_a;
+		navigation->link_cells[navigation->link_count][1] = cell_b;
+		navigation->link_meters[navigation->link_count] = SDL_sqrtf(dx * dx + dz * dz);
+		navigation->link_count++;
+	}
+}
+
 void navigation_set_blockers(navigation_t *navigation, const navigation_blocker_t *blockers, int count)
 {
 	count = SDL_clamp(count, 0, NAVIGATION_BLOCKERS_MAX);
@@ -2692,6 +2728,56 @@ navigation_result_t navigation_find_path(navigation_t *navigation, const terrain
 		{
 			node_info_at(navigation, terrain, water, agent, node, cell, cell_x, cell_z, &here);
 		}
+		// Through a door from here (its terrain: the doors' ends are on
+		// the ground), to the other end's terrain, open or one it opens
+		if (navigation->link_count > 0 && node == cell && here.passable)
+		{
+			for (int k = 0; k < navigation->link_count; k++)
+			{
+				int32_t next;
+				int32_t next_x;
+				int32_t next_z;
+				node_info_t there;
+				float cost;
+
+				if (navigation->link_cells[k][0] == cell)
+				{
+					next = navigation->link_cells[k][1];
+				}
+				else if (navigation->link_cells[k][1] == cell)
+				{
+					next = navigation->link_cells[k][0];
+				}
+				else
+				{
+					continue;
+				}
+				if ((!navigation->links[k].open && !agent->opens_doors) || navigation->search[next].tag == reached_tag + 1)
+				{
+					continue;
+				}
+				next_x = next % size;
+				next_z = next / size;
+				terrain_node_info(navigation, terrain, water, agent, next, next_x, next_z, &there);
+				if (!there.passable || SDL_fabsf(there.height - here.height) > SDL_max(agent->step_meters, 0.6f))
+				{
+					continue;
+				}
+				// (a shut one a little dearer: opening it takes a moment)
+				cost = navigation->search[node].cost + navigation->link_meters[k] + (navigation->links[k].open ? 0.0f : LINK_SHUT_METERS);
+				if (navigation->search[next].tag != reached_tag || cost < navigation->search[next].cost)
+				{
+					navigation->search[next].tag = reached_tag;
+					navigation->search[next].cost = cost;
+					navigation->search[next].came_from = node;
+					if (!buckets_push(navigation, next, cost + HEURISTIC_WEIGHT * estimate(next_x, next_z, goal_x, goal_z)))
+					{
+						navigation->bucket_open_count = 0;
+						break;
+					}
+				}
+			}
+		}
 		if (dry_block_steps(navigation, water, agent, &here, node, cell, cell_x, cell_z, block_valid, block_costs))
 		{
 			for (int d = 0; d < 8; d++)
@@ -2907,6 +2993,35 @@ navigation_result_t navigation_find_path(navigation_t *navigation, const terrain
 		}
 		*waypoint_count_out = count;
 		navigation->last_pull_ticks = SDL_GetPerformanceCounter() - pull_start;
+	}
+	// Through a door: its two ends where they are, not their cells' middles
+	// (the way between them lined up with the gap, not across its posts)
+	for (int w = 0; w + 1 < *waypoint_count_out && navigation->link_count > 0; w++)
+	{
+		int32_t here_cell;
+		int32_t next_cell;
+
+		cell_of_point(navigation, waypoints_out[w][0], waypoints_out[w][1], &here_cell);
+		cell_of_point(navigation, waypoints_out[w + 1][0], waypoints_out[w + 1][1], &next_cell);
+		for (int k = 0; k < navigation->link_count; k++)
+		{
+			int forward = navigation->link_cells[k][0] == here_cell && navigation->link_cells[k][1] == next_cell;
+			int backward = navigation->link_cells[k][1] == here_cell && navigation->link_cells[k][0] == next_cell;
+
+			if (!forward && !backward)
+			{
+				continue;
+			}
+			// (the goal itself kept where it is)
+			if (!(w + 1 == *waypoint_count_out - 1 && found))
+			{
+				waypoints_out[w + 1][0] = forward ? navigation->links[k].b[0] : navigation->links[k].a[0];
+				waypoints_out[w + 1][1] = forward ? navigation->links[k].b[1] : navigation->links[k].a[1];
+			}
+			waypoints_out[w][0] = forward ? navigation->links[k].a[0] : navigation->links[k].b[0];
+			waypoints_out[w][1] = forward ? navigation->links[k].a[1] : navigation->links[k].b[1];
+			break;
+		}
 	}
 	return found ? NAVIGATION_PATH_FOUND : NAVIGATION_PATH_PARTIAL;
 }

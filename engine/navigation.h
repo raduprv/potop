@@ -99,7 +99,25 @@ typedef struct
 	float swim_meters_per_second;      // a current faster than this is a wall
 	float radius_meters;               // half its width: straight stretches of a path keep this far from what is in the way
 	uint8_t groups;                    // bits: a blocker for one of these stops it (navigation_set_blockers; 0: none does)
+	bool opens_doors;                  // goes through a shut door (navigation_set_links): it opens it (a person, not a cow)
 } navigation_agent_t;
+
+// A door: a way from one cell to another through what is in the way (a
+// gate in a fence, a door in a wall, narrower than a cell: the cells by
+// it are taken). Its two ends a little out either side of it; open, any
+// walker goes through; shut, only one that opens doors. The world keeps
+// them (the modules' doors: world_render.c)
+enum
+{
+	NAVIGATION_LINKS_MAX = 512
+};
+
+typedef struct
+{
+	float a[2];                        // one end (x, z): out on one side of the door
+	float b[2];                        // the other, out on the other side
+	bool open;
+} navigation_link_t;
 
 // A blocker: a rectangle no one of its groups goes through (a locked
 // gate, a fallen tree, a ward), whatever is there. The game sets them
@@ -222,6 +240,11 @@ typedef struct
 	uint8_t *blocked;
 	navigation_blocker_t blockers[NAVIGATION_BLOCKERS_MAX];
 	int blocker_count;
+	// The doors (navigation_set_links): their ends' cells, how far apart
+	navigation_link_t links[NAVIGATION_LINKS_MAX];
+	int32_t link_cells[NAVIGATION_LINKS_MAX][2];
+	float link_meters[NAVIGATION_LINKS_MAX];
+	int link_count;
 	float small_object_meters;
 	float small_detour_meters;
 	uint8_t *extra_count;
@@ -383,6 +406,9 @@ void navigation_prepare_around(navigation_t *navigation, float x, float z);
 // The blockers as they are now (each frame: only a change costs anything;
 // the paths through where it changed are looked at again)
 void navigation_set_blockers(navigation_t *navigation, const navigation_blocker_t *blockers, int count);
+// The doors as they are now (all of them, each time: a door opened or shut,
+// one added or gone): the searches go through them (see navigation_link_t)
+void navigation_set_links(navigation_t *navigation, const navigation_link_t *links, int count);
 // What walking on slopes costs: a meter of ground full_degrees steep or
 // steeper costs 1 + extra_cost meters of flat ground, gentler ones less
 // (in proportion to the slope); the steepness each actor can climb at all
