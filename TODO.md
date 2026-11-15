@@ -246,6 +246,10 @@ from an older version get their terrain difference baked in once).
   the casts go over its sides: step_meters 0.1 for hens, or a code rule);
   sheep mill a while at the strunga at dawn. Each new kind of AI: run the
   trace before the zip.
+- Animals, after 39i (walks ahead within ±20°): item 2 grazing as small
+  steps (a bite, a step, a bite) and item 3 herd spacing still to do.
+  Pigs in their small sty and sheep left behind by the flock still turn
+  wide; the flock's grazing place could move by short hops, not jumps.
 
 ## Dependencies
 

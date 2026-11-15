@@ -370,6 +370,115 @@ static bool point_on_ground(game_t *game, potop_t *potop, const animal_mind_t *a
 	return point_in_area(game, potop, home_object(game, animal), "yard", animal->pen, x_out, z_out);
 }
 
+// Whether (x, z) is on its ground: its home's yard (its pen's), within
+// its flock's reach of the grazing place, or round its point
+static bool on_ground(game_t *game, potop_t *potop, const animal_mind_t *animal, float x, float z)
+{
+	const animal_kind_t *kind = &ANIMAL_KINDS[animal->kind];
+
+	if (animal->ground.home >= 0 && kind->flock_radius > 0.0f)
+	{
+		const animal_home_t *home = &game->animal_homes[animal->ground.home];
+
+		// (and in the yard: round a grazing place by its fence, not over it)
+		return home->graze_set && distance_squared_2d(x, z, home->graze_x, home->graze_z) <= kind->flock_radius * kind->flock_radius
+			&& inside_area(potop, home->object_id, "yard", 0, x, z);
+	}
+	if (animal->ground.home < 0)
+	{
+		return distance_squared_2d(x, z, animal->ground.x, animal->ground.z) <= animal->ground.radius * animal->ground.radius;
+	}
+	return inside_area(potop, home_object(game, animal), "yard", animal->pen, x, z);
+}
+
+enum
+{
+	AHEAD_NEIGHBORS_MAX = 64,
+	AHEAD_TRIES_PER_CONE = 8
+};
+
+static const float AHEAD_ROOM_METERS = 2.5f;
+
+// A point of its ground ahead of it: a few meters on, no more than
+// AHEAD_CONES_DEGREES[0] off the way it faces (a cow does not turn round
+// on the spot to walk off the other way); away from the others where it
+// can. At a fence (nothing ahead on its ground) the cone wider, a step at
+// a time, the least turn that finds ground; none at all (off its ground,
+// its flock gone on): anywhere on it, as before
+static bool point_ahead(game_t *game, potop_t *potop, const animal_mind_t *animal, const potop_actor_info_t *actor, float *x_out, float *z_out)
+{
+	static const float AHEAD_CONES_DEGREES[] = { 20.0f, 45.0f, 90.0f, 180.0f };
+	float neighbors[AHEAD_NEIGHBORS_MAX][2];
+	int neighbor_count = 0;
+
+	// (a flock's grazing place found first: on_ground needs it)
+	if (animal->ground.home >= 0 && ANIMAL_KINDS[animal->kind].flock_radius > 0.0f
+		&& !game->animal_homes[animal->ground.home].graze_set)
+	{
+		return point_on_ground(game, potop, animal, x_out, z_out);
+	}
+	for (int k = 0; k < game->animal_count && neighbor_count < AHEAD_NEIGHBORS_MAX; k++)
+	{
+		const animal_mind_t *other = &game->animals[k];
+		potop_actor_info_t there;
+
+		if (other == animal || other->ground.home != animal->ground.home || !potop_actor_get(potop, other->actor_id, &there) || there.dead)
+		{
+			continue;
+		}
+		// (where it is going, if it is: that is where it will be)
+		neighbors[neighbor_count][0] = other->walking ? other->walk_x : there.x;
+		neighbors[neighbor_count][1] = other->walking ? other->walk_z : there.z;
+		neighbor_count++;
+	}
+	for (int cone = 0; cone < (int)SDL_arraysize(AHEAD_CONES_DEGREES); cone++)
+	{
+		float half_angle = AHEAD_CONES_DEGREES[cone] * 0.017453293f;
+		float best_room = -1.0f;
+		float best_x = 0.0f;
+		float best_z = 0.0f;
+
+		for (int t = 0; t < AHEAD_TRIES_PER_CONE; t++)
+		{
+			float yaw = actor->yaw_radians + random_between(game, -half_angle, half_angle);
+			// (the last tries shorter: in a small yard a step or two on
+			// before a turn round)
+			float reach = t < AHEAD_TRIES_PER_CONE - 3 ? random_between(game, 2.0f, 6.0f) : random_between(game, 1.2f, 2.5f);
+			float x = actor->x + SDL_sinf(yaw) * reach;
+			float z = actor->z + SDL_cosf(yaw) * reach;
+			// (room enough at AHEAD_ROOM_METERS from the nearest: any such
+			// as good, not off to the far edge away from all of them)
+			float room = AHEAD_ROOM_METERS * AHEAD_ROOM_METERS;
+
+			if (!on_ground(game, potop, animal, x, z))
+			{
+				continue;
+			}
+			for (int n = 0; n < neighbor_count; n++)
+			{
+				room = SDL_min(room, distance_squared_2d(x, z, neighbors[n][0], neighbors[n][1]));
+			}
+			if (room > best_room)
+			{
+				best_room = room;
+				best_x = x;
+				best_z = z;
+			}
+		}
+		if (best_room >= 0.0f)
+		{
+			char text[32];
+			SDL_snprintf(text, sizeof(text), "ahead_%d", cone);
+			game_trace_event(game, potop, animal->actor_id, text);
+			*x_out = best_x;
+			*z_out = best_z;
+			return true;
+		}
+	}
+	game_trace_event(game, potop, animal->actor_id, "ahead_none");
+	return point_on_ground(game, potop, animal, x_out, z_out);
+}
+
 // Somewhere a few meters round where it stands (out of a crowd's way at a
 // gate, the flock's own going round)
 static void point_near(game_t *game, const potop_actor_info_t *actor, float *x_out, float *z_out)
@@ -1071,7 +1180,7 @@ static void think(game_t *game, potop_t *potop, int index, float seconds)
 					return;
 				}
 			}
-			if (point_on_ground(game, potop, animal, &x, &z))
+			if (point_ahead(game, potop, animal, &actor, &x, &z))
 			{
 				walk_to(potop, animal, x, z);
 			}

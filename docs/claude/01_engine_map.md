@@ -1070,3 +1070,17 @@ The render.indirect_light* settings are gone.
 actors.c: spot_turn_degrees (actors.ini; default 20 for ground_align > 0, else 0): standing, a straight walker turns no farther than that from spot_yaw_radians (where it last went; taken while moving or going 0.1 m/s), clamped at the end of move_actor (looks, sidesteps, bumps). Such a type with no turn_walk_fraction gets 0.4 (the cow had none: it span on the spot). Tried first: held while walking too, backing out at the limit: --sim walking in place 3x..30x (cow 176, pig 138, ram 380 vs 60, 5, 52); so walking is not held (blocked arcs still turn on the spot). Now: cow 21, pig 4, ram 28.
 
 - 39h: a one-shot action of its own playing (eat, get_up, lie_down, pain; not dying, not backing) holds a walker still (wanted_speed 0): it slid a meter eating. --sim with the new models (old ini scales): ram walking in place 132 vs 203 without, pig 30 vs 11, cow 37 vs 36; pigs in for the night later (they finish eating).
+
+## Walks ahead, not round (39i)
+
+animals.c point_ahead (ROAM walks; the feeder walks and detours as
+before): 8 tries 2..6 m (the last 3: 1.2..2.5 m) within ±20° of the
+actor's yaw, kept only on its ground (on_ground: the pen's yard; a
+flock's circle round the grazing place AND inside the yard; a free one's
+circle), the one with 2.5 m of room from the others (their walk targets
+when walking) preferred. Nothing: the cone ±45, ±90, ±180, the least
+turn that finds ground; still nothing (a sheep left behind by its moving
+flock): point_on_ground as before. Trace events ahead_0..3 / ahead_none
+show which cone it took. Sim (1200 s, 16h): cow walking in place 57 -> 16,
+pig 10 -> 2, ram 36 -> 27; cows take the ±20° cone 79% of walks, pigs
+(small sty) 34%, rams 103 of 171 none (the flock moved on).
