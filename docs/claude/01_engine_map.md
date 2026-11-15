@@ -1109,3 +1109,15 @@ trails by them and counts turns on the spot (40 degrees within a second,
 under 0.3 m on); animal_test.sh writes trace_walk.png too. Sim: cows
 walking in place 57 -> 10, no turns on the spot (hens 299, pigs 133 still:
 theirs next).
+
+39k (Radu's test of 39j: too many gratuitous steps back, ugly; the slowed
+turn odd): blocked ahead, wander looks for the nearest free way 10 degrees
+at a time out to search_degrees (40 for the cow) before a step back (the
+last resort); caught (legs going, body not, 1.5 s) it turns the same way,
+only its body not coming round either (rump against something) makes it
+back. wander_move keeps the full walk through a turn (no cos slowdown);
+COW_WANDER speed_share 1.0. animal_trace.py --walk: black a step back,
+violet jitter (not walking, moved over 1.5 cm a sample: the physics), red
+spin / in place (the dots red too). Sim: cow steps back 488 -> 54 a run,
+walking in place while roaming 14 (39i base) -> 4; jitter cows 141 samples
+(at the troughs mostly: to look at).

@@ -5,10 +5,11 @@
 //
 //   free ahead       on it goes; now and then (drift_chance) a little to
 //                    one side (drift_degrees), if that way is free too
-//   blocked ahead    a little to one side or the other, whichever is free
-//                    (once it has turned the last such: no running ahead of
-//                    its own body, a spin on the spot in tenths of a second)
-//   neither          a step back, if free behind
+//   blocked ahead    the nearest free way to one side or the other, ten
+//                    degrees at a time out to search_degrees (once it has
+//                    turned the last such: no running ahead of its own
+//                    body, a spin on the spot in tenths of a second)
+//   none             a step back, if free behind: the last resort
 //   not even that    it stands and tries on a while (give_up_seconds),
 //                    then gives up: the walk is over
 //
@@ -78,11 +79,27 @@ void wander_stop(wander_t *wander, potop_t *potop, uint32_t actor_id)
 	wander->active = false;
 }
 
+// A step back, if free behind and it has some left this walk
+static bool wander_step_back(wander_t *wander, game_t *game, potop_t *potop, uint32_t actor_id, const wander_style_t *style)
+{
+	if (wander->backs >= style->backs_most || !potop_actor_heading_free(potop, actor_id, wander->heading + 3.14159265f, WANDER_BACK_LOOK_METERS))
+	{
+		return false;
+	}
+	wander->backs++;
+	wander->back_seconds = style->back_seconds;
+	game_trace_event(game, potop, actor_id, "wander_back");
+	potop_actor_wander(potop, actor_id, wander->heading, -style->back_share);
+	return true;
+}
+
 // One look ahead (see the top); false: the walk is over
 static bool wander_look(wander_t *wander, game_t *game, potop_t *potop, uint32_t actor_id, const wander_style_t *style, const potop_actor_info_t *actor)
 {
 	float drift = style->drift_degrees * 0.017453293f;
 	float side = wander_random(wander) < 0.5f ? 1.0f : -1.0f;
+	int steps = SDL_max(1, (int)(style->search_degrees / SDL_max(style->drift_degrees, 1.0f) + 0.5f));
+	bool stuck;
 
 	wander->looks++;
 	// Stepping back: on till its time is up or something is behind it
@@ -101,8 +118,8 @@ static bool wander_look(wander_t *wander, game_t *game, potop_t *potop, uint32_t
 		return false;
 	}
 	// (its legs going and its body not getting on, its mind seeing the way
-	// free (its body not fitting round, another pushing it): caught, a
-	// step back, or it gives up)
+	// free (its body not fitting round, another pushing it): caught, taken
+	// as blocked ahead)
 	if ((actor->x - wander->stuck_x) * (actor->x - wander->stuck_x) + (actor->z - wander->stuck_z) * (actor->z - wander->stuck_z)
 		> WANDER_STUCK_METERS * WANDER_STUCK_METERS || !actor->wandering)
 	{
@@ -114,22 +131,8 @@ static bool wander_look(wander_t *wander, game_t *game, potop_t *potop, uint32_t
 	{
 		wander->stuck_seconds += WANDER_TICK_SECONDS;
 	}
-	if (wander->stuck_seconds >= WANDER_STUCK_SECONDS)
-	{
-		wander->stuck_seconds = 0.0f;
-		wander->stuck_x = 1e9f;
-		if (wander->backs < style->backs_most && potop_actor_heading_free(potop, actor_id, wander->heading + 3.14159265f, WANDER_BACK_LOOK_METERS))
-		{
-			wander->backs++;
-			wander->back_seconds = style->back_seconds;
-			game_trace_event(game, potop, actor_id, "wander_back");
-			potop_actor_wander(potop, actor_id, wander->heading, -style->back_share);
-			return true;
-		}
-		game_trace_event(game, potop, actor_id, "wander_gave_up");
-		return false;
-	}
-	if (potop_actor_heading_free(potop, actor_id, wander->heading, style->look_meters))
+	stuck = wander->stuck_seconds >= WANDER_STUCK_SECONDS;
+	if (!stuck && potop_actor_heading_free(potop, actor_id, wander->heading, style->look_meters))
 	{
 		wander->blocked_seconds = 0.0f;
 		if (wander_random(wander) < style->drift_chance && potop_actor_heading_free(potop, actor_id, wander->heading + side * drift, style->look_meters))
@@ -140,10 +143,11 @@ static bool wander_look(wander_t *wander, game_t *game, potop_t *potop, uint32_t
 		potop_actor_wander(potop, actor_id, wander->heading, style->speed_share);
 		return true;
 	}
-	// Blocked ahead: a little to one side or the other, once its body has
-	// come round to the last turn (meanwhile it goes on as it is: the
-	// engine stops its step if something is right at its nose)
-	if (SDL_fabsf(wrap_radians(wander->heading - actor->yaw_radians)) > WANDER_TURNED_RADIANS)
+	// Blocked ahead: the nearest free way to one side or the other, ten
+	// degrees at a time out to search_degrees, once its body has come
+	// round to the last turn (meanwhile it goes on as it is: the engine
+	// stops its step if something is right at its nose)
+	if (!stuck && SDL_fabsf(wrap_radians(wander->heading - actor->yaw_radians)) > WANDER_TURNED_RADIANS)
 	{
 		// (its body not coming round: caught, it gives up in the end)
 		wander->blocked_seconds += WANDER_TICK_SECONDS;
@@ -154,34 +158,46 @@ static bool wander_look(wander_t *wander, game_t *game, potop_t *potop, uint32_t
 		}
 		return true;
 	}
-	for (int pass = 0; pass < 2; pass++)
+	wander->stuck_seconds = 0.0f;
+	wander->stuck_x = 1e9f;
+	// (caught and its body not coming round to its heading either: its
+	// rump against something, no turn and no way on; only back is left)
+	if (stuck && SDL_fabsf(wrap_radians(wander->heading - actor->yaw_radians)) > WANDER_TURNED_RADIANS)
 	{
-		float heading = wander->heading + (pass == 0 ? side : -side) * drift;
-
-		if (potop_actor_heading_free(potop, actor_id, heading, style->look_meters))
+		if (wander_step_back(wander, game, potop, actor_id, style))
 		{
-			wander->heading = wrap_radians(heading);
-			wander->blocked_seconds = 0.0f;
-			game_trace_event(game, potop, actor_id, "wander_turn");
-			potop_actor_wander(potop, actor_id, wander->heading, style->speed_share);
 			return true;
 		}
+		game_trace_event(game, potop, actor_id, "wander_gave_up");
+		return false;
 	}
-	// Neither: a step back, if free behind (so many in a walk at most);
-	// not at its first look (set out facing a wall, another: no walk at
-	// all, rather than back and on and back at it, walk after walk)
-	if (wander->looks > 1 && wander->backs < style->backs_most && potop_actor_heading_free(potop, actor_id, wander->heading + 3.14159265f, WANDER_BACK_LOOK_METERS))
+	for (int step = 1; step <= steps; step++)
 	{
-		wander->backs++;
-		wander->back_seconds = style->back_seconds;
-		game_trace_event(game, potop, actor_id, "wander_back");
-		potop_actor_wander(potop, actor_id, wander->heading, -style->back_share);
-		return true;
+		for (int pass = 0; pass < 2; pass++)
+		{
+			float heading = wander->heading + (pass == 0 ? side : -side) * drift * (float)step;
+
+			if (potop_actor_heading_free(potop, actor_id, heading, style->look_meters))
+			{
+				wander->heading = wrap_radians(heading);
+				wander->blocked_seconds = 0.0f;
+				game_trace_event(game, potop, actor_id, "wander_turn");
+				potop_actor_wander(potop, actor_id, wander->heading, style->speed_share);
+				return true;
+			}
+		}
 	}
+	// Nothing free round it: set out facing a wall, another, there is no
+	// walk at all (rather than back and on and back at it, walk after
+	// walk); on the way, a step back, the last resort
 	if (wander->looks <= 1)
 	{
 		game_trace_event(game, potop, actor_id, "wander_gave_up");
 		return false;
+	}
+	if (wander_step_back(wander, game, potop, actor_id, style))
+	{
+		return true;
 	}
 	// Not even that: it stands, and tries on a while
 	potop_actor_wander(potop, actor_id, wander->heading, 0.0f);

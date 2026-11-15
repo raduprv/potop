@@ -87,12 +87,13 @@ typedef struct
 } animal_kind_t;
 
 // A cow's boredom walk: a meter past her nose, now and then (once a second
-// or so) ten degrees aside, at most of her walk
+// or so) ten degrees aside, blocked out to forty round, at her walk
 static const wander_style_t COW_WANDER = {
 	.look_meters = 1.0f,
 	.drift_chance = 0.1f,
 	.drift_degrees = 10.0f,
-	.speed_share = 0.8f,
+	.search_degrees = 40.0f,
+	.speed_share = 1.0f,
 	.back_seconds = 0.8f,
 	.back_share = 0.35f,
 	.give_up_seconds = 1.0f,

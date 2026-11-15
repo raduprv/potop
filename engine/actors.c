@@ -2395,13 +2395,14 @@ static void wander_move(actors_t *actors, actor_t *actor, const navigation_t *na
 	turn = wrap_angle(actor->wander_heading - actor->yaw_radians);
 	if (actor->wander_share >= 0.0f)
 	{
-		// (still turning to it: on round an arc, slower, not on the spot)
 		float ahead_x = actor->x + SDL_sinf(actor->yaw_radians) * 0.5f;
 		float ahead_z = actor->z + SDL_cosf(actor->yaw_radians) * 0.5f;
 		float rise = (navigation_surface_height(navigation, terrain, &agent, ahead_x, ahead_z, actor->y)
 			- navigation_surface_height(navigation, terrain, &agent, actor->x, actor->z, actor->y)) / 0.5f;
 
-		wanted_speed = actor->wander_share * SDL_max(SDL_cosf(turn), type->turn_walk_fraction) * type->walk_meters_per_second;
+		// (turning too: its walk kept, round an arc; slowed in a turn it
+		// looked odd, a mind's turns are small)
+		wanted_speed = actor->wander_share * type->walk_meters_per_second;
 		wanted_speed /= 1.0f + 2.0f * SDL_max(rise, 0.0f);
 		actor->backing_meters = 0.0f;
 	}

@@ -15,9 +15,10 @@
 #
 # --walk: the trails coloured by how they walk instead (the boredom walk,
 # game/wander.c): green free, yellow its little turn aside (wander_drift),
-# orange blocked and turned (wander_turn), red forced (a step back, a turn
-# on the spot of more than SPIN_DEGREES within a second, walking in
-# place), grey given up (wander_gave_up); not walking, pale.
+# orange blocked and turned (wander_turn), black a step back, red forced (a
+# turn on the spot of more than SPIN_DEGREES within a second, walking in
+# place), violet jitter (not walking, yet moved: the physics pushing it,
+# at a feeder mostly), grey given up (wander_gave_up); not walking, pale.
 
 import argparse
 import math
@@ -50,12 +51,15 @@ OBSTACLE_COLOURS = { "1": (190, 140, 90), "2": (150, 165, 195), "3": (150, 150, 
 SPIN_DEGREES = 40.0
 SPIN_SECONDS = 1.0
 SPIN_METERS = 0.3
+JITTER_METERS = 0.015             # not walking, yet moved this much from one sample to the next
 WALK_EVENT_SECONDS = 0.6
 WALK_COLOURS = {
 	"free": (40, 170, 60),
 	"wander_drift": (230, 200, 0),
 	"wander_turn": (245, 130, 0),
 	"forced": (220, 20, 20),
+	"wander_back": (0, 0, 0),
+	"jitter": (170, 0, 220),
 	"wander_gave_up": (120, 120, 120),
 	"still": (215, 225, 215),
 }
@@ -207,6 +211,20 @@ def main():
 				if t - last_spin > SPIN_SECONDS:
 					spins.append((t, animal, kind, x, z, math.degrees(turned)))
 				last_spin = t
+	# Jitter: not walking, yet moved (the physics pushing it about)
+	jitter_times = defaultdict(set)   # id -> {t}
+	jitter_count = defaultdict(int)   # kind -> samples
+	for animal, trail in samples.items():
+		for k in range(1, len(trail)):
+			a = trail[k - 1]
+			b = trail[k]
+			if not a[5] and not b[5] and b[2] not in ("asleep", "dead", "going_in", "going_out") \
+					and math.hypot(b[3] - a[3], b[4] - a[4]) > JITTER_METERS and b[0] - a[0] < 1.0:
+				jitter_times[animal].add(b[0])
+				jitter_count[b[1]] += 1
+	if jitter_count:
+		print("\njitter (not walking, moved over %.0f cm a sample): %s" % (JITTER_METERS * 100.0,
+			", ".join("%s %d" % (kind, n) for kind, n in sorted(jitter_count.items()))))
 	if spins:
 		print("\nturns on the spot (more than %.0f degrees in %.0f s, under %.1f m on):" % (SPIN_DEGREES, SPIN_SECONDS, SPIN_METERS))
 		for kind in sorted(set(s[2] for s in spins)):
@@ -257,7 +275,7 @@ def main():
 	for t, animal, kind, x, z, text in events:
 		name = text.split()[0]
 		if name in ("wander_drift", "wander_turn", "wander_back", "wander_gave_up"):
-			walk_events[animal].append((t, "forced" if name == "wander_back" else name))
+			walk_events[animal].append((t, name))
 	in_place_times = defaultdict(list)
 	for t, animal, kind, x, z, seconds in in_place:
 		in_place_times[animal].append((t, seconds))
@@ -275,10 +293,14 @@ def main():
 					m += 1
 				recent = [name for when, name in marks[m:] if when <= t]
 				moved = math.hypot(b[3] - a[3], b[4] - a[4]) > 0.01
-				if t in spin_times.get(animal, ()) or any(when <= t <= when + seconds for when, seconds in in_place_times.get(animal, ())):
+				if "wander_back" in recent:
+					colour = WALK_COLOURS["wander_back"]
+				elif t in spin_times.get(animal, ()) or any(when <= t <= when + seconds for when, seconds in in_place_times.get(animal, ())):
 					colour = WALK_COLOURS["forced"]
+				elif t in jitter_times.get(animal, ()):
+					colour = WALK_COLOURS["jitter"]
 				elif recent:
-					order = ("forced", "wander_gave_up", "wander_turn", "wander_drift")
+					order = ("wander_gave_up", "wander_turn", "wander_drift")
 					colour = WALK_COLOURS[min(recent, key=order.index)]
 				elif b[2] == "roam" and moved:
 					colour = WALK_COLOURS["free"]
@@ -287,7 +309,7 @@ def main():
 			draw.line([at(a[3], a[4]), at(b[3], b[4])], fill=colour, width=2)
 	for t, animal, kind, x, z, seconds in in_place:
 		p = at(x, z)
-		draw.ellipse([p[0] - 3, p[1] - 3, p[0] + 3, p[1] + 3], fill=(0, 0, 0))
+		draw.ellipse([p[0] - 3, p[1] - 3, p[0] + 3, p[1] + 3], fill=WALK_COLOURS["forced"] if arguments.walk else (0, 0, 0))
 	for t, animal, kind, x, z, text in events:
 		p = at(x, z)
 		name = text.split()[0]
@@ -304,8 +326,8 @@ def main():
 	# (the key, top left)
 	y = 4
 	if arguments.walk:
-		for name, label in (("free", "free"), ("wander_drift", "drift aside"), ("wander_turn", "blocked, turned"), ("forced", "back / spin / in place"),
-				("wander_gave_up", "gave up"), ("still", "not walking")):
+		for name, label in (("free", "free"), ("wander_drift", "drift aside"), ("wander_turn", "blocked, turned"), ("wander_back", "step back"),
+				("forced", "spin / in place (dot)"), ("jitter", "jitter (physics)"), ("wander_gave_up", "gave up"), ("still", "not walking")):
 			draw.rectangle([4, y + 2, 14, y + 10], fill=WALK_COLOURS[name])
 			draw.text((18, y), label, fill=(0, 0, 0))
 			y += 13
