@@ -73,3 +73,12 @@ ONLY about the boredom walk; the other activities come later.
   (no slowing down to "arrive" every 100 ms).
 - 6: staggering (agreed in principle).
 - 7: hysteresis (agreed in principle).
+
+## Trace picture (asked 2026-11-15)
+
+tools/animal_trace.py already draws the tracks into a png; extend it so
+Claude can look at it (vision) after each --sim run. Each step coloured:
+green walking free; yellow the 10% drift turn; orange blocked ahead and
+turned to another heading; red forced: the step back, a turn wider than
+the limit, walking in place; grey idle after giving up. Needs a trace
+event from the new walk for each of these.
