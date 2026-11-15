@@ -792,3 +792,90 @@ bool objects_door_at(objects_t *objects, vec3_t origin, vec3_t direction, float 
 	}
 	return found;
 }
+
+bool objects_door_info(objects_t *objects, uint32_t module_id, int door_part, objects_door_info_t *info_out)
+{
+	int module_index = objects_find_id(objects, module_id);
+	const module_file_t *module = objects_module_of(objects, module_index);
+	int part_index = find_door(objects, module_id, door_part);
+	const object_instance_t *module_instance;
+	const object_instance_t *part;
+	const object_type_t *type;
+	const object_model_t *model;
+	const module_file_part_t *file_part;
+	float closed_angle;
+	float open_angle;
+	float local_along[3];
+	float closed[4];
+	float yaw[4];
+	float turn[4];
+	float along[3];
+	float local[3];
+	float hinge[3];
+	float sign;
+
+	if (part_index < 0)
+	{
+		return false;
+	}
+	module_instance = &objects->instances[module_index];
+	part = &objects->instances[part_index];
+	type = &objects->types.types[part->type];
+	if (type->model < 0)
+	{
+		return false;
+	}
+	model = &objects->models[type->model];
+	file_part = &module->parts[door_part];
+	closed_angle = module->poses[door_state(module, false)][door_part].angle_degrees;
+	open_angle = module->poses[door_state(module, true)][door_part].angle_degrees;
+	// The leaf across its own frame: from its hinge (the origin) along
+	// the longer of its bounds' X and Z (a door in a wall that runs along
+	// Z lies along Z), whichever way they lie
+	if (model->bounds_maximum.x - model->bounds_minimum.x >= model->bounds_maximum.z - model->bounds_minimum.z)
+	{
+		sign = model->bounds_maximum.x + model->bounds_minimum.x >= 0.0f ? 1.0f : -1.0f;
+		local_along[0] = sign;
+		local_along[2] = 0.0f;
+		info_out->width = (model->bounds_maximum.x - model->bounds_minimum.x) * module_instance->scale;
+	}
+	else
+	{
+		sign = model->bounds_maximum.z + model->bounds_minimum.z >= 0.0f ? 1.0f : -1.0f;
+		local_along[0] = 0.0f;
+		local_along[2] = sign;
+		info_out->width = (model->bounds_maximum.z - model->bounds_minimum.z) * module_instance->scale;
+	}
+	local_along[1] = 0.0f;
+	quaternion_axis_angle(file_part->axis, closed_angle * DEGREES_TO_RADIANS, closed);
+	quaternion_axis_angle((const float[3]){ 0.0f, 1.0f, 0.0f }, file_part->yaw_degrees * DEGREES_TO_RADIANS, yaw);
+	quaternion_multiply(yaw, closed, turn);
+	quaternion_multiply(module_instance->rotation, turn, turn);
+	quaternion_rotate(turn, local_along, along);
+	for (int k = 0; k < 3; k++)
+	{
+		local[k] = file_part->position[k] * module_instance->scale;
+	}
+	quaternion_rotate(module_instance->rotation, local, hinge);
+	info_out->hinge[0] = module_instance->x + hinge[0];
+	info_out->hinge[1] = objects_instance_base_y(module_instance) + hinge[1];
+	info_out->hinge[2] = module_instance->z + hinge[2];
+	info_out->along[0] = along[0];
+	info_out->along[1] = 0.0f;
+	info_out->along[2] = along[2];
+	{
+		float length = SDL_sqrtf(along[0] * along[0] + along[2] * along[2]);
+
+		info_out->along[0] /= SDL_max(length, 1e-6f);
+		info_out->along[2] /= SDL_max(length, 1e-6f);
+	}
+	info_out->height = (model->bounds_maximum.y - model->bounds_minimum.y) * module_instance->scale;
+	// (+ round +Y turns along toward up x along = (along.z, 0, -along.x))
+	sign = open_angle - closed_angle >= 0.0f ? 1.0f : -1.0f;
+	info_out->swing[0] = sign * info_out->along[2];
+	info_out->swing[1] = 0.0f;
+	info_out->swing[2] = -sign * info_out->along[0];
+	info_out->open = objects_door(objects, module_id, door_part) == 1;
+	info_out->moving = part->module_state != part->module_target;
+	return true;
+}

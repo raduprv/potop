@@ -1161,3 +1161,25 @@ fading out too); choose_animation only the walk (going: speed over 0.05 to
 start, over 0.02 to keep on); wander_move's blocked step holds it 0.5 s
 (wander_hold_seconds); previous_rate. Cow, 300 s: walk_left/right
 switches 0 (were ~650), walk <-> idle 214 (were ~430).
+
+## The farmer (39p, for now)
+
+game/farmer.c: one farmer (actors.ini [farmer], data/actors/farmer.pact:
+idle, walk, walk_left/right, turn_left/right, idle_look/stretch/wipe/
+hips, door_push, door_pull, 2.667 s, hands on the leaf at ~0.6 s) spawned
+once the animals' homes are known, 3 m out before the first home's first
+door. His doors: door1..door12 of every animal home within 200 m of that
+one. Round: a random door (not the last), opened if shut, shut if open;
+potop_actor_go_to a point 1.2 m out on the swing side of his spot, then
+walk_straight_exact onto the spot facing the door, the clip, the door set
+swinging at 0.6 s (potop_door_set), a breather (an idle clip, 2-6 s).
+Opening: door_pull, standing beyond the latch edge on the swing side
+(hinge + along*(w+0.3) + swing*0.35, facing the latch: the leaf swings
+past him). Shutting: door_push, beside the open leaf's end behind it
+(hinge + swing*(w-0.15) - along*0.45, facing along). potop_door_info:
+hinge, along (the longer of the leaf's bounds' X and Z, by their sign),
+swing (the open pose's turn), width, height, open, moving. Trace events
+farmer_opened / farmer_shut / farmer_no_way / farmer_lost /
+farmer_step_short / farmer_door (his doors, at the start).
+farmer_travel.json (root motion per frame) not used: his clips are in
+place like the smith's.

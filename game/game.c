@@ -452,6 +452,7 @@ void game_update(game_t *game, potop_t *potop, const game_input_t *input, float 
 	game_update_places(game, potop);
 	game_update_bears(game, potop, seconds);
 	game_update_animals(game, potop, seconds);
+	game_update_farmer(game, potop, seconds);
 	game_update_workers(game, potop, seconds);
 	if (!camera.first_person)
 	{

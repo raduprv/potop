@@ -166,6 +166,40 @@ typedef struct
 	int pen;
 } animal_mind_t;
 
+// The farmer (farmer.c): going round the farm's doors, for now
+#define FARMER_DOORS_MAX 48
+
+typedef enum
+{
+	FARMER_RESTING = 0,            // a breather (seconds: left of it)
+	FARMER_GOING,                  // to a door, by his paths
+	FARMER_STEPPING,               // onto his spot by it, turning to it
+	FARMER_WORKING                 // swinging it (door_pull / door_push)
+} farmer_state_t;
+
+typedef struct
+{
+	uint32_t actor;                // 0: none (yet)
+	bool gave_up;                  // no farm with moving doors, or he is gone
+	farmer_state_t state;
+	float seconds;                 // in this state (resting: left of it)
+	struct
+	{
+		uint32_t building;         // the object
+		int door;                  // its door (potop_door_set)
+	} doors[FARMER_DOORS_MAX];
+	int door_count;
+	int current;                   // the door he is at (-1: none)
+	bool opening;                  // opening it (else shutting)
+	bool door_set;                 // set swinging this time
+	float spot_x;                  // where he stands to do it, facing spot_yaw
+	float spot_z;
+	float spot_yaw;
+	float approach_x;              // the walk there ends here first
+	float approach_z;
+	uint32_t random;
+} farmer_t;
+
 // A building animals live at (animals.c): a hen house, a cow farm
 typedef struct
 {
@@ -338,6 +372,7 @@ typedef struct
 	uint32_t bear_random;
 	float bear_milliseconds;       // what their minds cost a frame (on average)
 	// The farm animals (animals.c): their homes near the eye, their minds
+	farmer_t farmer;
 	animal_home_t animal_homes[GAME_ANIMAL_HOMES_MAX];
 	int animal_home_count;
 	animal_mind_t animals[GAME_ANIMALS_MAX];
@@ -412,6 +447,7 @@ const char *game_animal_kind_name(int kind);
 // spots: the hens at their hen houses, the cows at their farms) once a
 // frame
 void game_update_animals(game_t *game, potop_t *potop, float seconds);
+void game_update_farmer(game_t *game, potop_t *potop, float seconds);
 void game_update_workers(game_t *game, potop_t *potop, float seconds);
 void game_workers_map_loaded(game_t *game, potop_t *potop);
 // One loose about the land, round (x, z) within radius, no home (a cow

@@ -764,6 +764,21 @@ int potop_door_get(potop_t *potop, uint32_t object_id, int door);
 // A building's door by its name ("door1", "door2", ... in the order the
 // house generator made them); -1 if none
 int potop_door_find(potop_t *potop, uint32_t object_id, const char *name);
+
+typedef struct
+{
+	float hinge[3];                // its hinges' foot (world, meters)
+	float along[3];                // from the hinges across the leaf, shut (horizontal, unit)
+	float swing[3];                // the side it swings open to (horizontal, unit)
+	float width;                   // the leaf's (meters)
+	float height;
+	bool open;                     // open or opening
+	bool moving;                   // swinging now
+} potop_door_info_t;
+
+// Where a building's door is and how it swings (for someone to stand by
+// it); false if there is no such door
+bool potop_door_info(potop_t *potop, uint32_t object_id, int door, potop_door_info_t *info_out);
 // Picks from the target found last (POTOP_TARGET_HARVEST) into the pack;
 // the item and how many went in
 potop_pick_result_t potop_player_pick(potop_t *potop, int *item_out, int *count_out);

@@ -1037,6 +1037,24 @@ int potop_door_find(potop_t *potop, uint32_t object_id, const char *name)
 	return objects_door_find(&potop->world.objects, object_id, name);
 }
 
+bool potop_door_info(potop_t *potop, uint32_t object_id, int door, potop_door_info_t *info_out)
+{
+	objects_door_info_t info;
+
+	if (!objects_door_info(&potop->world.objects, object_id, door, &info))
+	{
+		return false;
+	}
+	SDL_memcpy(info_out->hinge, info.hinge, sizeof(info.hinge));
+	SDL_memcpy(info_out->along, info.along, sizeof(info.along));
+	SDL_memcpy(info_out->swing, info.swing, sizeof(info.swing));
+	info_out->width = info.width;
+	info_out->height = info.height;
+	info_out->open = info.open;
+	info_out->moving = info.moving;
+	return true;
+}
+
 potop_pick_result_t potop_player_pick(potop_t *potop, int *item_out, int *count_out)
 {
 	harvest_outcome_t outcome = player_pick(&potop->session.player, &potop->session, &potop->world);

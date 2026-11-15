@@ -613,6 +613,19 @@ bool objects_set_door(objects_t *objects, uint32_t module_id, int door_part, boo
 int objects_door(objects_t *objects, uint32_t module_id, int door_part);
 // A module's door by its part's name ("door1"); -1 if none
 int objects_door_find(objects_t *objects, uint32_t module_id, const char *name);
+typedef struct
+{
+	float hinge[3];                // its hinges' foot (world)
+	float along[3];                // from the hinges across the leaf, shut (horizontal, unit)
+	float swing[3];                // the side it swings open to (horizontal, unit)
+	float width;                   // the leaf's, meters
+	float height;
+	bool open;                     // open or opening
+	bool moving;                   // swinging now
+} objects_door_info_t;
+
+// Where a door is and how it swings; false if there is no such door
+bool objects_door_info(objects_t *objects, uint32_t module_id, int door_part, objects_door_info_t *info_out);
 // The nearest door along a ray (its model's bounds as it stands now),
 // within maximum_distance: its module's id, its part, how far; false if none
 bool objects_door_at(objects_t *objects, vec3_t origin, vec3_t direction, float maximum_distance, uint32_t *module_id_out, int *door_part_out,
