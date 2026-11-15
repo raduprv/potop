@@ -18322,15 +18322,22 @@ static void cabin_stone_face(house_t *house, const cabin_t *cabin, vec_t origin,
 
 		smooth_grid_holes(builder, HOUSE_MATERIAL_BASE, LEVEL_FULL, points, (const float (*)[2])uv, columns, rows, facing, closed, skip);
 	}
-	// (its ledge back over the wall's thickness, from its top row)
+	// (its ledge back over the wall's thickness, from its top row; at an
+	// outer corner mitred: its back edge stops the wall's thickness short
+	// of the end, the two ledges meeting on the corner's diagonal, not
+	// both over its square at one height, fighting)
 	{
 		float back = cabin->wall_half * 2.0f;
+		float back_s0 = convex_lo ? s0 + back : s0;
+		float back_s1 = convex_hi ? s1 - back : s1;
 
 		for (int i = 0; i + 1 < columns; i++)
 		{
 			vec_t a = points[i];
 			vec_t b = points[i + 1];
-			vec_t c = sub(add(add(origin, scale(along, lines_s[i + 1])), vec(0.0f, b.y, 0.0f)), scale(outward, back));
+			float c_s = clamp_float(lines_s[i + 1], back_s0, back_s1);
+			float d_s = clamp_float(lines_s[i], back_s0, back_s1);
+			vec_t c = sub(add(add(origin, scale(along, c_s)), vec(0.0f, b.y, 0.0f)), scale(outward, back));
 			float middle_s = (lines_s[i] + lines_s[i + 1]) * 0.5f;
 			bool over_hole = false;
 
@@ -18343,10 +18350,12 @@ static void cabin_stone_face(house_t *house, const cabin_t *cabin, vec_t origin,
 			{
 				continue;
 			}
-			vec_t d = sub(add(add(origin, scale(along, lines_s[i])), vec(0.0f, a.y, 0.0f)), scale(outward, back));
+			vec_t d = sub(add(add(origin, scale(along, d_s)), vec(0.0f, a.y, 0.0f)), scale(outward, back));
 			vec_t p[4] = { a, b, c, d };
-			float ledge_uv[4][2] = { { uv[i][0], uv[i][1] }, { uv[i + 1][0], uv[i + 1][1] }, { uv[i + 1][0], uv[i + 1][1] + back / repeat },
-				{ uv[i][0], uv[i][1] + back / repeat } };
+			float ledge_uv[4][2] = { { uv[i][0], uv[i][1] }, { uv[i + 1][0], uv[i + 1][1] },
+				{ uv[i + 1][0] + (c_s - lines_s[i + 1]) / repeat, uv[i + 1][1] + back / repeat },
+				{ uv[i][0] + (d_s - lines_s[i]) / repeat, uv[i][1] + back / repeat } };
+
 
 			quad_outward(builder, HOUSE_MATERIAL_BASE, LEVEL_FULL, p, ledge_uv, add(scale(add(a, c), 0.5f), vec(0.0f, -1.0f, 0.0f)));
 		}
