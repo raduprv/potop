@@ -51,6 +51,9 @@
 //   timber  one face of worked wood (a beam's, a log's): fibers along it,
 //           lighter and darker bands, knots, long checks, a worm's holes
 //           (and NAME_height.png, NAME_arm.png; --color: the wood's)
+//   planks  an old floor's planks down the picture: several widths, butt
+//           joints, gaps with dirt in them, weathered gray wood full of
+//           checks, square forged nails (and NAME_height.png, NAME_arm.png)
 //
 // Options:
 //   --data DIR         the game's data directory (data)
@@ -64,7 +67,8 @@
 //   --ripples M        sand: the ripples' spacing (meters; 0.11; 0: none)
 //   --ripple-height M  sand: their height (meters; 0.008)
 //   --plates M         clay: the big plates' size (meters; 0.35)
-//   --boards M         weatherboard: what shows of each board (meters; 0.2)
+//   --boards M         weatherboard: what shows of each board (meters; 0.2);
+//                      planks: a plank's width (meters; 0.33)
 //   --moss A           rock, granite: how much moss or lichen; weatherboard:
 //                      how much lichen (0..1; each kind its own)
 //   --baked-light A    how much of the light is baked into the color, as a
@@ -96,7 +100,7 @@ typedef struct
 	float ripple_spacing;
 	float ripple_height;
 	float plate_meters;
-	float board_meters;                // weatherboard: what shows of each board (meters)
+	float board_meters;                // weatherboard: what shows of each board; planks: a plank's width (meters; 0: the kind's)
 	float baked_light;                 // how much of the light is in the color (0..1)
 	float moss;                        // rock, granite: how much moss or lichen (0..1; below 0: the kind's)
 	float puddles;                     // wet_*: the share of it under standing water (0..1)
@@ -3855,6 +3859,93 @@ static bool soak(const texture_settings_t *settings, field_t *field, float settl
 	return true;
 }
 
+// The color a little crisper, as a photograph's is after its sharpening:
+// each pixel pushed away from its surroundings' average (amount: how far;
+// passes: how wide the surroundings, 1 the pixels next to it, 10 or so a
+// centimeter of them: the local contrast). No halos: a pixel never goes
+// past the lightest or the darkest of the pixels right round it, so a
+// dark line gets no pale rim, a pale one no dark rim (the overshoot that
+// makes them is cut off, the texture between stays sharpened)
+static void sharpen_color(field_t *field, int passes, float amount)
+{
+	int size = field->size;
+	int reach = passes > 1 ? 2 : 1;
+	float *around = malloc((size_t)size * (size_t)size * sizeof(float));
+	float *lowest = malloc((size_t)size * (size_t)size * sizeof(float));
+	float *highest = malloc((size_t)size * (size_t)size * sizeof(float));
+	float *row_lowest = malloc((size_t)size * (size_t)size * sizeof(float));
+	float *row_highest = malloc((size_t)size * (size_t)size * sizeof(float));
+
+	if (around == NULL || lowest == NULL || highest == NULL || row_lowest == NULL || row_highest == NULL)
+	{
+		free(around);
+		free(lowest);
+		free(highest);
+		free(row_lowest);
+		free(row_highest);
+		return;
+	}
+	for (int k = 0; k < 3; k++)
+	{
+		for (int i = 0; i < size * size; i++)
+		{
+			around[i] = field->color[i * 3 + k];
+		}
+		// (the lightest and darkest within reach: along the rows, then
+		// down the columns)
+#pragma omp parallel for schedule(static)
+		for (int y = 0; y < size; y++)
+		{
+			for (int x = 0; x < size; x++)
+			{
+				float low = 1e9f;
+				float high = -1e9f;
+
+				for (int d = -reach; d <= reach; d++)
+				{
+					float value = around[y * size + wrap_index(x + d, size)];
+
+					low = fminf(low, value);
+					high = fmaxf(high, value);
+				}
+				row_lowest[y * size + x] = low;
+				row_highest[y * size + x] = high;
+			}
+		}
+#pragma omp parallel for schedule(static)
+		for (int y = 0; y < size; y++)
+		{
+			for (int x = 0; x < size; x++)
+			{
+				float low = 1e9f;
+				float high = -1e9f;
+
+				for (int d = -reach; d <= reach; d++)
+				{
+					int row = wrap_index(y + d, size);
+
+					low = fminf(low, row_lowest[row * size + x]);
+					high = fmaxf(high, row_highest[row * size + x]);
+				}
+				lowest[y * size + x] = low;
+				highest[y * size + x] = high;
+			}
+		}
+		blur_wrapping(around, size, passes);
+		for (int i = 0; i < size * size; i++)
+		{
+			float sharpened = field->color[i * 3 + k] + amount * (field->color[i * 3 + k] - around[i]);
+
+			field->color[i * 3 + k] = fminf(fmaxf(sharpened, lowest[i]), highest[i]);
+		}
+	}
+	free(around);
+	free(lowest);
+	free(highest);
+	free(row_lowest);
+	free(row_highest);
+}
+
 // ---------------------------------------------------------------------------
 // Weatherboards: old boards laid across the picture, each one's lower edge
 // over the top of the one under it (a waney edge: wandering, chipped), its
@@ -3963,7 +4054,7 @@ static bool weatherboard_lay(weatherboard_wall_t *wall, const texture_settings_t
 	wall->meters = meters;
 	wall->seed = settings->seed;
 	wall->lichen = settings->moss >= 0.0f ? settings->moss : 0.4f;
-	wall->count = (int)fmaxf(roundf(meters / settings->board_meters), 1.0f);
+	wall->count = (int)fmaxf(roundf(meters / (settings->board_meters > 0.0f ? settings->board_meters : 0.2f)), 1.0f);
 	wall->board_height = meters / (float)wall->count;
 	wall->boards = calloc((size_t)wall->count, sizeof(weatherboard_board_t));
 	if (wall->boards == NULL)
@@ -4503,20 +4594,31 @@ typedef struct
 {
 	float meters;
 	uint32_t seed;
+	float warmth;                      // how much the dark wood reddens and the pale yellows (1: new timber; 0: weathered gray)
+	float waviness;                    // how much the grain winds (1: the timber's)
+	float contrast;                    // how far its tones are from the wood's own (1: the timber's)
+	float planed;                      // how much of the plane's trails shows (1: the timber's; 0: none, a weathered face)
+	float worm_holes;                  // the share of its 9 cm cells with a worm's hole (0 .. 1)
 	int knot_count;
 	timber_knot_t knots[TIMBER_KNOTS];
 	int check_count;
 	timber_check_t checks[TIMBER_CHECKS];
 } timber_face_t;
 
-static void timber_lay(timber_face_t *face, const texture_settings_t *settings, float meters)
+static void timber_lay(timber_face_t *face, const texture_settings_t *settings, float meters, float knots_per_square_meter, float checks_per_square_meter,
+	float warmth, float waviness, float contrast, float planed)
 {
 	uint32_t seed = hash_u32(settings->seed * 6151u + 29u);
-	int knots = (int)fminf(fmaxf(roundf(meters * meters * 0.55f), 1.0f), (float)TIMBER_KNOTS);
-	int checks = (int)fminf(fmaxf(roundf(meters * meters * 2.2f), 2.0f), (float)TIMBER_CHECKS);
+	int knots = (int)fminf(fmaxf(roundf(meters * meters * knots_per_square_meter), 1.0f), (float)TIMBER_KNOTS);
+	int checks = (int)fminf(fmaxf(roundf(meters * meters * checks_per_square_meter), 2.0f), (float)TIMBER_CHECKS);
 
 	face->meters = meters;
 	face->seed = settings->seed;
+	face->warmth = warmth;
+	face->waviness = waviness;
+	face->contrast = contrast;
+	face->planed = planed;
+	face->worm_holes = 0.3f;
 	for (int k = 0; k < knots; k++)
 	{
 		timber_knot_t *knot = &face->knots[face->knot_count];
@@ -4524,7 +4626,7 @@ static void timber_lay(timber_face_t *face, const texture_settings_t *settings, 
 
 		knot->x = hash_unit(k, 1, seed) * meters;
 		knot->y = hash_unit(k, 2, seed) * meters;
-		knot->radius = fminf(0.018f + 0.02f * powf(hash_unit(k, 3, seed), 1.5f), meters * 0.04f);
+		knot->radius = fminf(0.024f + 0.022f * powf(hash_unit(k, 3, seed), 1.5f), meters * 0.05f);
 		knot->turn = hash_unit(k, 4, seed) * 2.0f * PI_F;
 		knot->dead = hash_unit(k, 5, seed) < 0.3f ? 0.5f + 0.5f * hash_unit(k, 6, seed) : 0.3f * hash_unit(k, 6, seed);
 		// (not beside another one)
@@ -4550,8 +4652,8 @@ static void timber_lay(timber_face_t *face, const texture_settings_t *settings, 
 		check->y = hash_unit(k, 12, seed) * meters;
 		check->half_length = fminf(0.08f + 0.42f * size, meters * 0.3f);
 		check->width = 0.0018f + 0.004f * size;
-		check->bend = (hash_unit(k, 14, seed) * 2.0f - 1.0f) * 0.06f * (0.3f + size);
-		check->sway = (hash_unit(k, 15, seed) * 2.0f - 1.0f) * 0.02f;
+		check->bend = (hash_unit(k, 14, seed) * 2.0f - 1.0f) * 0.06f * (0.3f + size) * waviness;
+		check->sway = (hash_unit(k, 15, seed) * 2.0f - 1.0f) * 0.02f * fminf(waviness * 2.0f, 1.0f);
 		check->phase = hash_unit(k, 16, seed) * 2.0f * PI_F;
 	}
 }
@@ -4565,8 +4667,9 @@ static void timber_sample(const timber_face_t *face, const float wood[3], float 
 	float v = y / meters;
 	// The grain's lines: across the picture, winding a little, pushed
 	// aside round each knot
-	float grain = y + 0.03f * stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.8f), 1.0f), (int)fmaxf(roundf(meters / 0.3f), 2.0f), 2, seed + 1u)
-		+ 0.006f * stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.22f), 2.0f), (int)fmaxf(roundf(meters / 0.07f), 4.0f), 2, seed + 2u);
+	float grain = y + face->waviness * 0.03f * stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.8f), 1.0f), (int)fmaxf(roundf(meters / 0.3f), 2.0f), 2, seed + 1u)
+		+ face->waviness * 0.006f * stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.22f), 2.0f), (int)fmaxf(roundf(meters / 0.07f), 4.0f), 2, seed + 2u)
+		+ 0.001f * stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.12f), 4.0f), (int)fmaxf(roundf(meters / 0.03f), 8.0f), 2, seed + 3u);
 	float knot_body = 0.0f;
 	float knot_rim = 0.0f;
 	float knot_rings = 0.0f;
@@ -4574,9 +4677,11 @@ static void timber_sample(const timber_face_t *face, const float wood[3], float 
 	float knot_dead = 0.0f;
 	float knot_eye = 0.0f;
 	float knot_middle = 0.0f;
+	float knot_hug = 0.0f;
 	float grain_v;
 	float check = 0.0f;
 	float check_near = 0.0f;
+	float check_lip = 0.0f;
 	float height;
 	float color[3];
 	float roughness;
@@ -4586,35 +4691,52 @@ static void timber_sample(const timber_face_t *face, const float wood[3], float 
 		const timber_knot_t *knot = &face->knots[k];
 		float dx = wrap_difference(knot->x, x, meters);
 		float dy = wrap_difference(knot->y, y, meters);
-		float reach = knot->radius * 2.2f;
-		float along = dx / 2.8f;
+		float reach = knot->radius * 2.4f;
+		float along = dx / 3.2f;
 		float window = (1.0f - smooth_step(0.2f * meters, 0.45f * meters, fabsf(dx))) * (1.0f - smooth_step(0.2f * meters, 0.45f * meters, fabsf(dy)));
 		float from = sqrtf(dx * dx / (1.25f * 1.25f) + dy * dy) / knot->radius;
 		float far = (along * along + dy * dy) / (reach * reach);
+		// (how far from the knot's own line of the grain, as the grain
+		// runs here: nothing on the line through its middle, the lines
+		// over and under it pressed against it)
+		float stream = fabsf(dy) * far / (far + 1.0f) / knot->radius;
 
-		grain -= dy * window / (far + 1.0f);
-		// (the eye round it: the wood darker where the grain is pressed
-		// together above and under the knot, out to its points)
+		// (pushed aside, not stopped: in the eye before and behind the knot
+		// the lines still run, a third as close)
+		grain -= 0.65f * dy * window / (far + 1.0f);
+		// The eye round it: the wood darker where the grain is pressed
+		// together over and under the knot, out to its points; and the
+		// dark lines that hug it there (the grain's own, opened by the
+		// knot's swelling), fading along its tails
 		knot_eye = fmaxf(knot_eye, expf(-far * 0.9f));
-		if (from < 1.4f)
+		knot_hug = fmaxf(knot_hug, fmaxf((1.0f - smooth_step(0.0f, 0.1f, fabsf(stream - 0.34f))) * expf(-far * 0.22f),
+			0.6f * (1.0f - smooth_step(0.0f, 0.08f, fabsf(stream - 0.62f))) * expf(-far * 0.35f)) * smooth_step(0.95f, 1.15f, from));
+		if (from < 1.6f)
 		{
 			float angle = atan2f(dy, dx) + knot->turn;
 			float lumpy = cell_noise(dx / knot->radius * 1.7f + 9.0f, dy / knot->radius * 1.7f + 9.0f, 64, seed + 50u + (uint32_t)k);
-			float wobbled = from * (1.0f + 0.03f * sinf(2.0f * angle) + 0.1f * lumpy);
-			float body = 1.0f - smooth_step(0.7f, 1.0f, wobbled);
-			float rim = expf(-powf((wobbled - 1.0f) / 0.07f, 2.0f));
-			float rings = 0.5f + 0.5f * cosf(2.0f * PI_F * wobbled * knot->radius / 0.003f);
+			float rough = cell_noise(dx / knot->radius * 6.0f + 9.0f, dy / knot->radius * 6.0f + 9.0f, 64, seed + 90u + (uint32_t)k);
+			// (its outline uneven, no circle: lumps, and a ragged edge)
+			float wobbled = from * (1.0f + 0.06f * sinf(2.0f * angle) + 0.2f * lumpy + 0.03f * rough);
+			float body = 1.0f - smooth_step(0.75f, 1.0f, wobbled);
+			float rim = expf(-powf((wobbled - 1.0f) / 0.13f, 2.0f)) * (0.7f + 0.5f * lumpy);
+			// (its rings rough, not drawn with a compass; its heart dark
+			// and ragged)
+			float rings = 0.5f + 0.5f * cosf(2.0f * PI_F * (wobbled * knot->radius / 0.0042f + 0.7f * lumpy + 0.12f * rough));
+			float middle = 1.0f - smooth_step(0.2f, 0.62f, wobbled + 0.3f * rough);
 			float star = 0.0f;
 
-			for (int j = 0; j < 4; j++)
+			// (checks from its heart: each its own length and width)
+			for (int j = 0; j < 6; j++)
 			{
-				float ray = angle - (float)j * 1.6f - 0.5f * sinf(knot->turn * 7.0f + (float)j);
-				float width = 0.001f * (1.0f - 0.7f * from);
+				float own = hash_unit(j, k, seed + 95u);
+				float ray = angle - (float)j * 1.047f - 0.7f * (own - 0.5f) - 0.25f * lumpy;
+				float length = 0.45f + 0.5f * hash_unit(j, k, seed + 96u);
+				float width = (0.0006f + 0.0008f * own) * (1.0f - from / length);
 
 				if (cosf(ray) > 0.0f && width > 0.0f)
 				{
-					star = fmaxf(star, (1.0f - smooth_step(0.4f * width, width, from * knot->radius * fabsf(sinf(ray))))
-						* smooth_step(0.03f, 0.15f, from) * (1.0f - smooth_step(0.5f, 0.85f, from)));
+					star = fmaxf(star, (1.0f - smooth_step(0.4f * width, width, from * knot->radius * fabsf(sinf(ray)))) * smooth_step(0.0f, 0.08f, from));
 				}
 			}
 			if (body > knot_body)
@@ -4622,10 +4744,10 @@ static void timber_sample(const timber_face_t *face, const float wood[3], float 
 				knot_body = body;
 				knot_rings = rings;
 				knot_dead = knot->dead;
-				knot_middle = 1.0f - smooth_step(0.0f, 0.6f, wobbled);
+				knot_middle = middle;
 			}
-			knot_rim = fmaxf(knot_rim, rim * (0.45f + 0.55f * knot->dead));
-			knot_star = fmaxf(knot_star, star * (0.5f + 0.5f * knot->dead));
+			knot_rim = fmaxf(knot_rim, clamp_unit(rim) * (0.6f + 0.4f * knot->dead));
+			knot_star = fmaxf(knot_star, star * (0.6f + 0.4f * knot->dead) * body);
 		}
 	}
 	grain_v = grain / meters;
@@ -4638,6 +4760,7 @@ static void timber_sample(const timber_face_t *face, const float wood[3], float 
 		float part;
 		float width;
 		float off;
+		float jag = 0.0f;
 
 		if (fabsf(dx) >= crack->half_length)
 		{
@@ -4645,26 +4768,76 @@ static void timber_sample(const timber_face_t *face, const float wood[3], float 
 		}
 		part = dx / crack->half_length;
 		width = crack->width * powf(1.0f - part * part, 0.7f);
-		off = fabsf(wrap_difference(crack->y, grain, meters) - crack->bend * (part * part - 0.4f) - crack->sway * sinf(2.5f * part + crack->phase));
+		// (a weathered face's checks ragged: stepping from fiber to fiber,
+		// wider and narrower)
+		if (face->planed < 1.0f)
+		{
+			float ragged = cell_noise(dx / 0.014f + 100.0f, (float)k + 0.5f, 4096, seed + 70u) + 0.5f * cell_noise(dx / 0.005f + 100.0f, (float)k + 0.5f, 4096, seed + 71u);
+
+			width *= 1.0f + 0.5f * (1.0f - face->planed) * cell_noise(dx / 0.03f + 100.0f, (float)k + 0.5f, 4096, seed + 72u);
+			jag = 0.0022f * (1.0f - face->planed) * ragged;
+		}
+		off = fabsf(wrap_difference(crack->y, grain, meters) - crack->bend * (part * part - 0.4f) - crack->sway * sinf(2.5f * part + crack->phase) - jag);
 		check = fmaxf(check, 1.0f - smooth_step(0.25f * width, width, off));
 		check_near = fmaxf(check_near, (1.0f - smooth_step(width, width * 5.0f, off)) * (1.0f - part * part));
+		// (its lips: the wood lifted and worn pale along it)
+		check_lip = fmaxf(check_lip, smooth_step(width * 0.9f, width * 1.3f, off) * (1.0f - smooth_step(width * 1.6f, width * 3.5f, off)) * (1.0f - part * part));
 	}
 	{
 		// Its wood: bands, streaks, fibers, each finer than the last, all
 		// along the grain; the long dark lines and the fine ones where
 		// the fibers have parted; furrows between the rings, running into
 		// each other
-		float bands = stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 1.5f), 1.0f), (int)fmaxf(roundf(meters / 0.14f), 2.0f), 3, seed + 11u);
+		// (the broad things, bands, stains, the plane's trails: none runs
+		// the picture's whole width, each winds its own way a little off
+		// the grain, as a snake's track)
+		float winding = (0.09f * stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.45f), 2.0f), (int)fmaxf(roundf(meters / 0.5f), 2.0f), 2, seed + 5u)
+			+ 0.025f * stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.15f), 4.0f), (int)fmaxf(roundf(meters / 0.3f), 2.0f), 2, seed + 6u)) / meters;
+		// (the dark ones stay nearly on the grain: a dark band across it
+		// reads as a stain; the pale ones wander the most)
+		float band_v = grain_v + 0.5f * winding * face->waviness;
+		float dark_v = grain_v + 0.25f * winding * face->waviness;
+		float pale_v = grain_v + 1.7f * winding * face->waviness;
+		float trail_v = grain_v + (0.14f * stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.35f), 2.0f), (int)fmaxf(roundf(meters / 0.4f), 2.0f), 2, seed + 7u)) / meters;
+		float bands = stretched_noise(u, band_v, (int)fmaxf(roundf(meters / 0.6f), 2.0f), (int)fmaxf(roundf(meters / 0.14f), 2.0f), 3, seed + 11u);
 		float streaks = stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 1.2f), 1.0f), (int)fmaxf(roundf(meters / 0.03f), 8.0f), 4, seed + 12u);
 		float fibers = stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 0.35f), 2.0f), (int)fmaxf(roundf(meters / 0.006f), 16.0f), 3, seed + 13u);
-		float fine = stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 0.04f), 8.0f), (int)fmaxf(roundf(meters / 0.0014f), 16.0f), 2, seed + 14u);
-		float long_lines = 1.0f - smooth_step(0.01f, 0.07f, fabsf(stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 1.4f), 1.0f),
-			(int)fmaxf(roundf(meters / 0.022f), 8.0f), 4, seed + 15u)));
+		float fine = stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 0.06f), 8.0f), (int)fmaxf(roundf(meters / 0.0014f), 16.0f), 2, seed + 14u);
+		float line_here = stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 1.4f), 1.0f), (int)fmaxf(roundf(meters / 0.022f), 8.0f), 4, seed + 15u);
+		float long_lines = 1.0f - smooth_step(0.01f, 0.07f, fabsf(line_here));
 		// (and whole dark streaks, a few fibers wide)
-		float dark_streaks = smooth_step(0.1f, 0.5f, stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 2.0f), 1.0f),
-			(int)fmaxf(roundf(meters / 0.045f), 4.0f), 4, seed + 20u));
+		float dark_streaks = smooth_step(0.1f, 0.5f, stretched_noise(u, dark_v, (int)fmaxf(roundf(meters / 0.7f), 2.0f),
+			(int)fmaxf(roundf(meters / 0.045f), 4.0f), 2, seed + 20u));
 		float short_lines = 1.0f - smooth_step(0.0f, 0.1f, fabsf(stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 0.1f), 4.0f),
 			(int)fmaxf(roundf(meters / 0.004f), 16.0f), 3, seed + 16u)));
+		// (the lines broken: showing here, faint there; pale fibers as well
+		// as dark; short dark dashes, the wood's open pores; coarser grit;
+		// dark stains)
+		float broken = smooth_step(-0.25f, 0.2f, stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 0.12f), 4.0f), (int)fmaxf(roundf(meters / 0.02f), 8.0f),
+			2, seed + 22u));
+		float light_lines = 1.0f - smooth_step(0.01f, 0.06f, fabsf(stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 1.0f), 1.0f),
+			(int)fmaxf(roundf(meters / 0.018f), 8.0f), 4, seed + 23u)));
+		float dashes = smooth_step(0.3f, 0.45f, stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 0.05f), 8.0f),
+			(int)fmaxf(roundf(meters / 0.0016f), 16.0f), 1, seed + 24u));
+		float coarse = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.012f), 8.0f), 3, 0.6f, seed + 25u);
+		// The plane's marks: where its iron tore the grain instead of
+		// cutting it, slivers lifted and left pale (short, along the
+		// grain, in patches: where the grain ran against the iron)
+		float torn = smooth_step(0.42f, 0.56f, stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 0.014f), 8.0f), (int)fmaxf(roundf(meters / 0.0026f), 16.0f),
+			1, seed + 27u)) * smooth_step(0.0f, 0.45f, tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.3f), 2.0f), 3, 0.55f, seed + 28u));
+		// (each long dark line's lit side: the edge under it catches the
+		// light, as every furrow's does in a photograph)
+		float line_below = stretched_noise(u, grain_v + 0.0012f / meters, (int)fmaxf(roundf(meters / 1.4f), 1.0f), (int)fmaxf(roundf(meters / 0.022f), 8.0f), 4,
+			seed + 15u);
+		float line_side = (line_below > line_here ? 1.0f : -1.0f) * line_here;
+		float lit_edge = smooth_step(0.05f, 0.09f, line_side) * (1.0f - smooth_step(0.11f, 0.22f, line_side)) * (0.35f + 0.65f * broken);
+		// (dark stains: soft, whole, drawn out along the grain)
+		float stains = smooth_step(0.05f, 0.7f, stretched_noise(u, dark_v, (int)fmaxf(roundf(meters / 0.6f), 2.0f), (int)fmaxf(roundf(meters / 0.22f), 2.0f), 2,
+			seed + 26u));
+		// The plane's trails: long faint tracks along the grain, winding a
+		// little (the hand's), the wood a shade warmer on them
+		float strokes = powf(1.0f - fminf(fabsf(stretched_noise(u, trail_v, (int)fmaxf(roundf(meters / 0.5f), 2.0f), (int)fmaxf(roundf(meters / 0.06f), 4.0f),
+			2, seed + 36u)) * 3.5f, 1.0f), 3.0f) * face->planed;
 		float ring_count = fmaxf(roundf(meters / 0.018f), 4.0f);
 		float phase = grain_v * ring_count + 3.0f * stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 1.6f), 1.0f),
 			(int)fmaxf(roundf(meters / 0.05f), 4.0f), 2, seed + 17u);
@@ -4672,44 +4845,49 @@ static void timber_sample(const timber_face_t *face, const float wood[3], float 
 		float furrow = 1.0f - smooth_step(0.04f, 0.15f, fminf(within, 1.0f - within));
 		float grit = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.003f), 16.0f), 2, 0.6f, seed + 18u);
 		// (blotches that follow nothing: stains, wear, the weather's side)
-		float mottle = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.2f), 2.0f), 4, 0.6f, seed + 21u);
-		float pale = smooth_step(0.05f, 0.6f, stretched_noise(u, grain_v, (int)fmaxf(roundf(meters / 1.0f), 1.0f), (int)fmaxf(roundf(meters / 0.2f), 2.0f),
+		float mottle = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.3f), 2.0f), 2, 0.5f, seed + 21u);
+		float pale = smooth_step(0.05f, 0.6f, stretched_noise(u, pale_v, (int)fmaxf(roundf(meters / 0.8f), 2.0f), (int)fmaxf(roundf(meters / 0.12f), 2.0f),
 			2, seed + 19u));
 		// (a worm's holes: few, small, black)
 		int hole_cells = (int)fmaxf(roundf(meters / 0.09f), 4.0f);
 		cells_t hole = tiling_cells(u, v, hole_cells, 0.9f, seed + 30u);
 		float hole_radius = (0.0009f + 0.0016f * hash_unit(hole.cell_x, hole.cell_y, seed + 31u)) * (float)hole_cells / meters;
-		float pit = hash_unit(hole.cell_x, hole.cell_y, seed + 32u) < 0.3f ? 1.0f - smooth_step(0.5f * hole_radius, hole_radius, hole.nearest) : 0.0f;
+		float pit = hash_unit(hole.cell_x, hole.cell_y, seed + 32u) < face->worm_holes ? 1.0f - smooth_step(0.5f * hole_radius, hole_radius, hole.nearest) : 0.0f;
 		float open = 1.0f - knot_body;
 		float tone = (1.0f + 0.3f * bands) * (1.0f + 0.26f * streaks) * (1.0f + 0.24f * fibers) * (1.0f + 0.22f * fine)
-			* (1.0f - 0.5f * long_lines * open) * (1.0f - 0.3f * short_lines * open) * (1.0f - 0.25f * furrow * open) * (1.0f + 0.14f * grit)
-			* (1.0f + 0.2f * mottle)
-			* (1.0f - 0.3f * dark_streaks) * (1.0f - 0.4f * knot_eye) * (1.0f - 0.25f * check_near);
+			* (1.0f - 0.55f * long_lines * (0.35f + 0.65f * broken) * open) * (1.0f - 0.3f * short_lines * open) * (1.0f - 0.25f * furrow * open)
+			* (1.0f + 0.28f * light_lines * (1.0f - 0.6f * broken) * open) * (1.0f - 0.4f * dashes * open * (1.0f - knot_eye)) * (1.0f + 0.08f * grit) * (1.0f + 0.04f * coarse)
+			* (1.0f + 0.4f * torn * open) * (1.0f + 0.3f * lit_edge * open)
+			* (1.0f + 0.1f * mottle) * (1.0f - 0.28f * stains)
+			* (1.0f - 0.3f * dark_streaks) * (1.0f - 0.4f * knot_eye) * (1.0f - 0.6f * knot_hug * open) * (1.0f - 0.12f * check_near) * (1.0f + 0.3f * check_lip);
 		// (the dark wood redder, the light yellower and duller: the red
 		// falls slowest as it darkens, the blue fastest)
 		float luminance;
 
-		tone = powf(fmaxf(tone, 0.05f), 1.1f);
-		color[0] = wood[0] * powf(tone, 0.85f);
-		color[1] = wood[1] * tone;
-		color[2] = wood[2] * powf(tone, 1.3f);
+		tone = powf(fmaxf(tone, 0.05f), 1.2f * face->contrast);
+		color[0] = wood[0] * powf(tone, 1.0f - 0.15f * face->warmth) * (1.0f + 0.22f * strokes * open);
+		color[1] = wood[1] * tone * (1.0f + 0.16f * strokes * open);
+		color[2] = wood[2] * powf(tone, 1.0f + 0.3f * face->warmth) * (1.0f - 0.02f * strokes * open);
 		// (weathered pale in patches: toward a dull straw)
 		luminance = color[0] * 0.3f + color[1] * 0.59f + color[2] * 0.11f;
-		color[0] = mix_float(color[0], luminance * 1.32f, 0.5f * pale);
-		color[1] = mix_float(color[1], luminance * 1.12f, 0.5f * pale);
-		color[2] = mix_float(color[2], luminance * 0.86f, 0.5f * pale);
+		color[0] = mix_float(color[0], luminance * mix_float(1.08f, 1.32f, face->warmth), 0.5f * pale);
+		color[1] = mix_float(color[1], luminance * mix_float(1.08f, 1.12f, face->warmth), 0.5f * pale);
+		color[2] = mix_float(color[2], luminance * mix_float(1.08f, 0.86f, face->warmth), 0.5f * pale);
 		height = 0.0015f * bands + 0.001f * streaks + 0.0007f * fibers + 0.0002f * fine + 0.0001f * grit - 0.0006f * dark_streaks
-			- (0.0008f * long_lines + 0.0003f * short_lines + 0.0006f * furrow) * open - 0.004f * check - 0.002f * pit
-			+ knot_body * (0.0006f + 0.0003f * knot_rings) - 0.0014f * knot_rim - 0.0012f * knot_star;
+			- (0.0008f * long_lines * (0.35f + 0.65f * broken) + 0.0003f * short_lines + 0.0006f * furrow + 0.0004f * dashes - 0.0003f * light_lines) * open
+			+ 0.00008f * coarse + (0.0003f * torn + 0.0002f * lit_edge + 0.00012f * strokes) * open + 0.0005f * check_lip - 0.004f * check - 0.002f * pit
+			+ knot_body * (0.0006f + 0.0004f * knot_rings - 0.0008f * knot_middle) - 0.0014f * knot_rim - 0.0015f * knot_star - 0.0008f * knot_hug * open;
 		roughness = 0.8f + 0.06f * long_lines + 0.05f * grit - 0.04f * fine;
 		if (knot_body > 0.0f || knot_rim > 0.0f)
 		{
-			float dark = mix_float(0.62f, 0.36f, knot_dead) * (0.7f + 0.45f * knot_rings) * (1.0f - 0.35f * knot_middle) * (1.0f + 0.3f * mottle + 0.2f * grit);
-			float knot_color[3] = { wood[0] * dark * 1.04f, wood[1] * dark * 0.9f, wood[2] * dark * 0.78f };
+			float dark = mix_float(0.56f, 0.4f, knot_dead) * (0.66f + 0.5f * knot_rings) * (1.0f - 0.6f * knot_middle) * (1.0f + 0.3f * mottle + 0.3f * grit);
+			float knot_color[3] = { wood[0] * dark * mix_float(1.0f, 1.08f, face->warmth), wood[1] * dark * mix_float(0.97f, 0.9f, face->warmth),
+				wood[2] * dark * mix_float(0.92f, 0.72f, face->warmth) };
 
 			for (int k = 0; k < 3; k++)
 			{
-				color[k] = mix_float(color[k], knot_color[k], knot_body) * (1.0f - 0.6f * knot_rim) * (1.0f - 0.7f * knot_star);
+				color[k] = mix_float(color[k], knot_color[k], knot_body * (0.5f + 0.5f * face->contrast)) * (1.0f - 0.6f * knot_rim * (0.4f + 0.6f * face->contrast))
+					* (1.0f - 0.55f * knot_star);
 			}
 			roughness = mix_float(roughness, 0.7f, knot_body);
 		}
@@ -4734,7 +4912,7 @@ static bool make_timber(const texture_settings_t *settings, field_t *field)
 		fprintf(stderr, "potop_texture: out of memory\n");
 		return false;
 	}
-	timber_lay(face, settings, field->meters);
+	timber_lay(face, settings, field->meters, 0.55f, 2.2f, 1.0f, 1.0f, 1.0f, 1.0f);
 	// (each pixel the average of four points in it: the fibers and the
 	// checks are finer than a pixel)
 #pragma omp parallel for schedule(dynamic, 8)
@@ -4773,6 +4951,371 @@ static bool make_timber(const texture_settings_t *settings, field_t *field)
 	free(face);
 	shade_hollows(field, (int)fminf(fmaxf(0.003f / pixel_meters, 2.0f), 6.0f), 0.003f, 0.45f);
 	bake_light(field, settings->baked_light);
+	sharpen_color(field, 1, 0.6f);
+	match_average(field, settings->color);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Planks: an old floor's (a porch's, a bridge's), down the picture: planks
+// of several widths, each of a few pieces butted end to end, a gap between
+// two planks (dirt in it), their edges worn round and dark. Each piece is
+// its own wood (the timber's, turned: weathered gray, many checks), a
+// little higher or lower than the next, a little cupped; square forged
+// nails near its ends.
+
+#define PLANK_COLUMNS 48
+#define PLANK_PIECES 3
+
+typedef struct
+{
+	float start;                       // where it begins down the picture (meters)
+	float along_shift;                 // which wood: where in the timber's face it is cut from (meters)
+	float across_shift;
+	float tone;                        // lighter or darker than the others
+	float gray;                        // how weathered to gray (0 .. 1)
+	float lift;                        // higher or lower than the others (meters)
+	float nails_before;                // nails above its start, in the piece that ends there (0 none, 1 one, 2 two)
+	float nails_after;                 // and under it, in itself
+} plank_piece_t;
+
+typedef struct
+{
+	float left;                        // its left edge (meters)
+	float gap;                         // half the gap at that edge (meters)
+	uint32_t seed;
+	int piece_count;
+	plank_piece_t pieces[PLANK_PIECES];
+} plank_column_t;
+
+typedef struct
+{
+	float meters;
+	uint32_t seed;
+	int count;
+	plank_column_t columns[PLANK_COLUMNS];
+	timber_face_t wood;
+} plank_floor_t;
+
+static void plank_lay(plank_floor_t *floor, const texture_settings_t *settings, float meters)
+{
+	float width = settings->board_meters > 0.0f ? settings->board_meters : 0.33f;
+
+	floor->meters = meters;
+	floor->seed = settings->seed;
+	floor->count = (int)fminf(fmaxf(roundf(meters / width), 1.0f), (float)PLANK_COLUMNS);
+	timber_lay(&floor->wood, settings, meters, 1.0f, 9.0f, 0.2f, 0.15f, 0.33f, 0.0f);
+	// (fewer worm holes than a beam; a floor's checks finer than a
+	// beam's: thin boards, nailed down)
+	floor->wood.worm_holes = 0.14f;
+	for (int k = 0; k < floor->wood.check_count; k++)
+	{
+		floor->wood.checks[k].width *= 0.62f;
+	}
+	for (int c = 0; c < floor->count; c++)
+	{
+		plank_column_t *column = &floor->columns[c];
+		uint32_t seed = hash_u32(settings->seed * 4099u + (uint32_t)c * 7717u + 5u);
+		float starts[PLANK_PIECES];
+
+		column->seed = seed;
+		// (planks of several widths: each edge off its even place)
+		column->left = ((float)c + 0.5f + (hash_unit(0, 0, seed) - 0.5f) * 0.27f) / (float)floor->count * meters;
+		column->gap = 0.0035f + 0.003f * hash_unit(1, 0, seed);
+		// (one piece the picture's whole length, or two or three)
+		column->piece_count = meters < 1.0f || hash_unit(2, 0, seed) < 0.45f ? 1 : 2;
+		if (column->piece_count > PLANK_PIECES)
+		{
+			column->piece_count = PLANK_PIECES;
+		}
+		for (int k = 0; k < column->piece_count; k++)
+		{
+			starts[k] = ((float)k + 0.15f + 0.7f * hash_unit(k, 3, seed)) / (float)column->piece_count * meters;
+		}
+		for (int k = 0; k < column->piece_count; k++)
+		{
+			plank_piece_t *piece = &column->pieces[k];
+
+			piece->start = starts[k];
+			piece->along_shift = hash_unit(k, 4, seed) * meters;
+			piece->across_shift = hash_unit(k, 5, seed) * meters;
+			piece->tone = 0.9f + 0.2f * hash_unit(k, 6, seed);
+			piece->gray = 0.25f + 0.55f * hash_unit(k, 7, seed);
+			piece->lift = (hash_unit(k, 8, seed) - 0.5f) * 0.0025f;
+			// (nails only where there is a joint, and not at every one)
+			piece->nails_before = column->piece_count > 1 && hash_unit(k, 9, seed) < 0.6f ? 1.0f + floorf(hash_unit(k, 10, seed) * 1.99f) : 0.0f;
+			piece->nails_after = column->piece_count > 1 && hash_unit(k, 11, seed) < 0.6f ? 1.0f + floorf(hash_unit(k, 12, seed) * 1.99f) : 0.0f;
+		}
+	}
+}
+
+// Where column number's left edge is at y (meters; number any whole
+// number: column number + count is column number a picture to the right),
+// and half the gap there (the planks not quite straight, the gap wider and
+// narrower, a splinter gone here and there)
+static float plank_edge(const plank_floor_t *floor, int number, float y, float *gap_out)
+{
+	const plank_column_t *column = &floor->columns[wrap_index(number, floor->count)];
+	float v = y / floor->meters;
+	int bow_period = (int)fmaxf(roundf(floor->meters / 0.6f), 1.0f);
+	int gap_period = (int)fmaxf(roundf(floor->meters / 0.15f), 4.0f);
+	int chip_period = (int)fmaxf(roundf(floor->meters / 0.03f), 8.0f);
+	float lap = floorf((float)number / (float)floor->count);
+
+	// (old planks: shrunk here and swollen there, so the gap narrows and
+	// widens a little; and its edges ragged all the way along, never
+	// much: every few centimeters a little out, a little in, a fine
+	// fraying on top of that)
+	*gap_out = fmaxf(column->gap * (1.0f + 0.45f * cell_noise(0.2f, v * (float)bow_period * 2.0f, bow_period * 2, column->seed + 25u)
+		+ 0.2f * cell_noise(0.6f, v * (float)gap_period, gap_period, column->seed + 22u))
+		+ 0.0007f * cell_noise(0.4f, v * (float)chip_period, chip_period, column->seed + 23u)
+		+ 0.0004f * cell_noise(0.9f, v * (float)chip_period * 3.0f, chip_period * 3, column->seed + 27u), 0.0006f);
+	return column->left + lap * floor->meters + 0.012f * cell_noise(0.3f, v * (float)bow_period, bow_period, column->seed + 21u)
+		+ 0.005f * cell_noise(0.8f, v * (float)bow_period * 3.0f, bow_period * 3, column->seed + 26u)
+		+ 0.0015f * cell_noise(0.7f, v * (float)gap_period, gap_period, column->seed + 24u);
+}
+
+// The floor at a point: its height (meters), color and roughness
+static void plank_sample(const plank_floor_t *floor, const float wood[3], float x, float y, float *height_out, float color_out[3], float *roughness_out)
+{
+	float meters = floor->meters;
+	int number = (int)floorf(x / meters * (float)floor->count) - 2;
+	const plank_column_t *column;
+	const plank_piece_t *piece;
+	float left_gap;
+	float right_gap;
+	float left;
+	float right;
+	float joint = 1e9f;
+	float inside;
+	float solid;
+	float worn;
+	float height;
+	float color[3];
+	float roughness;
+	float luminance;
+	float across;
+	float dirt;
+	int piece_index = 0;
+
+	// Which plank: the last whose left edge is left of the point
+	right = plank_edge(floor, number + 1, y, &right_gap);
+	while (x >= right)
+	{
+		number++;
+		right = plank_edge(floor, number + 1, y, &right_gap);
+	}
+	left = plank_edge(floor, number, y, &left_gap);
+	column = &floor->columns[wrap_index(number, floor->count)];
+	// Which piece of it: the last that begins above the point (the last
+	// of all runs on round the picture's edge)
+	// (a joint is a saw's cut by eye: a little askew, not quite straight)
+	across = (x - left) / fmaxf(right - left, 1e-4f);
+	piece_index = column->piece_count - 1;
+	for (int k = 0; k < column->piece_count; k++)
+	{
+		float cut = column->pieces[k].start + (hash_unit(k, 50, column->seed) - 0.5f) * 0.012f * (across - 0.5f) * 2.0f
+			+ 0.0012f * cell_noise(across * 6.0f + 3.0f, (float)k + 0.5f, 64, column->seed + 51u);
+
+		if (cut <= y)
+		{
+			piece_index = k;
+		}
+		if (column->piece_count > 1)
+		{
+			joint = fminf(joint, fabsf(wrap_difference(cut, y, meters)));
+		}
+	}
+	piece = &column->pieces[piece_index];
+	// Its wood: the timber's face, the grain down the picture
+	timber_sample(&floor->wood, wood, y + piece->along_shift, x + piece->across_shift, &height, color, &roughness);
+	height += piece->lift - 0.0012f * (2.0f * across - 1.0f) * (2.0f * across - 1.0f);
+	// (weathered gray, each piece its own way; silver where the rain
+	// washes it most)
+	luminance = color[0] * 0.3f + color[1] * 0.59f + color[2] * 0.11f;
+	color[0] = mix_float(color[0], luminance * 1.03f, piece->gray) * piece->tone;
+	color[1] = mix_float(color[1], luminance * 1.0f, piece->gray) * piece->tone;
+	color[2] = mix_float(color[2], luminance * 0.96f, piece->gray) * piece->tone;
+	// Its weathered skin: the soft wood gone, what is left rough as bark
+	// in small: low ridges along the grain a finger wide, a crust of small
+	// scales on them (their edges pale, curling), pits between; this, not
+	// the grain's lines, is what the eye sees of an old board
+	{
+		float u = x / meters;
+		float v = y / meters;
+		uint32_t seed = floor->seed + (uint32_t)piece_index * 131u + column->seed;
+		float ridges = stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.03f), 8.0f), (int)fmaxf(roundf(meters / 0.25f), 4.0f), 3, seed + 81u);
+		float crust = stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.016f), 16.0f), (int)fmaxf(roundf(meters / 0.026f), 16.0f), 4, seed + 82u);
+		float scale_edges = powf(1.0f - fminf(fabsf(stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.01f), 16.0f), (int)fmaxf(roundf(meters / 0.016f), 16.0f),
+			2, seed + 83u)) * 3.2f, 1.0f), 2.0f);
+		float blotch = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.09f), 4.0f), 3, 0.55f, seed + 85u);
+		float pits = smooth_step(0.38f, 0.6f, stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.004f), 16.0f), (int)fmaxf(roundf(meters / 0.007f), 16.0f), 2,
+			seed + 84u));
+		float skin = (1.0f + 0.28f * ridges) * (1.0f + 0.24f * crust) * (0.985f + 0.045f * scale_edges * smooth_step(-0.3f, 0.4f, crust)) * (1.0f - 0.15f * pits) * (1.0f + 0.1f * blotch);
+		float washed = smooth_step(0.1f, 0.6f, tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.45f), 2.0f), 3, 0.55f, floor->seed + 63u));
+
+		// (the floor's own dirt, over plank after plank: trodden darker in
+		// blotches, washed silver in others)
+		dirt = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.3f), 2.0f), 4, 0.6f, floor->seed + 61u);
+		for (int c = 0; c < 3; c++)
+		{
+			color[c] = mix_float(color[c], luminance * 1.15f, 0.2f * washed) * (1.0f + 0.1f * dirt) * skin;
+		}
+		// (browner here, grayer there)
+		color[0] *= 1.0f + 0.05f * blotch;
+		color[2] *= 1.0f - 0.07f * blotch;
+		height += 0.0017f * ridges + 0.0007f * crust + 0.0004f * scale_edges - 0.0007f * pits;
+		roughness = clamp_unit(roughness + 0.06f + 0.05f * crust);
+	}
+	// Nails: square forged heads, a low pyramid, a little askew, near the
+	// piece's end; the wood dark round them
+	for (int k = 0; k < column->piece_count; k++)
+	{
+		const plank_piece_t *other = &column->pieces[k];
+
+		for (int side = 0; side < 2; side++)
+		{
+			int nails = (int)(side == 0 ? other->nails_before : other->nails_after);
+			float along = wrap_difference(other->start, y, meters) - (side == 0 ? -1.0f : 1.0f) * (0.06f + 0.03f * hash_unit(k, 30 + side, column->seed));
+
+			if (fabsf(along) > 0.09f)
+			{
+				continue;
+			}
+			for (int n = 0; n < nails; n++)
+			{
+				float place = nails == 1 ? 0.3f + 0.4f * hash_unit(k, 32 + side, column->seed) : (n == 0 ? 0.22f : 0.78f)
+					+ (hash_unit(k * 2 + n, 34 + side, column->seed) - 0.5f) * 0.1f;
+				float dx = x - (left + place * (right - left));
+				float dy = along - (hash_unit(k * 2 + n, 36 + side, column->seed) - 0.5f) * 0.012f;
+				float turn = (hash_unit(k * 2 + n, 38 + side, column->seed) - 0.5f) * 0.5f;
+				float half = 0.011f + 0.003f * hash_unit(k * 2 + n, 40 + side, column->seed);
+				float rx = dx * cosf(turn) + dy * sinf(turn);
+				float ry = -dx * sinf(turn) + dy * cosf(turn);
+				uint32_t nail_seed = column->seed + 100u + (uint32_t)(k * 4 + side * 2 + n);
+				// (hammered on the anvil, no two sides alike: the square a
+				// little out of true, its sides not straight)
+				float out_of_true = 1.0f + 0.07f * cell_noise(atan2f(ry, rx) * 1.3f + 10.0f, 0.5f, 64, nail_seed)
+					+ 0.03f * cell_noise(rx / 0.0025f + 20.0f, ry / 0.0025f + 20.0f, 256, nail_seed + 1u);
+				float square = fmaxf(fabsf(rx), fabsf(ry)) / half * out_of_true;
+				float head = 1.0f - smooth_step(0.92f, 1.0f, square);
+				float round_from = sqrtf(dx * dx + dy * dy) / half;
+				// (rust in the wood: close round it, and drawn out along the
+				// grain, up and down the plank)
+				float stain = fmaxf((1.0f - smooth_step(1.0f, 2.0f, round_from)) * 0.55f,
+					0.45f * expf(-fabsf(dx) / (half * 0.7f)) * expf(-fabsf(dy) / (half * 3.5f)));
+				// (its shadow on the wood, to the right and down; the wood
+				// crushed in a ring round it)
+				float shadow = (1.0f - smooth_step(1.0f, 1.45f, fmaxf(fabsf(rx - 0.0018f), fabsf(ry - 0.0018f)) / half)) * 0.55f;
+				// Its four faces, each catching the light its own way (the
+				// light from up the picture's left); the ridges between them
+				// worn bright; its point hammered flat
+				bool sideways = fabsf(rx) > fabsf(ry);
+				float face_light = sideways ? (rx < 0.0f ? 1.12f : 0.66f) : (ry < 0.0f ? 1.3f : 0.52f);
+				float ridge = (1.0f - smooth_step(0.0f, 0.09f, fabsf(fabsf(rx) - fabsf(ry)) / half)) * smooth_step(0.12f, 0.3f, square);
+				float flat_top = 1.0f - smooth_step(0.1f, 0.2f, square);
+				float rim = smooth_step(0.8f, 0.93f, square);
+				// (hammer marks: shallow dents; pitting; rust in patches
+				// over the black scale)
+				float dents = cell_noise(rx / 0.004f + 30.0f, ry / 0.004f + 30.0f, 256, nail_seed + 2u);
+				float pitting = cell_noise(rx / 0.0011f + 40.0f, ry / 0.0011f + 40.0f, 1024, nail_seed + 3u);
+				float rusty = smooth_step(-0.2f, 0.4f, cell_noise(rx / 0.0035f + 50.0f, ry / 0.0035f + 50.0f, 256, nail_seed + 4u) + 0.5f * pitting + 0.4f * rim);
+				float lit = mix_float(face_light, 1.15f, flat_top) * (1.0f + 0.12f * dents) * (1.0f + 0.2f * pitting) * (1.0f + 0.45f * ridge) * (1.0f - 0.3f * rim);
+				float iron[3] = { mix_float(0.21f, 0.33f, rusty), mix_float(0.2f, 0.235f, rusty), mix_float(0.2f, 0.18f, rusty) };
+				float rust_wood[3] = { 0.3f, 0.2f, 0.14f };
+
+				if (fabsf(dx) > half * 4.0f)
+				{
+					continue;
+				}
+				for (int c = 0; c < 3; c++)
+				{
+					float under = mix_float(color[c], mix_float(color[c], rust_wood[c], 0.7f), stain) * (1.0f - shadow);
+
+					color[c] = mix_float(under, iron[c] * lit, head);
+				}
+				height = mix_float(height - 0.001f * (1.0f - smooth_step(1.0f, 1.8f, round_from)),
+					height + 0.0006f + 0.0038f * fmaxf(fminf(1.0f - square, 0.85f), 0.0f) + 0.00025f * dents + 0.00012f * pitting, head);
+				roughness = mix_float(roughness, mix_float(0.55f, 0.85f, rusty), head);
+			}
+		}
+	}
+	// Its edges: worn round, dark with the dirt trodden into them; past
+	// them the gap (or the joint), black earth deep in it
+	inside = fminf(fminf(x - left - left_gap, right - right_gap - x), joint - 0.002f);
+	worn = 1.0f - smooth_step(0.0f, 0.006f, inside);
+	height -= 0.0028f * worn * worn;
+	for (int c = 0; c < 3; c++)
+	{
+		color[c] *= 1.0f - 0.55f * expf(-fmaxf(inside, 0.0f) / (0.005f * (0.5f + smooth_step(-0.4f, 0.5f, dirt))));
+	}
+	solid = smooth_step(-0.0004f, 0.0004f, inside);
+	{
+		float earth = 0.6f + 0.5f * cell_noise(x / 0.004f, y / 0.004f, 4096, floor->seed + 51u);
+		float gap_color[3] = { 0.17f * earth, 0.14f * earth, 0.115f * earth };
+
+		for (int c = 0; c < 3; c++)
+		{
+			color[c] = mix_float(gap_color[c], color[c], solid);
+		}
+		height = mix_float(-0.008f + 0.0015f * earth, height, solid);
+		roughness = mix_float(0.95f, roughness, solid);
+	}
+	*height_out = height;
+	memcpy(color_out, color, sizeof(color));
+	*roughness_out = clamp_unit(roughness);
+}
+
+static bool make_planks(const texture_settings_t *settings, field_t *field)
+{
+	int size = field->size;
+	float pixel_meters = field->meters / (float)size;
+	plank_floor_t *floor = calloc(1, sizeof(plank_floor_t));
+
+	if (floor == NULL)
+	{
+		fprintf(stderr, "potop_texture: out of memory\n");
+		return false;
+	}
+	plank_lay(floor, settings, field->meters);
+#pragma omp parallel for schedule(dynamic, 8)
+	for (int y = 0; y < size; y++)
+	{
+		for (int x = 0; x < size; x++)
+		{
+			int index = y * size + x;
+			float height_sum = 0.0f;
+			float color_sum[3] = { 0.0f, 0.0f, 0.0f };
+			float roughness_sum = 0.0f;
+
+			for (int s = 0; s < 4; s++)
+			{
+				float height;
+				float color[3];
+				float roughness;
+
+				plank_sample(floor, settings->color, ((float)x + 0.25f + 0.5f * (float)(s & 1)) * pixel_meters,
+					((float)y + 0.25f + 0.5f * (float)(s >> 1)) * pixel_meters, &height, color, &roughness);
+				height_sum += height;
+				roughness_sum += roughness;
+				for (int k = 0; k < 3; k++)
+				{
+					color_sum[k] += color[k];
+				}
+			}
+			field->height[index] = height_sum * 0.25f;
+			field->roughness[index] = roughness_sum * 0.25f;
+			for (int k = 0; k < 3; k++)
+			{
+				field->color[index * 3 + k] = color_sum[k] * 0.25f;
+			}
+		}
+	}
+	free(floor);
+	shade_hollows(field, (int)fminf(fmaxf(0.003f / pixel_meters, 2.0f), 6.0f), 0.003f, 0.45f);
+	bake_light(field, settings->baked_light);
+	sharpen_color(field, (int)fminf(fmaxf(0.008f / pixel_meters, 3.0f), 16.0f), 0.6f);
+	sharpen_color(field, 1, 1.3f);
 	match_average(field, settings->color);
 	return true;
 }
@@ -4783,7 +5326,7 @@ static void usage(void)
 {
 	fprintf(stderr, "potop_texture [--data DIR] [--size N] [--meters M] [--seed N] [--color R,G,B]\n"
 		"              [--grain MM] [--ripples M] [--ripple-height M] [--plates M] [--boards M] [--moss A] [--baked-light A] [--puddles A] [--height]\n"
-		"              sand|clay|mud|grass|rock|canyon|granite|stone|dirt|relief|wet_sand|wet_dirt|needles|leaves|trampled|petals|snow|drystone|coursed|weatherboard|timber NAME\n");
+		"              sand|clay|mud|grass|rock|canyon|granite|stone|dirt|relief|wet_sand|wet_dirt|needles|leaves|trampled|petals|snow|drystone|coursed|weatherboard|timber|planks NAME\n");
 }
 
 int main(int argument_count, char **arguments)
@@ -4802,7 +5345,6 @@ int main(int argument_count, char **arguments)
 	settings.ripple_spacing = 0.11f;
 	settings.ripple_height = 0.008f;
 	settings.plate_meters = 0.35f;
-	settings.board_meters = 0.2f;
 	settings.baked_light = 0.4f;
 	settings.moss = -1.0f;
 	settings.puddles = -1.0f;
@@ -4891,6 +5433,7 @@ int main(int argument_count, char **arguments)
 			{ "coursed", 3.0f, { 0.87f, 0.845f, 0.81f } },
 			{ "weatherboard", 1.8f, { 0.30f, 0.245f, 0.20f } },
 			{ "timber", 2.0f, { 0.464f, 0.304f, 0.168f } },
+			{ "planks", 2.0f, { 0.503f, 0.438f, 0.376f } },
 		};
 		bool known = false;
 
@@ -4911,7 +5454,7 @@ int main(int argument_count, char **arguments)
 		}
 		if (!known)
 		{
-			fprintf(stderr, "potop_texture: no kind '%s' (sand, clay, mud, grass, rock, canyon, granite, stone, dirt, relief, wet_sand, wet_dirt, needles, leaves, trampled, petals, snow, drystone, coursed, weatherboard, timber)\n", kind);
+			fprintf(stderr, "potop_texture: no kind '%s' (sand, clay, mud, grass, rock, canyon, granite, stone, dirt, relief, wet_sand, wet_dirt, needles, leaves, trampled, petals, snow, drystone, coursed, weatherboard, timber, planks)\n", kind);
 			return 1;
 		}
 	}
@@ -5014,13 +5557,17 @@ int main(int argument_count, char **arguments)
 	{
 		ok = make_timber(&settings, &field);
 	}
+	else if (strcmp(kind, "planks") == 0)
+	{
+		ok = make_planks(&settings, &field);
+	}
 	else
 	{
 		ok = make_dirt(&settings, &field);
 	}
 	{
 		bool drystone = strcmp(kind, "drystone") == 0 || strcmp(kind, "coursed") == 0 || strcmp(kind, "weatherboard") == 0
-			|| strcmp(kind, "timber") == 0;
+			|| strcmp(kind, "timber") == 0 || strcmp(kind, "planks") == 0;
 
 		ok = ok && write_field(&field, data_directory, name, settings.write_height || drystone || strcmp(kind, "relief") == 0,
 			strcmp(kind, "relief") != 0 && !drystone, drystone);
