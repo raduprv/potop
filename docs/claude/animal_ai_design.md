@@ -67,7 +67,9 @@ ONLY about the boredom walk; the other activities come later.
 
 - 4: the herd: NOT needed now (Radu: the yards are tiny, they are never
   alone in them). Maybe later for open pasture or wild herds.
-- 5: how the engine takes "walk this way" (a point 1-2 m ahead each tick,
-  or a heading and speed given to actors.c straight).
+- 5: DECIDED: a heading and speed given to actors.c straight ("a body in
+  motion stays in motion"): it keeps going that way at that speed, its
+  turn rate limited, till the mind says otherwise. No point each tick
+  (no slowing down to "arrive" every 100 ms).
 - 6: staggering (agreed in principle).
 - 7: hysteresis (agreed in principle).
