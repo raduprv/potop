@@ -194,7 +194,7 @@ static void wake(potop_t *potop, bear_mind_t *bear)
 {
 	if (bear->asleep)
 	{
-		potop_actor_play(potop, bear->actor_id, "bear_outsleep");
+		potop_actor_play(potop, bear->actor_id, "get_up");
 		bear->asleep = false;
 	}
 }
@@ -312,7 +312,7 @@ static void think(game_t *game, potop_t *potop, bear_mind_t *bear, const potop_a
 				if (!bear->asleep && (!bear->going || arrived(bear, actor)))
 				{
 					stand(potop, bear);
-					potop_actor_play(potop, bear->actor_id, "bear_intosleep");
+					potop_actor_play(potop, bear->actor_id, "lie_down");
 					bear->asleep = true;
 					bear->sleep_seconds = 0.0f;
 				}
@@ -321,7 +321,7 @@ static void think(game_t *game, potop_t *potop, bear_mind_t *bear, const potop_a
 					bear->sleep_seconds += seconds;
 					if (bear->sleep_seconds > 2.0f && bear->sleep_seconds - seconds <= 2.0f)
 					{
-						potop_actor_play(potop, bear->actor_id, "bear_sleepidle");
+						potop_actor_play(potop, bear->actor_id, "sleep_idle");
 					}
 				}
 				if (bear->state_seconds > bear->rest_seconds)
@@ -341,7 +341,7 @@ static void think(game_t *game, potop_t *potop, bear_mind_t *bear, const potop_a
 				bear->going = false;
 				bear->stand_seconds = random_between(game, STAND_SECONDS_LEAST, STAND_SECONDS_MOST);
 				bear->state_seconds = 0.0f;
-				potop_actor_play(potop, bear->actor_id, random_unit(game) < 0.5f ? "bear_idle1" : "bear_idle2");
+				potop_actor_play(potop, bear->actor_id, random_unit(game) < 0.5f ? "idle_break" : "eat");
 			}
 			if (bear->state_seconds < bear->stand_seconds)
 			{
@@ -401,7 +401,7 @@ static void think(game_t *game, potop_t *potop, bear_mind_t *bear, const potop_a
 				{
 					bear->knows_player_until = now + KNOWN_SECONDS;
 					set_state(bear, BEAR_WARN);
-					potop_actor_play(potop, bear->actor_id, "combat_idle");
+					potop_actor_play(potop, bear->actor_id, "roar");
 					potop_notify(potop, "A bear growls at you. Back off.", 3.0f, POTOP_NOTIFY_WARNING);
 					break;
 				}
@@ -468,7 +468,7 @@ static void think(game_t *game, potop_t *potop, bear_mind_t *bear, const potop_a
 				// time is up): it watches them a while, then goes off
 				bear->suspicion = 0.3f;
 				bear->knows_player_until = now + KNOWN_SECONDS;
-				potop_actor_play(potop, bear->actor_id, "bear_idle1");
+				potop_actor_play(potop, bear->actor_id, "idle_break");
 				alert(potop, bear, camera->walker_x, camera->walker_z);
 			}
 			break;
@@ -499,7 +499,7 @@ static void think(game_t *game, potop_t *potop, bear_mind_t *bear, const potop_a
 					char message[64];
 
 					bear->attack_seconds = ATTACK_SECONDS;
-					potop_actor_play(potop, bear->actor_id, random_unit(game) < 0.5f ? "bear_attack1" : "bear_attack2");
+					potop_actor_play(potop, bear->actor_id, "attack");
 					// (no health of the player's yet: told only)
 					SDL_snprintf(message, sizeof(message), "The bear mauls you (%.0f)", ATTACK_DAMAGE);
 					potop_notify(potop, message, 2.0f, POTOP_NOTIFY_WARNING);
