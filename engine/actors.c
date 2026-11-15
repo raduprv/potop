@@ -50,6 +50,11 @@ static void set_type_defaults(actor_type_t *type, const char *name)
 	type->turn_left_action = -1;
 	SDL_strlcpy(type->turn_right_action_name, "turn_right", sizeof(type->turn_right_action_name));
 	type->turn_right_action = -1;
+	SDL_strlcpy(type->walk_left_action_name, "walk_left", sizeof(type->walk_left_action_name));
+	type->walk_left_action = -1;
+	SDL_strlcpy(type->walk_right_action_name, "walk_right", sizeof(type->walk_right_action_name));
+	type->walk_right_action = -1;
+	type->walk_turn_degrees = 15.0f;
 	for (int g = 0; g < ACTOR_GAIT_COUNT; g++)
 	{
 		type->gait_actions[g] = -1;
@@ -152,6 +157,20 @@ static bool load_key(void *user_data, const char *section, const char *key, cons
 	if (SDL_strcmp(key, "turn_degrees_per_second") == 0)
 	{
 		return ini_value_to_float(value, &type->turn_degrees_per_second);
+	}
+	if (SDL_strcmp(key, "walk_left_action") == 0)
+	{
+		SDL_strlcpy(type->walk_left_action_name, value, sizeof(type->walk_left_action_name));
+		return true;
+	}
+	if (SDL_strcmp(key, "walk_right_action") == 0)
+	{
+		SDL_strlcpy(type->walk_right_action_name, value, sizeof(type->walk_right_action_name));
+		return true;
+	}
+	if (SDL_strcmp(key, "walk_turn_degrees") == 0)
+	{
+		return ini_value_to_float(value, &type->walk_turn_degrees);
 	}
 	if (SDL_strcmp(key, "turn_left_action") == 0)
 	{
@@ -440,6 +459,8 @@ static void load_models(actors_t *actors)
 			// Optional: without them, the walk while it turns on the spot
 			type->turn_left_action = actor_model_find_action(&actors->models[type->model], type->turn_left_action_name);
 			type->turn_right_action = actor_model_find_action(&actors->models[type->model], type->turn_right_action_name);
+			type->walk_left_action = actor_model_find_action(&actors->models[type->model], type->walk_left_action_name);
+			type->walk_right_action = actor_model_find_action(&actors->models[type->model], type->walk_right_action_name);
 			// Optional: its steps between standing and walking (people)
 			{
 				static const char *const gait_names[ACTOR_GAIT_COUNT] = { "walk_start", "walk_start_180", "walk_stop_l", "walk_stop_r", "step_left", "step_right",
@@ -472,6 +493,7 @@ static void load_models(actors_t *actors)
 		type->wade_depth_meters = SDL_clamp(type->wade_depth_meters, 0.0f, type->swim_depth_meters);
 		type->step_meters = SDL_max(type->step_meters, 0.0f);
 		type->blend_seconds = SDL_max(type->blend_seconds, 0.0f);
+		type->walk_turn_degrees = SDL_clamp(type->walk_turn_degrees, 1.0f, 90.0f);
 		type->ground_align = SDL_clamp(type->ground_align, 0.0f, 1.0f);
 		type->fly_meters_per_second = SDL_max(type->fly_meters_per_second, 0.5f);
 		type->fly_height_minimum_meters = SDL_max(type->fly_height_minimum_meters, 1.0f);
@@ -1981,7 +2003,55 @@ static float body_radius(const actors_t *actors, const actor_t *actor);
 static bool walking_action(const actor_type_t *type, int action)
 {
 	return action == type->walk_action || action == type->idle_action || (action >= 0 && (action == type->turn_left_action
-		|| action == type->turn_right_action));
+		|| action == type->turn_right_action || action == type->walk_left_action || action == type->walk_right_action));
+}
+
+// One of its walks: straight on, or round a curve
+static bool walk_group_action(const actor_type_t *type, int action)
+{
+	return action >= 0 && (action == type->walk_action || action == type->walk_left_action || action == type->walk_right_action);
+}
+
+// Into one of its walks; from another of them at the same point of its
+// step (they are made alike: the crossfade then only bends the curve, no
+// legs crossed over)
+static void start_walk(const actors_t *actors, actor_t *actor, int action)
+{
+	const actor_type_t *type = &actors->types[actor->type];
+	const actor_model_t *model = model_of(actors, actor);
+	float phase = -1.0f;
+
+	if (action == actor->action)
+	{
+		return;
+	}
+	if (walk_group_action(type, actor->action) && walk_group_action(type, action))
+	{
+		float length = action_length(model, actor->action);
+
+		phase = length > 0.0f ? SDL_fmodf(actor->action_seconds, length) / length : 0.0f;
+		phase = phase < 0.0f ? phase + 1.0f : phase;
+	}
+	start_action(actors, actor, action);
+	if (phase >= 0.0f)
+	{
+		actor->action_seconds = phase * action_length(model, action);
+	}
+}
+
+// How fast it turns walking round its curve at this speed (radians a
+// second): walk_turn_degrees a cycle of the walk
+static float walk_turn_radians_per_second(const actors_t *actors, const actor_t *actor, float speed)
+{
+	const actor_type_t *type = &actors->types[actor->type];
+	const actor_model_t *model = model_of(actors, actor);
+	float cycle_meters = type->walk_cycle_meters;
+
+	if (cycle_meters <= 0.0f)
+	{
+		cycle_meters = type->walk_meters_per_second * (type->walk_action >= 0 ? action_length(model, type->walk_action) : 1.0f);
+	}
+	return degrees_to_radians(type->walk_turn_degrees) * SDL_fabsf(speed) / SDL_max(cycle_meters, 0.05f);
 }
 
 // Walk (or swim) animation at the pace of its speed; turning on the spot,
@@ -2009,12 +2079,21 @@ static void choose_animation(actors_t *actors, actor_t *actor)
 	if (actor->backing_meters > 0.0f && actor->speed < -0.02f)
 	{
 		// Stepping back: the walk backwards
-		start_action(actors, actor, type->walk_action);
+		start_walk(actors, actor, type->walk_action);
 		actor->action_rate = -SDL_clamp(-actor->speed / pace, 0.3f, 2.0f);
+	}
+	else if (going && !actor->swimming && type->walk_left_action >= 0 && type->walk_right_action >= 0
+		&& turning > (actor->action == type->walk_left_action || actor->action == type->walk_right_action ? 0.25f : 0.5f)
+			* walk_turn_radians_per_second(actors, actor, actor->speed))
+	{
+		// Round a curve: its walk that turns (it turns as fast as that
+		// does, or near it), at the pace of its speed like the walk
+		start_walk(actors, actor, actor->turn_rate > 0.0f ? type->walk_left_action : type->walk_right_action);
+		actor->action_rate = SDL_clamp(actor->speed / (pace * actor->stride_scale), 0.3f, 3.0f);
 	}
 	else if (going || actor->swimming)
 	{
-		start_action(actors, actor, type->walk_action);
+		start_walk(actors, actor, type->walk_action);
 		// Treading water when it is not going anywhere
 		// (its stride stretched to end on a foot: the feet so much slower)
 		actor->action_rate = going ? SDL_clamp(actor->speed / (pace * actor->stride_scale), 0.3f, 3.0f) : 0.5f;
@@ -2380,7 +2459,10 @@ static void wander_move(actors_t *actors, actor_t *actor, const navigation_t *na
 	navigation_agent_t agent = agent_of(type);
 	float map_meters = (float)terrain->size * terrain->cell_size_meters;
 	float turn = wrap_angle(actor->wander_heading - actor->yaw_radians);
-	float most = degrees_to_radians(type->turn_degrees_per_second) * seconds;
+	// (walking: round its own curve, as its walk_left / walk_right turn;
+	// standing: on the spot at its turning speed, its turn clips)
+	float most = (SDL_fabsf(actor->speed) > 0.05f ? SDL_min(walk_turn_radians_per_second(actors, actor, actor->speed),
+		degrees_to_radians(type->turn_degrees_per_second)) : degrees_to_radians(type->turn_degrees_per_second)) * seconds;
 	float new_yaw = wrap_angle(actor->yaw_radians + SDL_clamp(turn, -most, most));
 	float wanted_speed;
 	float step_x;

@@ -91,7 +91,8 @@ typedef struct
 	float look_meters;             // how far past its nose it looks
 	float drift_chance;            // each tick, the chance it turns a little while free ahead
 	float drift_degrees;           // a little: this much, either side
-	float search_degrees;          // blocked ahead: free ways looked for this far round, drift_degrees apart
+	float search_degrees;          // blocked ahead: free ways looked for this far round, drift_degrees apart (walking on round them);
+	                               // past that, round to 180 (stopping to turn on the spot, its turn clips)
 	float speed_share;             // of its walk (turning too: no slowing down round a turn)
 	float back_seconds;            // a step back: this long
 	float back_share;              // at this share of its walk
@@ -111,6 +112,8 @@ typedef struct
 	float back_seconds;            // stepping back: this much longer
 	int backs;                     // steps back this walk
 	int looks;                     // looks ahead this walk
+	bool cornering;                // nothing free within search_degrees: stopped, turning on the spot to a free way
+	float last_yaw;                // its body's yaw at the last look (still coming round, or not)
 	float stuck_x;                 // where it was when it last got on (its legs going, its body not: caught)
 	float stuck_z;
 	float stuck_seconds;

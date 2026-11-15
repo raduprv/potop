@@ -15,7 +15,8 @@
 #
 # --walk: the trails coloured by how they walk instead (the boredom walk,
 # game/wander.c): green free, yellow its little turn aside (wander_drift),
-# orange blocked and turned (wander_turn), black a step back, red forced (a
+# orange blocked and turned (wander_turn), blue a corner (stopped, turned
+# on the spot with its turn clips), black a step back, red forced (a
 # turn on the spot of more than SPIN_DEGREES within a second, walking in
 # place), violet jitter (not walking, yet moved: the physics pushing it,
 # at a feeder mostly), grey given up (wander_gave_up); not walking, pale.
@@ -59,6 +60,7 @@ WALK_COLOURS = {
 	"wander_turn": (245, 130, 0),
 	"forced": (220, 20, 20),
 	"wander_back": (0, 0, 0),
+	"wander_corner": (30, 110, 255),
 	"jitter": (170, 0, 220),
 	"wander_gave_up": (120, 120, 120),
 	"still": (215, 225, 215),
@@ -274,7 +276,7 @@ def main():
 	walk_events = defaultdict(list)   # id -> [(t, name)]
 	for t, animal, kind, x, z, text in events:
 		name = text.split()[0]
-		if name in ("wander_drift", "wander_turn", "wander_back", "wander_gave_up"):
+		if name in ("wander_drift", "wander_turn", "wander_back", "wander_gave_up", "wander_corner"):
 			walk_events[animal].append((t, name))
 	in_place_times = defaultdict(list)
 	for t, animal, kind, x, z, seconds in in_place:
@@ -295,6 +297,8 @@ def main():
 				moved = math.hypot(b[3] - a[3], b[4] - a[4]) > 0.01
 				if "wander_back" in recent:
 					colour = WALK_COLOURS["wander_back"]
+				elif "wander_corner" in recent or any(when <= t <= when + 4.0 for when, name in marks if name == "wander_corner"):
+					colour = WALK_COLOURS["wander_corner"]
 				elif t in spin_times.get(animal, ()) or any(when <= t <= when + seconds for when, seconds in in_place_times.get(animal, ())):
 					colour = WALK_COLOURS["forced"]
 				elif t in jitter_times.get(animal, ()):
@@ -326,7 +330,7 @@ def main():
 	# (the key, top left)
 	y = 4
 	if arguments.walk:
-		for name, label in (("free", "free"), ("wander_drift", "drift aside"), ("wander_turn", "blocked, turned"), ("wander_back", "step back"),
+		for name, label in (("free", "free"), ("wander_drift", "drift aside"), ("wander_turn", "blocked, turned"), ("wander_back", "step back"), ("wander_corner", "corner: turn on the spot"),
 				("forced", "spin / in place (dot)"), ("jitter", "jitter (physics)"), ("wander_gave_up", "gave up"), ("still", "not walking")):
 			draw.rectangle([4, y + 2, 14, y + 10], fill=WALK_COLOURS[name])
 			draw.text((18, y), label, fill=(0, 0, 0))

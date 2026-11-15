@@ -9,7 +9,9 @@
 //                    degrees at a time out to search_degrees (once it has
 //                    turned the last such: no running ahead of its own
 //                    body, a spin on the spot in tenths of a second)
-//   none             a step back, if free behind: the last resort
+//   none             a corner: the nearest free way farther round (to 180);
+//                    it stops and turns there on the spot (its turn clips)
+//   none at all      a step back, if free behind: the last resort
 //   not even that    it stands and tries on a while (give_up_seconds),
 //                    then gives up: the walk is over
 //
@@ -79,6 +81,16 @@ void wander_stop(wander_t *wander, potop_t *potop, uint32_t actor_id)
 	wander->active = false;
 }
 
+// Whether its body is still coming round (its yaw moved since the last
+// look); keeps the yaw for the next
+static bool wander_body_turning(wander_t *wander, const potop_actor_info_t *actor)
+{
+	bool turning = SDL_fabsf(wrap_radians(actor->yaw_radians - wander->last_yaw)) > 0.005f;
+
+	wander->last_yaw = actor->yaw_radians;
+	return turning;
+}
+
 // A step back, if free behind and it has some left this walk
 static bool wander_step_back(wander_t *wander, game_t *game, potop_t *potop, uint32_t actor_id, const wander_style_t *style)
 {
@@ -117,6 +129,26 @@ static bool wander_look(wander_t *wander, game_t *game, potop_t *potop, uint32_t
 	{
 		return false;
 	}
+	// Turning on the spot in a corner: till its body has come round (or
+	// it gives up, its body not coming round at all)
+	if (wander->cornering)
+	{
+		if (SDL_fabsf(wrap_radians(wander->heading - actor->yaw_radians)) > WANDER_TURNED_RADIANS)
+		{
+			if (!wander_body_turning(wander, actor))
+			{
+				wander->blocked_seconds += WANDER_TICK_SECONDS;
+				if (wander->blocked_seconds >= 2.0f * style->give_up_seconds)
+				{
+					game_trace_event(game, potop, actor_id, "wander_gave_up");
+					return false;
+				}
+			}
+			return true;
+		}
+		wander->cornering = false;
+		wander->blocked_seconds = 0.0f;
+	}
 	// (its legs going and its body not getting on, its mind seeing the way
 	// free (its body not fitting round, another pushing it): caught, taken
 	// as blocked ahead)
@@ -150,11 +182,14 @@ static bool wander_look(wander_t *wander, game_t *game, potop_t *potop, uint32_t
 	if (!stuck && SDL_fabsf(wrap_radians(wander->heading - actor->yaw_radians)) > WANDER_TURNED_RADIANS)
 	{
 		// (its body not coming round: caught, it gives up in the end)
-		wander->blocked_seconds += WANDER_TICK_SECONDS;
-		if (wander->blocked_seconds >= 2.0f * style->give_up_seconds)
+		if (!wander_body_turning(wander, actor))
 		{
-			game_trace_event(game, potop, actor_id, "wander_gave_up");
-			return false;
+			wander->blocked_seconds += WANDER_TICK_SECONDS;
+			if (wander->blocked_seconds >= 2.0f * style->give_up_seconds)
+			{
+				game_trace_event(game, potop, actor_id, "wander_gave_up");
+				return false;
+			}
 		}
 		return true;
 	}
@@ -194,6 +229,25 @@ static bool wander_look(wander_t *wander, game_t *game, potop_t *potop, uint32_t
 	{
 		game_trace_event(game, potop, actor_id, "wander_gave_up");
 		return false;
+	}
+	// A corner: the nearest free way farther round, to 180; it stops and
+	// turns there on the spot (its turn clips), then walks on
+	for (int step = steps + 1; step * drift <= 3.14159265f + 0.001f; step++)
+	{
+		for (int pass = 0; pass < 2; pass++)
+		{
+			float heading = wander->heading + (pass == 0 ? side : -side) * drift * (float)step;
+
+			if (potop_actor_heading_free(potop, actor_id, heading, style->look_meters))
+			{
+				wander->heading = wrap_radians(heading);
+				wander->cornering = true;
+				wander->blocked_seconds = 0.0f;
+				game_trace_event(game, potop, actor_id, "wander_corner");
+				potop_actor_wander(potop, actor_id, wander->heading, 0.0f);
+				return true;
+			}
+		}
 	}
 	if (wander_step_back(wander, game, potop, actor_id, style))
 	{

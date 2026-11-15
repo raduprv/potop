@@ -86,10 +86,12 @@ typedef struct
 	const wander_style_t *wander;
 } animal_kind_t;
 
-// A cow's boredom walk: a meter past her nose, now and then (once a second
-// or so) ten degrees aside, blocked out to forty round, at her walk
+// A cow's boredom walk: two and a half meters past her nose (her curve
+// starts in time: she turns as her walk_left / walk_right do, 15 degrees
+// a cycle, a curve of about 4 m), now and then (once a second or so) ten
+// degrees aside, blocked out to forty round, at her walk
 static const wander_style_t COW_WANDER = {
-	.look_meters = 1.0f,
+	.look_meters = 2.5f,
 	.drift_chance = 0.1f,
 	.drift_degrees = 10.0f,
 	.search_degrees = 40.0f,
@@ -100,6 +102,37 @@ static const wander_style_t COW_WANDER = {
 	.backs_most = 2,
 	.least_seconds = 8.0f,
 	.most_seconds = 25.0f,
+};
+
+// A pig's: a smaller animal in a smaller sty (a curve of about 2 m)
+static const wander_style_t PIG_WANDER = {
+	.look_meters = 1.2f,
+	.drift_chance = 0.1f,
+	.drift_degrees = 10.0f,
+	.search_degrees = 40.0f,
+	.speed_share = 1.0f,
+	.back_seconds = 0.6f,
+	.back_share = 0.35f,
+	.give_up_seconds = 1.0f,
+	.backs_most = 2,
+	.least_seconds = 6.0f,
+	.most_seconds = 20.0f,
+};
+
+// A hen's: a short look, a quick turn (a curve of under a meter), short
+// walks
+static const wander_style_t HEN_WANDER = {
+	.look_meters = 0.4f,
+	.drift_chance = 0.15f,
+	.drift_degrees = 15.0f,
+	.search_degrees = 60.0f,
+	.speed_share = 1.0f,
+	.back_seconds = 0.4f,
+	.back_share = 0.35f,
+	.give_up_seconds = 0.8f,
+	.backs_most = 2,
+	.least_seconds = 3.0f,
+	.most_seconds = 10.0f,
 };
 
 static const animal_kind_t ANIMAL_KINDS[] = {
@@ -121,6 +154,7 @@ static const animal_kind_t ANIMAL_KINDS[] = {
 		.ground_bites_most = 1,
 		.in_meters = 0.5f,
 		.in_near_meters = 1.5f,
+		.wander = &HEN_WANDER,
 	},
 	{
 		.actor_type = "cow",
@@ -187,6 +221,7 @@ static const animal_kind_t ANIMAL_KINDS[] = {
 		.in_near_meters = 1.7f,
 		.dusk_spread = 30.0f,
 		.dawn_spread = 40.0f,
+		.wander = &PIG_WANDER,
 	},
 	{
 		// (a stana's: grazing its pasture as a flock, in the fold by night)

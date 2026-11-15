@@ -1121,3 +1121,26 @@ violet jitter (not walking, moved over 1.5 cm a sample: the physics), red
 spin / in place (the dots red too). Sim: cow steps back 488 -> 54 a run,
 walking in place while roaming 14 (39i base) -> 4; jitter cows 141 samples
 (at the troughs mostly: to look at).
+
+## Walking round a curve (39l)
+
+actor_type_t walk_left_action / walk_right_action (ini walk_left_action,
+walk_right_action; default names walk_left / walk_right) and
+walk_turn_degrees (default 15: a cycle of those). choose_animation, going
+and turning faster than half (0.25 to stay) of walk_turn_radians_per_second
+at its speed: walk_left (turn_rate > 0: toward +X, its left) or
+walk_right, at the walk's pace. start_walk: between walk / walk_left /
+walk_right the new clip starts at the same point of its step (the
+models' phases are the same: tools/clip_check.py showed the nearest pose
+is the same frame for all six), the crossfade on top. wander_move turns
+no faster than walk_turn_radians_per_second while moving (a cow 12.5
+degrees/s: a 4 m curve), at turn_degrees_per_second standing. wander.c:
+past search_degrees, a corner: the nearest free way out to 180, stopped,
+turned on the spot (turn clips), then on (wander_corner; blue in --walk);
+the step back only after that. While its body still comes round, the
+blocked wait does not count (wander_body_turning). COW_WANDER look 2.5 m;
+PIG_WANDER (1.2 m) and HEN_WANDER (0.4 m, 15 degrees, 60 searched) new:
+cows, pigs, hens wander; sheep still point_ahead (the flock). Sim: cow
+steps back 54 -> 3, corners 47, roaming in place 2.
+tools/clip_check.py: bone checks of a glTF's clips (jumps, loop seams,
+nearest poses between the walks, foot slip moved as the engine moves it).

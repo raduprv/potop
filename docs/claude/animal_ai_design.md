@@ -118,3 +118,11 @@ event from the new walk for each of these.
   pose that looks alike with the legs going the other way); at run time a
   table lookup. The best match's distance is also the check: large, the
   clips do not fit together (tell Radu).
+
+## 39l
+
+Done: walk_left/right in the engine (phase kept, crossfade), the turn
+while walking at the clip's rate, look 2.5 m (cow), corners on the spot
+with turn clips before any step back; pigs and hens on the boredom walk.
+Sheep still not (the flock). Fable fixing the pig's front hooves (spin in
+flight) and the hen's walk loop seam; new models -> zip of the actors.

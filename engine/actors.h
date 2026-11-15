@@ -114,6 +114,16 @@ typedef struct
 	int turn_left_action;              // -1 if none
 	char turn_right_action_name[ACTOR_FILE_NAME_LENGTH];
 	int turn_right_action;             // -1 if none
+	// Turning while it walks: these walks round a curve if the model has
+	// them (optional), made to turn walk_turn_degrees a cycle of the walk
+	// (the same length, steps and speed as the walk: one goes into the
+	// other at the same point of its step). A wanderer turns no faster
+	// than they do (a curve of its own size, not a spin on the walk)
+	char walk_left_action_name[ACTOR_FILE_NAME_LENGTH];
+	int walk_left_action;              // -1 if none
+	char walk_right_action_name[ACTOR_FILE_NAME_LENGTH];
+	int walk_right_action;             // -1 if none
+	float walk_turn_degrees;           // a cycle of walk_left / walk_right; also a wanderer's turn while walking without them
 	// Walking straight (actors_walk_straight), it keeps this much of its
 	// walk in a sharp turn and goes round in an arc (a cow) instead of
 	// stopping to turn on the spot (0: it stops); on the spot still where
