@@ -110,3 +110,11 @@ event from the new walk for each of these.
   jumps (angular speed/acceleration spikes), the loop seam (last frame vs
   first), walk vs walk_left/right phase (feet down at the same moments),
   measured turn per cycle. Then the sim.
+- Radu's idea (better than phase sync): switching walk -> walk_left/right
+  starts the new clip at its frame whose bones are nearest the current
+  pose. Precomputed at load for each pair in the group (walk, walk_left,
+  walk_right): per source frame, the best target time, by the legs'
+  joint positions in model space AND their velocities (else it matches a
+  pose that looks alike with the legs going the other way); at run time a
+  table lookup. The best match's distance is also the check: large, the
+  clips do not fit together (tell Radu).
