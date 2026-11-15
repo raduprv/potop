@@ -1193,6 +1193,55 @@ static void place_feet(const actors_t *actors, actor_t *actor, const actor_model
 	actor_model_global_rows(model, global, actor->bone_rows);
 }
 
+// Two poses mixed: from a toward b by amount (0..1)
+static void mix_poses(int bone_count, actor_file_key_t *a, const actor_file_key_t *b, float amount)
+{
+	for (int bone = 0; bone < bone_count; bone++)
+	{
+		const float *to = b[bone].rotation;
+		float *from = a[bone].rotation;
+		float sign = from[0] * to[0] + from[1] * to[1] + from[2] * to[2] + from[3] * to[3] < 0.0f ? -1.0f : 1.0f;
+		float length_squared = 0.0f;
+
+		for (int k = 0; k < 3; k++)
+		{
+			a[bone].translation[k] += (b[bone].translation[k] - a[bone].translation[k]) * amount;
+		}
+		for (int k = 0; k < 4; k++)
+		{
+			from[k] += (sign * to[k] - from[k]) * amount;
+			length_squared += from[k] * from[k];
+		}
+		for (int k = 0; k < 4; k++)
+		{
+			from[k] /= SDL_max(SDL_sqrtf(length_squared), 1e-6f);
+		}
+	}
+}
+
+static bool walking_action(const actor_type_t *type, int action);
+
+// Its walk's pose bent round its curve (walk_curve): walk_left or
+// walk_right at the same point of the step, mixed in so much
+static void bend_walk(const actors_t *actors, const actor_t *actor, int action, float seconds, actor_file_key_t *pose)
+{
+	const actor_type_t *type = &actors->types[actor->type];
+	const actor_model_t *model = model_of(actors, actor);
+	actor_file_key_t side_pose[ACTOR_FILE_MAX_BONES];
+	int side = actor->walk_curve > 0.0f ? type->walk_left_action : type->walk_right_action;
+	float length = action_length(model, action);
+	float phase;
+
+	if (action != type->walk_action || side < 0 || SDL_fabsf(actor->walk_curve) < 0.01f || length <= 0.0f)
+	{
+		return;
+	}
+	phase = SDL_fmodf(seconds, length) / length;
+	phase = phase < 0.0f ? phase + 1.0f : phase;
+	sample_action(model, side, phase * action_length(model, side), side_pose);
+	mix_poses(model->bone_count, pose, side_pose, SDL_fabsf(actor->walk_curve));
+}
+
 // The pose's skinning matrices from the action and the crossfade
 static void update_pose(const actors_t *actors, actor_t *actor)
 {
@@ -1208,33 +1257,16 @@ static void update_pose(const actors_t *actors, actor_t *actor)
 		return;
 	}
 	sample_action(model, actor->action, actor->action_seconds, pose);
+	bend_walk(actors, actor, actor->action, actor->action_seconds, pose);
 	if (actor->previous_action >= 0 && actor->blend_left_seconds > 0.0f && blend_seconds > 0.0f)
 	{
 		// From the old pose to the new one, smoothly
 		float amount = smoothstep_float(0.0f, 1.0f, 1.0f - actor->blend_left_seconds / blend_seconds);
 
 		sample_action(model, actor->previous_action, actor->previous_seconds, old_pose);
-		for (int b = 0; b < model->bone_count; b++)
-		{
-			const float *from = old_pose[b].rotation;
-			float *to = pose[b].rotation;
-			float sign = from[0] * to[0] + from[1] * to[1] + from[2] * to[2] + from[3] * to[3] < 0.0f ? -1.0f : 1.0f;
-			float length_squared = 0.0f;
-
-			for (int k = 0; k < 3; k++)
-			{
-				pose[b].translation[k] = old_pose[b].translation[k] + (pose[b].translation[k] - old_pose[b].translation[k]) * amount;
-			}
-			for (int k = 0; k < 4; k++)
-			{
-				to[k] = from[k] + (sign * to[k] - from[k]) * amount;
-				length_squared += to[k] * to[k];
-			}
-			for (int k = 0; k < 4; k++)
-			{
-				to[k] /= SDL_max(SDL_sqrtf(length_squared), 1e-6f);
-			}
-		}
+		bend_walk(actors, actor, actor->previous_action, actor->previous_seconds, old_pose);
+		mix_poses(model->bone_count, old_pose, pose, amount);
+		SDL_memcpy(pose, old_pose, sizeof(actor_file_key_t) * (size_t)model->bone_count);
 	}
 	if (actors->types[actor->type].flies && model->bone_count > 0)
 	{
@@ -1256,14 +1288,46 @@ static void start_action(const actors_t *actors, actor_t *actor, int action)
 	}
 	actor->previous_action = actor->action;
 	actor->previous_seconds = actor->action_seconds;
+	actor->previous_rate = actor->action_rate;
 	actor->blend_left_seconds = actor->previous_action >= 0 ? actors->types[actor->type].blend_seconds : 0.0f;
 	actor->action = action;
 	actor->action_seconds = 0.0f;
 	actor->action_rate = 1.0f;
 }
 
+#define WALK_CURVE_PER_SECOND 2.5f      // its walk's bend eased this fast (all straight to all round a curve: 0.4 s)
+
+static float walk_turn_radians_per_second(const actors_t *actors, const actor_t *actor, float speed);
+
+// Debug: POTOP_ANIMATION_LOG=file and POTOP_ANIMATION_TYPE=name: every
+// frame, each actor of that type's actions as they play (for
+// tools/animation_check.py: the pose as drawn, its jumps)
+static SDL_IOStream *animation_log;
+static const char *animation_log_type;
+static bool animation_log_tried;
+static double animation_log_clock;
+
+static void log_animation(const actors_t *actors, const actor_t *actor)
+{
+	const actor_model_t *model = model_of(actors, actor);
+
+	SDL_IOprintf(animation_log, "%.4f %u %s %.4f %.3f %s %.4f %.4f %.3f %.3f\n", animation_log_clock, actor->id,
+		actor->action >= 0 ? model->actions[actor->action].name : "-", (double)actor->action_seconds, (double)actor->action_rate,
+		actor->previous_action >= 0 ? model->actions[actor->previous_action].name : "-", (double)actor->previous_seconds,
+		(double)actor->blend_left_seconds, (double)actor->speed, (double)actor->walk_curve);
+}
+
 void actors_update(actors_t *actors, float seconds)
 {
+	if (!animation_log_tried)
+	{
+		const char *path = SDL_getenv("POTOP_ANIMATION_LOG");
+
+		animation_log_tried = true;
+		animation_log_type = SDL_getenv("POTOP_ANIMATION_TYPE");
+		animation_log = path != NULL && animation_log_type != NULL ? SDL_IOFromFile(path, "w") : NULL;
+	}
+	animation_log_clock += seconds;
 	for (int i = 0; i < actors->count; i++)
 	{
 		actor_t *actor = &actors->actors[i];
@@ -1299,14 +1363,38 @@ void actors_update(actors_t *actors, float seconds)
 		}
 		if (actor->previous_action >= 0)
 		{
-			actor->previous_seconds += seconds;
+			actor->previous_seconds += seconds * actor->previous_rate;
 			actor->blend_left_seconds -= seconds;
 			if (actor->blend_left_seconds <= 0.0f)
 			{
 				actor->previous_action = -1;
 			}
 		}
+		// Its walk's bend: toward how fast it turns against how fast its
+		// walk_left / walk_right turn at its speed (straight when it does
+		// not walk), eased (a turn coming and going bends it smoothly)
+		{
+			const actor_type_t *type = &actors->types[actor->type];
+			float wanted = 0.0f;
+
+			if (actor->action == type->walk_action && type->walk_left_action >= 0 && type->walk_right_action >= 0 && actor->speed > 0.02f)
+			{
+				wanted = SDL_clamp(actor->turn_rate / SDL_max(walk_turn_radians_per_second(actors, actor, actor->speed), 1e-3f), -1.0f, 1.0f);
+			}
+			if (actor->walk_curve < wanted)
+			{
+				actor->walk_curve = SDL_min(actor->walk_curve + WALK_CURVE_PER_SECOND * seconds, wanted);
+			}
+			else
+			{
+				actor->walk_curve = SDL_max(actor->walk_curve - WALK_CURVE_PER_SECOND * seconds, wanted);
+			}
+		}
 		update_pose(actors, actor);
+		if (animation_log != NULL && SDL_strcmp(actors->types[actor->type].name, animation_log_type) == 0)
+		{
+			log_animation(actors, actor);
+		}
 	}
 }
 
@@ -1331,8 +1419,6 @@ void actors_set_running(actors_t *actors, uint32_t id, bool running)
 		actors->actors[index].running = running;
 	}
 }
-
-static bool walking_action(const actor_type_t *type, int action);
 
 bool actors_play(actors_t *actors, uint32_t id, const char *action_name)
 {
@@ -2060,7 +2146,9 @@ static void choose_animation(actors_t *actors, actor_t *actor)
 {
 	const actor_type_t *type = &actors->types[actor->type];
 	const actor_model_t *model = model_of(actors, actor);
-	bool going = actor->speed > 0.05f;
+	// (walking already: on till it is all but still, no walk-idle-walk
+	// flicker at the edge; round a curve the walk is bent: walk_curve)
+	bool going = actor->speed > (walk_group_action(type, actor->action) ? 0.02f : 0.05f);
 	float turning = SDL_fabsf(actor->turn_rate);
 	float clip_seconds;
 	float pace;
@@ -2081,15 +2169,6 @@ static void choose_animation(actors_t *actors, actor_t *actor)
 		// Stepping back: the walk backwards
 		start_walk(actors, actor, type->walk_action);
 		actor->action_rate = -SDL_clamp(-actor->speed / pace, 0.3f, 2.0f);
-	}
-	else if (going && !actor->swimming && type->walk_left_action >= 0 && type->walk_right_action >= 0
-		&& turning > (actor->action == type->walk_left_action || actor->action == type->walk_right_action ? 0.25f : 0.5f)
-			* walk_turn_radians_per_second(actors, actor, actor->speed))
-	{
-		// Round a curve: its walk that turns (it turns as fast as that
-		// does, or near it), at the pace of its speed like the walk
-		start_walk(actors, actor, actor->turn_rate > 0.0f ? type->walk_left_action : type->walk_right_action);
-		actor->action_rate = SDL_clamp(actor->speed / (pace * actor->stride_scale), 0.3f, 3.0f);
 	}
 	else if (going || actor->swimming)
 	{
@@ -2357,6 +2436,7 @@ static bool steer(const actors_t *actors, actor_t *actor, float wanted, float se
 
 #define WANDER_PREDICT_SECONDS 0.5f    // another that goes: where it will be in this long counts too
 #define WANDER_SIDE_SHARE 0.85f        // its sides' lines: this share of its half width out
+#define WANDER_HOLD_SECONDS 0.5f       // its step blocked: it stands this long before it tries again
 
 // Whether a point (another's middle, of radius) is across the stretch
 // from (x, z) along (direction_x, direction_z), length long, half_width
@@ -2494,6 +2574,11 @@ static void wander_move(actors_t *actors, actor_t *actor, const navigation_t *na
 		// (choose_animation's walk backwards)
 		actor->backing_meters = 1.0f;
 	}
+	if (actor->wander_hold_seconds > 0.0f)
+	{
+		actor->wander_hold_seconds -= seconds;
+		wanted_speed = 0.0f;
+	}
 	// (a one-shot of its own playing: still, as move_actor holds it)
 	if (actor->action >= 0 && !walking_action(type, actor->action) && (model_of(actors, actor)->actions[actor->action].flags & ACTOR_ACTION_LOOP) == 0)
 	{
@@ -2516,6 +2601,9 @@ static void wander_move(actors_t *actors, actor_t *actor, const navigation_t *na
 		&& !heading_free_for(actors, actor, actor->speed >= 0.0f ? actor->yaw_radians : actor->yaw_radians + 3.14159265f,
 			SDL_fabsf(actor->speed) * seconds + 0.02f))
 	{
+		// (it stands a while before it tries again: not a start and a stop
+		// every frame against what is at its nose)
+		actor->wander_hold_seconds = WANDER_HOLD_SECONDS;
 		step_x = 0.0f;
 		step_z = 0.0f;
 		actor->speed = 0.0f;

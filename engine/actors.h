@@ -239,6 +239,12 @@ typedef struct
 	int previous_action;               // fading out, -1 if none
 	float previous_seconds;
 	float blend_left_seconds;          // of the crossfade
+	float previous_rate;               // the one fading out goes on at its own pace
+	// Its walk bent round a curve: -1 all walk_right, 1 all walk_left, 0
+	// straight (the walk alone), mixed at the same point of the step;
+	// eased toward how fast it turns against how fast those turn, so a
+	// turn coming and going bends it smoothly (no switching of clips)
+	float walk_curve;
 	float bone_rows[ACTOR_FILE_MAX_BONES * 12]; // the pose's skinning matrices
 	float action_rate;                 // the current action's playing speed (walk: with the pace)
 	// How far the pose lifts the model's root above the bind pose. Eternal
@@ -315,6 +321,7 @@ typedef struct
 	bool wandering;
 	float wander_heading;
 	float wander_share;
+	float wander_hold_seconds;         // its step was blocked: it stands this long before it tries again (no stop-go every frame)
 	// A straight walk that ends exactly (actors_walk_straight_exact: a
 	// worker onto his place at the anvil): how near the end counts as there
 	// (0: as any walk)

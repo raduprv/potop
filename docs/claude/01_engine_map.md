@@ -1144,3 +1144,20 @@ cows, pigs, hens wander; sheep still point_ahead (the flock). Sim: cow
 steps back 54 -> 3, corners 47, roaming in place 2.
 tools/clip_check.py: bone checks of a glTF's clips (jumps, loop seams,
 nearest poses between the walks, foot slip moved as the engine moves it).
+
+39m (Radu: "it jumps, from walk_left to walk_right and back"): measured
+with POTOP_ANIMATION_LOG / POTOP_ANIMATION_TYPE (actors.c logs each frame
+the actions, times, crossfade, speed, walk_curve) and
+tools/animation_check.py (rebuilds the drawn pose from the glTF: switches,
+switches inside a crossfade, joint jumps). Found: walk <-> walk_left/right
+switched every 0.5-1.5 s, left <-> right straight 86 times in 300 s, the
+crossfades cut off (a switch in a crossfade drops the one fading out),
+stop-go flicker against an obstacle (idle/walk/turn every 1-6 frames), and
+the clip fading out ran at rate 1, not its own. Now: no switching inside
+the walk: actor_t.walk_curve (-1..1, eased 2.5/s toward turn_rate over
+walk_turn_radians_per_second) mixes walk_left or walk_right into the walk
+at the same point of the step (bend_walk, in update_pose, for the clip
+fading out too); choose_animation only the walk (going: speed over 0.05 to
+start, over 0.02 to keep on); wander_move's blocked step holds it 0.5 s
+(wander_hold_seconds); previous_rate. Cow, 300 s: walk_left/right
+switches 0 (were ~650), walk <-> idle 214 (were ~430).
