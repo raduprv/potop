@@ -1,4 +1,5 @@
-# Animal AI redesign (discussed 2026-11-15, nothing coded yet)
+# Animal AI redesign (discussed 2026-11-15; the boredom walk coded in 39j
+for the cows: game/wander.c, see 01_engine_map.md)
 
 Radu's design. Do NOT code before he says so. The discussion so far is
 ONLY about the boredom walk; the other activities come later.
@@ -82,3 +83,14 @@ green walking free; yellow the 10% drift turn; orange blocked ahead and
 turned to another heading; red forced: the step back, a turn wider than
 the limit, walking in place; grey idle after giving up. Needs a trace
 event from the new walk for each of these.
+
+## Done in 39j, and what is left
+
+- Done: the boredom walk (wander.c, shared, for any animal), the heading
+  and speed mode, the physical free check, the coloured trace. Cows use it.
+- Deviations: a walk whose FIRST look is blocked does not back up (no walk
+  at all: back-on-back walk after walk otherwise); at most 2 steps back a
+  walk; legs going but body stuck 1.5 s counts as blocked.
+- Not done yet: the split into cow.c / pig.c / sheep.c / hen.c (cows still
+  in animals.c, only their walk is new); needs (hunger, thirst...);
+  hens, pigs, sheep on the new walk.

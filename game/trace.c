@@ -49,8 +49,9 @@ static void sample(game_t *game, potop_t *potop, uint32_t actor_id, const char *
 	{
 		return;
 	}
-	SDL_IOprintf(game->trace, "a %.2f %u %s %s %.3f %.3f %d %.3f\n", potop_elapsed_seconds(potop), actor_id, kind, state, (double)actor.x,
-		(double)actor.z, actor.moving ? 1 : 0, (double)potop_day_hour(potop));
+	// (moving: going somewhere or wandering; then the hour, its yaw)
+	SDL_IOprintf(game->trace, "a %.2f %u %s %s %.3f %.3f %d %.3f %.3f\n", potop_elapsed_seconds(potop), actor_id, kind, state, (double)actor.x,
+		(double)actor.z, actor.moving || actor.wandering ? 1 : 0, (double)potop_day_hour(potop), (double)actor.yaw_radians);
 }
 
 void game_trace_update(game_t *game, potop_t *potop, float seconds)

@@ -29,6 +29,7 @@
 !/tools/*.h
 !/tools/*.sh
 !/tools/*.ini
+!/tools/*.py
 
 # Built anywhere
 *.o

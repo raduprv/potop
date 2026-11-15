@@ -29,3 +29,4 @@ xvfb-run -a ./potop --houses hen_house,cow_farm,stana,pigsty --width 320 --heigh
 	--set render.day_cycle=true --set render.day_length_minutes=24 --hour "$HOUR" \
 	--sim "$SECONDS_TO_RUN" --trace "$OUT/trace.txt" > "$OUT/run.log" 2>&1
 python3 tools/animal_trace.py "$OUT/trace.txt" --out "$OUT/trace.png"
+python3 tools/animal_trace.py "$OUT/trace.txt" --walk --out "$OUT/trace_walk.png" > /dev/null

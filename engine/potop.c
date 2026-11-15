@@ -418,6 +418,7 @@ bool potop_actor_get(const potop_t *potop, uint32_t id, potop_actor_info_t *info
 	info_out->flies = type->flies;
 	// (stepping onto its place, or in a start's or stop's step: still going)
 	info_out->moving = actor->moving || actor->sidestep || actor->gait >= 0;
+	info_out->wandering = actor->wandering && actor->wander_share != 0.0f;
 	info_out->x = actor->x;
 	info_out->y = actor->y;
 	info_out->z = actor->z;
@@ -493,6 +494,16 @@ bool potop_actor_go_to(potop_t *potop, uint32_t id, float x, float z)
 bool potop_actor_walk_straight(potop_t *potop, uint32_t id, const float (*points)[2], int count)
 {
 	return actors_walk_straight(&potop->world.actors, id, points, count);
+}
+
+bool potop_actor_wander(potop_t *potop, uint32_t id, float heading_radians, float share)
+{
+	return actors_wander(&potop->world.actors, id, heading_radians, share);
+}
+
+bool potop_actor_heading_free(potop_t *potop, uint32_t id, float heading_radians, float meters)
+{
+	return actors_heading_free(&potop->world.actors, id, heading_radians, meters);
 }
 
 bool potop_actor_walk_straight_exact(potop_t *potop, uint32_t id, const float (*points)[2], int count, float face_yaw_radians)

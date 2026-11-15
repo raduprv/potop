@@ -338,6 +338,7 @@ typedef struct
 	bool dead;
 	bool flies;                    // its type flies
 	bool moving;                   // on its way somewhere
+	bool wandering;                // on a walk with no goal (potop_actor_wander), not told to stand
 	float x;
 	float y;                       // the ground (or the air) under it
 	float z;
@@ -381,6 +382,15 @@ bool potop_actor_go_to(potop_t *potop, uint32_t id, float x, float z);
 // can), and it says so as if it found no way (POTOP_ACTOR_NO_PATH); false
 // if it cannot set out. points: x, z pairs
 bool potop_actor_walk_straight(potop_t *potop, uint32_t id, const float (*points)[2], int count);
+// Wanders (a walk with no goal, a bored cow's): on the way heading_radians
+// says (0 = +z) at share of its walk (0: stands; below 0: backs) till told
+// otherwise or given a walk; it turns to a new heading at its own turning
+// speed. A body or another just ahead stops it where it is
+bool potop_actor_wander(potop_t *potop, uint32_t id, float heading_radians, float share);
+// Whether its way heading so is free for meters past its nose: no body
+// (the physics' shapes, along its middle and both sides), no other there
+// now or in half a second
+bool potop_actor_heading_free(potop_t *potop, uint32_t id, float heading_radians, float meters);
 // The same, ending on the last point within a few centimeters (a worker
 // onto his place) and turned at once to face_yaw_radians there; a point a
 // step or two away: no walk, turned on the spot onto it, sliding as it

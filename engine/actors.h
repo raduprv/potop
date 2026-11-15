@@ -296,6 +296,15 @@ typedef struct
 	// trough, a fence) and its way behind it, it steps back clear before it
 	// turns, not swinging its head through it
 	float backing_meters;
+	// Wandering (actors_wander: a mind's walk with no goal): it keeps
+	// going the way wander_heading says at wander_share of its walk (below
+	// 0: backing), turning to it at its turning speed, till told otherwise
+	// ("a body in motion stays in motion"); no path, no waypoints, no
+	// slowing down to arrive. A body or another just ahead stops its step
+	// (the mind sees that and turns it)
+	bool wandering;
+	float wander_heading;
+	float wander_share;
 	// A straight walk that ends exactly (actors_walk_straight_exact: a
 	// worker onto his place at the anvil): how near the end counts as there
 	// (0: as any walk)
@@ -417,6 +426,15 @@ bool actors_walk_straight(actors_t *actors, uint32_t id, const float (*points)[2
 // The same, ending on the last point within a few centimeters (slowing,
 // turning on the spot to it when it is not ahead)
 bool actors_walk_straight_exact(actors_t *actors, uint32_t id, const float (*points)[2], int count, float face_yaw_radians);
+// Wanders: goes on the way heading_radians says (0 = +z) at share of its
+// walk (0: stands; below 0: backs, its walk backwards), till told
+// otherwise or given a walk (see actor_t.wandering); false if it cannot
+bool actors_wander(actors_t *actors, uint32_t id, float heading_radians, float share);
+// Whether its way is free heading so, meters past its nose: no body (a
+// fence, a feeder, a wall: the physics' shapes, along its middle and both
+// its sides, at its feet and at its middle) and no other on the ground
+// across that stretch, where it is or where it will be in half a second
+bool actors_heading_free(const actors_t *actors, uint32_t id, float heading_radians, float meters);
 // Takes it off the map; false if there was none
 bool actors_remove(actors_t *actors, uint32_t id);
 // Goes at its run speed (run_meters_per_second) or at its walk again

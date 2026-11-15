@@ -81,7 +81,25 @@ typedef struct
 	// not the whole flock in one door at once)
 	float dusk_spread;
 	float dawn_spread;
+	// Its boredom walk (wander.c) in place of a walk to a point of its
+	// ground; NULL: to a point (point_ahead)
+	const wander_style_t *wander;
 } animal_kind_t;
+
+// A cow's boredom walk: a meter past her nose, now and then (once a second
+// or so) ten degrees aside, at most of her walk
+static const wander_style_t COW_WANDER = {
+	.look_meters = 1.0f,
+	.drift_chance = 0.1f,
+	.drift_degrees = 10.0f,
+	.speed_share = 0.8f,
+	.back_seconds = 0.8f,
+	.back_share = 0.35f,
+	.give_up_seconds = 1.0f,
+	.backs_most = 2,
+	.least_seconds = 8.0f,
+	.most_seconds = 25.0f,
+};
 
 static const animal_kind_t ANIMAL_KINDS[] = {
 	{
@@ -133,6 +151,7 @@ static const animal_kind_t ANIMAL_KINDS[] = {
 		.in_near_meters = 2.0f,
 		.dusk_spread = 30.0f,
 		.dawn_spread = 40.0f,
+		.wander = &COW_WANDER,
 	},
 	{
 		// (a pigsty's: two pens, each its door into the shed; rooting about
@@ -800,6 +819,12 @@ static void walk_to(potop_t *potop, animal_mind_t *animal, float x, float z)
 
 static void set_state(animal_mind_t *animal, animal_state_t state, float wait_seconds)
 {
+	// (out of its roaming: its boredom walk over; what the new state has
+	// it do (a walk, a clip, a stop) stops the engine's wandering)
+	if (state != ANIMAL_ROAM)
+	{
+		animal->wander.active = false;
+	}
 	animal->state = state;
 	animal->state_seconds = 0.0f;
 	animal->wait_seconds = wait_seconds;
@@ -1106,7 +1131,8 @@ static void think(game_t *game, potop_t *potop, int index, float seconds)
 			float x;
 			float z;
 
-			if (actor.moving)
+			// (on its boredom walk: wander_update keeps it, till it is over)
+			if (actor.moving || animal->wander.active)
 			{
 				return;
 			}
@@ -1179,6 +1205,11 @@ static void think(game_t *game, potop_t *potop, int index, float seconds)
 					animal->feeder = feeder;
 					return;
 				}
+			}
+			if (kind->wander != NULL)
+			{
+				wander_start(&animal->wander, potop, animal->actor_id, kind->wander, actor.yaw_radians);
+				return;
 			}
 			if (point_ahead(game, potop, animal, &actor, &x, &z))
 			{
@@ -1266,6 +1297,15 @@ void game_update_animals(game_t *game, potop_t *potop, float seconds)
 		animal_mind_t *animal = &game->animals[i];
 		int before = game->animal_count;
 
+		// Its boredom walk, every frame (it looks at its own moment); over,
+		// it stands a while
+		if (animal->wander.active && animal->state == ANIMAL_ROAM
+			&& !wander_update(&animal->wander, game, potop, animal->actor_id, ANIMAL_KINDS[animal->kind].wander, seconds))
+		{
+			const animal_kind_t *kind = &ANIMAL_KINDS[animal->kind];
+
+			set_state(animal, ANIMAL_ROAM, random_between(game, kind->stand_least, kind->stand_most));
+		}
 		animal->think_in -= seconds;
 		if (animal->think_in > 0.0f)
 		{

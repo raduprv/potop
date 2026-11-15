@@ -1084,3 +1084,28 @@ flock): point_on_ground as before. Trace events ahead_0..3 / ahead_none
 show which cone it took. Sim (1200 s, 16h): cow walking in place 57 -> 16,
 pig 10 -> 2, ram 36 -> 27; cows take the ±20° cone 79% of walks, pigs
 (small sty) 34%, rams 103 of 171 none (the flock moved on).
+
+## The boredom walk (39j)
+
+game/wander.c (wander_t, wander_style_t in game.h): Radu's design
+(docs/claude/animal_ai_design.md). Every 0.1 s (each walker at its own
+moment) it looks ahead look_meters past its nose: free, on (drift_chance
+10% a look to turn drift_degrees 10 aside if that is free too); blocked,
+±10 whichever is free (once its body has come round to the last turn: no
+running ahead into a spin); neither, a step back (not at the walk's first
+look, at most backs_most a walk); not even that, stands, tries
+give_up_seconds, gives up. Its legs going and its body not getting on
+1.5 s: caught, a step back or gives up. Engine: actors_wander (heading,
+share of the walk; actor_t.wandering: wander_move, its own branch at the
+top of move_actor; actors_play of a clip not its walk, actors_look_at, any
+walk or stop end it) and actors_heading_free (three lines, middle and both
+sides, at the feet and the middle, against the physics; others where they
+are and in 0.5 s); wander_move's own step check is the same look, just
+past its nose. potop_actor_info_t.wandering. Used by the cows (kind
+.wander = &COW_WANDER, in place of point_ahead); hens, pigs, sheep still
+point_ahead. Trace: the sample line has the yaw at its end now; events
+wander_drift/turn/back/gave_up; tools/animal_trace.py --walk colours the
+trails by them and counts turns on the spot (40 degrees within a second,
+under 0.3 m on); animal_test.sh writes trace_walk.png too. Sim: cows
+walking in place 57 -> 10, no turns on the spot (hens 299, pigs 133 still:
+theirs next).

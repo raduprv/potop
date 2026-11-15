@@ -1310,6 +1310,8 @@ void actors_set_running(actors_t *actors, uint32_t id, bool running)
 	}
 }
 
+static bool walking_action(const actor_type_t *type, int action);
+
 bool actors_play(actors_t *actors, uint32_t id, const char *action_name)
 {
 	int index = actors_find(actors, id);
@@ -1323,6 +1325,12 @@ bool actors_play(actors_t *actors, uint32_t id, const char *action_name)
 	if (action < 0)
 	{
 		return false;
+	}
+	// (a clip of its own, not its walk: a wanderer stops for it, or it
+	// went on wandering once the clip was over)
+	if (!walking_action(&actors->types[actors->actors[index].type], action))
+	{
+		actors->actors[index].wandering = false;
 	}
 	start_action(actors, &actors->actors[index], action);
 	return true;
@@ -1571,6 +1579,7 @@ uint32_t actors_nearest(const actors_t *actors, float x, float z, float radius)
 
 static void stop_moving(actor_t *actor)
 {
+	actor->wandering = false;
 	actor->moving = false;
 	actor->path_count = 0;
 	actor->path_index = 0;
@@ -1706,6 +1715,7 @@ bool actors_move_to(actors_t *actors, navigation_t *navigation, const terrain_t 
 	}
 	actor = &actors->actors[index];
 	actor->straight = false;
+	actor->wandering = false;
 	actor->goal_x = x;
 	actor->goal_z = z;
 	actor->replans = 0;
@@ -1775,6 +1785,7 @@ bool actors_walk_straight(actors_t *actors, uint32_t id, const float (*points)[2
 	actor->progress_z = actor->z;
 	actor->waiting = false;
 	actor->path_dirty = false;
+	actor->wandering = false;
 	actor->moving = true;
 	return true;
 }
@@ -1810,6 +1821,39 @@ bool actors_walk_straight_exact(actors_t *actors, uint32_t id, const float (*poi
 	actor->arrive_face = true;
 	actor->arrive_yaw = face_yaw_radians;
 	actor->sidestep = false;
+	return true;
+}
+
+static float wrap_angle(float radians);
+
+bool actors_wander(actors_t *actors, uint32_t id, float heading_radians, float share)
+{
+	int index = actors_find(actors, id);
+	actor_t *actor;
+
+	if (index < 0)
+	{
+		return false;
+	}
+	actor = &actors->actors[index];
+	if (is_dying(actors, actor) || actors->types[actor->type].flies)
+	{
+		return false;
+	}
+	if (!actor->wandering)
+	{
+		stop_moving(actor);
+		actor->sidestep = false;
+		actor->facing = false;
+		actor->waiting = false;
+		actor->backing_meters = 0.0f;
+		actor->straight_free_meters = 0.0f;
+	}
+	// (a straight walker: its body's checks, its standing turn limit)
+	actor->straight = true;
+	actor->wandering = true;
+	actor->wander_heading = wrap_angle(heading_radians);
+	actor->wander_share = SDL_clamp(share, -1.0f, 1.0f);
 	return true;
 }
 
@@ -2230,6 +2274,174 @@ static bool steer(const actors_t *actors, actor_t *actor, float wanted, float se
 }
 
 // ---------------------------------------------------------------------------
+// Wandering (actors_wander): free ahead, and the step itself
+
+#define WANDER_PREDICT_SECONDS 0.5f    // another that goes: where it will be in this long counts too
+#define WANDER_SIDE_SHARE 0.85f        // its sides' lines: this share of its half width out
+
+// Whether a point (another's middle, of radius) is across the stretch
+// from (x, z) along (direction_x, direction_z), length long, half_width
+// each side: ahead of it only (one behind or beside its middle is not in
+// its way)
+static bool across_stretch(float x, float z, float direction_x, float direction_z, float length, float half_width, float other_x, float other_z,
+	float radius)
+{
+	float dx = other_x - x;
+	float dz = other_z - z;
+	float along = dx * direction_x + dz * direction_z;
+	float aside = SDL_fabsf(dx * direction_z - dz * direction_x);
+
+	return along > 0.0f && along < length + radius && aside < half_width + radius;
+}
+
+static bool heading_free_for(const actors_t *actors, const actor_t *actor, float heading_radians, float meters);
+
+bool actors_heading_free(const actors_t *actors, uint32_t id, float heading_radians, float meters)
+{
+	int index = actors_find(actors, id);
+
+	return index >= 0 && heading_free_for(actors, &actors->actors[index], heading_radians, meters);
+}
+
+static bool heading_free_for(const actors_t *actors, const actor_t *actor, float heading_radians, float meters)
+{
+	const actor_type_t *type;
+	const actor_model_t *model;
+	float direction_x = SDL_sinf(heading_radians);
+	float direction_z = SDL_cosf(heading_radians);
+	float half_width;
+	float nose;
+	float length;
+	float heights[2];
+
+	type = &actors->types[actor->type];
+	model = model_of(actors, actor);
+	half_width = 0.5f * (model->bounds_maximum.x - model->bounds_minimum.x) * type->scale;
+	// (its nose: the far end of its bounds the way it goes, ahead or back)
+	nose = SDL_max(model->bounds_maximum.z, -model->bounds_minimum.z) * type->scale;
+	length = nose + SDL_max(meters, 0.0f);
+	heights[0] = type->ground_align <= 0.0f ? type->step_meters + 0.03f : SDL_min(0.08f, 0.3f * type->height_meters);
+	heights[1] = 0.6f * type->height_meters;
+	// Bodies: lines along its middle and both its sides, at its feet and
+	// at its middle (one line slips between two fence posts)
+	if (actors->physics != NULL)
+	{
+		for (int side = -1; side <= 1; side++)
+		{
+			float offset = (float)side * half_width * WANDER_SIDE_SHARE;
+			// (its side: right of the way is (cos, -sin) of the heading)
+			float start_x = actor->x + direction_z * offset;
+			float start_z = actor->z - direction_x * offset;
+
+			for (int k = 0; k < 2; k++)
+			{
+				float from[3] = { start_x, actor->y + heights[k], start_z };
+				float to[3] = { start_x + direction_x * length, actor->y + heights[k], start_z + direction_z * length };
+				physics_cast_t hit;
+
+				if (physics_cast_segment(actors->physics, from, to, &hit) && hit.body >= 0)
+				{
+					return false;
+				}
+			}
+		}
+	}
+	// Others on the ground: where they are, and where they will be
+	for (int i = 0; i < actors->count; i++)
+	{
+		const actor_t *other = &actors->actors[i];
+		float radius;
+		float later_x;
+		float later_z;
+
+		if (other == actor || actors->types[other->type].flies || is_dying(actors, other) || SDL_fabsf(other->y - actor->y) > 1.0f)
+		{
+			continue;
+		}
+		radius = body_radius(actors, other);
+		later_x = other->x + SDL_sinf(other->yaw_radians) * other->speed * WANDER_PREDICT_SECONDS;
+		later_z = other->z + SDL_cosf(other->yaw_radians) * other->speed * WANDER_PREDICT_SECONDS;
+		if (across_stretch(actor->x, actor->z, direction_x, direction_z, length, half_width, other->x, other->z, radius)
+			|| across_stretch(actor->x, actor->z, direction_x, direction_z, length, half_width, later_x, later_z, radius))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+// A wanderer's frame: turned toward its heading at its turning speed (a
+// big body's turn it does not fit through not made), on at its share of
+// the walk (eased), the step not taken if a body or another is just ahead
+// of it; its speed for choose_animation (below 0: backing)
+static void wander_move(actors_t *actors, actor_t *actor, const navigation_t *navigation, const terrain_t *terrain, float seconds)
+{
+	const actor_type_t *type = &actors->types[actor->type];
+	navigation_agent_t agent = agent_of(type);
+	float map_meters = (float)terrain->size * terrain->cell_size_meters;
+	float turn = wrap_angle(actor->wander_heading - actor->yaw_radians);
+	float most = degrees_to_radians(type->turn_degrees_per_second) * seconds;
+	float new_yaw = wrap_angle(actor->yaw_radians + SDL_clamp(turn, -most, most));
+	float wanted_speed;
+	float step_x;
+	float step_z;
+
+	if (big_body(actors, actor) && !body_fits(actors, actor, actor->x, actor->z, new_yaw) && body_fits(actors, actor, actor->x, actor->z, actor->yaw_radians))
+	{
+		new_yaw = actor->yaw_radians;
+	}
+	actor->yaw_radians = new_yaw;
+	actor->spot_yaw_radians = new_yaw;
+	turn = wrap_angle(actor->wander_heading - actor->yaw_radians);
+	if (actor->wander_share >= 0.0f)
+	{
+		// (still turning to it: on round an arc, slower, not on the spot)
+		float ahead_x = actor->x + SDL_sinf(actor->yaw_radians) * 0.5f;
+		float ahead_z = actor->z + SDL_cosf(actor->yaw_radians) * 0.5f;
+		float rise = (navigation_surface_height(navigation, terrain, &agent, ahead_x, ahead_z, actor->y)
+			- navigation_surface_height(navigation, terrain, &agent, actor->x, actor->z, actor->y)) / 0.5f;
+
+		wanted_speed = actor->wander_share * SDL_max(SDL_cosf(turn), type->turn_walk_fraction) * type->walk_meters_per_second;
+		wanted_speed /= 1.0f + 2.0f * SDL_max(rise, 0.0f);
+		actor->backing_meters = 0.0f;
+	}
+	else
+	{
+		wanted_speed = actor->wander_share * type->walk_meters_per_second;
+		// (choose_animation's walk backwards)
+		actor->backing_meters = 1.0f;
+	}
+	// (a one-shot of its own playing: still, as move_actor holds it)
+	if (actor->action >= 0 && !walking_action(type, actor->action) && (model_of(actors, actor)->actions[actor->action].flags & ACTOR_ACTION_LOOP) == 0)
+	{
+		wanted_speed = 0.0f;
+	}
+	if (actor->speed < wanted_speed)
+	{
+		actor->speed = SDL_min(actor->speed + ACCELERATION * seconds, wanted_speed);
+	}
+	else
+	{
+		actor->speed = SDL_max(actor->speed - 2.0f * ACCELERATION * seconds, wanted_speed);
+	}
+	step_x = SDL_sinf(actor->yaw_radians) * actor->speed * seconds;
+	step_z = SDL_cosf(actor->yaw_radians) * actor->speed * seconds;
+	// (the same look as its mind's (actors_heading_free), just past its
+	// nose: a stricter one here walked it in place where its mind saw the
+	// way free)
+	if ((step_x != 0.0f || step_z != 0.0f)
+		&& !heading_free_for(actors, actor, actor->speed >= 0.0f ? actor->yaw_radians : actor->yaw_radians + 3.14159265f,
+			SDL_fabsf(actor->speed) * seconds + 0.02f))
+	{
+		step_x = 0.0f;
+		step_z = 0.0f;
+		actor->speed = 0.0f;
+	}
+	actor->x = SDL_clamp(actor->x + step_x, 0.5f, map_meters - 0.5f);
+	actor->z = SDL_clamp(actor->z + step_z, 0.5f, map_meters - 0.5f);
+}
+
+// ---------------------------------------------------------------------------
 // Steps between standing and walking (people's: their models' walk_start,
 // walk_start_180, walk_stop_l / _r, step_left / _right / _back, shuffle):
 // each clip moves it as far as it was made to, eased as its feet go, the
@@ -2563,6 +2775,20 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 			actor->waiting = false;
 			push_event(actors, ACTOR_EVENT_NO_PATH, actor);
 		}
+	}
+	// Wandering: its own frame (no path, no goal), then on the ground
+	if (actor->wandering && seconds > 0.0f && !is_dying(actors, actor))
+	{
+		wander_move(actors, actor, navigation, terrain, seconds);
+		{
+			float turned = wrap_angle(actor->yaw_radians - yaw_before) / seconds;
+			float ease = SDL_fabsf(turned) < SDL_fabsf(actor->turn_rate) ? 20.0f : 8.0f;
+
+			actor->turn_rate += (turned - actor->turn_rate) * SDL_min(seconds * ease, 1.0f);
+		}
+		place_on_ground(actors, actor, terrain, water, navigation, seconds);
+		choose_animation(actors, actor);
+		return;
 	}
 	// Something hit it or fell across its way (the physics says so): it
 	// searches again from where it is, now
@@ -4280,6 +4506,8 @@ void actors_look_at(actors_t *actors, uint32_t id, float x, float z)
 
 	if (index >= 0)
 	{
+		// (looking at something: it stands for it)
+		actors->actors[index].wandering = false;
 		actors->actors[index].facing = true;
 		actors->actors[index].face_x = x;
 		actors->actors[index].face_z = z;

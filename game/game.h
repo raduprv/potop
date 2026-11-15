@@ -80,6 +80,42 @@ typedef enum
 	ANIMAL_STATE_COUNT
 } animal_state_t;
 
+// The boredom walk (wander.c): nowhere to go, it just goes on. Every
+// WANDER_TICK_SECONDS it looks ahead: free, it keeps on, now and then a
+// little to one side if that is free too; not free, a little to one side
+// or the other; neither, a step back; not even that, it stands and tries
+// a while, then gives up. What stops it is only what is there: bodies,
+// others (potop_actor_heading_free), no grid, no area
+typedef struct
+{
+	float look_meters;             // how far past its nose it looks
+	float drift_chance;            // each tick, the chance it turns a little while free ahead
+	float drift_degrees;           // a little: this much, either side
+	float speed_share;             // of its walk
+	float back_seconds;            // a step back: this long
+	float back_share;              // at this share of its walk
+	float give_up_seconds;         // nothing free at all this long: it stops
+	int backs_most;                // so many steps back in one walk at most, then it stops
+	float least_seconds;           // a walk this long (least, most)
+	float most_seconds;
+} wander_style_t;
+
+typedef struct
+{
+	bool active;
+	float heading;                 // the way it goes (0 = +z)
+	float seconds_left;            // of this walk
+	float tick_in;                 // its next look
+	float blocked_seconds;         // nothing free for this long
+	float back_seconds;            // stepping back: this much longer
+	int backs;                     // steps back this walk
+	int looks;                     // looks ahead this walk
+	float stuck_x;                 // where it was when it last got on (its legs going, its body not: caught)
+	float stuck_z;
+	float stuck_seconds;
+	uint32_t random;               // its own dice
+} wander_t;
+
 // Where it keeps to: its home's area spot ("yard"), or round a point (one
 // free about the land: no home)
 typedef struct
@@ -118,6 +154,8 @@ typedef struct
 	// flock not all at once through its strunga)
 	bool dusk_seen;
 	float dusk_delay;
+	// Its boredom walk (wander.c), when the kind has one
+	wander_t wander;
 	// Its pen, where its home has more than one (a pigsty's two): the nth
 	// of the home's "yard" spots and of its kind's sleep area, its feeders
 	// the nearest to that yard; 0 else
@@ -354,6 +392,15 @@ const char *game_bear_state_name(bear_state_t state);
 bool game_trace_start(game_t *game, const char *path);
 void game_trace_update(game_t *game, potop_t *potop, float seconds);
 void game_trace_event(game_t *game, potop_t *potop, uint32_t actor_id, const char *text);
+
+// Off on a boredom walk the way it faces (yaw_radians), for a while
+void wander_start(wander_t *wander, potop_t *potop, uint32_t actor_id, const wander_style_t *style, float yaw_radians);
+// Its frame (looks every WANDER_TICK_SECONDS, spread over the frames);
+// false once the walk is over (its time up, or it gave up: it stands)
+bool wander_update(wander_t *wander, game_t *game, potop_t *potop, uint32_t actor_id, const wander_style_t *style, float seconds);
+// Stopped where it is
+void wander_stop(wander_t *wander, potop_t *potop, uint32_t actor_id);
+
 void game_trace_finish(game_t *game, potop_t *potop);
 const char *game_animal_state_name(animal_state_t state);
 const char *game_animal_kind_name(int kind);
