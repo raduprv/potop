@@ -57,6 +57,9 @@
 //   old_timber  a beam's face weathered for a lifetime: gray, come apart
 //           in long flakes along the grain, their edges frayed and pale,
 //           brown where the wood under is newly bare (--splinters)
+//   batten  board and batten: wide hewn boards down the picture (the
+//           adze's scoops across them), a batten nailed over each joint,
+//           round headed nails; old dark wood (--boards: a board's width)
 //
 // Options:
 //   --data DIR         the game's data directory (data)
@@ -71,7 +74,8 @@
 //   --ripple-height M  sand: their height (meters; 0.008)
 //   --plates M         clay: the big plates' size (meters; 0.35)
 //   --boards M         weatherboard: what shows of each board (meters; 0.2);
-//                      planks: a plank's width (meters; 0.33)
+//                      planks: a plank's width (meters; 0.33); batten: a
+//                      board's, batten to batten (meters; 0.3)
 //   --splinters A      old_timber: how much its flakes stand up (0..1; 0.5)
 //   --moss A           rock, granite: how much moss or lichen; weatherboard:
 //                      how much lichen (0..1; each kind its own)
@@ -4648,6 +4652,8 @@ typedef struct
 	float waviness;                    // how much the grain winds (1: the timber's)
 	float contrast;                    // how far its tones are from the wood's own (1: the timber's)
 	float planed;                      // how much of the plane's trails shows (1: the timber's; 0: none, a weathered face)
+	float knot_strength;               // how dark its knots are against the wood (the contrast's, unless set after)
+	float knot_swirl;                  // how far round a knot the grain is pushed aside (1: the timber's)
 	float worm_holes;                  // the share of its 9 cm cells with a worm's hole (0 .. 1)
 	int knot_count;
 	timber_knot_t knots[TIMBER_KNOTS];
@@ -4668,6 +4674,8 @@ static void timber_lay(timber_face_t *face, const texture_settings_t *settings, 
 	face->waviness = waviness;
 	face->contrast = contrast;
 	face->planed = planed;
+	face->knot_strength = contrast;
+	face->knot_swirl = 1.0f;
 	face->worm_holes = 0.3f;
 	for (int k = 0; k < knots; k++)
 	{
@@ -4741,7 +4749,7 @@ static void timber_sample(const timber_face_t *face, const float wood[3], float 
 		const timber_knot_t *knot = &face->knots[k];
 		float dx = wrap_difference(knot->x, x, meters);
 		float dy = wrap_difference(knot->y, y, meters);
-		float reach = knot->radius * 2.4f;
+		float reach = knot->radius * 2.4f * face->knot_swirl;
 		float along = dx / 3.2f;
 		float window = (1.0f - smooth_step(0.2f * meters, 0.45f * meters, fabsf(dx))) * (1.0f - smooth_step(0.2f * meters, 0.45f * meters, fabsf(dy)));
 		float from = sqrtf(dx * dx / (1.25f * 1.25f) + dy * dy) / knot->radius;
@@ -4936,7 +4944,7 @@ static void timber_sample(const timber_face_t *face, const float wood[3], float 
 
 			for (int k = 0; k < 3; k++)
 			{
-				color[k] = mix_float(color[k], knot_color[k], knot_body * (0.5f + 0.5f * face->contrast)) * (1.0f - 0.6f * knot_rim * (0.4f + 0.6f * face->contrast))
+				color[k] = mix_float(color[k], knot_color[k], knot_body * (0.5f + 0.5f * face->knot_strength)) * (1.0f - 0.6f * knot_rim * (0.4f + 0.6f * face->knot_strength))
 					* (1.0f - 0.55f * knot_star);
 			}
 			roughness = mix_float(roughness, 0.7f, knot_body);
@@ -5515,12 +5523,344 @@ static bool make_old_timber(const texture_settings_t *settings, field_t *field)
 }
 
 // ---------------------------------------------------------------------------
+// Board and batten: a wall of wide boards down the picture, a narrow
+// batten nailed over each joint (round headed nails). The boards hewn,
+// not sawn: the adze left a row of shallow scoops down each one, a low
+// edge between two scoops running across the board (crooked), the light
+// on the edge's lip. Old dark wood (the timber's, turned): knots, checks.
+
+#define BATTEN_COLUMNS 32
+
+typedef struct
+{
+	float joint;                       // where its left joint (and the batten over it) is (meters)
+	float batten_half;                 // half the batten's width (meters)
+	uint32_t seed;
+	int scoops;                        // how many of the adze's scoops down the picture
+	float board_shift[2];              // which wood the board is (where in the timber's face)
+	float batten_shift[2];
+	float board_tone;
+	float batten_tone;
+} batten_column_t;
+
+typedef struct
+{
+	float meters;
+	uint32_t seed;
+	int count;
+	batten_column_t columns[BATTEN_COLUMNS];
+	timber_face_t wood;
+	timber_face_t batten_wood;         // the battens': the same wood without knots (a strip that thin is riven from clear wood)
+} batten_wall_t;
+
+static void batten_lay(batten_wall_t *wall, const texture_settings_t *settings, float meters)
+{
+	float width = settings->board_meters > 0.0f ? settings->board_meters : 0.3f;
+
+	wall->meters = meters;
+	wall->seed = settings->seed;
+	wall->count = (int)fminf(fmaxf(roundf(meters / width), 1.0f), (float)BATTEN_COLUMNS);
+	timber_lay(&wall->wood, settings, meters, 1.6f, 42.0f, 0.6f, 0.6f, 0.12f, 0.0f);
+	wall->wood.worm_holes = 0.03f;
+	wall->wood.knot_strength = 0.5f;
+	wall->wood.knot_swirl = 1.35f;
+	for (int k = 0; k < wall->wood.check_count; k++)
+	{
+		wall->wood.checks[k].width = fminf(wall->wood.checks[k].width * 0.5f, 0.0016f);
+		// (many, of every length up to a forearm's, none the board's
+		// length; most of them hair thin)
+		wall->wood.checks[k].half_length = fminf(wall->wood.checks[k].half_length * 0.75f, 0.17f);
+		wall->wood.checks[k].width *= 0.5f + 0.9f * hash_unit(k, 60, settings->seed + 9u);
+		wall->wood.checks[k].bend *= 0.25f;
+		wall->wood.checks[k].sway *= 0.4f;
+	}
+	wall->batten_wood = wall->wood;
+	wall->batten_wood.knot_count = 0;
+	for (int c = 0; c < wall->count; c++)
+	{
+		batten_column_t *column = &wall->columns[c];
+		uint32_t seed = hash_u32(settings->seed * 5231u + (uint32_t)c * 9173u + 3u);
+
+		column->seed = seed;
+		column->joint = ((float)c + 0.5f + (hash_unit(0, 0, seed) - 0.5f) * 0.3f) / (float)wall->count * meters;
+		column->batten_half = 0.024f + 0.01f * hash_unit(1, 0, seed);
+		column->scoops = (int)fmaxf(roundf(meters / (0.065f + 0.05f * hash_unit(2, 0, seed))), 2.0f);
+		column->board_shift[0] = hash_unit(3, 0, seed) * meters;
+		column->board_shift[1] = hash_unit(4, 0, seed) * meters;
+		column->batten_shift[0] = hash_unit(5, 0, seed) * meters;
+		column->batten_shift[1] = hash_unit(6, 0, seed) * meters;
+		column->board_tone = 0.82f + 0.2f * hash_unit(7, 0, seed);
+		column->batten_tone = 1.22f + 0.25f * hash_unit(8, 0, seed);
+	}
+}
+
+// Column number's batten at y: its middle and half its width (meters;
+// number any whole number, a picture further for each count of them):
+// a riven strip, not straight, wider and narrower
+static float batten_middle(const batten_wall_t *wall, int number, float y, float *half_out)
+{
+	const batten_column_t *column = &wall->columns[wrap_index(number, wall->count)];
+	float v = y / wall->meters;
+	int bow_period = (int)fmaxf(roundf(wall->meters / 0.5f), 1.0f);
+	int edge_period = (int)fmaxf(roundf(wall->meters / 0.12f), 4.0f);
+	float lap = floorf((float)number / (float)wall->count);
+
+	*half_out = column->batten_half * (1.0f + 0.22f * cell_noise(0.3f, v * (float)bow_period * 2.0f, bow_period * 2, column->seed + 11u)
+		+ 0.1f * cell_noise(0.7f, v * (float)edge_period, edge_period, column->seed + 12u));
+	return column->joint + lap * wall->meters + 0.008f * cell_noise(0.5f, v * (float)bow_period, bow_period, column->seed + 13u);
+}
+
+static void batten_sample(const batten_wall_t *wall, const float wood[3], float x, float y, float *height_out, float color_out[3], float *roughness_out)
+{
+	float meters = wall->meters;
+	float u = x / meters;
+	float v = y / meters;
+	int number = (int)floorf(x / meters * (float)wall->count) - 2;
+	const batten_column_t *column;
+	float left_half;
+	float right_half;
+	float left;
+	float right;
+	float to_left;
+	float to_right;
+	float height;
+	float color[3];
+	float roughness;
+	float luminance;
+	float crust = staggered_noise(u, v, (int)fmaxf(roundf(meters / 0.014f), 16.0f), (int)fmaxf(roundf(meters / 0.022f), 16.0f), 3, wall->seed + 21u);
+	float blotch = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.12f), 4.0f), 4, 0.6f, wall->seed + 22u);
+	float damp = smooth_step(0.0f, 0.6f, tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.4f), 2.0f), 3, 0.55f, wall->seed + 23u));
+
+	// Between which two battens: the board from one's middle to the next's
+	right = batten_middle(wall, number + 1, y, &right_half);
+	while (x >= right)
+	{
+		number++;
+		right = batten_middle(wall, number + 1, y, &right_half);
+	}
+	left = batten_middle(wall, number, y, &left_half);
+	column = &wall->columns[wrap_index(number, wall->count)];
+	to_left = x - left - left_half;
+	to_right = right - right_half - x;
+	if (to_left < 0.0f || to_right < 0.0f)
+	{
+		// The batten: its own wood, standing a finger proud of the
+		// boards, its edges worn round; nails down its middle
+		bool on_left = to_left < 0.0f;
+		const batten_column_t *owner = on_left ? column : &wall->columns[wrap_index(number + 1, wall->count)];
+		float middle = on_left ? left : right;
+		float half = on_left ? left_half : right_half;
+		float from_edge = half - fabsf(x - middle);
+		float rounded = smooth_step(0.0f, 0.007f, from_edge);
+		int nail_count = (int)fmaxf(roundf(meters / 0.6f), 1.0f);
+
+		timber_sample(&wall->batten_wood, wood, y + owner->batten_shift[0], x + owner->batten_shift[1], &height, color, &roughness);
+		height += 0.011f * (0.35f + 0.65f * rounded);
+		for (int c = 0; c < 3; c++)
+		{
+			color[c] *= owner->batten_tone * (0.82f + 0.18f * rounded);
+		}
+		for (int n = 0; n < nail_count; n++)
+		{
+			float nail_y = ((float)n + 0.2f + 0.6f * hash_unit(n, 30, owner->seed)) / (float)nail_count * meters;
+			float dx = x - middle - (hash_unit(n, 31, owner->seed) - 0.5f) * half * 0.5f;
+			float dy = wrap_difference(nail_y, y, meters);
+			float radius = 0.0075f + 0.002f * hash_unit(n, 32, owner->seed);
+			float from = sqrtf(dx * dx + dy * dy) / radius;
+			float head;
+			float stain;
+			float dents;
+			float lit;
+			float metal[3] = { 0.36f, 0.27f, 0.2f };
+
+			if (from > 3.0f)
+			{
+				continue;
+			}
+			// (a round head, hammered: a low dome, not quite round,
+			// dented; dull and rusty; the wood dark round it, rust
+			// run a little way down)
+			from *= 1.0f + 0.06f * cell_noise(atan2f(dy, dx) * 1.5f + 9.0f, 0.5f, 64, owner->seed + 40u + (uint32_t)n);
+			head = 1.0f - smooth_step(0.9f, 1.0f, from);
+			stain = fmaxf((1.0f - smooth_step(1.0f, 1.9f, from)) * 0.5f, 0.35f * expf(-fabsf(dx) / (radius * 0.8f)) * (dy > 0.0f ? expf(-dy / (radius * 4.0f)) : 0.0f));
+			dents = cell_noise(dx / 0.003f + 20.0f, dy / 0.003f + 20.0f, 256, owner->seed + 41u + (uint32_t)n);
+			lit = (0.55f + 0.75f * dome_light(dx / radius * 0.8f, dy / radius * 0.8f)) * (1.0f + 0.15f * dents);
+			for (int c = 0; c < 3; c++)
+			{
+				color[c] = mix_float(color[c] * (1.0f - stain), metal[c] * lit, head);
+			}
+			height = mix_float(height - 0.0008f * (1.0f - smooth_step(1.0f, 1.8f, from)),
+				height + 0.0008f + 0.003f * sqrtf(fmaxf(1.0f - from * from, 0.0f)) + 0.0002f * dents, head);
+			roughness = mix_float(roughness, 0.6f, head);
+		}
+	}
+	else
+	{
+		// The board: the adze's scoops down it, each begun at an edge
+		// that runs across the board (crooked: the stroke's), the wood
+		// falling away under the edge and rising slowly to the next; the
+		// edge's lip worn pale, dark just over it
+		float across = (x - left) / fmaxf(right - left, 1e-4f);
+		int wobble_period = column->scoops;
+		int spacing_period = column->scoops / 2 > 1 ? column->scoops / 2 : 1;
+		// (the strokes not evenly spaced: closer here, further there; an
+		// edge tilted, bowed, a little ragged along the fibers)
+		float level = v * (float)column->scoops + hash_unit(9, 0, column->seed)
+			+ 0.7f * cell_noise(0.5f, v * (float)spacing_period, spacing_period, column->seed + 50u)
+			+ 0.55f * cell_noise(across * 2.5f + 3.0f, v * (float)wobble_period, wobble_period, column->seed + 51u)
+			+ 0.16f * cell_noise(across * 9.0f + 3.0f, v * (float)wobble_period * 2.0f, wobble_period * 2, column->seed + 52u)
+			+ 0.06f * staggered_noise(v, u, (int)fmaxf(roundf(meters / 0.05f), 4.0f), (int)fmaxf(roundf(meters / 0.004f), 16.0f), 2, column->seed + 54u);
+		float scoop = floorf(level);
+		float part = level - scoop;
+		// (the edge a short slope, not a cliff: the wood there crushed and
+		// worn; from the scoop's deepest, just under the edge, up to the
+		// next edge)
+		float profile = part < 0.86f ? (1.0f - part / 0.86f) * (1.0f - part / 0.86f) : smooth_step(0.86f, 1.0f, part);
+		// (the adze bit deep here, barely there: whole stretches of a board
+		// nearly smooth, others rough with it)
+		int stretch_period = (int)fmaxf(roundf(meters / 0.35f), 1.0f);
+		float worked = smooth_step(-0.35f, 0.3f, cell_noise(across * 1.2f + 5.0f, v * (float)stretch_period, stretch_period, column->seed + 55u));
+		float depth = (0.1f + 0.9f * powf(hash_unit(wrap_index((int)scoop, column->scoops), 53, column->seed), 1.3f))
+			* (0.15f + 0.85f * worked) * 1.25f;
+		float lip = powf(fmaxf(1.0f - part / 0.86f, 0.0f), 2.0f);
+		float over = smooth_step(0.45f, 0.86f, part) * (1.0f - smooth_step(0.9f, 1.0f, part));
+		float shade = 1.0f - 0.65f * expf(-fminf(to_left, to_right) / 0.012f);
+
+		timber_sample(&wall->wood, wood, y + column->board_shift[0], x + column->board_shift[1], &height, color, &roughness);
+		height += -0.003f * depth * profile - 0.002f * (2.0f * across - 1.0f) * (2.0f * across - 1.0f);
+		for (int c = 0; c < 3; c++)
+		{
+			color[c] *= column->board_tone * (1.0f + 0.45f * depth * lip) * (1.0f - 0.26f * depth * over) * shade;
+		}
+		// (the lip worn pale and gray: the weather's side of each edge)
+		{
+			float gray = (color[0] * 0.3f + color[1] * 0.59f + color[2] * 0.11f) * 1.06f;
+
+			for (int c = 0; c < 3; c++)
+			{
+				color[c] = mix_float(color[c], gray, clamp_unit(0.35f * depth * lip));
+			}
+		}
+	}
+	// Its weathered skin, over boards and battens alike: a crust of small
+	// scales, blotches, darker where the damp stays; grayer in the crust's
+	// high places
+	{
+		// (fibers down the grain, short and long mixed; hairline checks,
+		// many, short, broken; small pits)
+		float length_mix = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.07f), 4.0f), 3, 0.6f, wall->seed + 25u);
+		float short_fibers = staggered_noise(v, u, (int)fmaxf(roundf(meters / 0.01f), 8.0f), (int)fmaxf(roundf(meters / 0.0022f), 16.0f), 2, wall->seed + 26u);
+		float long_fibers = staggered_noise(v, u, (int)fmaxf(roundf(meters / 0.09f), 4.0f), (int)fmaxf(roundf(meters / 0.004f), 16.0f), 2, wall->seed + 27u);
+		float fibers = mix_float(short_fibers, long_fibers, smooth_step(-0.35f, 0.35f, length_mix));
+		float hairlines = powf(1.0f - fminf(fabsf(staggered_noise(v, u, (int)fmaxf(roundf(meters / 0.16f), 4.0f), (int)fmaxf(roundf(meters / 0.008f), 16.0f), 2,
+			wall->seed + 28u)) * 6.0f, 1.0f), 2.0f)
+			* smooth_step(0.15f, 0.5f, staggered_noise(v, u, (int)fmaxf(roundf(meters / 0.12f), 4.0f), (int)fmaxf(roundf(meters / 0.03f), 8.0f), 2, wall->seed + 29u));
+		// (streaks a finger wide down the grain: one rusty brown, the next
+		// gray, lighter, darker)
+		float streaks = staggered_noise(v, u, (int)fmaxf(roundf(meters / 0.25f), 2.0f), (int)fmaxf(roundf(meters / 0.016f), 8.0f), 3, wall->seed + 31u);
+		float streak_hue = staggered_noise(v, u, (int)fmaxf(roundf(meters / 0.3f), 2.0f), (int)fmaxf(roundf(meters / 0.025f), 8.0f), 2, wall->seed + 32u);
+		float pits = smooth_step(0.4f, 0.6f, staggered_noise(v, u, (int)fmaxf(roundf(meters / 0.008f), 16.0f), (int)fmaxf(roundf(meters / 0.004f), 16.0f), 2,
+			wall->seed + 30u));
+		// (the worn face mottled: patches a thumb long down the grain, pale
+		// gray where the fibers stand, dark between)
+		float mottle = staggered_noise(v, u, (int)fmaxf(roundf(meters / 0.05f), 4.0f), (int)fmaxf(roundf(meters / 0.012f), 8.0f), 3, wall->seed + 33u);
+		float pale_fibers = smooth_step(0.15f, 0.55f, mottle) * (0.5f + 0.5f * smooth_step(-0.2f, 0.4f, short_fibers));
+		// (the fine things: threads a pixel or two wide, short dark dashes
+		// where a fiber has lifted, pale flecks of bare wood)
+		float threads = staggered_noise(v, u, (int)fmaxf(roundf(meters / 0.02f), 8.0f), (int)fmaxf(roundf(meters / 0.0013f), 16.0f), 2, wall->seed + 34u);
+		float dashes = smooth_step(0.4f, 0.58f, staggered_noise(v, u, (int)fmaxf(roundf(meters / 0.035f), 8.0f), (int)fmaxf(roundf(meters / 0.0018f), 16.0f), 2,
+			wall->seed + 35u))
+			* smooth_step(-0.2f, 0.4f, tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.15f), 2.0f), 3, 0.55f, wall->seed + 37u));
+		float flecks = smooth_step(0.45f, 0.6f, staggered_noise(v, u, (int)fmaxf(roundf(meters / 0.006f), 16.0f), (int)fmaxf(roundf(meters / 0.002f), 16.0f), 2,
+			wall->seed + 36u));
+		float fine = (1.0f + 0.2f * threads) * (1.0f - 0.3f * dashes) * (1.0f + 0.14f * flecks);
+		float skin = fine * (1.0f + 0.08f * fibers) * (1.0f - 0.5f * hairlines) * (1.0f - 0.12f * pits) * (1.0f + 0.3f * streaks) * (1.0f + 0.2f * mottle)
+			* (1.0f + 0.22f * pale_fibers);
+
+		luminance = color[0] * 0.3f + color[1] * 0.59f + color[2] * 0.11f;
+		for (int c = 0; c < 3; c++)
+		{
+			color[c] = mix_float(color[c], luminance, 0.25f * smooth_step(0.0f, 0.5f, crust)) * (1.0f + 0.36f * crust) * (1.0f + 0.24f * blotch) * (1.0f - 0.3f * damp) * skin;
+		}
+		height += 0.0005f * fibers - 0.0012f * hairlines - 0.0004f * pits + 0.0008f * streaks;
+		color[0] *= (1.0f + 0.16f * streak_hue) * (1.0f - 0.05f * pale_fibers);
+		color[2] *= (1.0f - 0.22f * streak_hue) * (1.0f + 0.1f * pale_fibers);
+		height += 0.0006f * mottle + 0.0003f * threads - 0.0005f * dashes + 0.0002f * flecks;
+	}
+	// (rusty brown in patches: where the wood is less weathered)
+	{
+		float warm = smooth_step(0.1f, 0.7f, tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.25f), 2.0f), 4, 0.6f, wall->seed + 24u));
+
+		color[0] *= 1.0f + 0.26f * warm;
+		color[2] *= 1.0f - 0.3f * warm;
+	}
+	height += 0.0006f * crust;
+	*height_out = height;
+	memcpy(color_out, color, sizeof(color));
+	*roughness_out = clamp_unit(roughness + 0.06f);
+}
+
+static bool make_batten(const texture_settings_t *settings, field_t *field)
+{
+	int size = field->size;
+	float pixel_meters = field->meters / (float)size;
+	batten_wall_t *wall = calloc(1, sizeof(batten_wall_t));
+
+	if (wall == NULL)
+	{
+		fprintf(stderr, "potop_texture: out of memory\n");
+		return false;
+	}
+	batten_lay(wall, settings, field->meters);
+#pragma omp parallel for schedule(dynamic, 8)
+	for (int y = 0; y < size; y++)
+	{
+		for (int x = 0; x < size; x++)
+		{
+			int index = y * size + x;
+			float height_sum = 0.0f;
+			float color_sum[3] = { 0.0f, 0.0f, 0.0f };
+			float roughness_sum = 0.0f;
+
+			for (int s = 0; s < 4; s++)
+			{
+				float height;
+				float color[3];
+				float roughness;
+
+				batten_sample(wall, settings->color, ((float)x + 0.25f + 0.5f * (float)(s & 1)) * pixel_meters,
+					((float)y + 0.25f + 0.5f * (float)(s >> 1)) * pixel_meters, &height, color, &roughness);
+				height_sum += height;
+				roughness_sum += roughness;
+				for (int k = 0; k < 3; k++)
+				{
+					color_sum[k] += color[k];
+				}
+			}
+			field->height[index] = height_sum * 0.25f;
+			field->roughness[index] = roughness_sum * 0.25f;
+			for (int k = 0; k < 3; k++)
+			{
+				field->color[index * 3 + k] = color_sum[k] * 0.25f;
+			}
+		}
+	}
+	free(wall);
+	shade_hollows(field, (int)fminf(fmaxf(0.004f / pixel_meters, 2.0f), 8.0f), 0.004f, 0.5f);
+	bake_light(field, settings->baked_light);
+	sharpen_color(field, (int)fminf(fmaxf(0.008f / pixel_meters, 3.0f), 16.0f), 0.75f);
+	sharpen_color(field, 1, 1.7f);
+	match_average(field, settings->color);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
 
 static void usage(void)
 {
 	fprintf(stderr, "potop_texture [--data DIR] [--size N] [--meters M] [--seed N] [--color R,G,B]\n"
 		"              [--grain MM] [--ripples M] [--ripple-height M] [--plates M] [--boards M] [--moss A] [--baked-light A] [--puddles A] [--splinters A] [--height]\n"
-		"              sand|clay|mud|grass|rock|canyon|granite|stone|dirt|relief|wet_sand|wet_dirt|needles|leaves|trampled|petals|snow|drystone|coursed|weatherboard|timber|planks|old_timber NAME\n");
+		"              sand|clay|mud|grass|rock|canyon|granite|stone|dirt|relief|wet_sand|wet_dirt|needles|leaves|trampled|petals|snow|drystone|coursed|weatherboard|timber|planks|old_timber|batten NAME\n");
 }
 
 int main(int argument_count, char **arguments)
@@ -5631,6 +5971,7 @@ int main(int argument_count, char **arguments)
 			{ "timber", 2.0f, { 0.464f, 0.304f, 0.168f } },
 			{ "planks", 2.0f, { 0.503f, 0.438f, 0.376f } },
 			{ "old_timber", 2.4f, { 0.518f, 0.45f, 0.391f } },
+			{ "batten", 1.2f, { 0.366f, 0.297f, 0.241f } },
 		};
 		bool known = false;
 
@@ -5651,7 +5992,7 @@ int main(int argument_count, char **arguments)
 		}
 		if (!known)
 		{
-			fprintf(stderr, "potop_texture: no kind '%s' (sand, clay, mud, grass, rock, canyon, granite, stone, dirt, relief, wet_sand, wet_dirt, needles, leaves, trampled, petals, snow, drystone, coursed, weatherboard, timber, planks, old_timber)\n", kind);
+			fprintf(stderr, "potop_texture: no kind '%s' (sand, clay, mud, grass, rock, canyon, granite, stone, dirt, relief, wet_sand, wet_dirt, needles, leaves, trampled, petals, snow, drystone, coursed, weatherboard, timber, planks, old_timber, batten)\n", kind);
 			return 1;
 		}
 	}
@@ -5762,6 +6103,10 @@ int main(int argument_count, char **arguments)
 	{
 		ok = make_old_timber(&settings, &field);
 	}
+	else if (strcmp(kind, "batten") == 0)
+	{
+		ok = make_batten(&settings, &field);
+	}
 	else
 	{
 		ok = make_dirt(&settings, &field);
@@ -5769,7 +6114,7 @@ int main(int argument_count, char **arguments)
 	{
 		bool drystone = strcmp(kind, "drystone") == 0 || strcmp(kind, "coursed") == 0 || strcmp(kind, "weatherboard") == 0
 			|| strcmp(kind, "timber") == 0 || strcmp(kind, "planks") == 0
-			|| strcmp(kind, "old_timber") == 0;
+			|| strcmp(kind, "old_timber") == 0 || strcmp(kind, "batten") == 0;
 
 		ok = ok && write_field(&field, data_directory, name, settings.write_height || drystone || strcmp(kind, "relief") == 0,
 			strcmp(kind, "relief") != 0 && !drystone, drystone);
