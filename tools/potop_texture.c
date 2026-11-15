@@ -4603,6 +4603,8 @@ static bool make_weatherboard(const texture_settings_t *settings, field_t *field
 	free(wall.boards);
 	shade_hollows(field, (int)fminf(fmaxf(0.004f / pixel_meters, 2.0f), 8.0f), 0.004f, 0.5f);
 	bake_light(field, settings->baked_light);
+	sharpen_color(field, (int)fminf(fmaxf(0.008f / pixel_meters, 3.0f), 16.0f), 0.5f);
+	sharpen_color(field, 1, 1.2f);
 	match_average(field, settings->color);
 	return true;
 }
