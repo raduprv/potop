@@ -44,6 +44,10 @@
 //   coursed a coursed stone wall: limestone roughly squared, in courses,
 //           thin ones two to a course here and there, hammered faces,
 //           pitched edges, lime mortar (and NAME_height.png, NAME_arm.png)
+//   weatherboard  old boards across the picture, each one's waney lower
+//           edge over the next: the grain round its knots, checks, hand
+//           made nails and their rust, lichen along the edges, mold (and
+//           NAME_height.png, NAME_arm.png; --color: the wood's)
 //
 // Options:
 //   --data DIR         the game's data directory (data)
@@ -57,6 +61,9 @@
 //   --ripples M        sand: the ripples' spacing (meters; 0.11; 0: none)
 //   --ripple-height M  sand: their height (meters; 0.008)
 //   --plates M         clay: the big plates' size (meters; 0.35)
+//   --boards M         weatherboard: what shows of each board (meters; 0.2)
+//   --moss A           rock, granite: how much moss or lichen; weatherboard:
+//                      how much lichen (0..1; each kind its own)
 //   --baked-light A    how much of the light is baked into the color, as a
 //                      photograph has it (0..1; 0.4: the game lights the
 //                      normals as well)
@@ -86,6 +93,7 @@ typedef struct
 	float ripple_spacing;
 	float ripple_height;
 	float plate_meters;
+	float board_meters;                // weatherboard: what shows of each board (meters)
 	float baked_light;                 // how much of the light is in the color (0..1)
 	float moss;                        // rock, granite: how much moss or lichen (0..1; below 0: the kind's)
 	float puddles;                     // wet_*: the share of it under standing water (0..1)
@@ -3845,12 +3853,625 @@ static bool soak(const texture_settings_t *settings, field_t *field, float settl
 }
 
 // ---------------------------------------------------------------------------
+// Weatherboards: old boards laid across the picture, each one's lower edge
+// over the top of the one under it (a waney edge: wandering, chipped), its
+// face leaning out to that edge. Each board is its own piece of a log: its
+// rings the log's cut along it (arches where the cut nears the pith), the
+// soft wood between them weathered away into furrows, the grain flowing
+// round its knots, checks opening along the grain. Hand made nails in
+// rows up the studs, rust run down from them; lichen rosettes and crust
+// along the lower edges where the water stays; dark mold in streaks.
+// x along the boards and y down the picture, both in meters.
+
+#define WEATHERBOARD_KNOTS 4
+#define WEATHERBOARD_CHECKS 10
+#define WEATHERBOARD_NAILS 8
+#define WEATHERBOARD_LICHENS 96
+
+typedef struct
+{
+	float x;                           // along the board (meters)
+	float y;                           // across it, from its middle line (meters)
+	float radius;                      // meters
+	float turn;                        // its rings' and checks' turn (radians)
+	float dead;                        // 0 a sound knot .. 1 a dead one (dark, a gap round it)
+} weatherboard_knot_t;
+
+typedef struct
+{
+	float x;                           // its middle along the board (meters)
+	float level;                       // which line of the grain it follows (meters from the board's middle)
+	float half_length;                 // meters
+	float width;                       // at its middle (meters)
+} weatherboard_check_t;
+
+typedef struct
+{
+	float x;                           // meters
+	float y;                           // down from the board's own top line (meters)
+	float radius;                      // its head's (meters)
+	float streak;                      // how far the rust ran down (meters)
+} weatherboard_nail_t;
+
+typedef struct
+{
+	float x;                           // meters
+	float y;                           // down from the board's own top line (meters)
+	float radius;                      // meters
+	float lobes;                       // how many lobes round it
+	float turn;                        // radians
+	float yellow;                      // 0 gray green .. 1 yellow green
+} weatherboard_lichen_t;
+
+typedef struct
+{
+	uint32_t seed;
+	float tone;                        // lighter or darker than the others
+	float gray;                        // how weathered to gray (0 .. 1)
+	float warm;                        // redder or yellower than the others (-1 .. 1)
+	float ring_spacing;                // meters between its furrows
+	float pith_across;                 // where the log's pith is across the board (meters from its middle)
+	float pith_depth;                  // how far under the face (meters)
+	float pith_wander;                 // by how much that changes along the board (meters)
+	float waviness;                    // its lower edge's (about 1)
+	int knot_count;
+	weatherboard_knot_t knots[WEATHERBOARD_KNOTS];
+	int check_count;
+	weatherboard_check_t checks[WEATHERBOARD_CHECKS];
+	int nail_count;
+	weatherboard_nail_t nails[WEATHERBOARD_NAILS];
+	int lichen_count;
+	weatherboard_lichen_t lichens[WEATHERBOARD_LICHENS];
+} weatherboard_board_t;
+
+typedef struct
+{
+	int count;                         // boards down the picture
+	float board_height;                // what shows of each (meters)
+	float meters;
+	float lichen;                      // how much lichen (0 .. 1)
+	uint32_t seed;
+	weatherboard_board_t *boards;
+} weatherboard_wall_t;
+
+// Where board number's lower edge is at x (meters down the picture; number
+// any whole number: board number + count is board number a picture lower)
+static float weatherboard_edge(const weatherboard_wall_t *wall, int number, float x)
+{
+	const weatherboard_board_t *board = &wall->boards[wrap_index(number, wall->count)];
+	float u = x / wall->meters;
+	int long_period = (int)fmaxf(roundf(wall->meters / 0.4f), 2.0f);
+	int short_period = (int)fmaxf(roundf(wall->meters / 0.09f), 4.0f);
+	int chip_period = (int)fmaxf(roundf(wall->meters / 0.014f), 8.0f);
+	float scale = fminf(wall->board_height / 0.2f, 1.0f) * board->waviness;
+	float chips = cell_noise(u * (float)chip_period, 0.43f, chip_period, board->seed + 3u);
+
+	// (chips: bites out of the edge, never bits added to it)
+	return (float)(number + 1) * wall->board_height + scale * (0.016f * cell_noise(u * (float)long_period, 0.37f, long_period, board->seed + 1u)
+		+ 0.005f * cell_noise(u * (float)short_period, 0.61f, short_period, board->seed + 2u) - 0.0025f * smooth_step(0.25f, 0.7f, chips));
+}
+
+// The boards: each one's wood, its knots, checks, nails and lichens
+static bool weatherboard_lay(weatherboard_wall_t *wall, const texture_settings_t *settings, float meters)
+{
+	int stud_count = (int)fmaxf(roundf(meters / 0.9f), 1.0f);
+	int patch_period = (int)fmaxf(roundf(meters / 0.25f), 2.0f);
+
+	wall->meters = meters;
+	wall->seed = settings->seed;
+	wall->lichen = settings->moss >= 0.0f ? settings->moss : 0.4f;
+	wall->count = (int)fmaxf(roundf(meters / settings->board_meters), 1.0f);
+	wall->board_height = meters / (float)wall->count;
+	wall->boards = calloc((size_t)wall->count, sizeof(weatherboard_board_t));
+	if (wall->boards == NULL)
+	{
+		fprintf(stderr, "potop_texture: out of memory\n");
+		return false;
+	}
+	for (int b = 0; b < wall->count; b++)
+	{
+		weatherboard_board_t *board = &wall->boards[b];
+		uint32_t seed = hash_u32(settings->seed * 7919u + (uint32_t)b * 104729u + 17u);
+		float half = wall->board_height * 0.5f;
+		int knots;
+		int checks;
+
+		board->seed = seed;
+		board->tone = 0.86f + 0.28f * hash_unit(0, 0, seed);
+		board->gray = 0.15f + 0.5f * hash_unit(1, 0, seed);
+		board->warm = hash_unit(2, 0, seed) * 2.0f - 1.0f;
+		board->ring_spacing = 0.006f + 0.005f * hash_unit(3, 0, seed);
+		// (the pith near the board's middle: arches; far off it: straight
+		// grain, as a board cut near the log's edge or across its rings)
+		board->pith_across = (hash_unit(4, 0, seed) * 2.0f - 1.0f) * half * (hash_unit(5, 0, seed) < 0.6f ? 0.7f : 2.5f);
+		board->pith_depth = 0.05f + 0.16f * hash_unit(6, 0, seed);
+		board->pith_wander = 0.01f + 0.03f * hash_unit(7, 0, seed);
+		board->waviness = 0.55f + 0.75f * hash_unit(8, 0, seed);
+		// Knots: one every meter or so, most boards with one or two
+		knots = (int)(meters * (0.4f + 1.1f * hash_unit(9, 0, seed)) + hash_unit(10, 0, seed));
+		for (int k = 0; k < knots && board->knot_count < WEATHERBOARD_KNOTS; k++)
+		{
+			weatherboard_knot_t *knot = &board->knots[board->knot_count];
+			bool clear = true;
+
+			knot->radius = fminf(0.009f + 0.015f * powf(hash_unit(k, 11, seed), 1.5f), half * 0.3f);
+			knot->x = hash_unit(k, 12, seed) * meters;
+			knot->y = (hash_unit(k, 13, seed) * 2.0f - 1.0f) * (half - knot->radius * 2.2f) * 0.8f;
+			knot->turn = hash_unit(k, 14, seed) * 2.0f * PI_F;
+			knot->dead = hash_unit(k, 15, seed) < 0.3f ? 0.5f + 0.5f * hash_unit(k, 16, seed) : 0.3f * hash_unit(k, 16, seed);
+			// (not on top of another one)
+			for (int other = 0; other < board->knot_count; other++)
+			{
+				if (fabsf(wrap_difference(board->knots[other].x, knot->x, meters)) < 0.12f)
+				{
+					clear = false;
+				}
+			}
+			if (clear)
+			{
+				board->knot_count++;
+			}
+		}
+		// Checks: long thin ones along the grain, more of them in a board
+		// weathered gray
+		checks = (int)(meters * (1.2f + 2.6f * board->gray) + hash_unit(20, 0, seed));
+		for (int k = 0; k < checks && board->check_count < WEATHERBOARD_CHECKS; k++)
+		{
+			weatherboard_check_t *check = &board->checks[board->check_count++];
+
+			check->x = hash_unit(k, 21, seed) * meters;
+			check->level = (hash_unit(k, 22, seed) * 2.0f - 1.0f) * half * 0.85f;
+			check->half_length = fminf(0.04f + 0.3f * powf(hash_unit(k, 23, seed), 2.0f), meters * 0.4f);
+			check->width = (0.0007f + 0.0016f * powf(hash_unit(k, 24, seed), 2.0f)) * fminf(check->half_length / 0.08f + 0.4f, 1.0f);
+		}
+		// Nails: one at each stud (the studs a little off plumb from board
+		// to board: driven by eye), a few lost or sunk out of sight
+		for (int s = 0; s < stud_count && board->nail_count < WEATHERBOARD_NAILS; s++)
+		{
+			weatherboard_nail_t *nail;
+
+			if (hash_unit(s, 30 + b, settings->seed + 77u) < 0.3f)
+			{
+				continue;
+			}
+			nail = &board->nails[board->nail_count++];
+			nail->x = ((float)s + 0.31f) / (float)stud_count * meters + (hash_unit(s, 31, seed) - 0.5f) * 0.03f;
+			nail->y = wall->board_height * (0.3f + 0.3f * hash_unit(s, 32, seed));
+			nail->radius = 0.007f + 0.0025f * hash_unit(s, 33, seed);
+			nail->streak = 0.05f + 0.07f * hash_unit(s, 34, seed);
+		}
+		// Lichen rosettes: along the lower edge, in colonies (many where a
+		// patch of them has taken, none between)
+		{
+			int tries = (int)(meters * 170.0f * wall->lichen);
+
+			for (int k = 0; k < tries && board->lichen_count < WEATHERBOARD_LICHENS; k++)
+			{
+				float x = hash_unit(k, 40, seed) * meters;
+				float patch = cell_noise(x / meters * (float)patch_period, 0.5f, patch_period, seed + 41u)
+					+ 0.5f * cell_noise(x / meters * (float)(patch_period * 3), 0.2f, patch_period * 3, seed + 42u);
+				float size = powf(hash_unit(k, 43, seed), 2.2f);
+				weatherboard_lichen_t *lichen;
+
+				if (hash_unit(k, 44, seed) > smooth_step(0.05f, 0.55f, patch + (wall->lichen - 0.4f)))
+				{
+					continue;
+				}
+				lichen = &board->lichens[board->lichen_count++];
+				lichen->x = x;
+				lichen->radius = 0.005f + 0.016f * size;
+				// (the big ones sit on the edge itself, the small ones
+				// scattered a little way up from it)
+				lichen->y = weatherboard_edge(wall, b, x) - (float)b * wall->board_height - lichen->radius * 0.9f
+					- 0.03f * powf(hash_unit(k, 45, seed), 3.0f) * (1.0f - size);
+				lichen->lobes = 5.0f + floorf(hash_unit(k, 46, seed) * 4.0f);
+				lichen->turn = hash_unit(k, 47, seed) * 2.0f * PI_F;
+				lichen->yellow = 0.6f * powf(hash_unit(k, 48, seed), 2.0f);
+			}
+		}
+	}
+	return true;
+}
+
+// The wall at a point: its height (meters), color and roughness
+static void weatherboard_sample(const weatherboard_wall_t *wall, const float wood[3], float x, float y, float *height_out, float color_out[3],
+	float *roughness_out)
+{
+	float meters = wall->meters;
+	float board_height = wall->board_height;
+	float u = x / meters;
+	float v = y / meters;
+	int number = (int)floorf(y / board_height) - 1;
+	const weatherboard_board_t *board;
+	float bottom = weatherboard_edge(wall, number, x);
+	float top;
+	float down;
+	float up;
+	float local;
+	float across;
+	float grain;
+	float knot_body = 0.0f;
+	float knot_rim = 0.0f;
+	float knot_rings = 0.0f;
+	float knot_star = 0.0f;
+	float knot_dead = 0.0f;
+	float height;
+	float color[3];
+	float roughness;
+
+	// Which board: the first whose lower edge is under the point
+	while (y > bottom)
+	{
+		number++;
+		bottom = weatherboard_edge(wall, number, x);
+	}
+	top = weatherboard_edge(wall, number - 1, x);
+	board = &wall->boards[wrap_index(number, wall->count)];
+	down = y - top;
+	up = bottom - y;
+	local = y - (float)number * board_height;
+	across = local - board_height * 0.5f;
+	// The grain's lines: the board's own across, pushed aside round each
+	// knot as a stream round a stone (further along the board than across
+	// it); in the knot its own rings, a dark gap round a dead one, checks
+	// from its middle
+	grain = across;
+	for (int k = 0; k < board->knot_count; k++)
+	{
+		const weatherboard_knot_t *knot = &board->knots[k];
+		float dx = wrap_difference(knot->x, x, meters);
+		float dy = across - knot->y;
+		float reach = knot->radius * 2.2f;
+		float along = dx / 2.8f;
+		float window = 1.0f - smooth_step(0.2f * meters, 0.45f * meters, fabsf(dx));
+		float from = sqrtf(dx * dx / (1.25f * 1.25f) + dy * dy) / knot->radius;
+
+		grain -= dy * reach * reach / (along * along + dy * dy + reach * reach) * window;
+		if (from < 1.4f)
+		{
+			float angle = atan2f(dy, dx) + knot->turn;
+			float lumpy = cell_noise(dx / knot->radius * 1.7f + 9.0f, dy / knot->radius * 1.7f + 9.0f, 64, board->seed + 50u + (uint32_t)k);
+			float wobbled = from * (1.0f + 0.03f * sinf(2.0f * angle) + 0.1f * lumpy);
+			float body = 1.0f - smooth_step(0.7f, 1.0f, wobbled);
+			float rim = expf(-powf((wobbled - 1.0f) / 0.07f, 2.0f));
+			float rings = 0.5f + 0.5f * cosf(2.0f * PI_F * wobbled * knot->radius / 0.0022f);
+			float star = 0.0f;
+
+			for (int j = 0; j < 3; j++)
+			{
+				float ray = angle - (float)j * 2.1f - 0.5f * sinf(knot->turn * 7.0f + (float)j);
+				float width = 0.0008f * (1.0f - 0.7f * from);
+
+				if (cosf(ray) > 0.0f && width > 0.0f)
+				{
+					star = fmaxf(star, (1.0f - smooth_step(0.4f * width, width, from * knot->radius * fabsf(sinf(ray))))
+						* smooth_step(0.03f, 0.15f, from) * (1.0f - smooth_step(0.55f, 0.9f, from)));
+				}
+			}
+			if (body > knot_body)
+			{
+				knot_body = body;
+				knot_rings = rings;
+				knot_dead = knot->dead;
+			}
+			knot_rim = fmaxf(knot_rim, rim * (0.35f + 0.65f * knot->dead));
+			knot_star = fmaxf(knot_star, star * (0.4f + 0.6f * knot->dead));
+		}
+	}
+	{
+		// The rings: how far from the log's pith (it wanders under the
+		// board), a furrow every ring_spacing of it (the rings not all
+		// as thick), the lines a little ragged
+		int depth_period = (int)fmaxf(roundf(meters / 0.8f), 1.0f);
+		int ragged_period = (int)fmaxf(roundf(meters / 0.06f), 4.0f);
+		float depth = fabsf(board->pith_depth + board->pith_wander * (cell_noise(u * (float)depth_period, 0.3f, depth_period, board->seed + 11u)
+			+ 0.2f * cell_noise(u * (float)(depth_period * 3), 0.7f, depth_period * 3, board->seed + 12u))) + 0.004f;
+		float waved = grain + 0.004f * cell_noise(u * (float)(depth_period * 4), across / 0.06f + 30.0f, depth_period * 4, board->seed + 15u);
+		float ring_radius = sqrtf((waved - board->pith_across) * (waved - board->pith_across) + depth * depth);
+		float phase = ring_radius / board->ring_spacing + 1.3f * cell_noise(ring_radius * 45.0f, 3.3f, 1024, board->seed + 13u)
+			+ 0.15f * cell_noise(u * (float)ragged_period, grain / 0.008f + 50.0f, ragged_period, board->seed + 14u);
+		float within = phase - floorf(phase);
+		// (finer lines between the furrows: the thin rings of bad years)
+		float fine_phase = phase * 3.0f + 0.5f * cell_noise(u * (float)ragged_period * 2.0f, grain / 0.004f + 80.0f, ragged_period * 2, board->seed + 16u);
+		float fine_line = 0.5f + 0.5f * cosf(2.0f * PI_F * fine_phase);
+		float grit = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.003f), 16.0f), 2, 0.6f, board->seed + 17u);
+		// (the hard late wood stands, the soft early wood is worn away: up
+		// slowly, down at once)
+		float ridge = smooth_step(0.0f, 0.7f, within) * (1.0f - smooth_step(0.8f, 1.0f, within));
+		float late = smooth_step(0.55f, 0.75f, within) * (1.0f - smooth_step(0.85f, 1.0f, within));
+		// (the furrow itself: narrow, dark, a millimeter or so wide however
+		// far apart the lines are here: they spread where the cut runs
+		// along a ring)
+		float line_spacing = board->ring_spacing * ring_radius / fmaxf(fabsf(waved - board->pith_across), 1e-4f);
+		float furrow_width = fminf(fmaxf(0.0011f / line_spacing, 0.015f), 0.2f);
+		float furrow = 1.0f - smooth_step(0.3f * furrow_width, furrow_width, fminf(within, 1.0f - within));
+		// Its fibers (fine lines along the grain), long streaks of lighter
+		// and darker wood, hairline checks
+		float fiber_v = (y + grain - across) / meters;
+		float fiber = stretched_noise(u, fiber_v, (int)fmaxf(roundf(meters / 0.025f), 8.0f), (int)fmaxf(roundf(meters / 0.0014f), 16.0f), 2,
+			board->seed + 21u);
+		float streak = stretched_noise(u, fiber_v, (int)fmaxf(roundf(meters / 0.3f), 2.0f), (int)fmaxf(roundf(meters / 0.009f), 8.0f), 3,
+			board->seed + 22u);
+		float hairline = smooth_step(0.42f, 0.56f, stretched_noise(u, fiber_v, (int)fmaxf(roundf(meters / 0.09f), 4.0f),
+			(int)fmaxf(roundf(meters / 0.0028f), 16.0f), 2, board->seed + 23u));
+		// (thin dark lines where the fibers have parted: along the grain)
+		float parted = 1.0f - smooth_step(0.0f, 0.1f, fabsf(stretched_noise(u, fiber_v, (int)fmaxf(roundf(meters / 0.07f), 4.0f),
+			(int)fmaxf(roundf(meters / 0.0022f), 16.0f), 2, board->seed + 26u)));
+		float patches = tiling_fractal(u, fiber_v, (int)fmaxf(roundf(meters / 0.3f), 2.0f), 3, 0.55f, board->seed + 24u);
+		float cup = cell_noise(u * (float)depth_period * 2.0f, across / 0.08f + 20.0f, depth_period * 2, board->seed + 25u);
+		float check = 0.0f;
+		float weathered;
+		float tone;
+		float luminance;
+
+		// Checks: each along its own line of the grain (so round the
+		// knots with it), widest at its middle, drawn out to nothing
+		for (int k = 0; k < board->check_count; k++)
+		{
+			const weatherboard_check_t *crack = &board->checks[k];
+			float dx = wrap_difference(crack->x, x, meters);
+			float taper;
+			float width;
+
+			if (fabsf(dx) >= crack->half_length)
+			{
+				continue;
+			}
+			taper = 1.0f - (dx / crack->half_length) * (dx / crack->half_length);
+			width = crack->width * sqrtf(taper);
+			check = fmaxf(check, 1.0f - smooth_step(0.3f * width, width, fabsf(grain - crack->level + 0.002f * streak)));
+		}
+		// Its height: the face leaning out to the lower edge, that edge
+		// worn round; a little cupped; furrows, fibers, checks; a knot
+		// standing proud of the worn wood round it
+		height = 0.011f * local / board_height + 0.0012f * cup + (0.0004f * ridge - 0.0008f * furrow + 0.0002f * fine_line - 0.0002f * parted) * (1.0f - knot_body)
+			+ 0.0003f * fiber
+			+ 0.0004f * streak + 0.00012f * grit
+			- 0.003f * check - 0.0005f * hairline * (1.0f - knot_body)
+			+ knot_body * (0.0006f + 0.0003f * knot_rings) - 0.0014f * knot_rim - 0.0012f * knot_star;
+		if (up < 0.0035f)
+		{
+			float in = 1.0f - up / 0.0035f;
+
+			height -= 0.003f * (1.0f - sqrtf(fmaxf(1.0f - in * in, 0.0f)));
+		}
+		// Its color: the wood's, the furrows dark and the late wood a
+		// little darker than the ridge's top; grayer where it has
+		// weathered (the ridges first); dirtier up under the board above
+		tone = board->tone * (1.0f + 0.16f * streak) * (1.0f + 0.13f * fiber) * (0.98f + 0.1f * ridge - 0.06f * late - 0.5f * furrow * (1.0f - knot_body))
+			* (0.93f + 0.12f * fine_line) * (1.0f - 0.24f * parted * (1.0f - knot_body)) * (1.0f + 0.14f * grit) * (1.0f - 0.35f * hairline) * (0.84f + 0.2f * smooth_step(0.0f, board_height * 0.5f, down))
+			* (1.0f + 0.3f * expf(-up / 0.0025f));
+		color[0] = wood[0] * tone * (1.0f + 0.05f * board->warm + 0.04f * streak);
+		color[1] = wood[1] * tone;
+		color[2] = wood[2] * tone * (1.0f - 0.07f * board->warm - 0.05f * streak);
+		weathered = board->gray * smooth_step(-0.35f, 0.45f, patches + 0.35f * ridge - 0.1f);
+		luminance = color[0] * 0.3f + color[1] * 0.59f + color[2] * 0.11f;
+		color[0] = mix_float(color[0], luminance * 1.14f, weathered);
+		color[1] = mix_float(color[1], luminance * 1.13f, weathered);
+		color[2] = mix_float(color[2], luminance * 1.10f, weathered);
+		roughness = 0.86f - 0.06f * ridge + 0.04f * fiber;
+		// The knot: darker, redder, its rings close; a dead one nearly
+		// black, the gap round it and its checks black
+		if (knot_body > 0.0f || knot_rim > 0.0f)
+		{
+			float dark = mix_float(0.74f, 0.4f, knot_dead) * (0.8f + 0.3f * knot_rings) * (1.0f + 0.15f * fiber + 0.15f * grit);
+			float knot_color[3] = { wood[0] * dark * 1.06f, wood[1] * dark * 0.95f, wood[2] * dark * 0.86f };
+
+			for (int k = 0; k < 3; k++)
+			{
+				color[k] = mix_float(color[k], knot_color[k], knot_body) * (1.0f - 0.6f * knot_rim) * (1.0f - 0.7f * knot_star);
+			}
+			roughness = mix_float(roughness, 0.7f, knot_body);
+		}
+		for (int k = 0; k < 3; k++)
+		{
+			color[k] *= 1.0f - 0.8f * check;
+		}
+		// Mold: black, where the damp runs down the wall (over board
+		// after board), blotchy, soaked along the fibers
+		{
+			float runs = stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.3f), 2.0f), (int)fmaxf(roundf(meters / 0.8f), 1.0f), 3, wall->seed + 61u);
+			float blots = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.035f), 8.0f), 3, 0.6f, wall->seed + 63u);
+			float mold = smooth_step(0.3f, 0.52f, runs + 0.12f * blots) * smooth_step(-0.25f, 0.3f, blots + 0.5f * fiber + 0.3f * (1.0f - ridge) - 0.15f);
+
+			color[0] = mix_float(color[0], color[0] * 0.30f, 0.85f * mold);
+			color[1] = mix_float(color[1], color[1] * 0.33f, 0.85f * mold);
+			color[2] = mix_float(color[2], color[2] * 0.36f, 0.85f * mold);
+			roughness = mix_float(roughness, 0.93f, mold);
+		}
+		// Nails: the head a little dome, hammered, sunk in the wood it
+		// crushed; rust in the wood round it and run down from it (along
+		// the furrows more than over the ridges)
+		for (int k = 0; k < board->nail_count; k++)
+		{
+			const weatherboard_nail_t *nail = &board->nails[k];
+			float dx = wrap_difference(nail->x, x, meters);
+			float dy = local - nail->y;
+			float from = sqrtf(dx * dx + dy * dy);
+			float head;
+			float halo;
+			float run = 0.0f;
+
+			if (fabsf(dx) > 0.03f || dy < -0.03f || dy > nail->streak)
+			{
+				continue;
+			}
+			head = 1.0f - smooth_step(nail->radius - 0.0006f, nail->radius, from);
+			halo = (1.0f - smooth_step(nail->radius, nail->radius * 2.4f, from)) * 0.7f;
+			if (dy > 0.0f)
+			{
+				float part = dy / nail->streak;
+				float width = nail->radius * (0.9f + 0.5f * part);
+
+				run = powf(1.0f - part, 1.4f) * (1.0f - smooth_step(0.35f * width, width, fabsf(dx + 0.002f * streak * part)))
+					* clamp_unit(0.85f + 0.3f * furrow + 0.3f * fiber);
+			}
+			{
+				float rust = clamp_unit(fmaxf(halo, run));
+				float rust_color[3] = { 0.44f, 0.23f, 0.11f };
+				float mottle = 0.5f + 0.5f * cell_noise(dx / 0.0012f + 40.0f, dy / 0.0012f + 40.0f, 256, board->seed + 70u + (uint32_t)k);
+				float head_color[3] = { mix_float(0.19f, 0.40f, mottle), mix_float(0.13f, 0.21f, mottle), mix_float(0.11f, 0.11f, mottle) };
+				float dome = sqrtf(fmaxf(1.0f - (from / nail->radius) * (from / nail->radius), 0.0f));
+
+				for (int c = 0; c < 3; c++)
+				{
+					color[c] = mix_float(color[c], mix_float(color[c], rust_color[c], 0.8f), rust);
+					color[c] = mix_float(color[c], head_color[c] * (0.6f + 0.7f * dome_light(dx / nail->radius, dy / nail->radius)), head);
+				}
+				height -= 0.0012f * (1.0f - smooth_step(nail->radius * 0.8f, nail->radius * 3.0f, from));
+				height += head * (0.0006f + 0.0009f * dome + 0.00015f * mottle);
+				roughness = mix_float(roughness, 0.78f, head);
+			}
+		}
+		// Lichen along the lower edge: a crust of small pale dots first,
+		// then the rosettes, each of lobes round its middle, a second ring
+		// of them inside, their rims lifted and paler
+		if (wall->lichen > 0.0f && up < 0.07f)
+		{
+			float edge_near = 1.0f - smooth_step(0.004f, 0.03f + 0.03f * wall->lichen, up);
+			float colonies = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.2f), 2.0f), 3, 0.55f, board->seed + 81u);
+			float dots = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.006f), 16.0f), 2, 0.6f, board->seed + 83u);
+			float crust = smooth_step(0.25f, 0.45f, dots + 0.9f * colonies + 1.1f * edge_near - 1.2f + 0.5f * wall->lichen) * (1.0f - 0.7f * check);
+			float crust_color[3] = { 0.58f, 0.60f, 0.50f };
+
+			for (int c = 0; c < 3; c++)
+			{
+				color[c] = mix_float(color[c], crust_color[c] * (0.85f + 0.2f * dots), 0.8f * crust);
+			}
+			height += 0.00025f * crust;
+			roughness = mix_float(roughness, 0.95f, crust);
+			for (int k = 0; k < board->lichen_count; k++)
+			{
+				const weatherboard_lichen_t *lichen = &board->lichens[k];
+				float dy = local - lichen->y;
+				float dx;
+				float from;
+				float angle;
+				float petal;
+				float inner_petal;
+				float outline;
+				float inner;
+				float cover;
+				float part;
+				float shade;
+				float lichen_color[3];
+
+				if (fabsf(dy) > lichen->radius)
+				{
+					continue;
+				}
+				dx = wrap_difference(lichen->x, x, meters);
+				if (fabsf(dx) > lichen->radius)
+				{
+					continue;
+				}
+				from = sqrtf(dx * dx + dy * dy);
+				angle = atan2f(dy, dx) + lichen->turn;
+				// (a lobe: wide and round at its end, a notch between it
+				// and the next; uneven, no two alike)
+				petal = fabsf(cosf(lichen->lobes * 0.5f * angle + 0.6f * sinf(2.0f * angle + lichen->turn)));
+				inner_petal = fabsf(cosf(lichen->lobes * 0.5f * angle + 1.3f + 0.5f * sinf(3.0f * angle)));
+				outline = lichen->radius * (0.62f + 0.38f * powf(petal, 0.45f)) * (0.9f + 0.1f * sinf(3.0f * angle + lichen->turn * 3.0f));
+				inner = outline * (0.42f + 0.16f * powf(inner_petal, 0.5f));
+				cover = 1.0f - smooth_step(outline - 0.0007f, outline, from);
+				if (cover <= 0.0f)
+				{
+					continue;
+				}
+				part = from / fmaxf(outline, 1e-6f);
+				// (dark in the notches between lobes and under the inner
+				// ring's rim, pale on the rims, darker and browner at its
+				// old middle)
+				shade = (0.72f + 0.28f * smooth_step(0.0f, 0.3f, petal + (1.0f - part) * 0.6f))
+					* (1.0f - 0.35f * expf(-powf((from - inner) / 0.0006f, 2.0f)) * (from > inner ? 1.0f : 0.0f))
+					* (0.8f + 0.25f * smooth_step(0.55f, 0.95f, part))
+					* (0.78f + 0.22f * smooth_step(0.05f, 0.3f, part)) * (0.92f + 0.12f * dots);
+				lichen_color[0] = mix_float(0.63f, 0.66f, lichen->yellow) * shade;
+				lichen_color[1] = mix_float(0.66f, 0.64f, lichen->yellow) * shade;
+				lichen_color[2] = mix_float(0.54f, 0.36f, lichen->yellow) * shade;
+				for (int c = 0; c < 3; c++)
+				{
+					color[c] = mix_float(color[c], lichen_color[c], cover);
+				}
+				height += cover * (0.0004f + 0.0005f * smooth_step(0.6f, 0.95f, part) + 0.0003f * (from < inner ? 1.0f : 0.0f));
+				roughness = mix_float(roughness, 0.96f, cover);
+			}
+		}
+		// The shade of the board above on this one's top
+		{
+			float shade = 1.0f - 0.6f * expf(-down / 0.007f);
+
+			for (int c = 0; c < 3; c++)
+			{
+				color[c] *= shade;
+			}
+		}
+	}
+	*height_out = height;
+	memcpy(color_out, color, sizeof(color));
+	*roughness_out = clamp_unit(roughness);
+}
+
+static bool make_weatherboard(const texture_settings_t *settings, field_t *field)
+{
+	int size = field->size;
+	float pixel_meters = field->meters / (float)size;
+	weatherboard_wall_t wall;
+
+	memset(&wall, 0, sizeof(wall));
+	if (!weatherboard_lay(&wall, settings, field->meters))
+	{
+		return false;
+	}
+	// (each pixel the average of four points in it: the furrows, the
+	// checks and the boards' edges are finer than a pixel)
+#pragma omp parallel for schedule(dynamic, 8)
+	for (int y = 0; y < size; y++)
+	{
+		for (int x = 0; x < size; x++)
+		{
+			int index = y * size + x;
+			float height_sum = 0.0f;
+			float color_sum[3] = { 0.0f, 0.0f, 0.0f };
+			float roughness_sum = 0.0f;
+
+			for (int s = 0; s < 4; s++)
+			{
+				float height;
+				float color[3];
+				float roughness;
+
+				weatherboard_sample(&wall, settings->color, ((float)x + 0.25f + 0.5f * (float)(s & 1)) * pixel_meters,
+					((float)y + 0.25f + 0.5f * (float)(s >> 1)) * pixel_meters, &height, color, &roughness);
+				height_sum += height;
+				roughness_sum += roughness;
+				for (int k = 0; k < 3; k++)
+				{
+					color_sum[k] += color[k];
+				}
+			}
+			field->height[index] = height_sum * 0.25f;
+			field->roughness[index] = roughness_sum * 0.25f;
+			for (int k = 0; k < 3; k++)
+			{
+				field->color[index * 3 + k] = color_sum[k] * 0.25f;
+			}
+		}
+	}
+	free(wall.boards);
+	shade_hollows(field, (int)fminf(fmaxf(0.004f / pixel_meters, 2.0f), 8.0f), 0.004f, 0.5f);
+	bake_light(field, settings->baked_light);
+	match_average(field, settings->color);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
 
 static void usage(void)
 {
 	fprintf(stderr, "potop_texture [--data DIR] [--size N] [--meters M] [--seed N] [--color R,G,B]\n"
-		"              [--grain MM] [--ripples M] [--ripple-height M] [--plates M] [--moss A] [--baked-light A] [--puddles A] [--height]\n"
-		"              sand|clay|mud|grass|rock|canyon|granite|stone|dirt|relief|wet_sand|wet_dirt|needles|leaves|trampled|petals|snow|drystone|coursed NAME\n");
+		"              [--grain MM] [--ripples M] [--ripple-height M] [--plates M] [--boards M] [--moss A] [--baked-light A] [--puddles A] [--height]\n"
+		"              sand|clay|mud|grass|rock|canyon|granite|stone|dirt|relief|wet_sand|wet_dirt|needles|leaves|trampled|petals|snow|drystone|coursed|weatherboard NAME\n");
 }
 
 int main(int argument_count, char **arguments)
@@ -3869,6 +4490,7 @@ int main(int argument_count, char **arguments)
 	settings.ripple_spacing = 0.11f;
 	settings.ripple_height = 0.008f;
 	settings.plate_meters = 0.35f;
+	settings.board_meters = 0.2f;
 	settings.baked_light = 0.4f;
 	settings.moss = -1.0f;
 	settings.puddles = -1.0f;
@@ -3908,6 +4530,7 @@ int main(int argument_count, char **arguments)
 		else if (strcmp(argument, "--ripple-height") == 0) { settings.ripple_height = strtof(value, NULL); }
 		else if (strcmp(argument, "--grain") == 0) { settings.grain_millimeters = fmaxf(strtof(value, NULL), 0.05f); }
 		else if (strcmp(argument, "--plates") == 0) { settings.plate_meters = fmaxf(strtof(value, NULL), 0.02f); }
+		else if (strcmp(argument, "--boards") == 0) { settings.board_meters = fmaxf(strtof(value, NULL), 0.03f); }
 		else if (strcmp(argument, "--baked-light") == 0) { settings.baked_light = clamp_unit(strtof(value, NULL)); }
 		else if (strcmp(argument, "--moss") == 0) { settings.moss = clamp_unit(strtof(value, NULL)); }
 		else if (strcmp(argument, "--puddles") == 0) { settings.puddles = clamp_unit(strtof(value, NULL)); }
@@ -3954,6 +4577,7 @@ int main(int argument_count, char **arguments)
 			{ "snow", 4.0f, { 0.90f, 0.93f, 0.97f } },
 			{ "drystone", 3.0f, { 0.49f, 0.446f, 0.384f } },
 			{ "coursed", 3.0f, { 0.87f, 0.845f, 0.81f } },
+			{ "weatherboard", 1.8f, { 0.30f, 0.245f, 0.20f } },
 		};
 		bool known = false;
 
@@ -3974,7 +4598,7 @@ int main(int argument_count, char **arguments)
 		}
 		if (!known)
 		{
-			fprintf(stderr, "potop_texture: no kind '%s' (sand, clay, mud, grass, rock, canyon, granite, stone, dirt, relief, wet_sand, wet_dirt, needles, leaves, trampled, petals, snow)\n", kind);
+			fprintf(stderr, "potop_texture: no kind '%s' (sand, clay, mud, grass, rock, canyon, granite, stone, dirt, relief, wet_sand, wet_dirt, needles, leaves, trampled, petals, snow, drystone, coursed, weatherboard)\n", kind);
 			return 1;
 		}
 	}
@@ -4069,12 +4693,16 @@ int main(int argument_count, char **arguments)
 	{
 		ok = make_coursed(&settings, &field);
 	}
+	else if (strcmp(kind, "weatherboard") == 0)
+	{
+		ok = make_weatherboard(&settings, &field);
+	}
 	else
 	{
 		ok = make_dirt(&settings, &field);
 	}
 	{
-		bool drystone = strcmp(kind, "drystone") == 0 || strcmp(kind, "coursed") == 0;
+		bool drystone = strcmp(kind, "drystone") == 0 || strcmp(kind, "coursed") == 0 || strcmp(kind, "weatherboard") == 0;
 
 		ok = ok && write_field(&field, data_directory, name, settings.write_height || drystone || strcmp(kind, "relief") == 0,
 			strcmp(kind, "relief") != 0 && !drystone, drystone);
