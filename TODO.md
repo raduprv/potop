@@ -275,3 +275,16 @@ from an older version get their terrain difference baked in once).
   DDR4-3200: the water is memory bound.
 - If needed: upload changed terrain chunks close by less often too, and
   redraw the shadow map less often while erosion works.
+
+## potop_texture: smithy (forge chimney / wall) — on hold
+
+Work in progress, not yet good enough to use. Layers so far: bricks (running
+bond, done), lime mortar fallen off with the heat (about 60% of the wall),
+soot (first pass). Field stones exist but were not reworked (`--stones 0`
+while iterating). `--soot`, `--stones`, `--smear` switch the layers.
+
+- Soot: beside black, the clean brick reads as glowing (simultaneous
+  contrast). Dull and darken what is next to the soot (brick most of all),
+  do not leave bright orange islands inside it.
+- Soot should rise: streaks upward from a few places, not random blotches.
+- Then the field stones (now rounded rectangles in the courses).

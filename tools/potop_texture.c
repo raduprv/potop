@@ -60,6 +60,8 @@
 //   batten  board and batten: wide hewn boards down the picture (the
 //           adze's scoops across them), a batten nailed over each joint,
 //           round headed nails; old dark wood (--boards: a board's width)
+//   smithy  a forge's chimney and wall: old thin bricks in rough courses,
+//           field stones built in among them, lime mortar, soot
 //
 // Options:
 //   --data DIR         the game's data directory (data)
@@ -77,6 +79,11 @@
 //                      planks: a plank's width (meters; 0.33); batten: a
 //                      board's, batten to batten (meters; 0.3)
 //   --splinters A      old_timber: how much its flakes stand up (0..1; 0.5)
+//   --soot A           smithy: how much soot (0..1; 1)
+//   --stones A         smithy: the share of field stones among the bricks
+//                      (0..1; 0.36)
+//   --smear A          smithy: how much mortar is smeared over the faces
+//                      (0..1; 1)
 //   --moss A           rock, granite: how much moss or lichen; weatherboard:
 //                      how much lichen (0..1; each kind its own)
 //   --baked-light A    how much of the light is baked into the color, as a
@@ -113,6 +120,9 @@ typedef struct
 	float moss;                        // rock, granite: how much moss or lichen (0..1; below 0: the kind's)
 	float puddles;                     // wet_*: the share of it under standing water (0..1)
 	float splinters;                   // old_timber: how much its flakes stand up (0..1; below 0: the kind's)
+	float soot;                        // smithy: how much soot (0..1; below 0: the kind's)
+	float stones;                      // smithy: the share of field stones among the bricks (0..1; below 0: the kind's)
+	float smear;                       // smithy: how much mortar is smeared over the faces (0..1; below 0: the kind's)
 	bool write_height;                 // NAME_height.png as well (a relief's always)
 } texture_settings_t;
 
@@ -5855,12 +5865,439 @@ static bool make_batten(const texture_settings_t *settings, field_t *field)
 }
 
 // ---------------------------------------------------------------------------
+// Smithy masonry: a forge's chimney and wall: old thin bricks in rough
+// courses, field stones built in among them wherever one came to hand,
+// lime mortar (worn back in the joints, smeared over the faces in places),
+// and soot: black over whole stretches of it, thickest in the hollows.
+// x across and y down the picture, both in meters.
+
+typedef struct
+{
+	float height;                      // meters
+	float color[3];
+	float roughness;
+	float mortar;                      // how much of it is mortar (0 .. 1)
+} smithy_point_t;
+
+// Row number's top line at x (meters down the picture; number any whole
+// number, a picture lower for each count of them): the courses not level
+static float smithy_course(float meters, int rows, int number, float x, uint32_t seed)
+{
+	int row = wrap_index(number, rows);
+	int period = (int)fmaxf(roundf(meters / 0.5f), 1.0f);
+	float row_height = meters / (float)rows;
+
+	return ((float)number + (hash_unit(row, 1, seed) - 0.5f) * 0.08f) * row_height
+		+ 0.003f * cell_noise(x / meters * (float)period, (float)row + 0.5f, period, seed + 2u);
+}
+
+static smithy_point_t smithy_sample(const texture_settings_t *settings, float meters, float x, float y)
+{
+	uint32_t seed = settings->seed;
+	float u = x / meters;
+	float v = y / meters;
+	smithy_point_t point;
+	// (an even count of courses: a stone is two courses high)
+	int rows = 2 * (int)fmaxf(roundf(meters / 0.18f), 1.0f);
+	int across = (int)fmaxf(roundf(meters / 0.2f), 2.0f);
+	int stones_across = (int)fmaxf(roundf(meters / 0.3f), 2.0f);
+	float joint = 0.0025f;
+	// (what everything is made rough with: lumps, a coarse and a fine grain)
+	float lumps_here = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.09f), 4.0f), 4, 0.6f, seed + 10u);
+	float coarse = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.03f), 8.0f), 3, 0.6f, seed + 11u);
+	float fine = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.006f), 16.0f), 2, 0.6f, seed + 12u);
+	float ragged = 0.007f * tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.04f), 8.0f), 4, 0.65f, seed + 13u);
+	// Which course; and which pair of courses (a stone's)
+	int number = (int)floorf(y / meters * (float)rows) - 1;
+	float bottom = smithy_course(meters, rows, number + 1, x, seed + 31u);
+	float top;
+	int pair;
+	int pair_row;
+	float pair_top;
+	float pair_bottom;
+	float stone_along;
+	int stone_cell;
+	float stone_left;
+	float stone_right;
+	bool stone;
+	float inside;
+	float face_height;
+	float face_color[3];
+	float face_roughness;
+
+	while (y >= bottom)
+	{
+		number++;
+		bottom = smithy_course(meters, rows, number + 1, x, seed + 31u);
+	}
+	top = smithy_course(meters, rows, number, x, seed + 31u);
+	pair = (int)floorf((float)number * 0.5f);
+	pair_row = wrap_index(pair, rows / 2);
+	pair_top = smithy_course(meters, rows, pair * 2, x, seed + 31u);
+	pair_bottom = smithy_course(meters, rows, pair * 2 + 2, x, seed + 31u);
+	stone_along = (u + hash_unit(pair_row, 5, seed + 21u)) * (float)stones_across;
+	stone_cell = (int)floorf(stone_along);
+	stone_left = (float)stone_cell + (hash_unit(wrap_index(stone_cell, stones_across), pair_row, seed + 22u) - 0.5f) * 0.6f;
+	if (stone_along < stone_left)
+	{
+		stone_cell--;
+		stone_left = (float)stone_cell + (hash_unit(wrap_index(stone_cell, stones_across), pair_row, seed + 22u) - 0.5f) * 0.6f;
+	}
+	stone_right = (float)(stone_cell + 1) + (hash_unit(wrap_index(stone_cell + 1, stones_across), pair_row, seed + 22u) - 0.5f) * 0.6f;
+	stone_cell = wrap_index(stone_cell, stones_across);
+	stone = hash_unit(stone_cell, pair_row, seed + 24u) < (settings->stones >= 0.0f ? settings->stones : 0.36f);
+	if (stone)
+	{
+		// A field stone, two courses high, laid flat: its corners
+		// knocked round, its outline uneven, its face bulging, lumpy,
+		// pitted; gray to brown beige
+		float dx = fminf(stone_along - stone_left, stone_right - stone_along) * meters / (float)stones_across;
+		float dy = fminf(y - pair_top, pair_bottom - y);
+		float radius = 0.015f + 0.025f * hash_unit(stone_cell, pair_row, seed + 23u);
+		float corner_x = radius - dx;
+		float corner_y = radius - dy;
+		float edge = corner_x > 0.0f && corner_y > 0.0f ? radius - sqrtf(corner_x * corner_x + corner_y * corner_y) : fminf(dx, dy);
+		float tone = 0.75f + 0.4f * hash_unit(stone_cell, pair_row, seed + 25u);
+		float warm = hash_unit(stone_cell, pair_row, seed + 26u);
+		float bulge = smooth_step(0.0f, 0.05f, edge);
+		float pits = smooth_step(0.35f, 0.6f, tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.012f), 8.0f), 2, 0.6f, seed + 28u));
+
+		inside = edge - joint * 1.5f - 2.0f * ragged - 0.012f * lumps_here - 0.012f * hash_unit(stone_cell, pair_row, seed + 30u);
+		face_height = 0.003f + 0.005f * bulge * (0.3f + 0.7f * hash_unit(stone_cell, pair_row, seed + 29u)) + 0.008f * lumps_here + 0.003f * coarse - 0.0015f * pits;
+		face_color[0] = mix_float(0.36f, 0.44f, warm) * tone;
+		face_color[1] = mix_float(0.34f, 0.38f, warm) * tone;
+		face_color[2] = mix_float(0.31f, 0.29f, warm) * tone;
+		for (int k = 0; k < 3; k++)
+		{
+			face_color[k] *= (1.0f + 0.3f * lumps_here) * (1.0f + 0.22f * coarse) * (1.0f + 0.1f * fine) * (1.0f - 0.25f * pits);
+		}
+		face_roughness = 0.88f;
+	}
+	else
+	{
+		// Brickwork: which brick in the course
+		int row = wrap_index(number, rows);
+		// (a running bond: each course half a brick along from the one
+		// under it, give or take, so no joint stands over another)
+		float along = u * (float)across + 0.5f * (float)(row & 1) + (hash_unit(row, 3, seed + 32u) - 0.5f) * 0.12f;
+		int brick = (int)floorf(along);
+		float left = (float)brick + (hash_unit(wrap_index(brick, across), row, seed + 33u) - 0.5f) * 0.12f;
+		float right;
+		float dx;
+		float dy;
+		float radius;
+		float corner_x;
+		float corner_y;
+		float edge;
+		float pick;
+		float tone;
+		float clouds;
+		float spall;
+		float sand;
+		float crack = 0.0f;
+		float broken = 0.0f;
+		float base[3];
+		float inner[3];
+		uint32_t own;
+
+		if (along < left)
+		{
+			brick--;
+			left = (float)brick + (hash_unit(wrap_index(brick, across), row, seed + 33u) - 0.5f) * 0.12f;
+		}
+		right = (float)(brick + 1) + (hash_unit(wrap_index(brick + 1, across), row, seed + 33u) - 0.5f) * 0.12f;
+		brick = wrap_index(brick, across);
+		own = seed + 100u + (uint32_t)(brick * 131 + row * 977);
+		// (hand made: no two the same size, a little short of its place on
+		// one side or another; its corners knocked off, its edges uneven)
+		dx = fminf((along - left) * meters / (float)across - 0.001f * hash_unit(brick, row, seed + 40u),
+			(right - along) * meters / (float)across - 0.001f * hash_unit(brick, row, seed + 41u));
+		dy = fminf(y - top - 0.001f * hash_unit(brick, row, seed + 42u), bottom - y - 0.001f * hash_unit(brick, row, seed + 43u));
+		radius = 0.003f + 0.004f * hash_unit(brick, row, seed + 44u);
+		corner_x = radius - dx;
+		corner_y = radius - dy;
+		edge = corner_x > 0.0f && corner_y > 0.0f ? radius - sqrtf(corner_x * corner_x + corner_y * corner_y) : fminf(dx, dy);
+		// (knocked about: a corner broken off here and there, the break
+		// straight across it; bites out of its edges)
+		{
+			float from_left = (along - left) * meters / (float)across;
+			float from_right = (right - along) * meters / (float)across;
+			float from_top = y - top;
+			float from_bottom = bottom - y;
+
+			for (int c = 0; c < 4; c++)
+			{
+				float side = (c & 1) != 0 ? from_right : from_left;
+				float level = (c & 2) != 0 ? from_bottom : from_top;
+				float chip_side;
+				float chip_level;
+				float bend;
+				float cut;
+
+				if (hash_unit(brick * 4 + c, row, seed + 60u) > 0.07f)
+				{
+					continue;
+				}
+				chip_side = 0.008f + 0.02f * hash_unit(brick * 4 + c, row, seed + 61u);
+				chip_level = 0.006f + 0.014f * hash_unit(brick * 4 + c, row, seed + 62u);
+				// (a break is no straight cut: scooped, as a shell's, its
+				// line lumpy and ragged)
+				bend = 0.7f + 0.4f * hash_unit(brick * 4 + c, row, seed + 63u);
+				cut = (powf(fmaxf(side, 0.0f) / chip_side, bend) + powf(fmaxf(level, 0.0f) / chip_level, bend) - 1.0f) * fminf(chip_side, chip_level) * 0.7f
+					+ 0.003f * lumps_here + 0.002f * coarse + 0.0008f * fine;
+				// (half of them gone to the joint, the mortar in their
+				// place; the others still there, the corner's face broken
+				// off: its rough inside, set back)
+				if (hash_unit(brick * 4 + c, row, seed + 64u) < 0.5f)
+				{
+					edge = fminf(edge, cut);
+				}
+				else
+				{
+					broken = fmaxf(broken, 1.0f - smooth_step(-0.001f, 0.003f, cut));
+				}
+			}
+			edge -= 0.003f * smooth_step(0.25f, 0.6f, tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.04f), 4.0f), 2, 0.5f, own + 5u));
+		}
+		// (the joints a little tighter here, a little wider there: the
+		// mason's hand)
+		inside = edge - joint * (1.0f + 0.55f * tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.3f), 2.0f), 2, 0.5f, seed + 65u)) - 0.4f * ragged;
+		// Its clay: most of them orange red, some brown, a few burnt dark
+		// (those nearest the kiln's fire)
+		pick = hash_unit(brick, row, seed + 35u);
+		if (pick < 0.55f)
+		{
+			base[0] = 0.52f; base[1] = 0.30f; base[2] = 0.21f;
+		}
+		else if (pick < 0.87f)
+		{
+			base[0] = 0.43f; base[1] = 0.26f; base[2] = 0.19f;
+		}
+		else
+		{
+			base[0] = 0.31f; base[1] = 0.21f; base[2] = 0.18f;
+		}
+		tone = 0.85f + 0.3f * hash_unit(brick, row, seed + 34u);
+		// (the firing's clouds on its face: darker, bluer where the flame
+		// licked it; its inside, where the face has spalled off, a paler
+		// sandier orange, rough, a step down, the break's edge sharp)
+		clouds = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.08f), 4.0f), 3, 0.55f, own);
+		spall = smooth_step(-0.1f, 0.3f, tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.07f), 4.0f), 3, 0.55f, own + 1u) + 0.1f * coarse
+			- 0.45f + 0.75f * powf(hash_unit(brick, row, seed + 37u), 2.0f) + 0.25f * (1.0f - smooth_step(0.0f, 0.02f, edge)));
+		spall = fmaxf(spall, broken);
+		sand = 0.6f * fine + 0.4f * tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.0025f), 16.0f), 2, 0.6f, seed + 45u);
+		// (a crack through one brick in seven)
+		if (hash_unit(brick, row, seed + 48u) < 0.15f)
+		{
+			float place = left + (right - left) * (0.25f + 0.5f * hash_unit(brick, row, seed + 49u));
+			float off = fabsf((along - place) * meters / (float)across - 0.006f * cell_noise(y / 0.012f, 0.5f, 4096, own + 2u)
+				- 0.002f * cell_noise(y / 0.004f, 1.5f, 4096, own + 3u));
+
+			crack = 1.0f - smooth_step(0.0006f, 0.0026f, off);
+		}
+		inner[0] = mix_float(base[0], 0.62f, 0.4f);
+		inner[1] = mix_float(base[1], 0.39f, 0.4f);
+		inner[2] = mix_float(base[2], 0.27f, 0.4f);
+		for (int k = 0; k < 3; k++)
+		{
+			float skin = base[k] * tone * (1.0f + 0.16f * clouds) * (1.0f + 0.08f * coarse);
+			float flesh = inner[k] * tone * (1.0f + 0.2f * coarse) * (1.0f + 0.1f * lumps_here);
+
+			face_color[k] = mix_float(skin, flesh, spall);
+		}
+		// Its colors: no brick one clay's color all over. Each a little
+		// redder, yellower or browner than the next; on its face the
+		// flame's side plum dark, the far side a yellower orange; ochre
+		// and salmon patches where the clay was mixed; a gray bloom in
+		// places (salts)
+		{
+			float hue = hash_unit(brick, row, seed + 70u) * 2.0f - 1.0f;
+			float flame = smooth_step(0.05f, 0.5f, -clouds) * (1.0f - spall);
+			float far = smooth_step(0.05f, 0.5f, clouds);
+			float ochre = smooth_step(0.1f, 0.6f, tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.05f), 4.0f), 3, 0.55f, own + 6u));
+			float salmon = smooth_step(0.15f, 0.6f, tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.09f), 4.0f), 2, 0.5f, own + 7u));
+			float bloom = smooth_step(0.2f, 0.6f, tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.12f), 4.0f), 3, 0.6f, seed + 71u)) * (0.5f + 0.5f * sand);
+			float level = face_color[0] * 0.3f + face_color[1] * 0.59f + face_color[2] * 0.11f;
+
+			// (never toward green: the red always leads, most of all on
+			// the dark burnt ones)
+			ochre *= smooth_step(0.22f, 0.36f, level);
+			face_color[0] *= (1.0f + 0.07f * hue) * (1.0f - 0.09f * flame) * (1.0f + 0.05f * far);
+			face_color[1] *= (1.0f - 0.08f * hue) * (1.0f - 0.12f * flame) * (1.0f + 0.07f * far);
+			face_color[2] *= (1.0f - 0.12f * hue) * (1.0f - 0.06f * flame) * (1.0f - 0.06f * far);
+			face_color[0] = mix_float(face_color[0], level * 1.7f, 0.1f * ochre);
+			face_color[1] = mix_float(face_color[1], level * 1.0f, 0.1f * ochre);
+			face_color[2] = mix_float(face_color[2], level * 0.6f, 0.1f * ochre);
+			face_color[0] = mix_float(face_color[0], level * 1.7f, 0.09f * salmon);
+			face_color[1] = mix_float(face_color[1], level * 0.95f, 0.09f * salmon);
+			face_color[2] = mix_float(face_color[2], level * 0.8f, 0.09f * salmon);
+			for (int k = 0; k < 3; k++)
+			{
+				face_color[k] = mix_float(face_color[k], level * 1.25f, 0.07f * bloom);
+			}
+			// (a crack: the brick's own color, deeper and redder, not black)
+			face_color[0] *= 1.0f - 0.15f * crack;
+			face_color[1] *= 1.0f - 0.25f * crack;
+			face_color[2] *= 1.0f - 0.25f * crack;
+			// (its grain: no gray in it, each grain the clay's own color a
+			// shade redder or yellower, barely lighter or darker)
+			face_color[0] *= 1.0f + 0.05f * sand;
+			face_color[1] *= 1.0f + 0.06f * sand;
+			face_color[2] *= 1.0f - 0.04f * sand;
+		}
+		face_height = 0.003f + 0.004f * (hash_unit(brick, row, seed + 39u) - 0.5f) + 0.0015f * lumps_here + 0.0008f * coarse + 0.0003f * sand
+			- spall * (0.0018f + 0.0015f * coarse) - broken * (0.003f + 0.002f * lumps_here) - 0.0008f * crack;
+		face_roughness = 0.86f + 0.08f * spall;
+	}
+	{
+		// The mortar, worn back in the joints
+		// (lime and river sand: a warm pale gray, lighter and darker in
+		// patches; its sand's grains, a few of them small pebbles, dark
+		// or pale; where the rain has washed the lime out, the sand
+		// standing proud, darker)
+		float sand = 0.9f + 0.12f * fine + 0.1f * coarse
+			+ 0.1f * tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.25f), 2.0f), 3, 0.55f, seed + 42u);
+		cells_t pebble = tiling_cells(u, v, (int)fmaxf(roundf(meters / 0.006f), 16.0f), 0.9f, seed + 43u);
+		float pebble_pick = hash_unit(pebble.cell_x, pebble.cell_y, seed + 44u);
+		float pebble_here = pebble_pick < 0.2f ? 1.0f - smooth_step(0.15f, 0.3f, pebble.nearest) : 0.0f;
+		float pebble_tone = pebble_pick < 0.07f ? 0.86f : 1.12f;
+		float washed = smooth_step(0.0f, 0.5f, tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.15f), 4.0f), 3, 0.6f, seed + 45u));
+		float mortar_tone = sand * mix_float(1.0f, pebble_tone, pebble_here) * (1.0f - 0.14f * washed);
+		float mortar_color[3] = { 0.62f * mortar_tone, 0.56f * mortar_tone, 0.46f * mortar_tone };
+		float solid = smooth_step(-0.002f, 0.003f, inside);
+		float worn_edge = 1.0f - smooth_step(0.0f, 0.012f, inside);
+		// (on the faces: a thin haze of lime beside the joints, where the
+		// mason's trowel wiped it; and thick daubs here and there, old
+		// pointing spread over a brick's edge, their outline ragged)
+		float amount = settings->smear >= 0.0f ? settings->smear : 1.0f;
+		float near_joint = 1.0f - smooth_step(0.0f, 0.03f, inside);
+		float patches = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.3f), 2.0f), 4, 0.6f, seed + 41u);
+		float haze = 0.4f * amount * near_joint * smooth_step(-0.3f, 0.3f, patches + 0.3f * coarse);
+		float daub = amount * smooth_step(0.0f, 0.07f, patches + 0.25f * coarse + 0.1f * fine + 0.3f * near_joint - 0.03f);
+		float smear = fmaxf(haze, 0.9f * daub);
+		float mortar_height = -0.0035f + 0.002f * lumps_here + 0.0015f * coarse + 0.0005f * fine + 0.0005f * pebble_here - 0.001f * washed;
+		// Soot and grime: black, in great blotches (where the smoke found
+		// its way out), run upward in streaks, mottled at every scale;
+		// deepest in the hollows, thin on what stands out
+		float blotches = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.8f), 1.0f), 5, 0.6f, seed + 51u);
+		float streaks = staggered_noise(v, u, (int)fmaxf(roundf(meters / 0.6f), 1.0f), (int)fmaxf(roundf(meters / 0.1f), 2.0f), 3, seed + 52u);
+		float grime = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.12f), 4.0f), 4, 0.6f, seed + 53u);
+		// (a crust on everything: soft scabs a centimeter or two across,
+		// grit, a few small black pits)
+		float flakes = smooth_step(-0.2f, 0.5f, tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.02f), 8.0f), 4, 0.6f, seed + 54u));
+		float grit = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.003f), 16.0f), 2, 0.7f, seed + 55u);
+		float specks = smooth_step(0.5f, 0.7f, tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.008f), 16.0f), 2, 0.6f, seed + 56u));
+		float soot;
+		float height;
+
+		face_height -= 0.004f * worn_edge * worn_edge;
+		height = mix_float(mortar_height, face_height, solid);
+		for (int k = 0; k < 3; k++)
+		{
+			point.color[k] = mix_float(mortar_color[k], face_color[k] * (1.0f - 0.3f * worn_edge), solid);
+			point.color[k] = mix_float(point.color[k], mortar_color[k], smear * solid);
+		}
+		{
+			// (the crust dulls stone and mortar; on a brick it is the
+			// brick's own stuff: a redder, deeper shade, not gray)
+			float on_brick = stone ? 0.0f : solid * (1.0f - smear);
+			float dull = (0.88f + 0.3f * grime) * (1.0f - 0.08f * flakes) * (1.0f + 0.06f * grit) * (1.0f - (stone ? 0.35f : 0.0f) * specks);
+			float crust_shade = flakes - 0.5f + 0.6f * grit;
+
+			point.color[0] *= mix_float(dull, (0.9f + 0.2f * grime) * (1.0f - 0.03f * crust_shade), on_brick);
+			point.color[1] *= mix_float(dull, (0.9f + 0.2f * grime) * (1.0f - 0.12f * crust_shade), on_brick);
+			point.color[2] *= mix_float(dull, (0.9f + 0.2f * grime) * (1.0f - 0.1f * crust_shade), on_brick);
+		}
+		height = mix_float(height, fmaxf(height, face_height + 0.0012f + 0.001f * coarse), daub * solid);
+		height += -0.001f * flakes + 0.0003f * grit - 0.001f * specks * (stone ? 1.0f : 0.0f);
+		{
+			// How much smoke reached here: great blotches, run up the wall
+			// in streaks; less on what stands out
+			float amount = settings->soot >= 0.0f ? settings->soot : 1.0f;
+			float smoke = 1.3f * blotches + 0.35f * streaks - 0.15f * smooth_step(0.0f, 0.012f, height) + 0.25f * (amount - 1.0f);
+			// (round the soot the heat's own stain: lime and brick scorched
+			// brown, well before any black settles)
+			float scorch = amount * smooth_step(-0.45f, 0.0f, smoke + 0.2f * grime);
+			// (the soot itself: its edge broken up, creeping along the
+			// rough places; thick in the middle, a few places where it
+			// has flaked off and the wall shows through)
+			float flaked = smooth_step(0.25f, 0.5f, tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.06f), 4.0f), 4, 0.6f, seed + 57u));
+			float ash = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.04f), 8.0f), 3, 0.6f, seed + 58u);
+			float black[3] = { 0.07f + 0.035f * ash, 0.066f + 0.033f * ash, 0.062f + 0.032f * ash };
+
+			soot = amount * smooth_step(-0.1f, 0.12f, smoke + 0.45f * grime + 0.3f * coarse + 0.1f * grit);
+			soot = clamp_unit(soot * (0.93f - 0.6f * flaked * (1.0f - smooth_step(0.25f, 0.6f, smoke))));
+			// (and a thin smoky veil well beyond it, fading out)
+			soot = fmaxf(soot, 0.55f * amount * smooth_step(-0.45f, 0.15f, smoke + 0.15f * grime));
+			point.color[0] *= 1.0f - 0.22f * scorch;
+			point.color[1] *= 1.0f - 0.34f * scorch;
+			point.color[2] *= 1.0f - 0.46f * scorch;
+			for (int k = 0; k < 3; k++)
+			{
+				point.color[k] = mix_float(point.color[k], black[k] * (1.0f + 0.15f * grit) + 0.08f * point.color[k], soot);
+			}
+		}
+		point.height = height;
+		point.mortar = 1.0f - solid * (1.0f - smear);
+		point.roughness = clamp_unit(mix_float(mix_float(0.93f, face_roughness, solid), 0.96f, soot));
+	}
+	return point;
+}
+
+static bool make_smithy(const texture_settings_t *settings, field_t *field)
+{
+	int size = field->size;
+	float pixel_meters = field->meters / (float)size;
+	double mortar_sum = 0.0;
+
+#pragma omp parallel for schedule(dynamic, 8) reduction(+:mortar_sum)
+	for (int y = 0; y < size; y++)
+	{
+		for (int x = 0; x < size; x++)
+		{
+			int index = y * size + x;
+			float height_sum = 0.0f;
+			float color_sum[3] = { 0.0f, 0.0f, 0.0f };
+			float roughness_sum = 0.0f;
+
+			for (int s = 0; s < 4; s++)
+			{
+				smithy_point_t point = smithy_sample(settings, field->meters, ((float)x + 0.25f + 0.5f * (float)(s & 1)) * pixel_meters,
+					((float)y + 0.25f + 0.5f * (float)(s >> 1)) * pixel_meters);
+
+				height_sum += point.height;
+				mortar_sum += (double)point.mortar;
+				roughness_sum += point.roughness;
+				for (int k = 0; k < 3; k++)
+				{
+					color_sum[k] += point.color[k];
+				}
+			}
+			field->height[index] = height_sum * 0.25f;
+			field->roughness[index] = roughness_sum * 0.25f;
+			for (int k = 0; k < 3; k++)
+			{
+				field->color[index * 3 + k] = color_sum[k] * 0.25f;
+			}
+		}
+	}
+	printf("  mortar on %.0f%% of it\n", mortar_sum / (4.0 * (double)size * (double)size) * 100.0);
+	shade_hollows(field, (int)fminf(fmaxf(0.005f / pixel_meters, 2.0f), 8.0f), 0.005f, 0.55f);
+	bake_light(field, settings->baked_light);
+	// (only a little: the sharpening's limits flatten soft tones into
+	// patches, as a picture of few colors)
+	sharpen_color(field, 1, 0.35f);
+	match_average(field, settings->color);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
 
 static void usage(void)
 {
 	fprintf(stderr, "potop_texture [--data DIR] [--size N] [--meters M] [--seed N] [--color R,G,B]\n"
-		"              [--grain MM] [--ripples M] [--ripple-height M] [--plates M] [--boards M] [--moss A] [--baked-light A] [--puddles A] [--splinters A] [--height]\n"
-		"              sand|clay|mud|grass|rock|canyon|granite|stone|dirt|relief|wet_sand|wet_dirt|needles|leaves|trampled|petals|snow|drystone|coursed|weatherboard|timber|planks|old_timber|batten NAME\n");
+		"              [--grain MM] [--ripples M] [--ripple-height M] [--plates M] [--boards M] [--moss A] [--baked-light A] [--puddles A] [--splinters A] [--soot A] [--stones A] [--smear A] [--height]\n"
+		"              sand|clay|mud|grass|rock|canyon|granite|stone|dirt|relief|wet_sand|wet_dirt|needles|leaves|trampled|petals|snow|drystone|coursed|weatherboard|timber|planks|old_timber|batten|smithy NAME\n");
 }
 
 int main(int argument_count, char **arguments)
@@ -5883,6 +6320,9 @@ int main(int argument_count, char **arguments)
 	settings.moss = -1.0f;
 	settings.puddles = -1.0f;
 	settings.splinters = -1.0f;
+	settings.soot = -1.0f;
+	settings.stones = -1.0f;
+	settings.smear = -1.0f;
 	for (int i = 1; i < argument_count; i++)
 	{
 		const char *argument = arguments[i];
@@ -5922,6 +6362,9 @@ int main(int argument_count, char **arguments)
 		else if (strcmp(argument, "--boards") == 0) { settings.board_meters = fmaxf(strtof(value, NULL), 0.03f); }
 		else if (strcmp(argument, "--baked-light") == 0) { settings.baked_light = clamp_unit(strtof(value, NULL)); }
 		else if (strcmp(argument, "--moss") == 0) { settings.moss = clamp_unit(strtof(value, NULL)); }
+		else if (strcmp(argument, "--soot") == 0) { settings.soot = clamp_unit(strtof(value, NULL)); }
+		else if (strcmp(argument, "--stones") == 0) { settings.stones = clamp_unit(strtof(value, NULL)); }
+		else if (strcmp(argument, "--smear") == 0) { settings.smear = clamp_unit(strtof(value, NULL)); }
 		else if (strcmp(argument, "--splinters") == 0) { settings.splinters = clamp_unit(strtof(value, NULL)); }
 		else if (strcmp(argument, "--puddles") == 0) { settings.puddles = clamp_unit(strtof(value, NULL)); }
 		else if (strcmp(argument, "--color") == 0)
@@ -5972,6 +6415,7 @@ int main(int argument_count, char **arguments)
 			{ "planks", 2.0f, { 0.503f, 0.438f, 0.376f } },
 			{ "old_timber", 2.4f, { 0.518f, 0.45f, 0.391f } },
 			{ "batten", 1.2f, { 0.366f, 0.297f, 0.241f } },
+			{ "smithy", 1.6f, { 0.369f, 0.304f, 0.232f } },
 		};
 		bool known = false;
 
@@ -5992,7 +6436,7 @@ int main(int argument_count, char **arguments)
 		}
 		if (!known)
 		{
-			fprintf(stderr, "potop_texture: no kind '%s' (sand, clay, mud, grass, rock, canyon, granite, stone, dirt, relief, wet_sand, wet_dirt, needles, leaves, trampled, petals, snow, drystone, coursed, weatherboard, timber, planks, old_timber, batten)\n", kind);
+			fprintf(stderr, "potop_texture: no kind '%s' (sand, clay, mud, grass, rock, canyon, granite, stone, dirt, relief, wet_sand, wet_dirt, needles, leaves, trampled, petals, snow, drystone, coursed, weatherboard, timber, planks, old_timber, batten, smithy)\n", kind);
 			return 1;
 		}
 	}
@@ -6107,6 +6551,10 @@ int main(int argument_count, char **arguments)
 	{
 		ok = make_batten(&settings, &field);
 	}
+	else if (strcmp(kind, "smithy") == 0)
+	{
+		ok = make_smithy(&settings, &field);
+	}
 	else
 	{
 		ok = make_dirt(&settings, &field);
@@ -6114,7 +6562,8 @@ int main(int argument_count, char **arguments)
 	{
 		bool drystone = strcmp(kind, "drystone") == 0 || strcmp(kind, "coursed") == 0 || strcmp(kind, "weatherboard") == 0
 			|| strcmp(kind, "timber") == 0 || strcmp(kind, "planks") == 0
-			|| strcmp(kind, "old_timber") == 0 || strcmp(kind, "batten") == 0;
+			|| strcmp(kind, "old_timber") == 0 || strcmp(kind, "batten") == 0
+			|| strcmp(kind, "smithy") == 0;
 
 		ok = ok && write_field(&field, data_directory, name, settings.write_height || drystone || strcmp(kind, "relief") == 0,
 			strcmp(kind, "relief") != 0 && !drystone, drystone);
