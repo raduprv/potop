@@ -1511,3 +1511,11 @@ the four next tiles' words; none carries silt: no neighbor's aux read for
 the concentration (sediment_in stays 0, exactly what the reads gave).
 Not TILE_SEDIMENT (the silt held, from the last depths pass: erosion adds
 silt between, it could be 0 while cells send some).
+
+## Water substep: 7 dispatches, not 8 (39z12)
+
+CONTROL_RESET_TILE_LISTS is gone from the substep loop: the active and
+update counts are emptied by the arguments passes that run anyway, after
+they read them (water_control.comp CONTROL_RESET_UPDATE_AFTER on the
+first, CONTROL_RESET_ACTIVE_AFTER on the second: nothing after it reads
+the active count); the first substep's by STEP_BEGIN | RESET_TILE_LISTS.

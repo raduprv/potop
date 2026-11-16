@@ -19,6 +19,12 @@ layout(local_size_x = 1) in;
 #define CONTROL_ARGUMENTS 4
 #define CONTROL_STEP_BEGIN 8
 #define CONTROL_RESET_COUNTERS 16
+// After the arguments are written (a substep's dispatch saved: the reset
+// rides on an arguments pass that runs anyway): the update list's count
+// (after the first, its arguments not yet used), the active list's (after
+// the second: nothing after it reads it)
+#define CONTROL_RESET_UPDATE_AFTER 32
+#define CONTROL_RESET_ACTIVE_AFTER 64
 
 void write_arguments(int word, uint groups)
 {
@@ -64,5 +70,13 @@ void main()
 			control[HEADER_COUNTERS + i] = 0u;
 		}
 		control[HEADER_MOST_UPDATE_TILES] = 0u;
+	}
+	if ((mode & CONTROL_RESET_UPDATE_AFTER) != 0)
+	{
+		control[HEADER_UPDATE_COUNT] = 0u;
+	}
+	if ((mode & CONTROL_RESET_ACTIVE_AFTER) != 0)
+	{
+		control[HEADER_ACTIVE_COUNT] = 0u;
 	}
 }

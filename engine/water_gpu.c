@@ -61,6 +61,8 @@
 #define CONTROL_RESET_TILE_LISTS 1
 #define CONTROL_RESET_LIST 2
 #define CONTROL_ARGUMENTS 4
+#define CONTROL_RESET_UPDATE_AFTER 32
+#define CONTROL_RESET_ACTIVE_AFTER 64
 #define CONTROL_STEP_BEGIN 8
 #define CONTROL_RESET_COUNTERS 16
 #define TILES_ACTIVE 0
@@ -1384,19 +1386,22 @@ void water_gpu_step(water_t *water, const terrain_t *terrain, const water_settin
 		dispatch(water, state->cells_pipeline, CELLS_RAIN, (uint32_t)state->tile_count, -1);
 	}
 
-	dispatch(water, state->control_pipeline, CONTROL_STEP_BEGIN, 1, -1);
+	// (the tile lists' counts empty for the first substep; later ones have
+	// them emptied by the arguments passes: one dispatch a substep saved)
+	dispatch(water, state->control_pipeline, CONTROL_STEP_BEGIN | CONTROL_RESET_TILE_LISTS, 1, -1);
 	fill_flux_parameters(water, settings, soil_settings, step_seconds / (float)substeps);
 	for (int32_t substep = 0; substep < substeps; substep++)
 	{
-		// The active tiles; pass 1 on them
-		dispatch(water, state->control_pipeline, CONTROL_RESET_TILE_LISTS, 1, -1);
+		// The active tiles; pass 1 on them (the update list emptied once
+		// its count is read)
 		dispatch(water, state->tiles_pipeline, TILES_ACTIVE, tile_thread_groups(state), -1);
-		dispatch(water, state->control_pipeline, CONTROL_ARGUMENTS, 1, -1);
+		dispatch(water, state->control_pipeline, CONTROL_ARGUMENTS | CONTROL_RESET_UPDATE_AFTER, 1, -1);
 		dispatch(water, state->fluxes_pipeline, 0, 0, ARGUMENT_ACTIVE_TILES);
 		// The tiles taking part in pass 2: the active ones and the
-		// neighbors they woke
+		// neighbors they woke (the active list emptied for the next
+		// substep: nothing after this reads it)
 		dispatch(water, state->update_list_pipeline, 0, 0, ARGUMENT_ACTIVE_THREADS);
-		dispatch(water, state->control_pipeline, CONTROL_ARGUMENTS, 1, -1);
+		dispatch(water, state->control_pipeline, CONTROL_ARGUMENTS | CONTROL_RESET_ACTIVE_AFTER, 1, -1);
 		dispatch(water, state->depths_pipeline, 0, 0, ARGUMENT_UPDATE_TILES);
 		// Their sleep
 		dispatch(water, state->finish_pipeline, 0, 0, ARGUMENT_UPDATE_THREADS);
