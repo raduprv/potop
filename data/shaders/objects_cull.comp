@@ -155,7 +155,7 @@ layout(std140, set = UNIFORM_SET, binding = 0) uniform cull_block
 	vec4 lod_pixels;               // a model's height on screen (pixels) below which it is drawn at levels 1, 2, 3; w: a prop's levels' error (pixels, objects.prop_lod_pixels)
 	vec4 debug;                    // x: 1 the camera's pass keeps the boxes it hid (occlusion_buffer)
 	ivec4 work;                    // x: the objects looked at, y: the ranges, z: where the strays start in the order, w: where the ranges start in cell_words
-	ivec4 water;                   // x: where the cells' dry bits start in cell_words, y: 1 if they are there (the camera's pass)
+	ivec4 water;                   // x: where the cells' dry bits start in cell_words, y: 1 if they are there (the camera's pass); z: 1 the far map leaves out the plants
 	ivec4 hiz_levels[16];          // the pyramid's levels (hiz_level_table): where each starts in hiz_depths, its width, its height
 };
 
@@ -326,7 +326,9 @@ bool visible(uint slot, out uint model, out float fade, out bool impostor, out u
 	{
 		return false;
 	}
-	if (pass_kind == PASS_FAR_SHADOW && int(type_data.y) != SHADOW_ALL)
+	// (its shadow, and 8 added for a plant: the far map may leave them out,
+	// water.z, the Debug tab)
+	if (pass_kind == PASS_FAR_SHADOW && ((int(type_data.y) & 7) != SHADOW_ALL || (water.z != 0 && (int(type_data.y) & 8) != 0)))
 	{
 		return false;
 	}
@@ -356,7 +358,7 @@ bool visible(uint slot, out uint model, out float fade, out bool impostor, out u
 		float draw_distance = type_data.x * eye.w;
 		float distance = length(placement.xyz - eye.xyz);
 
-		if (distance >= draw_distance || (pass_kind == PASS_NEAR_SHADOW && int(type_data.y) == SHADOW_NONE))
+		if (distance >= draw_distance || (pass_kind == PASS_NEAR_SHADOW && (int(type_data.y) & 7) == SHADOW_NONE))
 		{
 			return false;
 		}

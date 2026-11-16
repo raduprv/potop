@@ -2863,6 +2863,30 @@ static int compare_table_draws(void *context, const void *left, const void *righ
 
 // The tables that do not change while the game runs: per type, per model,
 // and the draws (every material of every model)
+
+// Whether a type is a plant (its category: trees, bushes, grass, flowers,
+// crops, cacti, water plants), for the far shadow map left without them
+// (render.debug_far_shadow_no_plants)
+static bool type_is_plant(const objects_t *objects, const object_type_t *type)
+{
+	static const char *const plants[] = { "trees", "bushes", "grass", "flowers", "crops", "cacti", "water plants" };
+	const char *category;
+
+	if (type->category < 0 || type->category >= objects->types.category_count)
+	{
+		return false;
+	}
+	category = objects->types.categories[type->category];
+	for (size_t i = 0; i < SDL_arraysize(plants); i++)
+	{
+		if (SDL_strcmp(category, plants[i]) == 0)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 static bool upload_tables(objects_t *objects)
 {
 	int type_count = SDL_max(objects->types.type_count, 1);
@@ -2902,7 +2926,8 @@ static bool upload_tables(objects_t *objects)
 			const object_type_t *type = &objects->types.types[t];
 
 			types[4 * t] = type->draw_distance_meters;
-			types[4 * t + 1] = type->shadow == OBJECT_SHADOW_ALL ? 2.0f : type->shadow == OBJECT_SHADOW_NEAR ? 1.0f : 0.0f;
+			types[4 * t + 1] = (type->shadow == OBJECT_SHADOW_ALL ? 2.0f : type->shadow == OBJECT_SHADOW_NEAR ? 1.0f : 0.0f)
+				+ (type_is_plant(objects, type) ? 8.0f : 0.0f);
 			// The box comes from the type's own model, whatever it looks like now
 			types[4 * t + 2] = (float)SDL_max(type->model, 0);
 			// (all of them there, until objects_update_seasons says)
@@ -3917,6 +3942,7 @@ static void cull_pass(objects_t *objects, pass_t pass, const frustum_t *frustum,
 	uniforms.work[3] = (int32_t)(2u * objects->cell_words_used);
 	uniforms.water[0] = (int32_t)objects->cell_words_used;
 	uniforms.water[1] = pass == PASS_CAMERA && objects->dry_water != NULL && objects->dry_water->tile_state != NULL ? 1 : 0;
+	uniforms.water[2] = pass == PASS_FAR_SHADOW && objects->far_shadow_no_plants ? 1 : 0;
 	uniforms.model_count = objects->model_count;
 	uniforms.draw_count = objects->draw_count;
 	uniforms.capacity = (int32_t)objects->instance_capacity_per_pass[pass];

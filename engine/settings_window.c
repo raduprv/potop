@@ -445,6 +445,8 @@ static const ui_setting_t ui_settings[] = {
 		"The big shadow map (the terrain, everything standing) neither drawn nor used: what it costs", false },
 	{ TAB_DEBUG, "render", "debug_near_shadow_off", "Near shadow map off", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
 		"The near shadow map (round you: the small things, the actors) neither drawn nor used: what it costs", false },
+	{ TAB_DEBUG, "render", "debug_far_shadow_no_plants", "Far shadow map without plants", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
+		"The big shadow map drawn without the trees, bushes, grass and crops: how their far shadows look and what they cost", false },
 	HEADING(TAB_DEBUG, "Water drawing"),
 	{ TAB_DEBUG, "render", "water_depth_test", "Water depth test", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
 		"Off: the water is drawn over everything, hills in front of it included (debugging)", false },

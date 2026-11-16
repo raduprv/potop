@@ -123,6 +123,7 @@ typedef struct
 	bool far_shadow_off;           // the World window (debugging): the far shadow map neither drawn nor used
 	bool near_shadow_off;          // ... the near one
 	bool shadows_were_off[2];      // the far and the near map off the frame before (either way): back on, drawn again
+	bool far_shadow_had_plants;     // render.debug_far_shadow_no_plants as the far map was last drawn (switched: drawn again)
 	// The temporal anti-aliasing (post_temporal): the frames counted (the
 	// jitter's pattern), this frame's view and projection unjittered and its
 	// inverse, last frame's, whether there was one

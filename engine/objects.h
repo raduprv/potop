@@ -280,6 +280,7 @@ typedef struct
 	SDL_GPUComputePipeline *update_pipeline;
 	int prepared_pass;                 // the pass the instance buffer was last filled for, -1 none
 	float far_shadow_least_height;     // the far shadow map's pass leaves out what is lower (objects_prepare_sky_occlusion)
+	bool far_shadow_no_plants;         // the far shadow map's pass leaves out the plants (render.debug_far_shadow_no_plants)
 	float far_shadow_small_meters;     // ...and always what is lower than this (stones, bushes: the near map has them)
 	// The draws: each material of each model, in order
 	int *draw_models;

@@ -449,6 +449,12 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 		{
 			world->near_shadow.needs_render = true;
 		}
+		// (its plants switched on or off: drawn again)
+		if (world->far_shadow_had_plants != !world->settings->render.debug_far_shadow_no_plants)
+		{
+			world->far_shadow_had_plants = !world->settings->render.debug_far_shadow_no_plants;
+			world->shadow.needs_render = true;
+		}
 		world->shadows_were_off[0] = far_off;
 		world->shadows_were_off[1] = near_off;
 	}
@@ -464,7 +470,9 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 		frame_profile_count(FRAME_SHADOW_REDRAWS, 1);
 		shadow_map_update_projection(&world->shadow, &world->terrain, terrain_renderer_sun_direction(&world->lit_render));
 		gpu_timer_begin(&world->gpu_timer, GPU_PASS_SHADOW);
+		world->objects.far_shadow_no_plants = world->settings->render.debug_far_shadow_no_plants;
 		objects_prepare_shadow(&world->objects, &world->shadow, NULL);
+		world->objects.far_shadow_no_plants = false;
 		{
 			SDL_GPURenderPass *pass = shadow_map_begin(&world->shadow);
 

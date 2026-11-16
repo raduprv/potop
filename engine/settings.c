@@ -230,6 +230,7 @@ static const setting_field_t setting_fields[] =
 	FIELD("render", "water_depth_test", SETTING_BOOL, render.water_depth_test),
 	FIELD("render", "debug_far_shadow_off", SETTING_BOOL, render.debug_far_shadow_off),
 	FIELD("render", "debug_near_shadow_off", SETTING_BOOL, render.debug_near_shadow_off),
+	FIELD("render", "debug_far_shadow_no_plants", SETTING_BOOL, render.debug_far_shadow_no_plants),
 	FIELD("render", "water_depth_write", SETTING_BOOL, render.water_depth_write),
 	FIELD("render", "water_cull_back_faces", SETTING_BOOL, render.water_cull_back_faces),
 	FIELD("render", "underwater_visibility_meters", SETTING_FLOAT, render.underwater_visibility_meters),
