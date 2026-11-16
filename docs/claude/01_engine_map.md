@@ -1347,3 +1347,13 @@ material_map.c's CPU value_noise is noise_lattice_value (the patches
 match the shaders). The pattern is new (other dice: the ground's patches,
 the moss and lichen on a given stone land elsewhere), same rules. Period:
 512 cells (at x0.6, 850 m).
+
+## Shadow filter: 4 taps (39y)
+
+shadow_lookup (shadows.glsl) was 3x3 hardware PCF taps spread 1.5 texels
+(far map) / 0.75 (near). Now Castano's 4 taps: exactly the 3x3 at one
+texel's spacing (per axis texel weights 1-f, 1, 1, f as two bilinear taps
+weighted 2-f and 1+f), for both maps; the spread parameter is gone. So the
+far map's edges a little harder (about 4 texels across instead of 5), the
+near map's a little softer (4 instead of 3.5). Radu's choice; if the near
+map's twigs wash out, the fallback is 9 taps at 0.75 for the near map only.

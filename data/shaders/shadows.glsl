@@ -11,22 +11,27 @@
 layout(set = TEXTURE_SET, binding = 0) uniform sampler2DShadow shadow_texture;       // far cascade
 layout(set = TEXTURE_SET, binding = 1) uniform sampler2DShadow near_shadow_texture;  // near cascade
 
-// Nine hardware filtered taps (each already a 2x2 comparison) give soft
-// edges; spread is the tap spacing in texels. position is in the map's
-// 0..1 texture space.
-float shadow_lookup(sampler2DShadow map, vec3 position, float texel_size, float spread)
+// Soft edges: what nine hardware filtered taps (each already a 2x2
+// comparison) a texel apart would give, from four (Castano's way). Along
+// each axis the three taps weigh the four texels under them 1 - f, 1, 1, f
+// (f: where the point is between texel centers); two taps weigh them the
+// same, each between the two texels of its pair where the filter's own
+// blend gives their ratio, weighted 2 - f and 1 + f. position is in the
+// map's 0..1 texture space; texel_size its texel (square)
+float shadow_lookup(sampler2DShadow map, vec3 position, float texel_size)
 {
-	float lit = 0.0;
+	vec2 texels = position.xy / texel_size - 0.5;
+	vec2 corner = floor(texels);
+	vec2 fraction = texels - corner;
+	vec2 weight_low = 2.0 - fraction;
+	vec2 weight_high = 1.0 + fraction;
+	vec2 at_low = (corner - 0.5 + 1.0 / weight_low) * texel_size;
+	vec2 at_high = (corner + 1.5 + fraction / weight_high) * texel_size;
+	float lit = weight_low.x * weight_low.y * textureLod(map, vec3(at_low.x, at_low.y, position.z), 0.0)
+		+ weight_high.x * weight_low.y * textureLod(map, vec3(at_high.x, at_low.y, position.z), 0.0)
+		+ weight_low.x * weight_high.y * textureLod(map, vec3(at_low.x, at_high.y, position.z), 0.0)
+		+ weight_high.x * weight_high.y * textureLod(map, vec3(at_high.x, at_high.y, position.z), 0.0);
 
-	for (int offset_y = -1; offset_y <= 1; offset_y++)
-	{
-		for (int offset_x = -1; offset_x <= 1; offset_x++)
-		{
-			vec2 offset = vec2(float(offset_x), float(offset_y)) * texel_size * spread;
-
-			lit += textureLod(map, vec3(position.xy + offset, position.z), 0.0);
-		}
-	}
 	return lit / 9.0;
 }
 
@@ -57,13 +62,11 @@ float sun_visibility(vec4 far_clip, vec4 near_clip)
 	if (shadow_texel_size > 0.0 && near_weight < 1.0 && far_position.x >= 0.0 && far_position.x <= 1.0 && far_position.y >= 0.0 && far_position.y <= 1.0
 		&& far_position.z <= 1.0)
 	{
-		far_lit = shadow_lookup(shadow_texture, far_position, shadow_texel_size, 1.5);
+		far_lit = shadow_lookup(shadow_texture, far_position, shadow_texel_size);
 	}
 	if (near_weight > 0.0)
 	{
-		// Tighter: the near map is fine enough for twigs, a wide blur
-		// would wash them out
-		near_lit = shadow_lookup(near_shadow_texture, near_position, near_shadow_texel_size, 0.75);
+		near_lit = shadow_lookup(near_shadow_texture, near_position, near_shadow_texel_size);
 	}
 	return mix(1.0, mix(far_lit, near_lit, near_weight), shadow_strength);
 }
