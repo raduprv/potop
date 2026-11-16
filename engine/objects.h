@@ -184,6 +184,17 @@ typedef struct
 	// grid_first[cells + 1] - 1, and culled one by one
 	int grid_size;
 	int *grid_first;
+	// Each cell's runs of one type (sorted by draw distance, a type's
+	// objects lie together): cell c's are run_first[c] .. run_first[c + 1]
+	// - 1, each where it starts in the instances and its type. The models
+	// in view are marked by these, not object by object (objects_sort makes
+	// them; run_cells: the cell count they were made for)
+	int *run_first;
+	int *run_start;
+	int *run_type;
+	int run_count;
+	int run_capacity;
+	int run_cells;
 	float *grid_minimum_y;
 	float *grid_maximum_y;
 	float *grid_draw_distance;

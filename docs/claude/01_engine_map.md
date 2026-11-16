@@ -1490,3 +1490,14 @@ only where the ground under it moved by 2 cm or more: risen, the body goes
 up by that much (not to the top) and wakes; sunk, it wakes and falls.
 Tools' changes keep the old lift. (The wet / deep_enough wake conditions
 from the two misses stay: harmless, sensible.)
+
+## Models in view by type runs (39z10)
+
+find_cells marked the models in view object by object over every visible
+cell's range (the big instance array, every frame, camera and near
+shadow). objects_sort now ends with make_type_runs: each cell's runs of
+one type (a type's objects lie together, sorted by draw distance):
+run_first[cell] .. run_first[cell + 1] - 1, run_start / run_type. The
+frame marks by runs whose start is before the binary search's cut. A type
+changed since the sort is a stray (marked by the strays' loop); added
+ones by the tail's. run_cells != cell count (memory out): the old loop.

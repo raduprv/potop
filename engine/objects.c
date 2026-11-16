@@ -952,6 +952,9 @@ void objects_destroy(objects_t *objects)
 	SDL_free(objects->sort_scratch);
 	SDL_free(objects->id_slots);
 	SDL_free(objects->grid_first);
+	SDL_free(objects->run_first);
+	SDL_free(objects->run_start);
+	SDL_free(objects->run_type);
 	SDL_free(objects->ray_cell_stamps);
 	objects->ray_cell_stamps = NULL;
 	SDL_free(objects->grid_minimum_y);
@@ -2248,6 +2251,59 @@ static bool follows_water(const objects_t *objects, const object_instance_t *ins
 	return type->floats && type->physics != OBJECT_PHYSICS_BODY && !(instance->state & OBJECT_STATE_FREE);
 }
 
+// Each cell's runs of one type (see objects_t.run_first); left unmade
+// (run_cells 0: the models in view then marked object by object) if memory
+// runs out
+static void make_type_runs(objects_t *objects, int cell_count)
+{
+	int *first = SDL_realloc(objects->run_first, sizeof(int) * ((size_t)cell_count + 1));
+
+	objects->run_cells = 0;
+	if (first == NULL)
+	{
+		return;
+	}
+	objects->run_first = first;
+	objects->run_count = 0;
+	for (int c = 0; c < cell_count; c++)
+	{
+		objects->run_first[c] = objects->run_count;
+		for (int k = objects->grid_first[c]; k < objects->grid_first[c + 1]; k++)
+		{
+			int type = objects->instances[k].type;
+
+			if (k > objects->grid_first[c] && objects->instances[k - 1].type == type)
+			{
+				continue;
+			}
+			if (objects->run_count == objects->run_capacity)
+			{
+				int capacity = SDL_max(objects->run_capacity * 2, 1024);
+				int *starts = SDL_realloc(objects->run_start, sizeof(int) * (size_t)capacity);
+				int *types;
+
+				if (starts == NULL)
+				{
+					return;
+				}
+				objects->run_start = starts;
+				types = SDL_realloc(objects->run_type, sizeof(int) * (size_t)capacity);
+				if (types == NULL)
+				{
+					return;
+				}
+				objects->run_type = types;
+				objects->run_capacity = capacity;
+			}
+			objects->run_start[objects->run_count] = k;
+			objects->run_type[objects->run_count] = type;
+			objects->run_count++;
+		}
+	}
+	objects->run_first[cell_count] = objects->run_count;
+	objects->run_cells = cell_count;
+}
+
 void objects_sort(objects_t *objects)
 {
 	int cell_count = objects->grid_size * objects->grid_size;
@@ -2309,6 +2365,7 @@ void objects_sort(objects_t *objects)
 	{
 		update_cell_bounds(objects, c);
 	}
+	make_type_runs(objects, cell_count);
 
 	// The floating ones, which follow the water every frame
 	objects->floating_count = 0;
@@ -3615,7 +3672,16 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 			add_order_range(objects, (uint32_t)first, (uint32_t)SDL_min(last, objects->sorted_count), &range_count, &work_total);
 			// (the cell's objects the GPU may draw: what is past its draw
 			// distance is not among them)
-			if (in_view != NULL)
+			// By its runs of one type (a type turned into another since
+			// the sort is a stray: marked below), not object by object
+			if (in_view != NULL && objects->run_cells == cell_count)
+			{
+				for (int r = objects->run_first[cell]; r < objects->run_first[cell + 1] && objects->run_start[r] < last; r++)
+				{
+					mark_type_models(objects, in_view, objects->run_type[r]);
+				}
+			}
+			else if (in_view != NULL)
 			{
 				for (int k = first; k < last; k++)
 				{
