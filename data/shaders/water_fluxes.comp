@@ -25,6 +25,7 @@ bool frozen_at(int x, int y)
 layout(local_size_x = 256) in;
 
 shared uint shared_wake_requests;
+shared uint shared_carries_sediment;
 
 float depth_to_seven_thirds(float depth)
 {
@@ -70,6 +71,7 @@ void main()
 	if (gl_LocalInvocationID.x == 0u)
 	{
 		shared_wake_requests = 0u;
+		shared_carries_sediment = 0u;
 	}
 	barrier();
 
@@ -276,6 +278,10 @@ void main()
 			{
 				auxes[cell] = uvec2(concentration_bits, aux.y);
 			}
+			if (concentration > 0.0)
+			{
+				shared_carries_sediment = 1u;
+			}
 		}
 	}
 
@@ -283,5 +289,6 @@ void main()
 	if (gl_LocalInvocationID.x == 0u)
 	{
 		control[tile_word(tile, TILE_WAKE_REQUESTS)] = shared_wake_requests;
+		control[tile_word(tile, TILE_CARRIES_SEDIMENT)] = shared_carries_sediment;
 	}
 }

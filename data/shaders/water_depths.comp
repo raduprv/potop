@@ -75,6 +75,13 @@ void main()
 	bool skip_right = tile_x < tiles_per_side - 1 && control[tile_word(tile + 1u, TILE_IN_UPDATE)] == 0u;
 	bool skip_back = tile_y > 0 && control[tile_word(tile - uint(tiles_per_side), TILE_IN_UPDATE)] == 0u;
 	bool skip_front = tile_y < tiles_per_side - 1 && control[tile_word(tile + uint(tiles_per_side), TILE_IN_UPDATE)] == 0u;
+	// Clean water round it (no cell of it or the next tiles sends silt):
+	// the neighbors' concentrations not read at all
+	bool silt_around = control[tile_word(tile, TILE_CARRIES_SEDIMENT)] != 0u
+		|| (tile_x > 0 && control[tile_word(tile - 1u, TILE_CARRIES_SEDIMENT)] != 0u)
+		|| (tile_x < tiles_per_side - 1 && control[tile_word(tile + 1u, TILE_CARRIES_SEDIMENT)] != 0u)
+		|| (tile_y > 0 && control[tile_word(tile - uint(tiles_per_side), TILE_CARRIES_SEDIMENT)] != 0u)
+		|| (tile_y < tiles_per_side - 1 && control[tile_word(tile + uint(tiles_per_side), TILE_CARRIES_SEDIMENT)] != 0u);
 
 	if (gl_LocalInvocationID.x == 0u)
 	{
@@ -152,8 +159,9 @@ void main()
 				int received = flux_units(theirs[direction ^ 1]);
 
 				inflow += received;
-				// (their concentration only where they send)
-				if (received > 0)
+				// (their concentration only where they send, and only with
+				// silt about)
+				if (received > 0 && silt_around)
 				{
 					sediment_in += sediment_units(received, uintBitsToFloat(auxes[neighbor].x));
 				}

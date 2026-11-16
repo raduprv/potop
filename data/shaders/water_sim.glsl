@@ -95,6 +95,7 @@
 #define STEEP_RISE_CELLS 1.5        // a drop of this many cells' widths is steep (waterfalls.c's STEEP_RISE)
 #define STEEP_WET_UNITS 1000        // water this deep counts (waterfalls.c's WET_METERS, 1 cm)
 #define TILE_SETTLE_STEPS 17        // erosion keeps checking the banks this many steps after a change
+#define TILE_CARRIES_SEDIMENT 18    // 1 if a cell of it sends silt with its water (water_fluxes.comp, the last time it ran): its neighbors read the concentrations
 #define TILE_WORDS 24
 
 #define TILE_FLAG_CPU_DIRTY 1u      // the CPU's copy is out of date

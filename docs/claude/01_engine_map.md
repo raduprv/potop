@@ -1501,3 +1501,13 @@ run_first[cell] .. run_first[cell + 1] - 1, run_start / run_type. The
 frame marks by runs whose start is before the binary search's cut. A type
 changed since the sort is a stray (marked by the strays' loop); added
 ones by the tail's. run_cells != cell count (memory out): the old loop.
+
+## Clean water: no neighbor concentration reads (39z11)
+
+water_fluxes.comp writes TILE_CARRIES_SEDIMENT (tile word 18): 1 if any
+cell of the tile sends silt this run (concentration > 0), kept till it
+runs again, as its cells' aux.x are. water_depths.comp reads its own and
+the four next tiles' words; none carries silt: no neighbor's aux read for
+the concentration (sediment_in stays 0, exactly what the reads gave).
+Not TILE_SEDIMENT (the silt held, from the last depths pass: erosion adds
+silt between, it could be 0 while cells send some).
