@@ -2433,6 +2433,9 @@ void objects_follow_terrain(objects_t *objects, terrain_t *terrain)
 				{
 					continue;
 				}
+				// (DEBUG, temporary: the rocks that hop when water moves)
+				SDL_Log("DEBUG hop: %s at (%.1f, %.1f) follows the ground %+.3f m", objects->types.types[instance->type].name,
+					(double)instance->x, (double)instance->z, (double)(ground - instance->ground_height));
 				instance->ground_height = ground;
 				objects_touch(objects, k);
 				moved++;

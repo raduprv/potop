@@ -381,8 +381,16 @@ static void wake_body_in_rectangle(physics_t *physics, objects_t *objects, const
 		if (body->x >= minimum_x && body->x <= maximum_x && body->z >= minimum_z && body->z <= maximum_z)
 		{
 			object_instance_t *instance = &objects->instances[body->instance];
+			float before = instance->ground_height;
 
 			objects_refresh_ground(objects, terrain, body->instance);
+			// (DEBUG, temporary: the rocks that hop when water moves)
+			if (SDL_fabsf(instance->ground_height - before) > 0.01f)
+			{
+				SDL_Log("DEBUG hop: fixed %s at (%.1f, %.1f) put on new ground %+.3f m (rectangle %.0f..%.0f, %.0f..%.0f)",
+					objects->types.types[instance->type].name, (double)instance->x, (double)instance->z,
+					(double)(instance->ground_height - before), (double)minimum_x, (double)maximum_x, (double)minimum_z, (double)maximum_z);
+			}
 			b3Body_SetTransform(body->id, vector(instance->x, objects_instance_base_y(instance), instance->z), instance_rotation(instance));
 		}
 		return;
@@ -390,6 +398,14 @@ static void wake_body_in_rectangle(physics_t *physics, objects_t *objects, const
 	if (body->x >= minimum_x && body->x <= maximum_x && body->z >= minimum_z && body->z <= maximum_z)
 	{
 		float clearance = lift_above_ground(body->id, terrain);
+
+		// (DEBUG, temporary: the rocks that hop when water moves)
+		if (clearance < -0.01f || clearance > 0.05f)
+		{
+			SDL_Log("DEBUG hop: loose %s at (%.1f, %.1f) clearance %+.3f m: %s (rectangle %.0f..%.0f, %.0f..%.0f)",
+				objects->types.types[objects->instances[body->instance].type].name, (double)body->x, (double)body->z, (double)clearance,
+				clearance < 0.0f ? "lifted" : "woken", (double)minimum_x, (double)maximum_x, (double)minimum_z, (double)maximum_z);
+		}
 
 		// Only where the ground under it changed: it was lifted, or
 		// the ground went away under it
