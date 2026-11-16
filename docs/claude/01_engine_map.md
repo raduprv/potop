@@ -1414,3 +1414,17 @@ DepthGreater): what it writes is never nearer than the square, so the GPU
 may still reject hidden pixels first. The margin: the pictures' depth is
 taken along the axis to the middle, a corner's point off its own ray by up
 to about radius^2 / distance.
+
+## Grass scatter: only the part of each square the view reaches (39z6)
+
+Fable: each level dispatched its whole square round the eye; most spots
+fell out of the ring or out of view, and the frustum test came after the
+ground's four reads. Now grass_prepare bounds what the view can reach: a
+seen blade is within distance across and within rise (eye to lowest or
+highest ground, + 2 m) up or down, so within reach = sqrt(d^2 + rise^2) of
+the eye, so inside the view's pyramid cut at depth reach; the x, z box of
+the eye and the four corner rays at that depth (+3 m) is cut with each
+level's square. columns in grid.z, rows in control.w (was a square side).
+In the shader, before ground_height: each plane tested with the height
+unknown (the most the plane's y term can give between 0 and the highest
+ground + 2 blades). Same picture.

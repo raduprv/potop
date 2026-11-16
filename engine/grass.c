@@ -212,6 +212,10 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 	float estimate;
 	uint32_t capacity;
 	int level_count;
+	float view_minimum_x;
+	float view_maximum_x;
+	float view_minimum_z;
+	float view_maximum_z;
 
 	grass->prepared = false;
 	if (grass->failed || !settings->grass || world->height_texture == NULL || world->water_texture == NULL || world->flow_texture == NULL
@@ -299,6 +303,44 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 		return;
 	}
 	dispatch(grass, command_buffer, world, &uniforms, GRASS_CLEAR, 1);
+	// What the view can reach: every spot a blade can be seen at is within
+	// distance (across) and between the lowest ground and the highest (up
+	// and down), so within reach of the eye, so in the view's pyramid cut
+	// at that depth: its corners' x, z bound it (a level looks only at
+	// that part of its square)
+	{
+		float rise = SDL_max(camera->eye_position.y, world->max_height_meters - camera->eye_position.y) + 2.0f;
+		float reach = SDL_sqrtf(distance * distance + rise * rise);
+		vec4_t middle_near = mat4_transform(camera->inverse_view_projection, (vec4_t){ 0.0f, 0.0f, -1.0f, 1.0f });
+		vec4_t middle_far = mat4_transform(camera->inverse_view_projection, (vec4_t){ 0.0f, 0.0f, 1.0f, 1.0f });
+		vec3_t forward = vec3_normalize(vec3_subtract(vec3_scale(vec3_make(middle_far.x, middle_far.y, middle_far.z), 1.0f / middle_far.w),
+			vec3_scale(vec3_make(middle_near.x, middle_near.y, middle_near.z), 1.0f / middle_near.w)));
+
+		view_minimum_x = view_maximum_x = camera->eye_position.x;
+		view_minimum_z = view_maximum_z = camera->eye_position.z;
+		for (int corner = 0; corner < 4; corner++)
+		{
+			float ndc_x = (corner & 1) != 0 ? 1.0f : -1.0f;
+			float ndc_y = (corner & 2) != 0 ? 1.0f : -1.0f;
+			vec4_t near_point = mat4_transform(camera->inverse_view_projection, (vec4_t){ ndc_x, ndc_y, -1.0f, 1.0f });
+			vec4_t far_point = mat4_transform(camera->inverse_view_projection, (vec4_t){ ndc_x, ndc_y, 1.0f, 1.0f });
+			vec3_t way = vec3_normalize(vec3_subtract(vec3_scale(vec3_make(far_point.x, far_point.y, far_point.z), 1.0f / far_point.w),
+				vec3_scale(vec3_make(near_point.x, near_point.y, near_point.z), 1.0f / near_point.w)));
+			float along = SDL_max(vec3_dot(way, forward), 0.05f);
+			float x = camera->eye_position.x + way.x * reach / along;
+			float z = camera->eye_position.z + way.z * reach / along;
+
+			view_minimum_x = SDL_min(view_minimum_x, x);
+			view_maximum_x = SDL_max(view_maximum_x, x);
+			view_minimum_z = SDL_min(view_minimum_z, z);
+			view_maximum_z = SDL_max(view_maximum_z, z);
+		}
+		// (a blade's lean, its cell, the near plane's own corners)
+		view_minimum_x -= 3.0f;
+		view_minimum_z -= 3.0f;
+		view_maximum_x += 3.0f;
+		view_maximum_z += 3.0f;
+	}
 	// Ring by ring: level 0 out to the full radius on the fine grid, level
 	// L >= 1 from full_radius * 2^(L-1) to twice that, on a grid 2^(L-1)
 	// times as coarse
@@ -312,19 +354,34 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 	{
 		float level_spacing = level == 0 ? spacing : spacing * SDL_powf(2.0f, (float)level - 1.0f);
 		float outer = SDL_min(level == 0 ? full_radius : full_radius * SDL_powf(2.0f, (float)level), distance);
-		uint32_t side = (uint32_t)SDL_ceilf(2.0f * outer / level_spacing) + 1;
+		// Its square round the eye, cut to what the view can reach
+		float first_x = SDL_max(camera->eye_position.x - outer, view_minimum_x);
+		float first_z = SDL_max(camera->eye_position.z - outer, view_minimum_z);
+		float last_x = SDL_min(camera->eye_position.x + outer, view_maximum_x);
+		float last_z = SDL_min(camera->eye_position.z + outer, view_maximum_z);
+		uint32_t largest_side = (uint32_t)SDL_sqrtf((float)GRASS_MAXIMUM_GROUPS * (float)GRASS_THREADS);
+		uint32_t columns;
+		uint32_t rows;
 		uint32_t threads;
 
+		if (last_x <= first_x || last_z <= first_z)
+		{
+			continue;
+		}
+		columns = (uint32_t)SDL_ceilf((last_x - first_x) / level_spacing) + 1;
+		rows = (uint32_t)SDL_ceilf((last_z - first_z) / level_spacing) + 1;
 		// A level too big to look at in one go (a huge density far out):
 		// what fits
-		side = SDL_min(side, (uint32_t)SDL_sqrtf((float)GRASS_MAXIMUM_GROUPS * (float)GRASS_THREADS));
-		threads = side * side;
+		columns = SDL_min(columns, largest_side);
+		rows = SDL_min(rows, largest_side);
+		threads = columns * rows;
 		uniforms.grid[0] = level_spacing;
 		uniforms.grid[1] = (float)level;
-		uniforms.grid[2] = (float)side;
+		uniforms.grid[2] = (float)columns;
 		uniforms.grid[3] = full_radius;
-		uniforms.grid_origin[0] = camera->eye_position.x - outer;
-		uniforms.grid_origin[1] = camera->eye_position.z - outer;
+		uniforms.grid_origin[0] = first_x;
+		uniforms.grid_origin[1] = first_z;
+		uniforms.control[3] = (int32_t)rows;
 		dispatch(grass, command_buffer, world, &uniforms, GRASS_SCATTER, threads);
 		grass->candidate_count += threads;
 	}

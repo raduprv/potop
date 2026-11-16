@@ -106,13 +106,13 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform grass_block
 {
 	vec4 planes[6];            // the view's frustum (inside: dot(plane.xyz, p) + plane.w >= 0)
 	vec4 eye;                  // xyz; w: how far the grass goes (meters)
-	vec4 grid;                 // this level's spacing (m), its level, its spots per side, full_radius (m)
+	vec4 grid;                 // this level's spacing (m), its level, its spots across (its rows: control.w), full_radius (m)
 	vec4 grid_origin;          // x, z of its first spot's cell (meters); z: the finest spacing; w: blades the buffer holds
 	vec4 map;                  // cells per side, cell size (m), the soils' blend (cells), unused
 	vec4 slopes;               // grass from, grass to, cliff from, cliff to (terrain.frag's slope_ranges)
 	vec4 terrain;              // snow line (of the highest ground), its shift with the sun, the highest ground (m), 1 / the variation's tiling (m)
 	vec4 blade;                // a blade's height (m), its width (m), the sun's x, z (towards it)
-	ivec4 control;             // mode, the material map (1: read it), the overlay (1: read it), unused
+	ivec4 control;             // mode, the material map (1: read it), the overlay (1: read it), this level's rows (grid.z its columns)
 	vec4 material_patches[MATERIAL_COUNT]; // terrain.frag's: repeats per meter, strength, edge (meters)
 	mat4 hiz_view_projection;  // the camera's the pyramid was made with (depth 0..1)
 	vec4 hiz_size;             // level 0's width and height, the level count, 1 if it is there
@@ -443,7 +443,7 @@ void main()
 	uint side = uint(grid.z);
 	uint index = gl_GlobalInvocationID.x;
 
-	if (index >= side * side)
+	if (index >= side * uint(control.w))
 	{
 		return;
 	}
@@ -491,6 +491,18 @@ void main()
 	if (threshold >= kept)
 	{
 		return;
+	}
+	// Out of view whatever the ground's height there (from the lowest to the
+	// highest ground, a blade over it): before the ground's four reads
+	for (int i = 0; i < 6; i++)
+	{
+		float across = dot(planes[i].xz, world_xz) + planes[i].w;
+		float most = across + max(0.0, planes[i].y * (terrain.z + 2.0 * blade.x));
+
+		if (most < -(blade.x + 0.3))
+		{
+			return;
+		}
 	}
 	// Coming or going: smaller the nearer the share is to its threshold
 	float thinning = clamp((kept - threshold) / max(0.4 * threshold, 1e-6), 0.0, 1.0);
