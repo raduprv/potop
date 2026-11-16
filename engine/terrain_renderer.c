@@ -67,6 +67,8 @@ typedef struct
 	int32_t navigation_overlay;
 	int32_t material_map;
 	int32_t padding[2];
+	float macro_averages[MATERIAL_COUNT][4];   // each material's macro texture's average (rgb as the texture holds it; a: its luminance)
+	float grass_green[4];                      // rock_weathering's green: the grass's own texture's average, linear, times 0.8
 } terrain_fragment_uniforms_t;
 
 // The per chunk block of terrain.vert (chunk_block), std140
@@ -1653,6 +1655,28 @@ void terrain_renderer_draw(terrain_renderer_t *renderer, SDL_GPURenderPass *pass
 		fragment.material_patches[i][1] = materials->patch_strength[i];
 		fragment.material_patches[i][2] = materials->patch_edge_meters[i];
 		fragment.material_patches[i][3] = 1.0f / SDL_max(materials->relief_meters[i], 0.5f);
+		// (the same every pixel: worked out here once, not read from the
+		// smallest level per pixel)
+		if (materials->macro_layer[i] >= 0 && materials->macro_layer[i] < MATERIAL_MAX_LAYERS)
+		{
+			const uint8_t *average = materials->layer_average[materials->macro_layer[i]];
+
+			for (int c = 0; c < 3; c++)
+			{
+				fragment.macro_averages[i][c] = (float)average[c] / 255.0f;
+			}
+			fragment.macro_averages[i][3] = fragment.macro_averages[i][0] * 0.3f + fragment.macro_averages[i][1] * 0.59f
+				+ fragment.macro_averages[i][2] * 0.11f;
+		}
+	}
+	if (materials->first_layer[MATERIAL_GRASS] >= 0 && materials->first_layer[MATERIAL_GRASS] < MATERIAL_MAX_LAYERS)
+	{
+		const uint8_t *average = materials->layer_average[materials->first_layer[MATERIAL_GRASS]];
+
+		for (int c = 0; c < 3; c++)
+		{
+			fragment.grass_green[c] = SDL_powf((float)average[c] / 255.0f, 2.2f) * 0.8f;
+		}
 	}
 	fragment.brush_line[0] = brush->start_x;
 	fragment.brush_line[1] = brush->start_z;

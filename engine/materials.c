@@ -1152,6 +1152,11 @@ bool materials_load(material_set_t *materials, const render_settings_t *settings
 	}
 	// The big layers wait in the staging area: off to the GPU now
 	gpu_flush_uploads();
+	for (int i = 0; i < materials->layer_count && i < MATERIAL_MAX_LAYERS; i++)
+	{
+		texture_cache_layer_smallest(color_blocks + layer_block_bytes * (size_t)i, (uint32_t)size, (uint32_t)size, level_count,
+			materials->layer_average[i]);
+	}
 	SDL_free(color_blocks);
 	SDL_free(normal_blocks);
 	SDL_Log("Terrain textures: %d layers of %d x %d, %s in %.2f s", materials->layer_count, size, size,

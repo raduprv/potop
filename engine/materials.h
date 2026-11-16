@@ -99,6 +99,10 @@ typedef struct
 	// gullies and buttresses on its steep faces, relief_meters across; -1:
 	// none), layers in the arrays
 	int macro_layer[MATERIAL_COUNT];
+	// Each color layer's average (its smallest level, RGBA8: what
+	// textureLod at level 16 read in the shaders; terrain_renderer.c sends
+	// the ones it needs as uniforms)
+	uint8_t layer_average[MATERIAL_MAX_LAYERS][4];
 	int relief_layer[MATERIAL_COUNT];
 	float relief_meters[MATERIAL_COUNT];
 	// What it looks like soaked (wet_texture: clay's smooth mud, its cracks

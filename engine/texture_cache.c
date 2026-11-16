@@ -580,6 +580,19 @@ SDL_GPUTexture *texture_cache_create(uint32_t width, uint32_t height, uint32_t l
 		SDL_GPU_TEXTUREUSAGE_SAMPLER);
 }
 
+void texture_cache_layer_smallest(const uint8_t *blocks, uint32_t width, uint32_t height, uint32_t level_count, uint8_t rgba_out[4])
+{
+	size_t offset = 0;
+	uint8_t block[16 * 4];
+
+	for (uint32_t k = 0; k + 1 < level_count; k++)
+	{
+		offset += texture_cache_level_bytes(SDL_max(width >> k, 1u), SDL_max(height >> k, 1u));
+	}
+	bcdec_bc7(blocks + offset, block, 16);
+	SDL_memcpy(rgba_out, block, 4);
+}
+
 void texture_cache_upload_layer(SDL_GPUTexture *texture, uint32_t layer, uint32_t width, uint32_t height, uint32_t level_count,
 	const uint8_t *blocks)
 {

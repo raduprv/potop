@@ -61,6 +61,8 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform terrain_block
 	int tile_overlay;                       // 1 shows the water tile overlay
 	int navigation_overlay;                 // 1 shows it
 	int material_map;                       // 1: the materials from the material map (0: worked out here, the old way)
+	vec4 macro_averages[MATERIAL_COUNT];    // each material's macro texture's average (its smallest level: rgb as held; a its luminance)
+	vec4 grass_green;                       // rock_weathering's green: the grass texture's average, linear, times 0.8
 };
 #include "clouds.glsl"
 #define SKY_OCCLUSION_NO_GROUND
@@ -279,9 +281,8 @@ vec4 sample_material_dry(int material, vec3 position, vec3 normal, vec3 projecti
 
 	if (macro_layer >= 0)
 	{
-		// (its average: the macro texture's smallest level)
-		vec3 average = textureLod(material_color_array, vec3(0.5, 0.5, float(macro_layer)), 16.0).rgb;
-		float shade = dot(macro.rgb, vec3(0.3, 0.59, 0.11)) / max(dot(average, vec3(0.3, 0.59, 0.11)), 0.02);
+		// (its average: the macro texture's smallest level, terrain_renderer.c's)
+		float shade = dot(macro.rgb, vec3(0.3, 0.59, 0.11)) / max(macro_averages[material].a, 0.02);
 
 		detail.rgb *= mix(1.0, shade, 0.5);
 		detail_normal = normalize(detail_normal + (macro_normal - normal) * 0.8);
@@ -445,8 +446,8 @@ float rock_relief_height(vec3 position, vec3 normal)
 vec3 rock_weathering(vec3 albedo, vec3 position, vec3 normal, vec3 bent, float relief_height, float amount)
 {
 	vec2 at = position.xz;
-	// (from the grass's own texture: its average)
-	vec3 green = pow(textureLod(material_color_array, vec3(0.5, 0.5, float(material_layers[MATERIAL_GRASS].x)), 16.0).rgb, vec3(2.2)) * 0.8;
+	// (from the grass's own texture: its average, terrain_renderer.c's)
+	vec3 green = grass_green.rgb;
 	float north = clamp(-normal.z, 0.0, 1.0);
 	float flat_bits = smoothstep(0.5, 0.8, bent.y);
 	float patches = smoothstep(0.45, 0.75, value_noise(at / 7.0 + position.y / 9.0) * 0.6 + value_noise(at / 23.0 + 5.0) * 0.6

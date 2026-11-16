@@ -1382,3 +1382,13 @@ each light covers many more tiles. Now: the lights sorted nearest first
 always; in cluster_spheres a light (or decal) whose tiles x slices do not
 fit what is left is left out whole (dropped++), never cut; the room is
 262144 (was 65536; 1 MB, only the used part goes up each frame).
+
+## Texture averages as uniforms (39z3)
+
+terrain_body.glsl read textureLod(material_color_array, ..., 16.0) per
+pixel twice: the macro texture's average (sample_material's shade) and the
+grass texture's average (rock_weathering's green). Both constant: now
+materials.c decodes each color layer's smallest level (BC7, bcdec:
+texture_cache_layer_smallest) into materials->layer_average, and
+terrain_renderer.c sends terrain_block.macro_averages[material] (rgb raw,
+a luminance) and grass_green (linear, x0.8). Same picture.

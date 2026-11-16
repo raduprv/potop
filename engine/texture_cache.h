@@ -66,6 +66,11 @@ void texture_cache_name(const char *relative_path, char *name_out, size_t name_o
 // A texture (2D, or a 2D array with layer_count > 1) to hold them: BC7
 // where the GPU reads it, else RGBA8
 SDL_GPUTexture *texture_cache_create(uint32_t width, uint32_t height, uint32_t layer_count, uint32_t level_count);
+// A layer's smallest level's first texel (its blocks, every level: as
+// texture_cache_upload_layer takes them), decoded: what a shader's
+// textureLod at the last level reads, its average (RGBA8)
+void texture_cache_layer_smallest(const uint8_t *blocks, uint32_t width, uint32_t height, uint32_t level_count, uint8_t rgba_out[4]);
+
 // One layer's blocks (every level) up into it (decoded where it is RGBA8)
 void texture_cache_upload_layer(SDL_GPUTexture *texture, uint32_t layer, uint32_t width, uint32_t height, uint32_t level_count,
 	const uint8_t *blocks);
