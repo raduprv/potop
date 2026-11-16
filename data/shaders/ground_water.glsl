@@ -16,9 +16,11 @@ layout(set = TEXTURE_SET, binding = GROUND_BINDING + 4) uniform sampler2D sky_bo
 #define SKY_BOUNCE
 #include "sky_occlusion.glsl"
 
-// objects_cull.comp's: added to an object's fade when it floats or was
-// moved (objects.c's strays; only taken off the fade now)
-const float NO_MARKS_FADE = 4096.0;
+// objects_cull.comp's: added to an object's fade when there is no water
+// anywhere near it (objects.c: its grid cell, by the water's tiles): its
+// pixels skip water_at's reads (the same for all of them: no cost to the
+// branch)
+const float DRY_FADE = 4096.0;
 
 // What a surface takes (apply_water_wet): a solid thing (a rock, a house:
 // all of it), bark (less), foliage (cut out cards: nothing)
@@ -49,13 +51,13 @@ float under_water_depth(vec3 position)
 	return max(texelFetch(ground_height_texture, cell, 0).x + depth - position.y, 0.0);
 }
 
-water_at_t water_at(vec3 position)
+water_at_t water_at(vec3 position, bool dry)
 {
 	water_at_t water;
 
 	water.under = 0.0;
 	water.to_surface = 1e6;
-	if (ground_map.z < 0.5)
+	if (ground_map.z < 0.5 || dry)
 	{
 		return water;
 	}

@@ -1283,7 +1283,17 @@ water_marks.c/.h/.comp, render.water_marks, world->water_marks, the marks
 sampler (GROUND_BINDING + 2; scene_ground_bind binds 5 now,
 OBJECT_FRAGMENT_SAMPLERS 13, LIGHT_BINDING 13), scene_ground_set's third
 argument, scene_ground_marks_ready, ground_map.w (0, unused).
-Left in place, now pointless: objects.c's strays (RECORD_NO_MARKS in
-objects_cull.comp, NO_MARKS_FADE added to the fade and taken off in the
-shaders). Next: Fable's per-instance flag (water near it or not) to skip
-water_at on dry land.
+RECORD_NO_MARKS is gone (record word 7: no flags now).
+
+Dry flag (39t, Fable's idea): objects_follow_water keeps the water;
+find_cells (camera pass only) marks each visible grid cell dry when every
+water tile within its bounds + 12 m (the objects' reach) + 2 cells is
+WATER_TILE_DRY with tile_total_depth 0 (cell_dry). The cells' buffer is
+now [visible bits][dry bits][ranges]; cull_uniforms_t.water (x: dry bits
+start = cell_words_used, y: 1 on the camera pass), work.w = 2 * words
+(was cell_visible_words: the staging's room, wrong after a smaller grid).
+objects_cull.comp adds DRY_FADE (4096, the old NO_MARKS_FADE slot) to a
+grid object's fade (not loose, not strays, not impostors); the three
+shaders decode it and water_at(position, dry) returns at once. Actors
+(their own instances) always look. Checked by forcing dry -> under water:
+everything but the cow went wet.

@@ -54,9 +54,10 @@ layout(local_size_x = 256) in;
 #define MODEL_NONE 0xFFFFu
 #define IMPOSTOR 8.0
 // A record's flags: the water's marks left on the spot are not drawn on it
-// (it floats, or was moved: objects.c); NO_MARKS_FADE added to its fade
-#define RECORD_NO_MARKS 0x01u
-#define NO_MARKS_FADE 4096.0
+// DRY_FADE added to the fade of an object in a grid cell with no water
+// anywhere near (ground_water.glsl; the cell's bit in cell_words, from
+// water.x on: objects.c's find_cells)
+#define DRY_FADE 4096.0
 
 #define RECORD_WORDS 10u
 #define INSTANCE_FLOATS 15u
@@ -73,7 +74,7 @@ layout(local_size_x = 256) in;
 
 // A slot: x, y (origin), z, size; the rotation (four signed 16 bit
 // fractions); drawn model (low 16 bits, MODEL_NONE: an empty slot) and
-// type (high 16 bits); flags (RECORD_NO_MARKS); its emissive groups put
+// type (high 16 bits); flags (none now); its emissive groups put
 // out (two words: object_format.h, OBJECT_FILE_EMISSIVE_GROUPS)
 layout(std430, set = READONLY_SET, binding = 0) readonly buffer record_buffer { uint records[]; };
 // Per slot: its grid cell (CELL_NONE) and FLAG_TUMBLES
@@ -150,6 +151,7 @@ layout(std140, set = UNIFORM_SET, binding = 0) uniform cull_block
 	vec4 lod_pixels;               // a model's height on screen (pixels) below which it is drawn at levels 1, 2, 3; w: a prop's levels' error (pixels, objects.prop_lod_pixels)
 	vec4 debug;                    // x: 1 the camera's pass keeps the boxes it hid (occlusion_buffer)
 	ivec4 work;                    // x: the objects looked at, y: the ranges, z: where the strays start in the order, w: where the ranges start in cell_words
+	ivec4 water;                   // x: where the cells' dry bits start in cell_words, y: 1 if they are there (the camera's pass)
 };
 
 // The most boxes kept (objects.c's OCCLUSION_DEBUG_RECORDS)
@@ -642,10 +644,15 @@ void main()
 			instances[base + 5u] = rotation.y;
 			instances[base + 6u] = rotation.z;
 			instances[base + 7u] = rotation.w;
-			// Highlighted: the fade carries it (see object.frag), and the
-			// flags (not for impostors: they take no marks)
-			bool no_marks = (records[record + 7u] & RECORD_NO_MARKS) != 0u && model < LOD_LEVELS * uint(model_count);
-			instances[base + 8u] = fade + (int(slot) == highlight_slot ? 2.0 : 0.0) + 4.0 * level_gone + (no_marks ? NO_MARKS_FADE : 0.0);
+			// Highlighted: the fade carries it (see object.frag), and dry
+			// (in a cell with no water near; a loose one never: it may be
+			// anywhere; not for impostors: they have no water)
+			// (a stray neither: it may have left its cell)
+			uint cell_word = slot_cells[slot];
+			uint cell = cell_word & CELL_NONE;
+			bool dry = water.y != 0 && cell != CELL_NONE && (cell_word & FLAG_STRAY) == 0u && model < LOD_LEVELS * uint(model_count)
+				&& (cell_words[uint(water.x) + (cell >> 5)] & (1u << (cell & 31u))) != 0u;
+			instances[base + 8u] = fade + (int(slot) == highlight_slot ? 2.0 : 0.0) + 4.0 * level_gone + (dry ? DRY_FADE : 0.0);
 			instances[base + 9u] = uintBitsToFloat(records[record + 8u]);
 			instances[base + 10u] = uintBitsToFloat(records[record + 9u]);
 			// (its model's look, a building's: prop_body.glsl)

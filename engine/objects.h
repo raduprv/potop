@@ -234,7 +234,12 @@ typedef struct
 	SDL_GPUBuffer *update_buffer;
 	uint32_t update_capacity;          // entries
 	SDL_GPUBuffer *cell_visible_buffers[3];
-	uint32_t cell_visible_words;
+	uint32_t cell_visible_words;       // the staging's room (words)
+	uint32_t cell_words_used;          // the grid's cells' words now (the visible bits; the dry bits after them, then the ranges)
+	// The water (objects_follow_water's, this frame): the camera's pass
+	// marks the cells with no water anywhere near (by its tiles) dry, and
+	// their objects' pixels skip the water (ground_water.glsl)
+	const water_t *dry_water;
 	SDL_GPUBuffer *count_buffers[3];
 	SDL_GPUBuffer *instance_buffers[3];
 	uint32_t instance_capacity_per_pass[3];
@@ -690,7 +695,8 @@ void objects_touch(objects_t *objects, int instance_index);
 // Puts one object back on the ground under it (after the ground changed)
 void objects_refresh_ground(objects_t *objects, const terrain_t *terrain, int instance_index);
 
-// Lifts floating objects to the water surface (once per frame)
+// Lifts floating objects to the water surface (once per frame); keeps the
+// water for the camera's pass (its dry cells)
 void objects_follow_water(objects_t *objects, const water_t *water);
 
 // Finds what the camera sees and uploads it, before the scene's pass

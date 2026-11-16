@@ -2459,6 +2459,7 @@ void objects_follow_terrain(objects_t *objects, terrain_t *terrain)
 void objects_follow_water(objects_t *objects, const water_t *water)
 {
 	objects_sort(objects);
+	objects->dry_water = water;
 	if (water == NULL || water->depth == NULL)
 	{
 		return;
@@ -2494,7 +2495,6 @@ typedef enum
 #define CULL_SCATTER 4
 #define RECORD_WORDS 10
 // A record's word 7: flags (objects_cull.comp's); 8 and 9: the emissive groups put out
-static const uint32_t RECORD_NO_MARKS = 0x01u;
 #define UPDATE_WORDS 12
 #define DRAW_ARGUMENT_WORDS 5
 #define CELL_NONE 0x00FFFFFFu
@@ -2530,9 +2530,10 @@ typedef struct
 	float lod_pixels[4];
 	float debug[4];                    // x: 1 the camera's culling keeps the boxes it hid (objects_t.occlusion_shown)
 	int32_t work[4];                   // objects to look at (the ranges' total), the ranges, where the strays start in the order, where the ranges start in the cells' buffer (words)
+	int32_t water[4];                  // where the cells' dry bits start in the cells' buffer (words), 1 if they are there
 } cull_uniforms_t;
 
-SDL_COMPILE_TIME_ASSERT(cull_uniforms_size, sizeof(cull_uniforms_t) == 304);
+SDL_COMPILE_TIME_ASSERT(cull_uniforms_size, sizeof(cull_uniforms_t) == 320);
 
 // Levels of detail (objects_cull.comp): each model's objects counted per
 // level, its impostors after; a model's four vec4s in the model table
@@ -3139,9 +3140,8 @@ static void pack_slot(const objects_t *objects, int slot, uint32_t *out)
 		out[1 + 4] = (uint32_t)(uint16_t)rotation[0] | ((uint32_t)(uint16_t)rotation[1] << 16);
 		out[1 + 5] = (uint32_t)(uint16_t)rotation[2] | ((uint32_t)(uint16_t)rotation[3] << 16);
 		out[1 + 6] = (model < 0 ? MODEL_NONE : (uint32_t)model) | ((uint32_t)instance->type << 16);
-		// What the water left on this spot is not this object's if it rides
-		// the water or was ever moved (ground_water.glsl): RECORD_NO_MARKS
-		out[1 + 7] = objects->types.types[instance->type].floats || free ? RECORD_NO_MARKS : 0u;
+		// (flags: none now)
+		out[1 + 7] = 0u;
 		out[1 + 8] = instance->emissive_off[0];
 		out[1 + 9] = instance->emissive_off[1];
 		out[1 + RECORD_WORDS] = (free ? CELL_NONE : (uint32_t)grid_cell_of(objects, instance->x, instance->z))
@@ -3481,6 +3481,44 @@ static void add_order_range(objects_t *objects, uint32_t order_first, uint32_t o
 	*range_count = count + 1u;
 }
 
+// Whether no water is anywhere near grid cell (i, j)'s objects (they reach
+// over its edge by their radius, the water's surface is taken from the four
+// cells round a point: a cell more): all the water's tiles there dry
+static bool cell_dry(const objects_t *objects, int i, int j)
+{
+	const water_t *water = objects->dry_water;
+	float tile_meters;
+	float reach = 12.0f;
+	int32_t first_x;
+	int32_t first_y;
+	int32_t last_x;
+	int32_t last_y;
+
+	if (water == NULL || water->tile_state == NULL || water->tile_total_depth == NULL || water->tiles_per_side <= 0)
+	{
+		return false;
+	}
+	tile_meters = (float)WATER_TILE_SIZE * water->cell_size_meters;
+	reach += 2.0f * water->cell_size_meters;
+	first_x = clamp_int((int32_t)SDL_floorf(((float)i * OBJECTS_GRID_CELL_METERS - reach) / tile_meters), 0, water->tiles_per_side - 1);
+	first_y = clamp_int((int32_t)SDL_floorf(((float)j * OBJECTS_GRID_CELL_METERS - reach) / tile_meters), 0, water->tiles_per_side - 1);
+	last_x = clamp_int((int32_t)SDL_floorf(((float)(i + 1) * OBJECTS_GRID_CELL_METERS + reach) / tile_meters), 0, water->tiles_per_side - 1);
+	last_y = clamp_int((int32_t)SDL_floorf(((float)(j + 1) * OBJECTS_GRID_CELL_METERS + reach) / tile_meters), 0, water->tiles_per_side - 1);
+	for (int32_t y = first_y; y <= last_y; y++)
+	{
+		for (int32_t x = first_x; x <= last_x; x++)
+		{
+			int32_t tile = y * water->tiles_per_side + x;
+
+			if (water->tile_state[tile] != WATER_TILE_DRY || water->tile_total_depth[tile] > 0)
+			{
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
 // The pass's visible cells (a bit each, for the GPU) and the ranges of the
 // order it looks at (work_out: their total, range_count_out: how many);
 // returns how many objects it may draw at most
@@ -3495,7 +3533,8 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 
 	if (objects->cell_visible_staging == NULL || objects->cell_visible_words < words)
 	{
-		uint32_t *grown = SDL_realloc(objects->cell_visible_staging, sizeof(uint32_t) * words);
+		// (the visible bits, then the dry ones)
+		uint32_t *grown = SDL_realloc(objects->cell_visible_staging, sizeof(uint32_t) * 2u * words);
 
 		if (grown == NULL)
 		{
@@ -3513,7 +3552,8 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 			objects->cell_visible_capacity_bytes[p] = 0;
 		}
 	}
-	SDL_memset(objects->cell_visible_staging, 0, sizeof(uint32_t) * words);
+	objects->cell_words_used = words;
+	SDL_memset(objects->cell_visible_staging, 0, sizeof(uint32_t) * 2u * words);
 	for (int j = 0; j < objects->grid_size; j++)
 	{
 		for (int i = 0; i < objects->grid_size; i++)
@@ -3566,6 +3606,10 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 			}
 			bound += (uint32_t)(last - first);
 			objects->cell_visible_staging[cell >> 5] |= 1u << (cell & 31);
+			if (pass == PASS_CAMERA && cell_dry(objects, i, j))
+			{
+				objects->cell_visible_staging[words + (uint32_t)(cell >> 5)] |= 1u << (cell & 31);
+			}
 			// (the cells hold what was sorted: those added since are in the tail)
 			add_order_range(objects, (uint32_t)first, (uint32_t)SDL_min(last, objects->sorted_count), &range_count, &work_total);
 			// (the cell's objects the GPU may draw: what is past its draw
@@ -3621,7 +3665,7 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 	// The visible bits and, after them, the ranges, in one buffer (grown
 	// first: what goes up goes into the buffer as it is then)
 	{
-		uint32_t needed = (uint32_t)sizeof(uint32_t) * (words + 2u * SDL_max(range_count, 1u));
+		uint32_t needed = (uint32_t)sizeof(uint32_t) * (2u * words + 2u * SDL_max(range_count, 1u));
 
 		objects->cell_visible_buffers[pass] = grow_buffer(objects->cell_visible_buffers[pass], SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ,
 			&objects->cell_visible_capacity_bytes[pass], needed);
@@ -3632,10 +3676,10 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 		}
 		else
 		{
-			gpu_upload_buffer(objects->cell_visible_buffers[pass], 0, objects->cell_visible_staging, sizeof(uint32_t) * words);
+			gpu_upload_buffer(objects->cell_visible_buffers[pass], 0, objects->cell_visible_staging, sizeof(uint32_t) * 2u * words);
 			if (range_count > 0)
 			{
-				gpu_upload_buffer(objects->cell_visible_buffers[pass], words * (uint32_t)sizeof(uint32_t), objects->range_staging,
+				gpu_upload_buffer(objects->cell_visible_buffers[pass], 2u * words * (uint32_t)sizeof(uint32_t), objects->range_staging,
 					sizeof(uint32_t) * 2u * range_count);
 			}
 		}
@@ -3731,7 +3775,9 @@ static void cull_pass(objects_t *objects, pass_t pass, const frustum_t *frustum,
 	uniforms.work[0] = (int32_t)work_count;
 	uniforms.work[1] = (int32_t)range_count;
 	uniforms.work[2] = objects->instance_count;
-	uniforms.work[3] = (int32_t)objects->cell_visible_words;
+	uniforms.work[3] = (int32_t)(2u * objects->cell_words_used);
+	uniforms.water[0] = (int32_t)objects->cell_words_used;
+	uniforms.water[1] = pass == PASS_CAMERA && objects->dry_water != NULL && objects->dry_water->tile_state != NULL ? 1 : 0;
 	uniforms.model_count = objects->model_count;
 	uniforms.draw_count = objects->draw_count;
 	uniforms.capacity = (int32_t)objects->instance_capacity_per_pass[pass];

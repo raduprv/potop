@@ -433,9 +433,9 @@ void main()
 	// A highlighted object comes with 2 added to its fade (see objects.h),
 	// and 4 times how much (of 255) of what its next level of detail leaves
 	// out is gone (objects_cull.comp)
-	// (NO_MARKS_FADE added for a stray: taken off, nothing else now)
-	float marks_off = floor(fade / NO_MARKS_FADE);
-	float packed_fade = fade - NO_MARKS_FADE * marks_off;
+	// (DRY_FADE added: no water anywhere near it, ground_water.glsl)
+	float dry = floor(fade / DRY_FADE);
+	float packed_fade = fade - DRY_FADE * dry;
 	float level_steps = floor(packed_fade / 4.0);
 	float own_fade = packed_fade - 4.0 * level_steps;
 	bool highlighted = own_fade > 1.5;
@@ -657,7 +657,7 @@ void main()
 	float wet = weather.y * (0.35 + 0.65 * clamp(normal.y, 0.0, 1.0)) * (1.0 - building_shelter);
 	// The water there now (ground_water.glsl): wet under it
 	int water_kind = WATER_SOLID;
-	water_at_t water = water_at(world_position);
+	water_at_t water = water_at(world_position, dry > 0.5);
 
 	// The moss on the rocks under water
 	float water_moss = 0.0;
