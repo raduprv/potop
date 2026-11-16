@@ -1475,3 +1475,8 @@ the heightmap: on a slope a rock's middle sits over the ground below it)
 even with no water at it, then settled onto the collision tiles with a
 jerk. Now unsupported counts only with water under some sample point
 (water_push_t.wet): the ground washed away from under it.
+Not it (no "under the ground" log; a hop of a few cm): a sleeping body
+woken by a film of water (its speed, flux over next to no depth, passes
+wake_flow) settles onto the collision tiles with a hop. Now a sleeping
+body wakes from the water only when the deepest water under its points is
+at least max(5 cm, 15% of its height) (water_push_t.deepest).
