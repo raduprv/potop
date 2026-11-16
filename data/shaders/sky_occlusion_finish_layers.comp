@@ -1,0 +1,42 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+
+// The sky's occlusion (sky_occlusion.h), the end for the layers in the air:
+// as sky_occlusion_finish.comp, the four layers' sums (one under the other,
+// height texels each) into one RGBA8 texel each (r the lowest layer .. a the
+// highest): sky_occlusion.glsl reads all four at once
+
+layout(local_size_x = 256) in;
+
+layout(set = READWRITE_SET, binding = 0, r32f) uniform image2D sum_image;
+layout(set = READWRITE_SET, binding = 1, r32f) uniform image2D weight_image;
+layout(set = READWRITE_SET, binding = 2, rgba8) uniform writeonly image2D occlusion_image;
+
+layout(std140, set = UNIFORM_SET, binding = 0) uniform finish_block
+{
+	int width;                         // a layer's texels
+	int height;
+	int padding_1;
+	int padding_2;
+};
+
+void main()
+{
+	int x = int(gl_GlobalInvocationID.x);
+	int y = int(gl_GlobalInvocationID.y);
+	vec4 seen;
+
+	if (x >= width || y >= height)
+	{
+		return;
+	}
+	for (int layer = 0; layer < 4; layer++)
+	{
+		ivec2 at = ivec2(x, y + layer * height);
+		float all_seen = imageLoad(weight_image, at).x;
+
+		seen[layer] = all_seen > 1e-4 ? clamp(imageLoad(sum_image, at).x / all_seen, 0.0, 1.0) : 1.0;
+	}
+	imageStore(occlusion_image, ivec2(x, y), seen);
+}

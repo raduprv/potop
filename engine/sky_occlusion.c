@@ -93,10 +93,12 @@ bool sky_occlusion_create(sky_occlusion_t *occlusion)
 	}
 	occlusion->accumulate_pipeline = gpu_load_compute("sky_occlusion_accumulate.comp", &accumulate_layout);
 	occlusion->finish_pipeline = gpu_load_compute("sky_occlusion_finish.comp", &finish_layout);
+	occlusion->finish_layers_pipeline = gpu_load_compute("sky_occlusion_finish_layers.comp", &finish_layout);
 	occlusion->layers_pipeline = gpu_load_compute("sky_occlusion_layers.comp", &layers_layout);
 	occlusion->bounce_pipeline = gpu_load_compute("sky_occlusion_bounce.comp", &bounce_layout);
 	occlusion->bounce_finish_pipeline = gpu_load_compute("sky_occlusion_bounce_finish.comp", &bounce_finish_layout);
-	occlusion->failed = occlusion->accumulate_pipeline == NULL || occlusion->finish_pipeline == NULL || occlusion->layers_pipeline == NULL
+	occlusion->failed = occlusion->accumulate_pipeline == NULL || occlusion->finish_pipeline == NULL || occlusion->finish_layers_pipeline == NULL
+		|| occlusion->layers_pipeline == NULL
 		|| occlusion->bounce_pipeline == NULL || occlusion->bounce_finish_pipeline == NULL;
 	return !occlusion->failed;
 }
@@ -146,6 +148,10 @@ void sky_occlusion_destroy(sky_occlusion_t *occlusion)
 		if (occlusion->finish_pipeline != NULL)
 		{
 			SDL_ReleaseGPUComputePipeline(gpu.device, occlusion->finish_pipeline);
+		}
+		if (occlusion->finish_layers_pipeline != NULL)
+		{
+			SDL_ReleaseGPUComputePipeline(gpu.device, occlusion->finish_layers_pipeline);
 		}
 	}
 	SDL_zerop(occlusion);
@@ -212,7 +218,7 @@ static bool start_working(sky_occlusion_t *occlusion, const terrain_t *terrain, 
 			SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE);
 		occlusion->layer_weight_texture = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREFORMAT_R32_FLOAT, layer_size, rows, 1, 1,
 			SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_SIMULTANEOUS_READ_WRITE);
-		occlusion->next_layers_texture = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREFORMAT_R8_UNORM, layer_size, rows, 1, 1,
+		occlusion->next_layers_texture = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, layer_size, layer_size, 1, 1,
 			SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE);
 	}
 	{
@@ -407,8 +413,8 @@ static void finish(sky_occlusion_t *occlusion, const terrain_t *terrain, SDL_GPU
 	}
 	if (bounced && divide(command_buffer, occlusion->finish_pipeline, occlusion->sum_texture, occlusion->weight_texture, occlusion->next_texture,
 			terrain->size, terrain->size)
-		&& divide(command_buffer, occlusion->finish_pipeline, occlusion->layer_sum_texture, occlusion->layer_weight_texture,
-			occlusion->next_layers_texture, layer_size, layer_size * SKY_OCCLUSION_LAYERS))
+		&& divide(command_buffer, occlusion->finish_layers_pipeline, occlusion->layer_sum_texture, occlusion->layer_weight_texture,
+			occlusion->next_layers_texture, layer_size, layer_size))
 	{
 		// The new ones in (the old drawn until now)
 		release_texture(&occlusion->texture);
@@ -525,7 +531,24 @@ bool sky_occlusion_upload(sky_occlusion_t *occlusion, int map_size, const uint8_
 	release_texture(&occlusion->layers_texture);
 	release_texture(&occlusion->bounce_texture);
 	occlusion->texture = upload_bytes(map_size, map_size, 1, cells);
-	occlusion->layers_texture = upload_bytes(layer_size, layer_size * SKY_OCCLUSION_LAYERS, 1, layers);
+	{
+		// (one under the other, as the map file has them, into one texel)
+		size_t layer_count = (size_t)layer_size * (size_t)layer_size;
+		uint8_t *packed = SDL_malloc(layer_count * SKY_OCCLUSION_LAYERS);
+
+		if (packed != NULL)
+		{
+			for (size_t i = 0; i < layer_count; i++)
+			{
+				for (int k = 0; k < SKY_OCCLUSION_LAYERS; k++)
+				{
+					packed[i * SKY_OCCLUSION_LAYERS + (size_t)k] = layers[(size_t)k * layer_count + i];
+				}
+			}
+			occlusion->layers_texture = upload_bytes(layer_size, layer_size, 4, packed);
+			SDL_free(packed);
+		}
+	}
 	occlusion->bounce_texture = upload_bytes(bounce_size, bounce_size, 4, bounce);
 	if (occlusion->texture == NULL || occlusion->layers_texture == NULL || occlusion->bounce_texture == NULL)
 	{
@@ -633,7 +656,22 @@ uint8_t *sky_occlusion_download(sky_occlusion_t *occlusion, uint8_t **layers_out
 	cells = download_bytes(occlusion->texture, occlusion->map_size, occlusion->map_size, 1);
 	if (cells != NULL && layers_out != NULL && occlusion->layer_size > 0)
 	{
-		*layers_out = download_bytes(occlusion->layers_texture, occlusion->layer_size, occlusion->layer_size * SKY_OCCLUSION_LAYERS, 1);
+		uint8_t *packed = download_bytes(occlusion->layers_texture, occlusion->layer_size, occlusion->layer_size, 4);
+		size_t layer_count = (size_t)occlusion->layer_size * (size_t)occlusion->layer_size;
+
+		// (back one under the other, as the map file keeps them)
+		*layers_out = packed != NULL ? SDL_malloc(layer_count * SKY_OCCLUSION_LAYERS) : NULL;
+		if (*layers_out != NULL)
+		{
+			for (size_t i = 0; i < layer_count; i++)
+			{
+				for (int k = 0; k < SKY_OCCLUSION_LAYERS; k++)
+				{
+					(*layers_out)[(size_t)k * layer_count + i] = packed[i * SKY_OCCLUSION_LAYERS + (size_t)k];
+				}
+			}
+		}
+		SDL_free(packed);
 	}
 	if (cells != NULL && bounce_out != NULL && occlusion->bounce_size > 0)
 	{

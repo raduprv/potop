@@ -4,19 +4,17 @@
 // between them by its height above the ground; above the last, the last.
 //
 // Wants the scene block, and before it: sky_occlusion_texture (R8 a cell),
-// sky_layers_texture (R8, the layers one under the other: scene
-// sky_occlusion.z texels per side each), and for object_sky_seen
+// sky_layers_texture (RGBA8: the four layers in one texel, r the lowest:
+// scene sky_occlusion.z texels per side), and for object_sky_seen
 // ground_height_texture (R32F; without it, SKY_OCCLUSION_NO_GROUND defined:
 // sky_seen_above alone, the height above the ground given).
 
 const float SKY_LAYER_HEIGHTS[4] = float[4](2.0, 6.0, 15.0, 35.0);
 
-float sky_layer_value(vec2 spot, int layer)
+// The four layers at spot, in one read
+vec4 sky_layer_values(vec2 spot)
 {
-	float layer_size = sky_occlusion.z;
-	vec2 uv = clamp(spot / (ground_map.x * ground_map.y), vec2(0.5 / layer_size), vec2(1.0 - 0.5 / layer_size));
-
-	return texture(sky_layers_texture, vec2(uv.x, (float(layer) + uv.y) * 0.25)).r;
+	return texture(sky_layers_texture, clamp(spot / (ground_map.x * ground_map.y), vec2(0.0), vec2(1.0)));
 }
 
 // How much a canopy hides the sky over the ground at spot (0 open .. 1 under
@@ -29,7 +27,7 @@ float canopy_cover(vec2 spot)
 		return 0.0;
 	}
 	float ground = texture(sky_occlusion_texture, (spot / ground_map.y + 0.5) / ground_map.x).r;
-	float top = sky_layer_value(spot, 3);
+	float top = sky_layer_values(spot).a;
 
 	return 1.0 - clamp(ground / max(top, 0.05), 0.0, 1.0);
 }
@@ -42,14 +40,14 @@ float sky_seen_above(vec2 spot, float above)
 		return 1.0;
 	}
 	vec2 cells = spot / ground_map.y;
-	vec3 position = vec3(spot.x, 0.0, spot.y);
+	vec4 values = sky_layer_values(spot);
 	float below_value = texture(sky_occlusion_texture, (cells + 0.5) / ground_map.x).r;
 	float below_height = 0.0;
 	float seen = below_value;
 
 	for (int layer = 0; layer < 4; layer++)
 	{
-		float value = sky_layer_value(position.xz, layer);
+		float value = values[layer];
 
 		if (above <= SKY_LAYER_HEIGHTS[layer])
 		{

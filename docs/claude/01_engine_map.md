@@ -1318,3 +1318,16 @@ and the colonies noise are skipped. No cells at all when lichen_amount *
 open is 0. Moss: the sky-hidden lookup only with moss_amount; its four fine
 noises (31, 23, 85, 37) only where moss > 0. Exactly the same picture
 (prop editor boulder: 0 pixels differ).
+
+## Sky occlusion layers in one RGBA8 texel (39w)
+
+The four layers in the air (2, 6, 15, 35 m) were one R8 texture with the
+layers one under the other: sky_seen_above read the ground and then layer
+after layer (up to 5 reads). Now layers_texture is RGBA8 layer_size^2 (r
+the lowest): sky_occlusion_finish_layers.comp divides the four rows of the
+sums into one texel; sky_layer_values() reads all four at once (canopy_cover
+takes .a). The map file and sky_occlusion_download/upload keep the old
+layout (R8, one under the other): interleaved on upload, split on
+download. Checked: same picture as before with the occlusion worked out
+(set render.sky_occlusion_directions_per_frame 32 makes it finish in ~11 s
+under lavapipe).

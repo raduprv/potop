@@ -46,8 +46,10 @@ typedef struct
 	int map_size;
 	// The air above the ground: SKY_OCCLUSION_LAYERS layers that follow it
 	// (sky_occlusion_layer_heights above it), layer_size texels per side
-	// over the map (about a meter), one under the other (R8, layer_size x
-	// 4 layer_size; map_file_sky_layer_size)
+	// over the map (about a meter), the four in one texel (RGBA8, r the
+	// lowest; layer_size x layer_size; map_file_sky_layer_size. The map
+	// file and sky_occlusion_download/upload keep them one under the other,
+	// R8, as before)
 	SDL_GPUTexture *layers_texture;
 	int layer_size;
 	// The light the land round sends back: per texel of the ground (about a
@@ -68,6 +70,7 @@ typedef struct
 	bool requested;                    // to be worked out when the terrain's textures are there
 	SDL_GPUComputePipeline *accumulate_pipeline;
 	SDL_GPUComputePipeline *finish_pipeline;
+	SDL_GPUComputePipeline *finish_layers_pipeline;  // the layers' end: all four into one RGBA8 texel
 	SDL_GPUComputePipeline *layers_pipeline;
 	SDL_GPUComputePipeline *bounce_pipeline;
 	SDL_GPUComputePipeline *bounce_finish_pipeline;

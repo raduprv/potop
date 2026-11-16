@@ -13,7 +13,7 @@ layout(set = TEXTURE_SET, binding = 2) uniform sampler2D valley_texture;
 layout(set = TEXTURE_SET, binding = 3) uniform sampler3D history_texture;      // the froxels the frame before made
 layout(set = TEXTURE_SET, binding = 4) uniform sampler2D ground_height_texture;    // R32F: the ground (m)
 layout(set = TEXTURE_SET, binding = 5) uniform sampler2D sky_occlusion_texture;    // R8 a cell (sky_occlusion.h)
-layout(set = TEXTURE_SET, binding = 6) uniform sampler2D sky_layers_texture;       // R8: in the air (sky_occlusion.glsl)
+layout(set = TEXTURE_SET, binding = 6) uniform sampler2D sky_layers_texture;       // RGBA8: the four layers in the air (sky_occlusion.glsl)
 layout(set = READWRITE_SET, binding = 0, rgba16f) uniform writeonly image3D scatter_image;
 #include "fog.glsl"
 #include "sky_occlusion.glsl"

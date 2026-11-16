@@ -35,7 +35,7 @@ layout(set = TEXTURE_SET, binding = 10) uniform sampler2D cloud_shadow_texture; 
 layout(set = TEXTURE_SET, binding = 11) uniform sampler2D material_map_texture;      // RGBA8 per cell: base, cover, overlay ids, shelter (material_map.h)
 layout(set = TEXTURE_SET, binding = 12) uniform sampler2D overlay_texture;           // RGBA16F per cell: snow, petals (ground_overlay.h)
 layout(set = TEXTURE_SET, binding = 13) uniform sampler2D sky_occlusion_texture;     // R8 per cell: the sky it sees (sky_occlusion.h)
-layout(set = TEXTURE_SET, binding = 14) uniform sampler2D sky_layers_texture;        // R8: the same in the air (sky_occlusion.glsl)
+layout(set = TEXTURE_SET, binding = 14) uniform sampler2D sky_layers_texture;        // RGBA8: the four layers in the air (sky_occlusion.glsl)
 layout(set = TEXTURE_SET, binding = 15) uniform sampler2D sky_bounce_texture;        // RGBA8: the light the land round sends back (sky_occlusion.glsl)
 #define CLOUD_SHADOW_TEXTURE
 #include "underwater.glsl"

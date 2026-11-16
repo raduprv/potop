@@ -81,7 +81,7 @@ layout(set = TEXTURE_SET, binding = 9) uniform sampler2D material_map_texture; /
 layout(set = TEXTURE_SET, binding = 10) uniform sampler2D overlay_texture;     // RGBA16F: snow, petals (ground_overlay.h)
 layout(set = TEXTURE_SET, binding = 11) uniform sampler2DArray material_color_array;  // the terrain's materials: RGB color
 layout(set = TEXTURE_SET, binding = 12) uniform sampler2D sky_occlusion_texture;      // R8 a cell (sky_occlusion.h)
-layout(set = TEXTURE_SET, binding = 13) uniform sampler2D sky_layers_texture;         // R8: in the air
+layout(set = TEXTURE_SET, binding = 13) uniform sampler2D sky_layers_texture;         // RGBA8: the four layers in the air
 layout(set = TEXTURE_SET, binding = 14) uniform sampler2D sky_bounce_texture;         // RGBA8: what hides the sky
 layout(set = TEXTURE_SET, binding = 15) uniform sampler2D cloud_shadow_texture;       // the volumetric clouds' shadows (clouds.glsl)
 #define SKY_OCCLUSION_NO_GROUND

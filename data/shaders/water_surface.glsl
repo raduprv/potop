@@ -35,7 +35,7 @@ layout(set = TEXTURE_SET, binding = 8) uniform sampler2D ice_texture;          /
 #include "sky.glsl"
 #include "dome_mapping.glsl"
 layout(set = TEXTURE_SET, binding = 9) uniform sampler2D sky_occlusion_texture;   // R8 a cell: the sky it sees (sky_occlusion.h)
-layout(set = TEXTURE_SET, binding = 10) uniform sampler2D sky_layers_texture;     // R8: the same in the air (sky_occlusion.glsl)
+layout(set = TEXTURE_SET, binding = 10) uniform sampler2D sky_layers_texture;     // RGBA8: the four layers in the air (sky_occlusion.glsl)
 #define SKY_OCCLUSION_NO_GROUND
 #include "sky_occlusion.glsl"
 #define LIGHT_BINDING 11

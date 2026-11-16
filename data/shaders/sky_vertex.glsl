@@ -6,7 +6,7 @@
 // bounce texture, the far shadow map. Wants the scene block.
 
 layout(set = TEXTURE_SET, binding = SKY_VERTEX_BINDING) uniform sampler2D sky_occlusion_texture;      // R8 a cell (sky_occlusion.h)
-layout(set = TEXTURE_SET, binding = SKY_VERTEX_BINDING + 1) uniform sampler2D sky_layers_texture;     // R8: in the air
+layout(set = TEXTURE_SET, binding = SKY_VERTEX_BINDING + 1) uniform sampler2D sky_layers_texture;     // RGBA8: the four layers in the air
 layout(set = TEXTURE_SET, binding = SKY_VERTEX_BINDING + 2) uniform sampler2D sky_bounce_texture;     // RGBA8: what hides the sky
 layout(set = TEXTURE_SET, binding = SKY_VERTEX_BINDING + 3) uniform sampler2DShadow shadow_texture;   // the far shadow map
 #define SKY_OCCLUSION_NO_GROUND

@@ -23,7 +23,7 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform particle_draw_block
 };
 
 layout(set = TEXTURE_SET, binding = 0) uniform sampler2D sky_occlusion_texture;   // R8 a cell (sky_occlusion.h)
-layout(set = TEXTURE_SET, binding = 1) uniform sampler2D sky_layers_texture;      // R8: in the air (sky_occlusion.glsl)
+layout(set = TEXTURE_SET, binding = 1) uniform sampler2D sky_layers_texture;      // RGBA8: the four layers in the air (sky_occlusion.glsl)
 #define SKY_OCCLUSION_NO_GROUND
 #include "sky_occlusion.glsl"
 

@@ -11,7 +11,7 @@
 layout(set = TEXTURE_SET, binding = GROUND_BINDING) uniform sampler2D ground_height_texture;       // R32F: the ground (m)
 layout(set = TEXTURE_SET, binding = GROUND_BINDING + 1) uniform sampler2D ground_water_texture;    // RG32F: the water's depth (m)
 layout(set = TEXTURE_SET, binding = GROUND_BINDING + 2) uniform sampler2D sky_occlusion_texture;   // R8 a cell: the sky it sees (sky_occlusion.h)
-layout(set = TEXTURE_SET, binding = GROUND_BINDING + 3) uniform sampler2D sky_layers_texture;      // R8: the same in the air, four layers (sky_occlusion.glsl)
+layout(set = TEXTURE_SET, binding = GROUND_BINDING + 3) uniform sampler2D sky_layers_texture;      // RGBA8: the four layers in the air (sky_occlusion.glsl)
 layout(set = TEXTURE_SET, binding = GROUND_BINDING + 4) uniform sampler2D sky_bounce_texture;      // RGBA8: what hides the sky, which way, how far (sky_occlusion.glsl)
 #define SKY_BOUNCE
 #include "sky_occlusion.glsl"
