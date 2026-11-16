@@ -17,6 +17,7 @@
 #include <SDL3/SDL_main.h>
 
 #include "game.h"
+#include "system_monitor.h"
 
 static const char *trace_path = NULL;
 
@@ -186,6 +187,7 @@ int main(int argument_count, char **arguments)
 		game_after_update(&game, potop);
 	}
 	game_trace_finish(&game, potop);
+	system_monitor_stop();
 	potop_stop(potop);
 	potop_destroy(potop);
 	return 0;

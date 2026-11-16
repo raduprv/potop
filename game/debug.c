@@ -3,8 +3,81 @@
 // needed.
 
 #include "game.h"
+#include "system_monitor.h"
 
 #include <SDL3/SDL.h>
+
+// What is known of a part of the machine, after a line's start: each thing
+// known appended, separated by commas (nothing known: the line not shown)
+static void append_part(char *line, size_t size, bool *first, const char *part)
+{
+	SDL_strlcat(line, *first ? " " : ", ", size);
+	SDL_strlcat(line, part, size);
+	*first = false;
+}
+
+// The processor's and the graphics card's lines (Linux only: see
+// system_monitor.h)
+static void machine_lines(potop_t *potop)
+{
+	system_sample_t sample;
+	char line[128];
+	char part[64];
+	bool first = true;
+
+	if (!system_monitor_get(&sample))
+	{
+		return;
+	}
+	SDL_strlcpy(line, "CPU:", sizeof(line));
+	if (sample.process_cpu_known)
+	{
+		SDL_snprintf(part, sizeof(part), "Potop %.0f%% of a core", sample.process_cpu_percent);
+		append_part(line, sizeof(line), &first, part);
+	}
+	if (sample.system_cpu_known)
+	{
+		SDL_snprintf(part, sizeof(part), "all %.0f%% of %d", sample.system_cpu_percent, sample.cpu_threads);
+		append_part(line, sizeof(line), &first, part);
+	}
+	if (sample.cpu_temperature_known)
+	{
+		SDL_snprintf(part, sizeof(part), "%.0f C", sample.cpu_celsius);
+		append_part(line, sizeof(line), &first, part);
+	}
+	if (!first)
+	{
+		potop_debug_line(potop, line);
+	}
+	first = true;
+	SDL_strlcpy(line, "GPU:", sizeof(line));
+	if (sample.gpu_load_known)
+	{
+		SDL_snprintf(part, sizeof(part), "load %.0f%%", sample.gpu_load_percent);
+		append_part(line, sizeof(line), &first, part);
+	}
+	if (sample.gpu_memory_known)
+	{
+		SDL_snprintf(part, sizeof(part), "VRAM %.0f / %.0f MB", sample.gpu_memory_used_megabytes, sample.gpu_memory_total_megabytes);
+		append_part(line, sizeof(line), &first, part);
+	}
+	if (sample.gpu_power_known)
+	{
+		SDL_snprintf(part, sizeof(part), "%.0f W", sample.gpu_watts);
+		append_part(line, sizeof(line), &first, part);
+	}
+	if (sample.gpu_temperature_known)
+	{
+		SDL_snprintf(part, sizeof(part), "%.0f C", sample.gpu_celsius);
+		append_part(line, sizeof(line), &first, part);
+	}
+	if (!first)
+	{
+		SDL_snprintf(part, sizeof(part), " (%s)", sample.gpu_source != NULL ? sample.gpu_source : "?");
+		SDL_strlcat(line, part, sizeof(line));
+		potop_debug_line(potop, line);
+	}
+}
 
 // The frame rate shown is the last frames' on average: this share of the
 // newest each frame
@@ -33,6 +106,7 @@ void game_update_debug(game_t *game, potop_t *potop, bool toggle, float seconds)
 	SDL_snprintf(line, sizeof(line), "FPS: %.0f (%.1f ms)", game->frame_seconds_average > 0.0f ? 1.0f / game->frame_seconds_average : 0.0f,
 		1000.0f * game->frame_seconds_average);
 	potop_debug_line(potop, line);
+	machine_lines(potop);
 	potop_camera_get(potop, &camera);
 	SDL_snprintf(line, sizeof(line), "Position: %.1f, %.1f, %.1f", camera.eye_x, camera.eye_y, camera.eye_z);
 	potop_debug_line(potop, line);

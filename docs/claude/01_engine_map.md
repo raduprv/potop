@@ -9,7 +9,7 @@ read the header first, then the .c.
 
 - `engine/` (103 .c): the engine, built into build/libpotop.a.
 - `game/`: the game on top (main.c with the command line, game.c, bear.c,
-  martin.c = Moș Martin, hunt.c, places.c, debug.c). Talks to the engine
+  martin.c = Moș Martin, hunt.c, places.c, debug.c = F3 window, system_monitor.c = CPU/GPU load, VRAM, watts, temperatures for it: a thread sampling once a second while F3 is open; NVML via SDL_LoadObject, else amdgpu sysfs; Linux only). Talks to the engine
   through `engine/potop.h` (potop_start, potop_frame_begin/end, potop_stop,
   queries about actors, containers, the player...).
 - `editor/`: potop_editor (main.c 6 300 lines, ui.c, tools.c, inspector.c),
