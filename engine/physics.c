@@ -1610,9 +1610,10 @@ static bool inside_outline(const float points[][2], int count, float x, float z)
 }
 
 // A building's walls for the water only within its outline: the cells
-// whose middles are inside one of its model's footprints that hide the
-// terrain (OBJECT_FOOTPRINT_NO_TERRAIN: the building itself, tools/house_grow;
-// a yard's cover is not one). Its fences, its yard, its eaves stand over
+// whose middles are inside one of its model's water wall footprints
+// (OBJECT_FOOTPRINT_WATER_WALL: a farm's building, not its yard), or with
+// none, those that hide the terrain (OBJECT_FOOTPRINT_NO_TERRAIN: a house,
+// tools/house_grow; a yard's cover is neither). Its fences, its yard, its eaves stand over
 // the ground, not on it: the water flows past and under them. Then the
 // roof's pits filled (its highest point over each cell leaves dips between
 // a thatch's bundles, its boards; the water a flood left in them stood on
@@ -1623,12 +1624,18 @@ static bool inside_outline(const float points[][2], int count, float x, float z)
 static bool keep_within_outline(const object_model_t *model, const object_instance_t *instance, float cosine, float sine, const water_t *water,
 	const int32_t rectangle[4], int32_t width, int32_t height, float *tops)
 {
+	uint32_t wanted = OBJECT_FOOTPRINT_WATER_WALL;
 	bool any = false;
 	bool *inside;
 
-	for (int f = 0; f < model->footprint_count; f++)
+	// (the water's own outlines if it has any, else those hiding the terrain)
+	for (int pass = 0; pass < 2 && !any; pass++)
 	{
-		any = any || ((model->footprints[f].flags & OBJECT_FOOTPRINT_NO_TERRAIN) != 0 && model->footprints[f].point_count >= 3);
+		wanted = pass == 0 ? OBJECT_FOOTPRINT_WATER_WALL : OBJECT_FOOTPRINT_NO_TERRAIN;
+		for (int f = 0; f < model->footprint_count; f++)
+		{
+			any = any || ((model->footprints[f].flags & wanted) != 0 && model->footprints[f].point_count >= 3);
+		}
 	}
 	if (!any)
 	{
@@ -1645,7 +1652,7 @@ static bool keep_within_outline(const object_model_t *model, const object_instan
 		float points[OBJECT_FILE_MAX_FOOTPRINT_POINTS][2];
 		int count = (int)SDL_min(footprint->point_count, (uint32_t)OBJECT_FILE_MAX_FOOTPRINT_POINTS);
 
-		if ((footprint->flags & OBJECT_FOOTPRINT_NO_TERRAIN) == 0 || count < 3)
+		if ((footprint->flags & wanted) == 0 || count < 3)
 		{
 			continue;
 		}

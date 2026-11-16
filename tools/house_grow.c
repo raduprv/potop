@@ -19963,9 +19963,12 @@ static void workshop_footprint(house_t *house)
 
 	// (the hen run and the pig pen trampled bare; walls, towers and the
 	// corn crib: no yard of their own)
+	// (and the buildings themselves the water's walls: their yards, runs,
+	// pens and fences let it through, as workshop_collision's boxes)
 	if (house->recipe->workshop == 10)
 	{
 		footprint_rectangle(house, -4.3f, -3.6f, 4.3f, 4.5f, OBJECT_FOOTPRINT_NO_GRASS | OBJECT_FOOTPRINT_COVER, "trampled_dirt");
+		footprint_rectangle(house, -1.75f, -3.4f, 1.75f, -1.0f, OBJECT_FOOTPRINT_WATER_WALL, NULL);
 		return;
 	}
 	if (house->recipe->workshop == 13 || house->recipe->workshop == 14)
@@ -19995,6 +19998,7 @@ static void workshop_footprint(house_t *house)
 	{
 		footprint_rectangle(house, -3.2f, -2.8f, 3.2f, 5.6f, OBJECT_FOOTPRINT_NO_GRASS | OBJECT_FOOTPRINT_COVER, "trampled_dirt");
 		footprint_rectangle(house, 4.2f, -4.5f, 16.2f, 4.5f, OBJECT_FOOTPRINT_NO_GRASS | OBJECT_FOOTPRINT_COVER, "trampled_dirt");
+		footprint_rectangle(house, -2.6f, -2.1f, 2.6f, 2.1f, OBJECT_FOOTPRINT_WATER_WALL, NULL);
 		return;
 	}
 	if (house->recipe->workshop == 18)
@@ -20008,11 +20012,13 @@ static void workshop_footprint(house_t *house)
 	{
 		footprint_rectangle(house, -7.3f, -11.3f, 7.3f, -3.7f, OBJECT_FOOTPRINT_NO_GRASS, NULL);
 		footprint_rectangle(house, -10.0f, -3.6f, 10.0f, 11.3f, OBJECT_FOOTPRINT_NO_GRASS | OBJECT_FOOTPRINT_COVER, "trampled_dirt");
+		footprint_rectangle(house, -7.3f, -11.3f, 7.3f, -3.7f, OBJECT_FOOTPRINT_WATER_WALL, NULL);
 		return;
 	}
 	if (house->recipe->workshop == 11)
 	{
 		footprint_rectangle(house, -4.6f, -4.1f, 4.6f, 7.0f, OBJECT_FOOTPRINT_NO_GRASS | OBJECT_FOOTPRINT_COVER, "dirt");
+		footprint_rectangle(house, -2.7f, -4.05f, 2.7f, -1.15f, OBJECT_FOOTPRINT_WATER_WALL, NULL);
 		return;
 	}
 	if (house->recipe->workshop >= 7)

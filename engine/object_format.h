@@ -347,6 +347,11 @@ typedef struct
 #define OBJECT_FOOTPRINT_NO_GRASS 1u      // no grass in the cells it touches at all
 #define OBJECT_FOOTPRINT_NO_TERRAIN 2u    // the terrain not drawn in the cells it covers whole (the floor over them hides them)
 #define OBJECT_FOOTPRINT_COVER 4u         // its cover (a terrain material) on the cells it touches: a floor on the ground itself
+// The water's wall: only the cells inside such outlines are walls for the
+// water simulation (the building itself, not its yard, fences, pens or
+// eaves: physics.c's rebuild_walls). None: those that hide the terrain
+// (NO_TERRAIN) stand for it; none of those either: the whole model
+#define OBJECT_FOOTPRINT_WATER_WALL 8u
 
 // A place on the object (OBJECT_FILE_SPOTS)
 typedef struct
