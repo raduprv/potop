@@ -23,6 +23,19 @@
 #include "math3d.h"
 #include "terrain.h"
 
+// The moving layer's marks (below): at most this many a frame, more and the
+// whole still layer is copied in
+#define SHADOW_MAP_MARKS_MAX 128
+
+// A rectangle of the map, in texels
+typedef struct
+{
+	uint32_t x;
+	uint32_t y;
+	uint32_t width;
+	uint32_t height;
+} shadow_rectangle_t;
+
 typedef struct
 {
 	SDL_GPUTexture *depth_texture; // 1x1 when shadows are off (shaders still bind one)
@@ -41,6 +54,17 @@ typedef struct
 	vec3_t center;
 	float extent_meters;
 	bool needs_render;
+	// The near map's moving layer: where what moves is drawn this frame
+	// (marked: shadow_map_mark_moving) and was drawn the last time
+	// (drawn). Only there is the still layer copied in again, not the whole
+	// map (16 million texels for a hen); drawn_known false: the last time
+	// is not known (the whole map then)
+	shadow_rectangle_t marked[SHADOW_MAP_MARKS_MAX];
+	int marked_count;
+	bool marked_overflow;
+	shadow_rectangle_t drawn[SHADOW_MAP_MARKS_MAX];
+	int drawn_count;
+	bool drawn_known;
 } shadow_map_t;
 
 // Creates the depth texture and the terrain's pipeline. size 0 disables
@@ -65,9 +89,19 @@ SDL_GPURenderPass *shadow_map_begin(shadow_map_t *shadow);
 // and what stands still. NULL if shadows are off or it cannot be made
 SDL_GPURenderPass *shadow_map_begin_still(shadow_map_t *shadow);
 
+// A box (world, meters) something moving is drawn within this frame, for
+// the moving layer: its texels get the still layer again before it is drawn
+// (and next frame too, where it was). Everything drawn over the still layer
+// that moved since the last time must be marked (or the whole asked for);
+// what is drawn again where it was need not be
+void shadow_map_mark_moving(shadow_map_t *shadow, vec3_t minimum, vec3_t maximum);
+
 // The map the shading reads: the still layer copied in, ready for what
-// moves to be drawn over it (cleared instead if there is no still layer)
-SDL_GPURenderPass *shadow_map_begin_moving(shadow_map_t *shadow);
+// moves to be drawn over it (cleared instead if there is no still layer).
+// Copied in only where the marks are, this frame's and the last time's,
+// unless whole (the still layer drawn again, something moved that was not
+// marked) or the marks are not enough; the marks are then cleared
+SDL_GPURenderPass *shadow_map_begin_moving(shadow_map_t *shadow, bool whole);
 
 void shadow_map_render_terrain(shadow_map_t *shadow, SDL_GPURenderPass *pass, const terrain_t *terrain, SDL_GPUBuffer *chunk_vertex_buffer,
 	SDL_GPUBuffer *chunk_index_buffer, int chunk_index_count, SDL_GPUTexture *height_texture, bool cull);

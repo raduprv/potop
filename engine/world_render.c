@@ -504,7 +504,8 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 		bool actors_moved = !options->paused && world->elapsed_seconds - world->last_moving_shadow_render_seconds
 			>= world->lit_render.actor_shadow_update_seconds && actors_any_near(&world->actors, target.x, target.z, extent * 0.75f);
 		bool still_again = moved || changed;
-		bool moving_again = still_again || world->objects.moving_shadows || world->actors.shadow_dirty || actors_moved;
+		bool moving_again = still_again || world->objects.moving_shadows || world->objects.marked_shadows || world->actors.shadow_dirty
+			|| actors_moved;
 
 		if (still_again || moving_again)
 		{
@@ -531,12 +532,20 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 		{
 			SDL_GPURenderPass *pass;
 
+			// The still layer copied in again only round what moves: the
+			// actors, the objects moved without the physics (marked);
+			// anything else that moved (a loose object falling, floating) is
+			// not marked: the whole of it then, as when it was drawn again
+			bool whole = still_again || world->objects.moving_shadows;
+
 			world->last_moving_shadow_render_seconds = SDL_max(world->elapsed_seconds, 1e-6);
 			world->objects.moving_shadows = false;
 			world->actors.shadow_dirty = false;
 			frame_profile_count(FRAME_MOVING_SHADOW_REDRAWS, 1);
 			objects_prepare_shadow_layer(&world->objects, &world->near_shadow, camera, OBJECTS_SHADOW_LOOSE);
-			pass = shadow_map_begin_moving(&world->near_shadow);
+			actors_mark_shadow(&world->actors, &world->near_shadow);
+			objects_mark_moved_shadows(&world->objects, &world->near_shadow);
+			pass = shadow_map_begin_moving(&world->near_shadow, whole);
 			if (pass != NULL)
 			{
 				objects_render_shadow(&world->objects, pass);

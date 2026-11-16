@@ -534,6 +534,9 @@ bool actors_any_near(const actors_t *actors, float x, float z, float radius);
 // In the scene's pass (its scene block already pushed)
 void actors_draw(actors_t *actors, SDL_GPURenderPass *pass, const camera_t *camera, const shadow_map_t *shadow,
 	const shadow_map_t *near_shadow, SDL_GPUTexture *variation_texture, float time_seconds);
+// Every actor the map's square holds marked as moving (the near map's
+// moving layer: shadow_map_mark_moving), by the box it is drawn within
+void actors_mark_shadow(const actors_t *actors, shadow_map_t *shadow);
 // Into a shadow map's pass (between shadow_map_begin and shadow_map_end)
 void actors_render_shadow(actors_t *actors, SDL_GPURenderPass *pass, const shadow_map_t *shadow);
 

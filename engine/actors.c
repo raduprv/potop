@@ -4639,6 +4639,25 @@ void actors_draw(actors_t *actors, SDL_GPURenderPass *pass, const camera_t *came
 	}
 }
 
+void actors_mark_shadow(const actors_t *actors, shadow_map_t *shadow)
+{
+	frustum_t frustum = frustum_from_matrix(shadow->light_view_projection);
+
+	// (the same boxes actors_render_shadow culls by: whatever it draws is
+	// within one; they are generous, two reaches round, twice the height)
+	for (int i = 0; i < actors->count; i++)
+	{
+		vec3_t minimum;
+		vec3_t maximum;
+
+		actor_bounds(actors, &actors->actors[i], &minimum, &maximum);
+		if (frustum_contains_box(&frustum, minimum, maximum))
+		{
+			shadow_map_mark_moving(shadow, minimum, maximum);
+		}
+	}
+}
+
 void actors_render_shadow(actors_t *actors, SDL_GPURenderPass *pass, const shadow_map_t *shadow)
 {
 	frustum_t frustum;

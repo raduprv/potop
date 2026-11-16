@@ -207,31 +207,124 @@ SDL_GPURenderPass *shadow_map_begin_still(shadow_map_t *shadow)
 	return begin_into(shadow, shadow->still_texture, true);
 }
 
-SDL_GPURenderPass *shadow_map_begin_moving(shadow_map_t *shadow)
+void shadow_map_mark_moving(shadow_map_t *shadow, vec3_t minimum, vec3_t maximum)
 {
+	float lowest[2] = { 1e30f, 1e30f };
+	float highest[2] = { -1e30f, -1e30f };
+	float size = (float)shadow->size;
+	shadow_rectangle_t *rectangle;
+
+	if (shadow->size <= 0)
+	{
+		return;
+	}
+	// Its corners on the map (orthographic: the box's outline holds it)
+	for (int corner = 0; corner < 8; corner++)
+	{
+		vec3_t point = vec3_make((corner & 1) ? maximum.x : minimum.x, (corner & 2) ? maximum.y : minimum.y, (corner & 4) ? maximum.z : minimum.z);
+		const float *m = shadow->light_view_projection.m;
+		float clip_x = m[0] * point.x + m[4] * point.y + m[8] * point.z + m[12];
+		float clip_y = m[1] * point.x + m[5] * point.y + m[9] * point.z + m[13];
+		// (texels from the top left, as the map is drawn: y down)
+		float texel_x = (clip_x * 0.5f + 0.5f) * size;
+		float texel_y = (0.5f - clip_y * 0.5f) * size;
+
+		lowest[0] = SDL_min(lowest[0], texel_x);
+		lowest[1] = SDL_min(lowest[1], texel_y);
+		highest[0] = SDL_max(highest[0], texel_x);
+		highest[1] = SDL_max(highest[1], texel_y);
+	}
+	// (a texel more each way: rounding; off the map: nothing)
+	lowest[0] = SDL_max(SDL_floorf(lowest[0]) - 1.0f, 0.0f);
+	lowest[1] = SDL_max(SDL_floorf(lowest[1]) - 1.0f, 0.0f);
+	highest[0] = SDL_min(SDL_ceilf(highest[0]) + 1.0f, size);
+	highest[1] = SDL_min(SDL_ceilf(highest[1]) + 1.0f, size);
+	if (highest[0] <= lowest[0] || highest[1] <= lowest[1])
+	{
+		return;
+	}
+	if (shadow->marked_count >= SHADOW_MAP_MARKS_MAX)
+	{
+		shadow->marked_overflow = true;
+		return;
+	}
+	rectangle = &shadow->marked[shadow->marked_count++];
+	rectangle->x = (uint32_t)lowest[0];
+	rectangle->y = (uint32_t)lowest[1];
+	rectangle->width = (uint32_t)(highest[0] - lowest[0]);
+	rectangle->height = (uint32_t)(highest[1] - lowest[1]);
+}
+
+// The still layer copied into the map over a rectangle
+static void copy_still(SDL_GPUCopyPass *copy, const shadow_map_t *shadow, const shadow_rectangle_t *rectangle)
+{
+	SDL_GPUTextureLocation source;
+	SDL_GPUTextureLocation destination;
+
+	SDL_zero(source);
+	SDL_zero(destination);
+	source.texture = shadow->still_texture;
+	source.x = rectangle->x;
+	source.y = rectangle->y;
+	destination.texture = shadow->depth_texture;
+	destination.x = rectangle->x;
+	destination.y = rectangle->y;
+	SDL_CopyGPUTextureToTexture(copy, &source, &destination, rectangle->width, rectangle->height, 1, false);
+}
+
+SDL_GPURenderPass *shadow_map_begin_moving(shadow_map_t *shadow, bool whole)
+{
+	SDL_GPURenderPass *pass = NULL;
+
 	if (shadow->size <= 0 || gpu.command_buffer == NULL)
 	{
+		shadow->marked_count = 0;
+		shadow->marked_overflow = false;
+		shadow->drawn_known = false;
 		return NULL;
 	}
 	gpu_flush_uploads();
 	if (shadow->still_texture == NULL)
 	{
-		return begin_into(shadow, shadow->depth_texture, true);
+		pass = begin_into(shadow, shadow->depth_texture, true);
+		whole = true;
 	}
-	// (a copy on the GPU: a few hundred microseconds for a big map)
+	else
 	{
 		SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(gpu.command_buffer);
-		SDL_GPUTextureLocation source;
-		SDL_GPUTextureLocation destination;
+		// (Direct3D 12 copies a depth texture only whole)
+		bool partial = !whole && !shadow->marked_overflow && shadow->drawn_known
+			&& SDL_strcmp(SDL_GetGPUDeviceDriver(gpu.device), "direct3d12") != 0;
 
-		SDL_zero(source);
-		SDL_zero(destination);
-		source.texture = shadow->still_texture;
-		destination.texture = shadow->depth_texture;
-		SDL_CopyGPUTextureToTexture(copy, &source, &destination, (uint32_t)shadow->size, (uint32_t)shadow->size, 1, false);
+		if (partial)
+		{
+			// Where it was drawn the last time, where it is drawn now
+			for (int i = 0; i < shadow->drawn_count; i++)
+			{
+				copy_still(copy, shadow, &shadow->drawn[i]);
+			}
+			for (int i = 0; i < shadow->marked_count; i++)
+			{
+				copy_still(copy, shadow, &shadow->marked[i]);
+			}
+		}
+		else
+		{
+			shadow_rectangle_t all = { 0, 0, (uint32_t)shadow->size, (uint32_t)shadow->size };
+
+			// (a copy on the GPU: a few hundred microseconds for a big map)
+			copy_still(copy, shadow, &all);
+		}
 		SDL_EndGPUCopyPass(copy);
+		pass = begin_into(shadow, shadow->depth_texture, false);
 	}
-	return begin_into(shadow, shadow->depth_texture, false);
+	// This frame's marks are the last time's for the next
+	SDL_memcpy(shadow->drawn, shadow->marked, sizeof(shadow_rectangle_t) * (size_t)shadow->marked_count);
+	shadow->drawn_count = shadow->marked_count;
+	shadow->drawn_known = !shadow->marked_overflow;
+	shadow->marked_count = 0;
+	shadow->marked_overflow = false;
+	return pass;
 }
 
 void shadow_map_render_terrain(shadow_map_t *shadow, SDL_GPURenderPass *pass, const terrain_t *terrain, SDL_GPUBuffer *chunk_vertex_buffer,

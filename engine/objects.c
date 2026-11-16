@@ -5432,9 +5432,68 @@ void objects_update_spin(objects_t *objects, double seconds)
 		if (k < objects->instance_count)
 		{
 			touch_slot(objects, objects->instances[k].gpu_slot);
+			objects_note_moved(objects, k);
 		}
 	}
-	objects->moving_shadows = true;
+}
+
+void objects_note_moved(objects_t *objects, int k)
+{
+	const object_instance_t *instance;
+	const object_type_t *type;
+	const object_model_t *model;
+	int model_index;
+	vec3_t far_corner;
+	vec3_t center;
+	float reach;
+
+	if (k < 0 || k >= objects->instance_count)
+	{
+		return;
+	}
+	instance = &objects->instances[k];
+	type = &objects->types.types[instance->type];
+	model_index = objects_instance_model(objects, instance);
+	if (model_index < 0 || model_index >= objects->model_count)
+	{
+		return;
+	}
+	if (objects->moved_box_count >= OBJECTS_MOVED_BOXES_MAX)
+	{
+		// (too many: the whole moving layer instead)
+		objects->moving_shadows = true;
+		return;
+	}
+	model = &objects->models[model_index];
+	// Whichever way it is turned round its model's origin: within its
+	// farthest corner's reach of it (a turning one's origin is its hub,
+	// spin_placement)
+	far_corner = vec3_make(SDL_max(SDL_fabsf(model->bounds_minimum.x), SDL_fabsf(model->bounds_maximum.x)),
+		SDL_max(SDL_fabsf(model->bounds_minimum.y), SDL_fabsf(model->bounds_maximum.y)),
+		SDL_max(SDL_fabsf(model->bounds_minimum.z), SDL_fabsf(model->bounds_maximum.z)));
+	reach = SDL_sqrtf(vec3_dot(far_corner, far_corner)) * instance->scale + 0.05f;
+	center = vec3_make(instance->x, objects_instance_base_y(instance), instance->z);
+	if (type->spins)
+	{
+		float pivot[3];
+
+		spin_rotate(instance->rotation, type->spin_pivot, pivot);
+		center = vec3_make(center.x + pivot[0] * instance->scale, center.y + pivot[1] * instance->scale, center.z + pivot[2] * instance->scale);
+	}
+	objects->moved_boxes[2 * objects->moved_box_count] = vec3_make(center.x - reach, center.y - reach, center.z - reach);
+	objects->moved_boxes[2 * objects->moved_box_count + 1] = vec3_make(center.x + reach, center.y + reach, center.z + reach);
+	objects->moved_box_count++;
+	objects->marked_shadows = true;
+}
+
+void objects_mark_moved_shadows(objects_t *objects, shadow_map_t *shadow)
+{
+	for (int i = 0; i < objects->moved_box_count; i++)
+	{
+		shadow_map_mark_moving(shadow, objects->moved_boxes[2 * i], objects->moved_boxes[2 * i + 1]);
+	}
+	objects->moved_box_count = 0;
+	objects->marked_shadows = false;
 }
 
 void objects_update_seasons(objects_t *objects)

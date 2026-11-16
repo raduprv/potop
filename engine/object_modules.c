@@ -438,8 +438,6 @@ static void rebuild_list(objects_t *objects)
 
 void objects_update_modules(objects_t *objects, float seconds)
 {
-	bool moved = false;
-
 	if (objects->types.module_count == 0)
 	{
 		return;
@@ -514,7 +512,7 @@ void objects_update_modules(objects_t *objects, float seconds)
 						part->module_progress = 1.0f;
 					}
 					place_part(objects, module_index, part_index);
-					moved = true;
+					objects_note_moved(objects, part_index);
 				}
 				else if (follow)
 				{
@@ -544,13 +542,12 @@ void objects_update_modules(objects_t *objects, float seconds)
 				|| (changing && (module->poses[module_instance->module_state][part->module_part].flags != module->poses[module_instance->module_target][part->module_part].flags)))
 			{
 				place_part(objects, module_index, part_index);
-				moved = moved || moves;
+				if (moves)
+				{
+					objects_note_moved(objects, part_index);
+				}
 			}
 		}
-	}
-	if (moved)
-	{
-		objects->moving_shadows = true;
 	}
 }
 

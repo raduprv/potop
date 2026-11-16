@@ -77,6 +77,10 @@
 // by the objects' indices (the physics' bodies, the navigation's regions):
 // an object added at its end, one gone (OBJECT_STATE_DEAD), one come loose
 // (OBJECT_STATE_FREE), one turned into another type in its place
+// Objects moved without the physics, a frame, followed by the near map's
+// moving layer round each (objects_note_moved); more: the whole layer
+#define OBJECTS_MOVED_BOXES_MAX 64
+
 typedef enum
 {
 	OBJECT_CHANGE_ADDED,
@@ -365,6 +369,12 @@ typedef struct
 	// Loose objects moved (falling, carried by the water): only the near
 	// map's moving layer follows them (shadow_map_t.layer_texture)
 	bool moving_shadows;
+	// Objects moved without the physics (objects_note_moved): the moving
+	// layer follows them too, but only round them (their boxes, world: two
+	// each, the least and the most corner), not the whole layer copied again
+	bool marked_shadows;
+	vec3_t moved_boxes[2 * OBJECTS_MOVED_BOXES_MAX];
+	int moved_box_count;
 	double spin_seconds;               // the clock the turning ones turn by (objects_update_spin)
 	bool any_spins;                    // some instance turns: its slot goes up every frame
 	// The instances that turn (their type spins), found again when the list
@@ -615,6 +625,12 @@ void objects_update_seasons(objects_t *objects);
 // the clock says: their slots go up again, the near map's moving layer
 // follows them. Once a frame, before the shadows
 void objects_update_spin(objects_t *objects, double seconds);
+// An object moved without the physics (turning, a module's part: a door, a
+// windmill's sails): the box it is drawn within whichever way it is turned
+// kept for the near map's moving layer (too many: the whole layer again)
+void objects_note_moved(objects_t *objects, int k);
+// The boxes kept marked on the near map (shadow_map_mark_moving), and let go
+void objects_mark_moved_shadows(objects_t *objects, shadow_map_t *shadow);
 
 // Modules (module_format.h, object_modules.c). Placing a module's type
 // places its parts with it (objects_add); removing any of it removes all of
