@@ -87,9 +87,38 @@ float wet_level(ivec2 cell)
 // lake or the lake under it, is another water, not a wave: left out)
 const float SMOOTHED_REACH = 0.25;
 
-float smoothed_level(ivec2 cell)
+// The wet levels round the vertex's cell, read once: five by five less the
+// corners (what the nine smoothed levels below reach), at (dy + 2) * 5 +
+// dx + 2. (Each smoothed level read its five cells again: thirteen of them a
+// vertex, some 130 reads; now 42)
+float wet_levels[25];
+
+void read_wet_levels(ivec2 cell)
 {
-	float own = wet_level(cell);
+	for (int dy = -2; dy <= 2; dy++)
+	{
+		for (int dx = -2; dx <= 2; dx++)
+		{
+			wet_levels[(dy + 2) * 5 + dx + 2] = abs(dx) == 2 && abs(dy) == 2 ? -1e9 : wet_level(cell + ivec2(dx, dy));
+		}
+	}
+}
+
+// One of a level and its neighbor's, as smoothed_level takes it
+void add_neighbor(float own, float neighbor, inout float sum, inout float weight)
+{
+	if (neighbor > -1e8 && abs(neighbor - own) < SMOOTHED_REACH)
+	{
+		sum += neighbor;
+		weight += 1.0;
+	}
+}
+
+// The smoothed level of the cell dx, dy from the vertex's (each -1 .. 1)
+float smoothed_level(int dx, int dy)
+{
+	int at = (dy + 2) * 5 + dx + 2;
+	float own = wet_levels[at];
 
 	if (own < -1e8)
 	{
@@ -97,16 +126,11 @@ float smoothed_level(ivec2 cell)
 	}
 	float sum = own * 4.0;
 	float weight = 4.0;
-	float neighbor;
 
-	neighbor = wet_level(cell + ivec2(-1, 0));
-	if (neighbor > -1e8 && abs(neighbor - own) < SMOOTHED_REACH) { sum += neighbor; weight += 1.0; }
-	neighbor = wet_level(cell + ivec2(1, 0));
-	if (neighbor > -1e8 && abs(neighbor - own) < SMOOTHED_REACH) { sum += neighbor; weight += 1.0; }
-	neighbor = wet_level(cell + ivec2(0, -1));
-	if (neighbor > -1e8 && abs(neighbor - own) < SMOOTHED_REACH) { sum += neighbor; weight += 1.0; }
-	neighbor = wet_level(cell + ivec2(0, 1));
-	if (neighbor > -1e8 && abs(neighbor - own) < SMOOTHED_REACH) { sum += neighbor; weight += 1.0; }
+	add_neighbor(own, wet_levels[at - 1], sum, weight);
+	add_neighbor(own, wet_levels[at + 1], sum, weight);
+	add_neighbor(own, wet_levels[at - 5], sum, weight);
+	add_neighbor(own, wet_levels[at + 5], sum, weight);
 	return sum / weight;
 }
 
@@ -117,10 +141,13 @@ void main()
 	vec4 water = water_at(cell);
 	vec4 flow = texelFetch(flow_texture, cell, 0);
 	float speed = length(flow.xy);
-	float level_left = smoothed_level(cell + ivec2(-1, 0));
-	float level_right = smoothed_level(cell + ivec2(1, 0));
-	float level_back = smoothed_level(cell + ivec2(0, -1));
-	float level_front = smoothed_level(cell + ivec2(0, 1));
+
+	read_wet_levels(cell);
+
+	float level_left = smoothed_level(-1, 0);
+	float level_right = smoothed_level(1, 0);
+	float level_back = smoothed_level(0, -1);
+	float level_front = smoothed_level(0, 1);
 	float surface;
 	// The water round us, all eight neighbors (a triangle joins us to the
 	// diagonal ones too): the highest level standing below our ground (a
@@ -137,7 +164,7 @@ void main()
 			{
 				continue;
 			}
-			float level = smoothed_level(cell + ivec2(dx, dy));
+			float level = smoothed_level(dx, dy);
 
 			if (level < -1e8)
 			{
@@ -165,7 +192,7 @@ void main()
 	}
 	else if (water.x > VISIBLE_DEPTH)
 	{
-		surface = smoothed_level(cell);
+		surface = smoothed_level(0, 0);
 	}
 	else if (highest_level < -1e8)
 	{
