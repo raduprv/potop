@@ -12440,27 +12440,33 @@ static void roundhouse(house_t *house, const mill_t *mill)
 	}
 }
 
-// Its ground: no grass inside the roundhouse
+// Its ground: no grass inside the roundhouse; and its walls the water's
+// (not the cap's eaves over the ground round it, which had kept the water
+// a meter off)
 static void roundhouse_footprint(house_t *house, const mill_t *mill)
 {
 	house_mesh_t *mesh = house->builder->mesh;
 	roundhouse_t round = roundhouse_of(mill);
-	object_file_footprint_t *made;
 
-	if (mesh->footprint_count >= OBJECT_FILE_MAX_FOOTPRINTS)
+	for (int pass = 0; pass < 2; pass++)
 	{
-		return;
-	}
-	made = &mesh->footprints[mesh->footprint_count++];
-	memset(made, 0, sizeof(*made));
-	made->flags = OBJECT_FOOTPRINT_NO_GRASS;
-	made->point_count = ROUNDHOUSE_SIDES;
-	for (int k = 0; k < ROUNDHOUSE_SIDES; k++)
-	{
-		vec_t p = roundhouse_corner(&round, k, round.radius - 0.05f);
+		object_file_footprint_t *made;
 
-		made->points[k][0] = p.x;
-		made->points[k][1] = p.z;
+		if (mesh->footprint_count >= OBJECT_FILE_MAX_FOOTPRINTS)
+		{
+			return;
+		}
+		made = &mesh->footprints[mesh->footprint_count++];
+		memset(made, 0, sizeof(*made));
+		made->flags = pass == 0 ? OBJECT_FOOTPRINT_NO_GRASS : OBJECT_FOOTPRINT_WATER_WALL;
+		made->point_count = ROUNDHOUSE_SIDES;
+		for (int k = 0; k < ROUNDHOUSE_SIDES; k++)
+		{
+			vec_t p = roundhouse_corner(&round, k, pass == 0 ? round.radius - 0.05f : round.radius);
+
+			made->points[k][0] = p.x;
+			made->points[k][1] = p.z;
+		}
 	}
 }
 
