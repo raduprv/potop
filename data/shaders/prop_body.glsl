@@ -851,7 +851,12 @@ void main()
 	float tangent_size = abs(world_tangent.w);
 	float shade = alpha_tested != 0 && tangent_size > 1e-3 ? min(tangent_size, 1.5) : 1.0;
 	float sun_shade = 0.5 + 0.5 * shade;      // the sun reaches in more than the sky does
-	float shadowed = sun_visibility(shadow_position, near_shadow_position) * cloud_light(world_position, sun_direction);
+	// (a face turned from the sun gets none of it, whatever the shadow maps
+	// say: they are not looked up. Not for leaves, which let it through,
+	// nor a wet face, which shines, nor where there is water about, whose
+	// light plays on it)
+	bool sun_reaches = alpha_tested != 0 || dot(surface_normal, sun_direction) > -0.06 || wet > 0.0 || water_marks.to_surface < 1e5;
+	float shadowed = sun_reaches ? sun_visibility(shadow_position, near_shadow_position) * cloud_light(world_position, sun_direction) : 0.0;
 	float sun = diffuse * shadowed;
 	vec3 lit;
 

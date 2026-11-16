@@ -250,6 +250,15 @@ vec4 sample_material_dry(int material, vec3 position, vec3 normal, vec3 projecti
 {
 	int macro_layer = material_layers[material].z;
 	vec3 macro_normal;
+
+	// (near the eye the detail is all that shows, the macro scale's share
+	// nothing: not read at all, unless it is a texture of its own, which
+	// shades the detail)
+	if (detail_weight >= 0.999 && macro_layer < 0)
+	{
+		return sample_material_scale(material, material_scales[material].x, position, normal, projection_weights, variant_noise, -1, 0.0,
+			world_normal_out);
+	}
 	vec4 macro = sample_material_scale(material, material_scales[material].y, position, normal,
 		macro_weights, variant_noise, macro_layer, side_shift, macro_normal);
 
@@ -296,19 +305,31 @@ vec4 sample_material(int material, vec3 position, vec3 normal, vec3 projection_w
 		world_normal_out = dry_normal;
 		return dry;
 	}
-	vec3 macro_normal;
-	vec4 soaked = sample_material_scale(material, material_scales[material].y, position, normal, macro_weights, variant_noise, wet_layer,
-		side_shift, macro_normal);
-	vec3 soaked_normal = macro_normal;
+	vec4 soaked;
+	vec3 soaked_normal;
 
-	if (detail_weight > 0.01)
+	// (as the dry one: near the eye the detail alone)
+	if (detail_weight >= 0.999)
 	{
-		vec3 detail_normal;
-		vec4 detail = sample_material_scale(material, material_scales[material].x, position, normal, projection_weights, variant_noise,
-			wet_layer, 0.0, detail_normal);
+		soaked = sample_material_scale(material, material_scales[material].x, position, normal, projection_weights, variant_noise, wet_layer,
+			0.0, soaked_normal);
+	}
+	else
+	{
+		vec3 macro_normal;
 
-		soaked = mix(soaked, detail, detail_weight);
-		soaked_normal = normalize(mix(macro_normal, detail_normal, detail_weight));
+		soaked = sample_material_scale(material, material_scales[material].y, position, normal, macro_weights, variant_noise, wet_layer,
+			side_shift, macro_normal);
+		soaked_normal = macro_normal;
+		if (detail_weight > 0.01)
+		{
+			vec3 detail_normal;
+			vec4 detail = sample_material_scale(material, material_scales[material].x, position, normal, projection_weights, variant_noise,
+				wet_layer, 0.0, detail_normal);
+
+			soaked = mix(soaked, detail, detail_weight);
+			soaked_normal = normalize(mix(macro_normal, detail_normal, detail_weight));
+		}
 	}
 	world_normal_out = normalize(mix(dry_normal, soaked_normal, wet));
 	return mix(dry, soaked, wet);
@@ -326,13 +347,22 @@ float overlay_coverage(int material, float amount, vec3 position, float detail_w
 	float layer = float(material_layers[material].x);
 	float repeats = material_scales[material].x;
 	float macro_repeats = material_scales[material].y;
-	float mask = textureGrad(material_normal_array, vec3(position.xz * macro_repeats, layer), position_ddx.xz * macro_repeats,
-		position_ddy.xz * macro_repeats).a;
+	float mask;
 
-	if (detail_weight > 0.01)
+	// (near the eye its detail's mask alone: the macro scale's not read)
+	if (detail_weight >= 0.999)
 	{
-		mask = mix(mask, textureGrad(material_normal_array, vec3(position.xz * repeats, layer), position_ddx.xz * repeats,
-			position_ddy.xz * repeats).a, detail_weight);
+		mask = textureGrad(material_normal_array, vec3(position.xz * repeats, layer), position_ddx.xz * repeats, position_ddy.xz * repeats).a;
+	}
+	else
+	{
+		mask = textureGrad(material_normal_array, vec3(position.xz * macro_repeats, layer), position_ddx.xz * macro_repeats,
+			position_ddy.xz * macro_repeats).a;
+		if (detail_weight > 0.01)
+		{
+			mask = mix(mask, textureGrad(material_normal_array, vec3(position.xz * repeats, layer), position_ddx.xz * repeats,
+				position_ddy.xz * repeats).a, detail_weight);
+		}
 	}
 	float width = mix(0.2, 0.05, detail_weight);
 	float level = amount * (1.0 + 2.0 * width) - width;
@@ -842,8 +872,10 @@ void main()
 
 	// Lighting: sun (blocked by shadows) plus hemisphere ambient (sky
 	// above, warm bounce below)
-	float sun_light = sun_visibility(shadow_position, near_shadow_position) * clouds;
 	float facing_sun = max(dot(shading_normal, sun_direction), 0.0);
+	// (ground turned from the sun gets none of it, whatever the shadow
+	// maps say: they are not looked up)
+	float sun_light = facing_sun > 0.0 ? sun_visibility(shadow_position, near_shadow_position) * clouds : 0.0;
 	float diffuse = facing_sun * sun_light;
 	vec3 ground_bounce = ground_bounce_color(1.0);
 	// (the sky it sees: less in hollows, under trees, round rocks)
