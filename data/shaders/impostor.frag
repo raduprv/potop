@@ -25,6 +25,10 @@ layout(set = TEXTURE_SET, binding = 5) uniform sampler2D normal_atlas;          
 #define LIGHT_BINDING 6
 #include "lights.glsl"
 
+// (written only farther than the square, drawn at the sphere's near side:
+// the depth test can still come first)
+layout(depth_greater) out float gl_FragDepth;
+
 layout(location = 0) in vec3 world_position;
 layout(location = 1) in vec2 picture_point_0;
 layout(location = 2) in vec2 picture_point_1;

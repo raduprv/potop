@@ -1400,3 +1400,17 @@ haze_amount (clamped) per vertex; the fragments mix by the interpolated
 value instead of the exps per pixel. A blade, a card, an impostor's square
 are small against how slowly the haze changes. Terrain, props, objects,
 water keep theirs per pixel (big triangles).
+
+## Impostors keep early-Z (39z5)
+
+impostor.frag writes gl_FragDepth (the pictures' depth), which turned off
+the early depth test: a far wood shaded every impostor behind another.
+Now impostor.vert draws the square at the sphere's near side (the same
+square on screen: each corner moved along its ray from the eye to the
+distance eye_distance - radius - 0.8 radius^2 / eye_distance - 0.02; the
+varyings stay the middle square's, an affine map between parallel planes),
+and impostor.frag declares layout(depth_greater) gl_FragDepth (SPIR-V
+DepthGreater): what it writes is never nearer than the square, so the GPU
+may still reject hidden pixels first. The margin: the pictures' depth is
+taken along the axis to the middle, a corner's point off its own ray by up
+to about radius^2 / distance.

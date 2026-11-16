@@ -119,5 +119,18 @@ void main()
 	toward_eye = vec4(eye_direction, radius);
 	leafy = look.x;
 	haze = clamp(haze_amount(world_position), 0.0, 1.0);
-	gl_Position = world_to_clip(world_position);
+	// Drawn at the sphere's near side (the same square on the screen,
+	// moved towards the eye along the rays: the attributes stay those of
+	// the square through the middle): impostor.frag writes its depth only
+	// farther than that (depth_greater), so the GPU can still turn away
+	// what is hidden before shading it (a far wood: impostor behind
+	// impostor). A little nearer still: the depth the pictures give is
+	// taken along the way to the middle, a corner's off it by up to about
+	// radius squared over the distance
+	{
+		float eye_distance = max(length(eye_position - center), 1e-3);
+		float near_distance = max(eye_distance - radius - 0.8 * radius * radius / eye_distance - 0.02, 0.05);
+
+		gl_Position = world_to_clip(eye_position + (world_position - eye_position) * (near_distance / eye_distance));
+	}
 }
