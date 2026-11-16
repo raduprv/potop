@@ -1465,3 +1465,13 @@ depth written only when changed. A tile where nothing moved (max change 0,
 no sediment change) no longer sets CPU_DIRTY | RENDER_DIRTY (no download,
 no texture refresh). Note: a sleeping neighbor tile's dry cell with a stale
 nonzero flux is no longer received from (was water out of nothing).
+
+## Rocks jerking when water moves elsewhere in their tile (bug)
+
+Radu: shooting the water gun, rocks on the dry bank upstream jerked. A
+sleeping body in an active water tile (64 m wide) is looked at; it woke
+when "unsupported" (its lowest sample point more than HOVER_METERS over
+the heightmap: on a slope a rock's middle sits over the ground below it)
+even with no water at it, then settled onto the collision tiles with a
+jerk. Now unsupported counts only with water under some sample point
+(water_push_t.wet): the ground washed away from under it.

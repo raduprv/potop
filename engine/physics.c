@@ -1760,6 +1760,7 @@ typedef struct
 	float fastest_flow;            // at the submerged points, m/s
 	float submerged;               // 0..1, the share of the volume under water
 	float lowest_clearance;        // height of the lowest point over the ground under it
+	bool wet;                      // water under some point (deep enough to count), submerged or not
 } water_push_t;
 
 static bool water_tile_active(const water_t *water, float x, float z)
@@ -1874,6 +1875,7 @@ static void compute_water_push(const physics_t *physics, const physics_body_t *b
 		{
 			continue;
 		}
+		push->wet = true;
 		submerged = SDL_clamp((ground + depth - point.y) / slab + 0.5f, 0.0f, 1.0f);
 		if (submerged <= 0.0f)
 		{
@@ -3006,7 +3008,12 @@ void physics_step(physics_t *physics, objects_t *objects, terrain_t *terrain, wa
 			{
 				float weight = body->mass * GRAVITY;
 				bool pushed = push.count > 0 && (push.fastest_flow > settings->wake_flow_meters_per_second || push.buoyancy > 1.1f * weight);
-				bool unsupported = push.lowest_clearance > HOVER_METERS && push.lowest_clearance < 1e29f;
+				// (the ground washed away under it: only where there is
+				// water. A rock on a dry bank sat a little over the ground
+				// the samples see, on a slope, its middle low: woken and
+				// settled with a jerk every time water anywhere in its tile
+				// moved, a water gun's splash fifty meters off)
+				bool unsupported = push.wet && push.lowest_clearance > HOVER_METERS && push.lowest_clearance < 1e29f;
 
 				if (!pushed && !unsupported)
 				{
