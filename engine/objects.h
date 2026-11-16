@@ -268,7 +268,7 @@ typedef struct
 	// Per slot, what the counting decided (its fade, below 0: not drawn), so
 	// that the writing draws exactly what was counted
 	SDL_GPUBuffer *decision_buffers[3];
-	uint32_t decision_capacity[3];     // slots
+	uint32_t decision_capacity[3];     // floats (two per slot, one per object looked at)
 	SDL_GPUBuffer *argument_storage[3];
 	SDL_GPUBuffer *argument_buffers[3];   // copies of the above, for the indirect draws
 	SDL_GPUComputePipeline *cull_pipeline;

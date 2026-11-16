@@ -3873,14 +3873,17 @@ static void cull_pass(objects_t *objects, pass_t pass, const frustum_t *frustum,
 				return;
 			}
 		}
-		if (objects->decision_buffers[pass] == NULL || objects->decision_capacity[pass] < (uint32_t)objects->slot_count)
+		// Two per slot: the fade, the level of detail; then one per object
+		// looked at: its slot (counting finds it, scattering reads it back)
+		uint32_t decision_words = (uint32_t)objects->slot_count * 2u + work_count;
+
+		if (objects->decision_buffers[pass] == NULL || objects->decision_capacity[pass] < decision_words)
 		{
-			// Two each: the fade, the level of detail
-			bytes = objects->decision_capacity[pass] * 2u * (uint32_t)sizeof(float);
+			bytes = objects->decision_capacity[pass] * (uint32_t)sizeof(float);
 			objects->decision_buffers[pass] = grow_buffer(objects->decision_buffers[pass],
 				SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ | SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE, &bytes,
-				(uint32_t)objects->slot_count * 2u * (uint32_t)sizeof(float));
-			objects->decision_capacity[pass] = bytes / (2u * (uint32_t)sizeof(float));
+				decision_words * (uint32_t)sizeof(float));
+			objects->decision_capacity[pass] = bytes / (uint32_t)sizeof(float);
 			if (objects->decision_buffers[pass] == NULL)
 			{
 				return;

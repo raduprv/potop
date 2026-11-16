@@ -12,8 +12,9 @@
 //   MODE_CLEAR    one thread per model: its count back to zero
 //   MODE_COUNT    one thread per object looked at: counts the visible
 //                 objects per model
-//   MODE_OFFSETS  one thread: each model's place in the instance buffer,
-//                 and the draw arguments
+//   MODE_OFFSETS  one work group: each model's place in the instance
+//                 buffer (a prefix sum over the counts), and the draw
+//                 arguments
 //   MODE_SCATTER  one thread per object looked at: writes the visible ones
 //
 // The objects looked at are not all the slots: the CPU gives the pass
@@ -111,7 +112,10 @@ layout(std430, set = READWRITE_SET, binding = 1) buffer instance_buffer { float 
 layout(std430, set = READWRITE_SET, binding = 2) buffer argument_buffer { uint arguments[]; };
 // Per slot, two each: COUNT's decision, its fade (below 0: not drawn;
 // IMPOSTOR added: drawn as its impostor); its level of detail, and how much
-// of what the next level leaves out is still there (1 .. 0 as it nears it)
+// of what the next level leaves out is still there (1 .. 0 as it nears it).
+// Then, after the slots (from 2 * slot_count), per object looked at: its
+// slot as COUNT found it (ORDER_NONE: none), so SCATTER need not search the
+// ranges again
 layout(std430, set = READWRITE_SET, binding = 3) buffer decision_buffer { float decisions[]; };
 // The occlusion culling seen (objects_t.occlusion_shown): the boxes the
 // camera's pass hid, three vec4s each: the box's outline on screen (0..1
@@ -493,6 +497,8 @@ uint slot_of_work(uint item)
 	return slot;
 }
 
+shared uint offset_sums[256];
+
 void main()
 {
 	uint stride = gl_NumWorkGroups.x * 256u;
@@ -516,6 +522,8 @@ void main()
 			uint model;
 			float fade;
 			bool impostor;
+
+			decisions[2u * uint(slot_count) + item] = uintBitsToFloat(slot);
 			uint level;
 			float level_fade;
 
@@ -537,24 +545,49 @@ void main()
 	}
 	else if (mode == MODE_OFFSETS)
 	{
-		if (gl_GlobalInvocationID.x != 0u)
-		{
-			return;
-		}
-		uint total = 0u;
+		// (one work group: the CPU dispatches one)
+		uint thread = gl_LocalInvocationID.x;
+		uint entry_count = (LOD_LEVELS + 1u) * uint(model_count);
+		uint chunk = (entry_count + 255u) / 256u;
+		uint first = min(thread * chunk, entry_count);
+		uint last = min(first + chunk, entry_count);
+		uint room = uint(max(capacity, 0));
+		uint sum = 0u;
 
-		for (int m = 0; m < int(LOD_LEVELS + 1u) * model_count; m++)
+		// Each thread its own run of the counts: their sum; then every run's
+		// start, the sums before it (in place, doubling the reach each step)
+		for (uint m = first; m < last; m++)
+		{
+			sum += counts[3u * m];
+		}
+		offset_sums[thread] = sum;
+		barrier();
+		for (uint reach = 1u; reach < 256u; reach <<= 1u)
+		{
+			uint before = thread >= reach ? offset_sums[thread - reach] : 0u;
+
+			barrier();
+			offset_sums[thread] += before;
+			barrier();
+		}
+		uint total = offset_sums[thread] - sum;
+
+		for (uint m = first; m < last; m++)
 		{
 			// Whatever does not fit is not drawn (the CPU sizes the buffer
 			// so that this does not happen)
-			uint count = min(counts[3u * uint(m)], uint(max(capacity, 0)) - min(total, uint(max(capacity, 0))));
+			uint wanted = counts[3u * m];
+			uint count = min(wanted, room - min(total, room));
 
-			counts[3u * uint(m)] = count;
-			counts[3u * uint(m) + 1u] = total;
-			counts[3u * uint(m) + 2u] = total;
-			total += count;
+			counts[3u * m] = count;
+			counts[3u * m + 1u] = min(total, room);
+			counts[3u * m + 2u] = min(total, room);
+			total += wanted;
 		}
-		for (int d = 0; d < draw_count; d++)
+		// (the draws read any model's counts: all of them written first)
+		memoryBarrierBuffer();
+		barrier();
+		for (int d = int(thread); d < draw_count; d += 256)
 		{
 			uvec4 draw = draws[d];
 			uint word = uint(d) * DRAW_ARGUMENT_WORDS;
@@ -589,7 +622,7 @@ void main()
 	{
 		for (uint item = gl_GlobalInvocationID.x; item < uint(work.x); item += stride)
 		{
-			uint slot = slot_of_work(item);
+			uint slot = floatBitsToUint(decisions[2u * uint(slot_count) + item]);
 			uint model;
 			float fade;
 			uint place;
