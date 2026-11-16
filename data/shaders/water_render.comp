@@ -66,10 +66,13 @@ void main()
 		vec4 flow;
 
 		// Water over a wall (a roof) lies on its top; a film there is not
-		// drawn, or the house looks wrapped in water
+		// drawn, or the house looks wrapped in water, nor what a flood left in
+		// a roof's dip (its dry neighbors' vertices are on the ground: a
+		// sheet of water hung from the roof down to them); only a flood over
+		// it, deep
 		if (obstacle > 0)
 		{
-			drawn_depth = depth_meters > 0.05 ? depth_meters + float(obstacle) * METERS_PER_UNIT : 0.0;
+			drawn_depth = depth_meters > 0.3 ? depth_meters + float(obstacle) * METERS_PER_UNIT : 0.0;
 		}
 		flow.x = wet ? flow_x / cross_section : 0.0;
 		flow.y = wet ? flow_y / cross_section : 0.0;

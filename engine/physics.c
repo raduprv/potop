@@ -1593,6 +1593,127 @@ static bool blocks_water(const objects_t *objects, const object_instance_t *inst
 		&& !(instance->damage == OBJECT_DAMAGE_DESTROYED && type->destroyed_model < 0);
 }
 
+// Whether a point (x, z) is inside an outline (even-odd)
+static bool inside_outline(const float points[][2], int count, float x, float z)
+{
+	bool inside = false;
+
+	for (int i = 0, j = count - 1; i < count; j = i++)
+	{
+		if ((points[i][1] > z) != (points[j][1] > z)
+			&& x < (points[j][0] - points[i][0]) * (z - points[i][1]) / (points[j][1] - points[i][1]) + points[i][0])
+		{
+			inside = !inside;
+		}
+	}
+	return inside;
+}
+
+// A building's walls for the water only within its outline: the cells
+// whose middles are inside one of its model's footprints that hide the
+// terrain (OBJECT_FOOTPRINT_NO_TERRAIN: the building itself, tools/house_grow;
+// a yard's cover is not one). Its fences, its yard, its eaves stand over
+// the ground, not on it: the water flows past and under them. Then the
+// roof's pits filled (its highest point over each cell leaves dips between
+// a thatch's bundles, its boards; the water a flood left in them stood on
+// the roof): each cell raised to the lowest of its four neighbors, again
+// until nothing changes (a cell at the outline's edge has the open ground
+// beside it: never raised). false: the model has no such footprint (all of
+// it stands as it is)
+static bool keep_within_outline(const object_model_t *model, const object_instance_t *instance, float cosine, float sine, const water_t *water,
+	const int32_t rectangle[4], int32_t width, int32_t height, float *tops)
+{
+	bool any = false;
+	bool *inside;
+
+	for (int f = 0; f < model->footprint_count; f++)
+	{
+		any = any || ((model->footprints[f].flags & OBJECT_FOOTPRINT_NO_TERRAIN) != 0 && model->footprints[f].point_count >= 3);
+	}
+	if (!any)
+	{
+		return false;
+	}
+	inside = SDL_calloc((size_t)width * (size_t)height, sizeof(bool));
+	if (inside == NULL)
+	{
+		return false;
+	}
+	for (int f = 0; f < model->footprint_count; f++)
+	{
+		const object_file_footprint_t *footprint = &model->footprints[f];
+		float points[OBJECT_FILE_MAX_FOOTPRINT_POINTS][2];
+		int count = (int)SDL_min(footprint->point_count, (uint32_t)OBJECT_FILE_MAX_FOOTPRINT_POINTS);
+
+		if ((footprint->flags & OBJECT_FOOTPRINT_NO_TERRAIN) == 0 || count < 3)
+		{
+			continue;
+		}
+		// (turned as the triangles are: x' = x cos + z sin, z' = -x sin + z cos)
+		for (int k = 0; k < count; k++)
+		{
+			float x = footprint->points[k][0];
+			float z = footprint->points[k][1];
+
+			points[k][0] = instance->x + (x * cosine + z * sine) * instance->scale;
+			points[k][1] = instance->z + (-x * sine + z * cosine) * instance->scale;
+		}
+		for (int32_t y = 0; y < height; y++)
+		{
+			for (int32_t x = 0; x < width; x++)
+			{
+				if (!inside[y * width + x] && inside_outline((const float(*)[2])points, count, (float)(rectangle[0] + x) * water->cell_size_meters,
+					(float)(rectangle[1] + y) * water->cell_size_meters))
+				{
+					inside[y * width + x] = true;
+				}
+			}
+		}
+	}
+	for (int32_t i = 0; i < width * height; i++)
+	{
+		if (!inside[i])
+		{
+			tops[i] = -1e30f;
+		}
+	}
+	// The pits filled (at most so many rounds: a pit is never that wide)
+	for (int round = 0; round < 256; round++)
+	{
+		bool changed = false;
+
+		for (int32_t y = 0; y < height; y++)
+		{
+			for (int32_t x = 0; x < width; x++)
+			{
+				int32_t at = y * width + x;
+				float lowest;
+
+				if (!inside[at])
+				{
+					continue;
+				}
+				// (off the rectangle, outside the outline: open ground, no fill)
+				lowest = x > 0 && inside[at - 1] ? tops[at - 1] : -1e30f;
+				lowest = SDL_min(lowest, x + 1 < width && inside[at + 1] ? tops[at + 1] : -1e30f);
+				lowest = SDL_min(lowest, y > 0 && inside[at - width] ? tops[at - width] : -1e30f);
+				lowest = SDL_min(lowest, y + 1 < height && inside[at + width] ? tops[at + width] : -1e30f);
+				if (lowest > tops[at])
+				{
+					tops[at] = lowest;
+					changed = true;
+				}
+			}
+		}
+		if (!changed)
+		{
+			break;
+		}
+	}
+	SDL_free(inside);
+	return true;
+}
+
 static void rebuild_walls(physics_t *physics, objects_t *objects, const terrain_t *terrain, water_t *water, bool force)
 {
 	uint64_t hash = 1469598103934665603ull;
@@ -1778,6 +1899,7 @@ static void rebuild_walls(physics_t *physics, objects_t *objects, const terrain_
 				}
 			}
 		}
+		keep_within_outline(model, instance, cosine, sine, water, rectangle, rectangle_width, rectangle_height, tops);
 		for (int32_t y = rectangle[1]; y <= rectangle[3]; y++)
 		{
 			for (int32_t x = rectangle[0]; x <= rectangle[2]; x++)
