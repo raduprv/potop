@@ -36,6 +36,25 @@
 // without its finer touches. Water on the ground lays the blades down the
 // way it flows (and they stay down where it left silt); deeper than a blade
 // by a little, there is none.
+//
+// What is the same all up a blade is worked out here, once, not seven
+// times in grass.vert (once per vertex): its color (the ground's grass
+// under it, the terrain's variation, wet, dry, its own shade), the silt
+// over it, the sky seen and the light the land round sends back, and the
+// sun the shadow maps and the clouds leave it (at half its height, a
+// little towards the sun: a blade stands above the ground the maps hold).
+// Into the blade's record, packed (BLADE_FLOATS: grass.vert reads them as
+// two uvec4s):
+//
+//   0..2   its foot (x, y, z: float bits)
+//   3      half floats: its height, its width
+//   4      half floats: laid down towards x, z (its length: how far)
+//   5      bytes: the way its face looks (0..1 of a turn), the sun left it,
+//          the sky seen, the silt
+//   6      bytes: its color (sqrt of half of it, linear: the darks keep
+//          their steps), unused
+//   7      bytes: the light the land round sends back, shared exponent
+//          (r, g, b, 2^(e - 128))
 
 layout(local_size_x = 256) in;
 
@@ -48,28 +67,42 @@ layout(local_size_x = 256) in;
 // The draw: a strip of seven vertices per blade (three segments and a tip)
 #define BLADE_VERTICES 7u
 
-layout(set = TEXTURE_SET, binding = 0) uniform sampler2D height_texture;       // R32F: the ground (meters)
-layout(set = TEXTURE_SET, binding = 1) uniform sampler2D water_texture;        // RG32F: the water on it (meters)
-layout(set = TEXTURE_SET, binding = 2) uniform sampler2D flow_texture;         // RGBA16F: its flow x, z (m/s)
-layout(set = TEXTURE_SET, binding = 3) uniform sampler2D soil_weight_texture;  // RGBA8: sand, earth, clay, rock
-layout(set = TEXTURE_SET, binding = 4) uniform sampler2D normal_texture;       // RGBA8: surface normal x, z; material normal x, z
-layout(set = TEXTURE_SET, binding = 5) uniform sampler2D surface_texture;      // RGBA8: silt, wetness, bare bedrock
-layout(set = TEXTURE_SET, binding = 6) uniform sampler2D variation_texture;    // R8: tileable cloudy noise
-layout(set = TEXTURE_SET, binding = 7) uniform sampler2D material_map_texture; // RGBA8: the material map (material_map.h)
-layout(set = TEXTURE_SET, binding = 8) uniform sampler2D overlay_texture;      // RGBA16F: snow, petals (ground_overlay.h)
+#include "scene.glsl"
+// The shadow maps first (shadows.glsl: samplers 0 and 1), then the ground's
+#include "shadows.glsl"
+layout(set = TEXTURE_SET, binding = 2) uniform sampler2D height_texture;       // R32F: the ground (meters)
+layout(set = TEXTURE_SET, binding = 3) uniform sampler2D water_texture;        // RG32F: the water on it (meters)
+layout(set = TEXTURE_SET, binding = 4) uniform sampler2D flow_texture;         // RGBA16F: its flow x, z (m/s)
+layout(set = TEXTURE_SET, binding = 5) uniform sampler2D soil_weight_texture;  // RGBA8: sand, earth, clay, rock
+layout(set = TEXTURE_SET, binding = 6) uniform sampler2D normal_texture;       // RGBA8: surface normal x, z; material normal x, z
+layout(set = TEXTURE_SET, binding = 7) uniform sampler2D surface_texture;      // RGBA8: silt, wetness, bare bedrock
+layout(set = TEXTURE_SET, binding = 8) uniform sampler2D variation_texture;    // R8: tileable cloudy noise
+layout(set = TEXTURE_SET, binding = 9) uniform sampler2D material_map_texture; // RGBA8: the material map (material_map.h)
+layout(set = TEXTURE_SET, binding = 10) uniform sampler2D overlay_texture;     // RGBA16F: snow, petals (ground_overlay.h)
+layout(set = TEXTURE_SET, binding = 11) uniform sampler2DArray material_color_array;  // the terrain's materials: RGB color
+layout(set = TEXTURE_SET, binding = 12) uniform sampler2D sky_occlusion_texture;      // R8 a cell (sky_occlusion.h)
+layout(set = TEXTURE_SET, binding = 13) uniform sampler2D sky_layers_texture;         // R8: in the air
+layout(set = TEXTURE_SET, binding = 14) uniform sampler2D sky_bounce_texture;         // RGBA8: what hides the sky
+layout(set = TEXTURE_SET, binding = 15) uniform sampler2D cloud_shadow_texture;       // the volumetric clouds' shadows (clouds.glsl)
+#define SKY_OCCLUSION_NO_GROUND
+#define SKY_BOUNCE
+#include "sky_occlusion.glsl"
+#define CLOUD_SHADOW_TEXTURE
+#define CLOUDS_EXPLICIT_LOD
+#include "clouds.glsl"
 
-layout(std430, set = READWRITE_SET, binding = 0) buffer blade_buffer { float blades[]; };
+layout(std430, set = READWRITE_SET, binding = 0) buffer blade_buffer { uint blades[]; };
 // The depth pyramid of the frame before (hiz.h): every level, one after
 // the other, row by row (a blade behind what was drawn then is left out).
 // (In a compute shader's first set the read only buffers come after the
-// samplers: binding 9, the nine above before it; at 0 it read the height
-// texture's slot, and every blade came out hidden)
-layout(std430, set = READONLY_SET, binding = 9) readonly buffer hiz_buffer { float hiz_depths[]; };
+// samplers: binding 16, the sixteen above before it; at 0 it read the
+// first sampler's slot, and every blade came out hidden)
+layout(std430, set = READONLY_SET, binding = 16) readonly buffer hiz_buffer { float hiz_depths[]; };
 // The count of blades written, then the draw's arguments (vertices,
 // instances, first vertex, first instance)
 layout(std430, set = READWRITE_SET, binding = 1) buffer count_buffer { uint counts[]; };
 
-layout(std140, set = UNIFORM_SET, binding = 0) uniform grass_block
+layout(std140, set = UNIFORM_SET, binding = 1) uniform grass_block
 {
 	vec4 planes[6];            // the view's frustum (inside: dot(plane.xyz, p) + plane.w >= 0)
 	vec4 eye;                  // xyz; w: how far the grass goes (meters)
@@ -81,8 +114,10 @@ layout(std140, set = UNIFORM_SET, binding = 0) uniform grass_block
 	vec4 blade;                // a blade's height (m), its width (m), the sun's x, z (towards it)
 	ivec4 control;             // mode, the material map (1: read it), the overlay (1: read it), unused
 	vec4 material_patches[MATERIAL_COUNT]; // terrain.frag's: repeats per meter, strength, edge (meters)
-	mat4 view_projection;      // the camera's the pyramid was made with (depth 0..1)
+	mat4 hiz_view_projection;  // the camera's the pyramid was made with (depth 0..1)
 	vec4 hiz_size;             // level 0's width and height, the level count, 1 if it is there
+	vec4 look;                 // the blades' color: the grass material's first layer, its macro repeats per meter, the variation's strength, its hue's
+	vec4 tint;                 // rgb: multiplies the ground's grass color; w: the share of dry blades
 };
 
 // --- Noise, as terrain.frag's ------------------------------------------------
@@ -236,7 +271,7 @@ bool hidden_by_pyramid(vec3 foot, vec3 top, float radius)
 	}
 	for (int k = 0; k < 2; k++)
 	{
-		vec4 clip = view_projection * vec4(k == 0 ? foot : top, 1.0);
+		vec4 clip = hiz_view_projection * vec4(k == 0 ? foot : top, 1.0);
 
 		if (clip.w <= 0.05)
 		{
@@ -245,7 +280,7 @@ bool hidden_by_pyramid(vec3 foot, vec3 top, float radius)
 		vec3 ndc = clip.xyz / clip.w;
 		vec2 uv = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
 		// (as wide as the blade may lean, on screen)
-		vec2 reach = vec2(radius / clip.w) * vec2(abs(view_projection[0][0]), abs(view_projection[1][1])) * 0.5;
+		vec2 reach = vec2(radius / clip.w) * vec2(abs(hiz_view_projection[0][0]), abs(hiz_view_projection[1][1])) * 0.5;
 
 		screen_minimum = min(screen_minimum, uv - reach);
 		screen_maximum = max(screen_maximum, uv + reach);
@@ -298,6 +333,83 @@ bool sphere_visible(vec3 center, float radius)
 		}
 	}
 	return true;
+}
+
+// --- What is the same all up a blade ------------------------------------------
+
+float hash_1d(vec2 position)
+{
+	return fract(sin(dot(position, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+// Its color before what changes up it (grass.vert: lighter and yellower to
+// the tip, the silt's brown, the gust's sheen): the ground's grass under it
+// (the far, smooth scale of its texture), the terrain's variation over its
+// materials (as terrain.frag has it), darker wet, its own shade, some dry
+vec3 blade_color(vec3 root, vec4 surface)
+{
+	vec3 ground = textureLod(material_color_array, vec3(root.xz * look.y, look.x), 3.0).rgb;
+	vec3 color = pow(ground, vec3(2.2)) * tint.rgb;
+	float large = textureLod(variation_texture, root.xz * terrain.w, 0.0).r;
+	float small = textureLod(variation_texture, root.xz * terrain.w * 3.83 + 0.61, 0.0).r;
+	float amount = (large - 0.5) * 0.7 + (small - 0.5) * 0.3;
+
+	color *= 1.0 + amount * look.z * 2.0;
+	color *= mix(vec3(1.0), amount > 0.0 ? vec3(1.08, 1.02, 0.86) : vec3(0.90, 1.02, 0.94), min(abs(amount) * 2.0, 1.0) * look.w);
+	color *= 1.0 - 0.3 * surface.g;
+	color *= 0.85 + 0.3 * hash_1d(root.xz + 17.31);
+	if (hash_1d(root.xz) < tint.w)
+	{
+		color = mix(color, vec3(0.32, 0.26, 0.12), 0.65);
+	}
+	return color;
+}
+
+// How much of the sun the clouds over a point leave it (as object.frag's)
+float cloud_light(vec3 position, vec3 towards_sun)
+{
+	if (cloud_parameters.z <= 0.0)
+	{
+		return 1.0;
+	}
+	float climb = max(cloud_motion.z - position.y, 0.0) / max(towards_sun.y, 0.05);
+	vec2 on_sheet = position.xz + towards_sun.xz * climb - cloud_motion.xy;
+
+	return 1.0 - cloud_shade(on_sheet) * cloud_parameters.z;
+}
+
+// Light (rgb, 0 and up) into four bytes: three and a shared exponent
+uint pack_shared_exponent(vec3 light)
+{
+	float largest = max(max(light.r, light.g), max(light.b, 1e-8));
+	float exponent = clamp(ceil(log2(largest)), -60.0, 60.0);
+	vec3 scaled = clamp(light * exp2(-exponent), 0.0, 1.0);
+
+	return packUnorm4x8(vec4(scaled, (exponent + 128.0) / 255.0));
+}
+
+// The blade's record (see the top), the parts that are the same all up it
+// worked out here
+void write_blade(uint base, vec3 root, float height, float width, float facing_turn, vec2 flatten)
+{
+	vec2 surface_uv = (root.xz / map.y + 0.5) / map.x;
+	vec4 surface = textureLod(surface_texture, surface_uv, 0.0);
+	vec3 color = blade_color(root, surface);
+	// Half up it, a little towards the sun
+	vec3 middle = root + vec3(0.0, height * 0.5, 0.0);
+	vec3 looked_up = middle + sun_direction * 0.3;
+	float sun = sun_visibility(light_view_projection * vec4(looked_up, 1.0), near_light_view_projection * vec4(looked_up, 1.0))
+		* cloud_light(middle, sun_direction);
+	vec4 sky = sky_light_at(middle, height * 0.5, vec3(0.0, 1.0, 0.0));
+
+	blades[base] = floatBitsToUint(root.x);
+	blades[base + 1u] = floatBitsToUint(root.y);
+	blades[base + 2u] = floatBitsToUint(root.z);
+	blades[base + 3u] = packHalf2x16(vec2(height, width));
+	blades[base + 4u] = packHalf2x16(flatten);
+	blades[base + 5u] = packUnorm4x8(vec4(facing_turn, sun, sky.a, surface.r));
+	blades[base + 6u] = packUnorm4x8(vec4(sqrt(clamp(color * 0.5, 0.0, 1.0)), 0.0));
+	blades[base + 7u] = pack_shared_exponent(sky.rgb);
 }
 
 void main()
@@ -445,15 +557,7 @@ void main()
 	{
 		return;
 	}
-	uint base = place * BLADE_FLOATS;
-
-	blades[base] = root.x;
-	blades[base + 1u] = root.y;
-	blades[base + 2u] = root.z;
-	blades[base + 3u] = height;
-	// Which way its face looks, its width, and laid down towards (and how far)
-	blades[base + 4u] = more.w * 6.2831853;
-	blades[base + 5u] = width;
-	blades[base + 6u] = flatten.x;
-	blades[base + 7u] = flatten.y;
+	// Which way its face looks (a share of a turn), its width, laid down
+	// towards (and how far)
+	write_blade(place * BLADE_FLOATS, root, height, width, more.w, flatten);
 }

@@ -12,34 +12,32 @@
 // roll through the trees, object.vert's, and its own quick sway), and lies
 // down where the water flows over it. Its color is the ground's grass
 // under it (so it melts into the terrain), darker at its foot, lighter and
-// a little yellow at its tip, some blades dry; muddy under silt.
+// a little yellow at its tip, some blades dry; muddy under silt. What is
+// the same all up the blade (its color before the tip's, the silt, the sky
+// seen and the light the land round sends back, the sun the shadow maps
+// and the clouds leave it) comes worked out by the scatter, once a blade
+// (grass_body.glsl), not here seven times.
 
-layout(location = 0) in vec4 blade_root;          // x, y, z of its foot; its height
-layout(location = 1) in vec4 blade_shape;         // the way its face looks (radians), its width, laid down towards x, z (its length: how far)
-
-layout(set = TEXTURE_SET, binding = 0) uniform sampler2DArray material_color_array;  // the terrain's materials: RGB color
-layout(set = TEXTURE_SET, binding = 1) uniform sampler2D surface_texture;            // RGBA8: silt, wetness, bare bedrock
-layout(set = TEXTURE_SET, binding = 2) uniform sampler2D variation_texture;          // R8: tileable cloudy noise (the terrain's variation)
-#define SKY_VERTEX_BINDING 3
-#include "sky_vertex.glsl"
+// The blade's record (grass_body.glsl, packed: see there)
+layout(location = 0) in uvec4 blade_first;
+layout(location = 1) in uvec4 blade_second;
 
 layout(std140, set = UNIFORM_SET, binding = 1) uniform grass_draw_block
 {
 	vec4 wind;                     // xy: where it blows towards (x, z); z: how hard (0..1); w: time (seconds)
 	vec4 gusts;                    // x: 2 pi over the gusts' spacing (per meter); y: how fast they roll (m/s); z: how far a blade bows in a gale (radians); w: how pale a gust's wave makes it
-	vec4 look;                     // x: the grass material's first layer; y: its macro repeats per meter; z: cells per side; w: cell size (m)
-	vec4 tint;                     // rgb: multiplies the ground's grass color; w: the share of dry blades
-	vec4 variation;                // the terrain's: 1 / its tiling (m), its strength, its hue's strength
 	vec4 coarse;                   // x: from how far off (m) a blade is one triangle (0: never); y: how much wider then
 };
 
 layout(location = 0) out vec3 world_position;
 layout(location = 1) out vec3 world_normal;
 layout(location = 2) out vec3 albedo;
-layout(location = 3) out vec4 shadow_position;
-layout(location = 4) out vec4 near_shadow_position;
+layout(location = 3) out float sunlit;            // what the shadow maps and the clouds leave of the sun on it (the scatter's)
 layout(location = 5) out float along;             // 0 at its foot .. 1 at its tip
-layout(location = 6) out vec4 sky_light;          // the light the land round sends back (rgb), the sky seen (a): sky_vertex.glsl
+layout(location = 6) out vec4 sky_light;          // the light the land round sends back (rgb), the sky seen (a)
+
+// The blade's own (the scatter's): how it lies, the way its face looks
+vec2 blade_flatten;
 
 float hash_1d(vec2 position)
 {
@@ -69,7 +67,7 @@ vec3 blade_point(float clock, vec3 root, float height, float width, float t, flo
 		lean += wind.xy * wind.z * gusts.z * (0.35 + 0.65 * gust + sway);
 	}
 	{
-		vec2 flatten = blade_shape.zw;
+		vec2 flatten = blade_flatten;
 		float laid = length(flatten);
 
 		if (laid > 0.001)
@@ -100,10 +98,15 @@ void main()
 	uint vertex = uint(gl_VertexIndex);
 	uint segment = vertex / 2u;
 	float side = (vertex & 1u) == 0u ? -0.5 : 0.5;
-	vec3 root = blade_root.xyz;
-	float height = blade_root.w;
-	float width = blade_shape.y;
+	vec3 root = uintBitsToFloat(blade_first.xyz);
+	vec2 height_width = unpackHalf2x16(blade_first.w);
+	vec4 bytes = unpackUnorm4x8(blade_second.y);
+	vec4 shared_light = unpackUnorm4x8(blade_second.w);
+	float height = height_width.x;
+	float width = height_width.y;
 	float own = hash_1d(root.xz);
+
+	blade_flatten = unpackHalf2x16(blade_second.x);
 	// Far off, a blade is one triangle, its foot to its tip, a little wider
 	// (a few pixels: the segments' bow is not seen, and four triangles of a
 	// pixel each cost the most of anything drawn): the other vertices all at
@@ -116,7 +119,8 @@ void main()
 	}
 	float t = float(segment) / 3.0;
 	float own_2 = hash_1d(root.xz + 17.31);
-	vec2 facing = vec2(cos(blade_shape.x), sin(blade_shape.x));
+	float facing_angle = bytes.x * 6.2831853;
+	vec2 facing = vec2(cos(facing_angle), sin(facing_angle));
 
 	vec3 tangent;
 	vec3 across;
@@ -131,31 +135,14 @@ void main()
 		// more its own the higher up the blade
 		world_normal = normalize(mix(vec3(0.0, 1.0, 0.0), normalize(face + across * side * 0.6), 0.25 + 0.25 * t));
 	}
-	// Its color: the ground's grass under it (the far, smooth scale of its
-	// texture), darker at the foot, lighter and yellower at the tip; some
-	// dry; brown under silt
+	// Its color (the scatter's: the ground's grass under it, the terrain's
+	// variation, wet, dry, its own shade), lighter and yellower at the tip;
+	// brown under silt
 	{
-		vec3 ground = textureLod(material_color_array, vec3(root.xz * look.y, look.x), 3.0).rgb;
-		vec3 color = pow(ground, vec3(2.2)) * tint.rgb;
-		vec2 surface_uv = (root.xz / look.w + 0.5) / look.z;
-		float silt = textureLod(surface_texture, surface_uv, 0.0).r;
+		vec3 color = unpackUnorm4x8(blade_second.z).rgb;
+		float silt = bytes.w;
 
-		// The terrain's variation over its materials, as terrain.frag has it
-		{
-			float large = textureLod(variation_texture, root.xz * variation.x, 0.0).r;
-			float small = textureLod(variation_texture, root.xz * variation.x * 3.83 + 0.61, 0.0).r;
-			float amount = (large - 0.5) * 0.7 + (small - 0.5) * 0.3;
-
-			color *= 1.0 + amount * variation.y * 2.0;
-			color *= mix(vec3(1.0), amount > 0.0 ? vec3(1.08, 1.02, 0.86) : vec3(0.90, 1.02, 0.94), min(abs(amount) * 2.0, 1.0) * variation.z);
-			// Wet: darker, as the ground
-			color *= 1.0 - 0.3 * textureLod(surface_texture, surface_uv, 0.0).g;
-		}
-		color *= 0.85 + 0.3 * own_2;
-		if (own < tint.w)
-		{
-			color = mix(color, vec3(0.32, 0.26, 0.12), 0.65);
-		}
+		color = color * color * 2.0;
 		color = mix(color, color * vec3(1.25, 1.2, 0.85), t * 0.6);
 		color = mix(color, vec3(0.16, 0.12, 0.08), clamp(silt * 1.2, 0.0, 0.85));
 		albedo = color * (0.8 + 0.2 * t);
@@ -164,14 +151,7 @@ void main()
 	}
 	along = t;
 	world_position = point;
-	sky_light = sky_light_at(point, point.y - root.y, world_normal);
-	// The shadow maps looked up a little towards the sun: a blade stands a
-	// hand above ground whose own depth the maps hold, coarser than that
-	{
-		vec3 looked_up = point + sun_direction * 0.3;
-
-		shadow_position = light_view_projection * vec4(looked_up, 1.0);
-		near_shadow_position = near_light_view_projection * vec4(looked_up, 1.0);
-	}
+	sunlit = bytes.y;
+	sky_light = vec4(shared_light.rgb * exp2(shared_light.a * 255.0 - 128.0), bytes.z);
 	gl_Position = world_to_clip(point);
 }

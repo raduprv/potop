@@ -27,6 +27,7 @@
 #include "hiz.h"
 #include "materials.h"
 #include "settings.h"
+#include "scene_uniforms.h"
 #include "shadow_map.h"
 
 typedef struct
@@ -75,6 +76,12 @@ typedef struct
 	// The depth pyramid of the frame before (hiz.h; NULL: none): a blade
 	// behind what was drawn then (a house, a hill) is left out
 	const hiz_t *occlusion;
+	// What the scatter works out once a blade (its color, the sky's light,
+	// the sun the shadow maps and the clouds leave it) wants the scene's
+	// block and the two shadow maps (the near one: the far one, unused)
+	const scene_uniforms_t *scene;
+	SDL_GPUTexture *far_shadow_texture;
+	SDL_GPUTexture *near_shadow_texture;
 } grass_world_t;
 
 bool grass_create(grass_t *grass);
@@ -86,6 +93,6 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 
 // Draws them, in the scene's pass (its block pushed)
 void grass_draw(grass_t *grass, SDL_GPURenderPass *pass, const render_settings_t *render, const objects_settings_t *settings,
-	const grass_world_t *world, const shadow_map_t *shadow, const shadow_map_t *near_shadow);
+	const grass_world_t *world);
 
 #endif

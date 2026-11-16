@@ -179,6 +179,9 @@ static void grass_world_of(const world_t *world, const scene_uniforms_t *scene, 
 	grass->sky_occlusion_texture = world->renderer.sky_occlusion_texture;
 	grass->sky_layers_texture = world->renderer.sky_layers_texture;
 	grass->sky_bounce_texture = world->renderer.sky_bounce_texture;
+	grass->scene = scene;
+	grass->far_shadow_texture = world->shadow.depth_texture;
+	grass->near_shadow_texture = world->near_shadow.size > 0 && world->shadow.size > 0 ? world->near_shadow.depth_texture : world->shadow.depth_texture;
 	grass->grass_layer = materials->first_layer[MATERIAL_GRASS];
 	for (int i = 0; i < MATERIAL_COUNT; i++)
 	{
@@ -789,7 +792,7 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 			SDL_snprintf(objects_drawn, sizeof(objects_drawn), "objects drawn (%d draws)", world->objects.draw_call_count);
 			trace_mark(objects_drawn);
 		}
-		grass_draw(&world->grass, pass, &world->lit_render, &world->settings->objects, &grass_world, &world->shadow, &world->near_shadow);
+		grass_draw(&world->grass, pass, &world->lit_render, &world->settings->objects, &grass_world);
 		trace_mark("grass drawn");
 		world->actors.pbr_shading = world->lit_render.pbr_shading;
 		actors_draw(&world->actors, pass, camera, &world->shadow, &world->near_shadow, world->renderer.materials.variation_texture,

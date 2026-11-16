@@ -41,18 +41,17 @@ typedef struct
 	float material_patches[MATERIAL_COUNT][4];
 	float view_projection[16];             // the camera's the pyramid was made with (depth 0..1)
 	float hiz_size[4];                     // level 0's width and height, the level count, 1 if it is there
+	float look[4];                         // the blades' color: the grass material's first layer, its macro repeats per meter, the variation's strength, its hue's
+	float tint[4];                         // rgb: multiplies the ground's grass color; w: the share of dry blades
 } grass_scatter_uniforms_t;
 
-SDL_COMPILE_TIME_ASSERT(grass_scatter_uniforms_size, sizeof(grass_scatter_uniforms_t) == 224 + 16 * MATERIAL_COUNT + 80);
+SDL_COMPILE_TIME_ASSERT(grass_scatter_uniforms_size, sizeof(grass_scatter_uniforms_t) == 224 + 16 * MATERIAL_COUNT + 112);
 
 // grass.vert's block (std140, vertex slot 1)
 typedef struct
 {
 	float wind[4];
 	float gusts[4];
-	float look[4];
-	float tint[4];
-	float variation[4];
 	float coarse[4];
 } grass_draw_uniforms_t;
 
@@ -66,22 +65,22 @@ bool grass_create(grass_t *grass)
 	};
 	static const SDL_GPUVertexAttribute attributes[2] =
 	{
-		{ 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, 0 },
-		{ 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, sizeof(float) * 4 },
+		{ 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_UINT4, 0 },
+		{ 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_UINT4, sizeof(uint32_t) * 4 },
 	};
 
 	SDL_zerop(grass);
 	SDL_zero(layout);
-	layout.samplers = 9;
+	layout.samplers = 16;
 	layout.readonly_storage_buffers = 1;
 	layout.readwrite_storage_buffers = 2;
-	layout.uniform_buffers = 1;
+	layout.uniform_buffers = 2;
 	layout.threads_x = GRASS_THREADS;
 	grass->scatter_pipeline = gpu_load_compute("grass.comp", &layout);
 	grass->map_scatter_pipeline = gpu_load_compute("grass_map.comp", &layout);
 	SDL_zero(info);
-	info.vertex_shader = gpu_load_shader("grass.vert", 7, 0, 2);
-	info.fragment_shader = gpu_load_shader("grass.frag", 4, LIGHTS_STORAGE_BUFFERS, 1);
+	info.vertex_shader = gpu_load_shader("grass.vert", 0, 0, 2);
+	info.fragment_shader = gpu_load_shader("grass.frag", 1, LIGHTS_STORAGE_BUFFERS, 1);
 	info.vertex_buffers = buffers;
 	info.vertex_buffer_count = 1;
 	info.vertex_attributes = attributes;
@@ -152,8 +151,13 @@ static void dispatch(grass_t *grass, SDL_GPUCommandBuffer *command_buffer, const
 	int mode, uint32_t threads)
 {
 	SDL_GPUStorageBufferReadWriteBinding read_write[2];
-	SDL_GPUTextureSamplerBinding samplers[9] =
+	// (the shadow maps first: shadows.glsl's; the sky's occlusion, its
+	// layers, the bounce texture none: anything stands in, not read, the
+	// scene's sky_occlusion.y 0; the clouds' shadows none: the sheet's)
+	SDL_GPUTextureSamplerBinding samplers[16] =
 	{
+		{ world->far_shadow_texture, gpu.shadow_compare },
+		{ world->near_shadow_texture, gpu.shadow_compare },
 		{ world->height_texture, gpu.nearest_clamp },
 		{ world->water_texture, gpu.nearest_clamp },
 		{ world->flow_texture, gpu.nearest_clamp },
@@ -163,6 +167,11 @@ static void dispatch(grass_t *grass, SDL_GPUCommandBuffer *command_buffer, const
 		{ world->variation_texture, gpu.linear_repeat },
 		{ world->material_texture, gpu.nearest_clamp },
 		{ world->overlay_texture != NULL ? world->overlay_texture : world->material_texture, gpu.nearest_clamp },
+		{ world->material_color_array, gpu.linear_repeat },
+		{ world->sky_occlusion_texture != NULL ? world->sky_occlusion_texture : world->variation_texture, gpu.linear_clamp },
+		{ world->sky_layers_texture != NULL ? world->sky_layers_texture : world->variation_texture, gpu.linear_clamp },
+		{ world->sky_bounce_texture != NULL ? world->sky_bounce_texture : world->variation_texture, gpu.linear_clamp },
+		{ world->cloud_shadow_texture != NULL ? world->cloud_shadow_texture : world->variation_texture, gpu.linear_repeat },
 	};
 	SDL_GPUComputePass *compute;
 	uint32_t groups = (threads + GRASS_THREADS - 1) / GRASS_THREADS;
@@ -177,14 +186,15 @@ static void dispatch(grass_t *grass, SDL_GPUCommandBuffer *command_buffer, const
 	}
 	SDL_BindGPUComputePipeline(compute, world->material_map && grass->map_scatter_pipeline != NULL ? grass->map_scatter_pipeline
 		: grass->scatter_pipeline);
-	SDL_BindGPUComputeSamplers(compute, 0, samplers, 9);
+	SDL_BindGPUComputeSamplers(compute, 0, samplers, 16);
 	{
 		SDL_GPUBuffer *pyramid = world->occlusion != NULL && uniforms->hiz_size[3] > 0.5f ? hiz_buffer(world->occlusion) : grass->no_occlusion_buffer;
 
 		SDL_BindGPUComputeStorageBuffers(compute, 0, &pyramid, 1);
 	}
 	uniforms->control[0] = mode;
-	SDL_PushGPUComputeUniformData(command_buffer, 0, uniforms, sizeof(*uniforms));
+	SDL_PushGPUComputeUniformData(command_buffer, 0, world->scene, sizeof(*world->scene));
+	SDL_PushGPUComputeUniformData(command_buffer, 1, uniforms, sizeof(*uniforms));
 	SDL_DispatchGPUCompute(compute, SDL_clamp(groups, 1u, GRASS_MAXIMUM_GROUPS), 1, 1);
 	SDL_EndGPUComputePass(compute);
 }
@@ -206,7 +216,8 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 	grass->prepared = false;
 	if (grass->failed || !settings->grass || world->height_texture == NULL || world->water_texture == NULL || world->flow_texture == NULL
 		|| world->soil_weight_texture == NULL || world->normal_texture == NULL || world->surface_texture == NULL
-		|| world->variation_texture == NULL || world->material_color_array == NULL)
+		|| world->variation_texture == NULL || world->material_color_array == NULL || world->scene == NULL
+		|| world->far_shadow_texture == NULL || world->near_shadow_texture == NULL)
 	{
 		return;
 	}
@@ -265,6 +276,14 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 	uniforms.blade[1] = SDL_clamp(settings->grass_width_meters, 0.001f, 0.2f);
 	uniforms.blade[2] = world->sun_direction[0];
 	uniforms.blade[3] = world->sun_direction[2];
+	uniforms.look[0] = (float)world->grass_layer;
+	uniforms.look[1] = world->grass_macro_repeats_per_meter;
+	uniforms.look[2] = render->variation_strength;
+	uniforms.look[3] = render->variation_hue_strength;
+	uniforms.tint[0] = settings->grass_tint[0];
+	uniforms.tint[1] = settings->grass_tint[1];
+	uniforms.tint[2] = settings->grass_tint[2];
+	uniforms.tint[3] = SDL_clamp(settings->grass_dry_share, 0.0f, 1.0f);
 	if (world->occlusion != NULL && world->occlusion->ready && hiz_buffer(world->occlusion) != NULL)
 	{
 		gpu_clip_matrix(world->occlusion->view_projection, uniforms.view_projection);
@@ -326,7 +345,7 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 }
 
 void grass_draw(grass_t *grass, SDL_GPURenderPass *pass, const render_settings_t *render, const objects_settings_t *settings,
-	const grass_world_t *world, const shadow_map_t *shadow, const shadow_map_t *near_shadow)
+	const grass_world_t *world)
 {
 	grass_draw_uniforms_t uniforms;
 
@@ -343,44 +362,14 @@ void grass_draw(grass_t *grass, SDL_GPURenderPass *pass, const render_settings_t
 	}
 	uniforms.gusts[2] = GRASS_GALE_BOW;
 	uniforms.gusts[3] = render->grass_gust_sheen;
-	uniforms.look[0] = (float)world->grass_layer;
-	uniforms.look[1] = world->grass_macro_repeats_per_meter;
-	uniforms.look[2] = (float)world->map_size;
-	uniforms.look[3] = world->cell_size_meters;
-	uniforms.tint[0] = settings->grass_tint[0];
-	uniforms.tint[1] = settings->grass_tint[1];
-	uniforms.tint[2] = settings->grass_tint[2];
-	uniforms.tint[3] = SDL_clamp(settings->grass_dry_share, 0.0f, 1.0f);
-	uniforms.variation[0] = 1.0f / SDL_max(render->variation_tiling_meters, 1.0f);
-	uniforms.variation[1] = render->variation_strength;
-	uniforms.variation[2] = render->variation_hue_strength;
 	uniforms.coarse[0] = SDL_max(settings->grass_coarse_meters, 0.0f);
 	uniforms.coarse[1] = SDL_clamp(settings->grass_coarse_width, 0.5f, 3.0f);
 	SDL_BindGPUGraphicsPipeline(pass, grass->pipeline);
 	{
-		SDL_GPUTextureSamplerBinding vertex_samplers[7] =
-		{
-			{ world->material_color_array, gpu.linear_repeat },
-			{ world->surface_texture, gpu.linear_clamp },
-			{ world->variation_texture, gpu.linear_repeat },
-			// The sky's occlusion, its layers, the bounce texture, the far
-			// shadow map (none: anything stands in, not read: scene
-			// sky_occlusion.y 0)
-			{ world->sky_occlusion_texture != NULL ? world->sky_occlusion_texture : world->variation_texture, gpu.linear_clamp },
-			{ world->sky_layers_texture != NULL ? world->sky_layers_texture : world->variation_texture, gpu.linear_clamp },
-			{ world->sky_bounce_texture != NULL ? world->sky_bounce_texture : world->variation_texture, gpu.linear_clamp },
-			{ shadow->depth_texture, gpu.shadow_compare },
-		};
-		SDL_GPUTextureSamplerBinding fragment_samplers[2] =
-		{
-			{ world->variation_texture, gpu.linear_repeat },
-			{ world->cloud_shadow_texture != NULL ? world->cloud_shadow_texture : world->variation_texture, gpu.linear_repeat },
-		};
 		SDL_GPUBufferBinding blades = { grass->blade_buffer, 0 };
+		SDL_GPUTextureSamplerBinding fragment_samplers[1] = { { world->variation_texture, gpu.linear_repeat } };
 
-		SDL_BindGPUVertexSamplers(pass, 0, vertex_samplers, 7);
-		shadow_map_bind_for_shading(pass, shadow, near_shadow);
-		SDL_BindGPUFragmentSamplers(pass, 2, fragment_samplers, 2);
+		SDL_BindGPUFragmentSamplers(pass, 0, fragment_samplers, 1);
 		lights_bind(pass);
 		SDL_BindGPUVertexBuffers(pass, 0, &blades, 1);
 	}

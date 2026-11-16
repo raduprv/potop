@@ -1249,3 +1249,27 @@ Walkers on a path still do not collide with bodies (the cow yard's
 collision has its gate shut: the farmer walks through that box when the
 gate is open, as he should; when doors get bodies the collision's gates
 must open).
+
+## Grass: what is the same up a blade, once a blade (39r)
+
+Fable's find: grass.vert ran 7 times a blade (far blades too: degenerate
+vertices) and read each time the ground color, the surface (silt, wet),
+the variation twice, the sky occlusion and bounce, all at the root; the
+fragment took 9 shadow taps on blades two pixels wide. Now the scatter
+(grass_body.glsl, write_blade) works out once a blade: the base color
+(before the tip's lightening, the silt's brown, the gust), the silt, the
+sky seen and the bounce light (sky_light_at at half height, normal up),
+the sun left by the shadow maps (9 taps) times the clouds' (at half height
+plus 0.3 m toward the sun). Still 8 words a blade, packed (uint buffer;
+grass.vert reads two uvec4): foot xyz float bits; half2 height+width;
+half2 flatten; bytes face turn, sun, sky seen, silt; bytes sqrt(color/2);
+bytes bounce rgb + shared exponent (2^(e-128)).
+The compute has the scene block at uniform 0 (grass_block at 1, its
+pyramid matrix renamed hiz_view_projection), 16 samplers (shadow maps 0-1
+first, shadows.glsl's; then the old nine; material colors, sky occlusion,
+layers, bounce, cloud shadows), the pyramid at storage binding 16.
+grass_world_t carries scene and the two shadow textures; grass_draw lost
+its shadow arguments. grass.vert has no samplers left; grass.frag only the
+variation texture (underwater.glsl's), lights at binding 1.
+Known: a blade near the eye is all shade or all sun (an edge across it is
+lost); accepted.

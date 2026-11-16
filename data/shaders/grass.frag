@@ -4,19 +4,15 @@
 #include "scene.glsl"
 
 // A blade of grass (grass.vert): lit as the terrain is (the sun through the
-// shadow maps and the clouds' shadows, the sky and the ground around, the
+// shadow maps and the clouds' shadows, once a blade by the scatter:
+// grass_body.glsl; the sky and the ground around, the
 // lamps), and besides: the sun through the blade from behind (thin, it lets
 // light through), a sheen along it, darker in its own shade low down, wet
 // in the rain; into the haze and under the water as everything.
 
-#include "shadows.glsl"
-layout(set = TEXTURE_SET, binding = 2) uniform sampler2D variation_texture;
-layout(set = TEXTURE_SET, binding = 3) uniform sampler2D cloud_shadow_texture;   // the volumetric clouds' shadows (clouds.glsl)
-#define CLOUD_SHADOW_TEXTURE
+layout(set = TEXTURE_SET, binding = 0) uniform sampler2D variation_texture;   // underwater.glsl's
 #include "underwater.glsl"
-#define CLOUDS_EXPLICIT_LOD
-#include "clouds.glsl"
-#define LIGHT_BINDING 4
+#define LIGHT_BINDING 1
 #include "lights.glsl"
 
 // (centroid: with multisampling a blade's pixel partly covered is shaded
@@ -25,26 +21,12 @@ layout(set = TEXTURE_SET, binding = 3) uniform sampler2D cloud_shadow_texture;  
 layout(location = 0) centroid in vec3 world_position;
 layout(location = 1) centroid in vec3 world_normal;
 layout(location = 2) centroid in vec3 albedo;
-layout(location = 3) centroid in vec4 shadow_position;
-layout(location = 4) centroid in vec4 near_shadow_position;
+layout(location = 3) centroid in float sunlit;            // grass.vert's: what the shadow maps and the clouds leave of the sun (a blade's)
 layout(location = 5) centroid in float along;
 layout(location = 6) centroid in vec4 sky_light;           // grass.vert's: the light sent back (rgb), the sky seen (a)
 
 layout(location = 0) out vec4 fragment_color;
 #include "scene_depth.glsl"
-
-// As object.frag's
-float cloud_light(vec3 position, vec3 towards_sun)
-{
-	if (cloud_parameters.z <= 0.0)
-	{
-		return 1.0;
-	}
-	float climb = max(cloud_motion.z - position.y, 0.0) / max(towards_sun.y, 0.05);
-	vec2 on_sheet = position.xz + towards_sun.xz * climb - cloud_motion.xy;
-
-	return 1.0 - cloud_shade(on_sheet) * cloud_parameters.z;
-}
 
 vec3 surroundings(vec3 direction)
 {
@@ -64,7 +46,7 @@ void main()
 	{
 		normal = normalize(vec3(-normal.x, normal.y, -normal.z));
 	}
-	float shadowed = sun_visibility(shadow_position, near_shadow_position) * cloud_light(world_position, sun_direction);
+	float shadowed = sunlit;
 	// Its own shade among the others, low down
 	float occlusion = 0.75 + 0.25 * along;
 	float diffuse = max(dot(normal, sun_direction), 0.0) * 0.85 + 0.15 * max(sun_direction.y, 0.0);
