@@ -262,8 +262,21 @@ void main()
 				concentration = float(sediments[cell]) / float(water_units) * 0.999;
 			}
 		}
-		fluxes[cell] = uvec2(pack_fluxes_down(new_flux[0], new_flux[1]), pack_fluxes_down(new_flux[2], new_flux[3]));
-		auxes[cell] = uvec2(floatBitsToUint(concentration), aux.y);
+		// (written only when it changes: most cells of a tile by a narrow
+		// river send nothing, step after step)
+		{
+			uvec2 packed = uvec2(pack_fluxes_down(new_flux[0], new_flux[1]), pack_fluxes_down(new_flux[2], new_flux[3]));
+			uint concentration_bits = floatBitsToUint(concentration);
+
+			if (packed != fluxes[cell])
+			{
+				fluxes[cell] = packed;
+			}
+			if (concentration_bits != aux.x)
+			{
+				auxes[cell] = uvec2(concentration_bits, aux.y);
+			}
+		}
 	}
 
 	barrier();

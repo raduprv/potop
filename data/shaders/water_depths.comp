@@ -27,6 +27,7 @@ shared uint shared_corrections;
 shared uint shared_sediment_drained;
 shared uint shared_sediment_corrections;
 shared uint shared_discarded;
+shared uint shared_sediment_changed;
 shared uint shared_sediment_discarded;
 
 // A 64 bit sum kept in two shared words (atomics need the variables
@@ -64,6 +65,7 @@ void main()
 	uint sediment_corrections = 0u;
 	uint discarded = 0u;
 	uint sediment_discarded = 0u;
+	uint sediment_changed = 0u;
 	// Now and then: the cells a waterfall's lip could be (waterfalls.c)
 	bool count_steep = (step_number % STEEP_COUNT_STEPS) == 0;
 	int steep_units = int(STEEP_RISE_CELLS * cell_size / METERS_PER_UNIT);
@@ -91,6 +93,7 @@ void main()
 		shared_sediment_corrections = 0u;
 		shared_discarded = 0u;
 		shared_sediment_discarded = 0u;
+		shared_sediment_changed = 0u;
 	}
 	barrier();
 
@@ -118,6 +121,26 @@ void main()
 		int new_sediment;
 		int largest_out;
 
+		// Quiet: it sends nothing and no neighbor holds more than a film
+		// (only those send: water_fluxes.comp), so nothing changes here:
+		// counted as it is, nothing written, the neighbors' fluxes and
+		// sediment not read (most of a tile by a narrow river is dry)
+		if ((out_flow[0] | out_flow[1] | out_flow[2] | out_flow[3]) == 0 && !(count_steep && old_depth >= STEEP_WET_UNITS))
+		{
+			bool quiet = true;
+
+			for (int direction = 0; direction < 4 && quiet; direction++)
+			{
+				quiet = !inside[direction] || depths[cell_of(neighbor_x[direction], neighbor_y[direction])] <= film_units;
+			}
+			if (quiet)
+			{
+				total_sediment = add_wide(total_sediment, uint(sediments[cell]));
+				total_depth = add_wide(total_depth, uint(old_depth));
+				max_depth = max(max_depth, uint(old_depth));
+				continue;
+			}
+		}
 		for (int direction = 0; direction < 4; direction++)
 		{
 			sediment_out += sediment_units(out_flow[direction], own_concentration);
@@ -129,7 +152,11 @@ void main()
 				int received = flux_units(theirs[direction ^ 1]);
 
 				inflow += received;
-				sediment_in += sediment_units(received, uintBitsToFloat(auxes[neighbor].x));
+				// (their concentration only where they send)
+				if (received > 0)
+				{
+					sediment_in += sediment_units(received, uintBitsToFloat(auxes[neighbor].x));
+				}
 				// Which way water last went through the pipe (static friction)
 				if (received > out_flow[direction])
 				{
@@ -158,7 +185,10 @@ void main()
 			discarded += uint(lost);
 			sediment_discarded += uint(sediment_units(lost, own_concentration));
 		}
-		auxes[cell] = uvec2(aux.x, inbound);
+		if (inbound != aux.y)
+		{
+			auxes[cell] = uvec2(aux.x, inbound);
+		}
 
 		new_sediment = sediments[cell] + sediment_in - sediment_out;
 		if (new_sediment < 0)
@@ -166,7 +196,11 @@ void main()
 			sediment_corrections += uint(-new_sediment);
 			new_sediment = 0;
 		}
-		sediments[cell] = new_sediment;
+		if (sediment_in != 0 || sediment_out != 0 || new_sediment != sediments[cell])
+		{
+			sediments[cell] = new_sediment;
+			sediment_changed = 1u;
+		}
 		total_sediment = add_wide(total_sediment, uint(new_sediment));
 
 		new_depth = old_depth + inflow - (out_flow[0] + out_flow[1] + out_flow[2] + out_flow[3]);
@@ -177,7 +211,10 @@ void main()
 			corrections += uint(-new_depth);
 			new_depth = 0;
 		}
-		depths[cell] = new_depth;
+		if (new_depth != old_depth)
+		{
+			depths[cell] = new_depth;
+		}
 		total_depth = add_wide(total_depth, uint(new_depth));
 		max_depth = max(max_depth, uint(new_depth));
 		max_change = max(max_change, uint(abs(new_depth - old_depth)));
@@ -232,6 +269,7 @@ void main()
 	atomicAdd(shared_sediment_corrections, sediment_corrections);
 	atomicAdd(shared_discarded, discarded);
 	atomicAdd(shared_sediment_discarded, sediment_discarded);
+	atomicOr(shared_sediment_changed, sediment_changed);
 	barrier();
 
 	if (gl_LocalInvocationID.x == 0u)
@@ -246,7 +284,11 @@ void main()
 		{
 			control[tile_word(tile, TILE_STEEP_CELLS)] = shared_steep;
 		}
-		control[tile_word(tile, TILE_FLAGS)] |= TILE_FLAG_CPU_DIRTY | TILE_FLAG_RENDER_DIRTY;
+		// (nothing moved: the CPU's copy and the textures are still right)
+		if (shared_max_change != 0u || shared_sediment_changed != 0u)
+		{
+			control[tile_word(tile, TILE_FLAGS)] |= TILE_FLAG_CPU_DIRTY | TILE_FLAG_RENDER_DIRTY;
+		}
 		add_counter(COUNTER_DRAINED, shared_drained);
 		add_counter(COUNTER_CORRECTIONS, shared_corrections);
 		add_counter(COUNTER_SEDIMENT_DRAINED, shared_sediment_drained + shared_sediment_discarded);

@@ -1452,3 +1452,16 @@ water_ground.comp writes only the surface's wetness (g) and water on it
 (a), keeping silt (r) and bare rock (b) as shown. Ground changes (erosion,
 collapse, the CPU's edits through water_sources) still set GROUND_DIRTY:
 the full rewrite.
+
+## Water: dry cells of active tiles cost less (39z9)
+
+water_fluxes.comp writes a cell's fluxes and concentration only when they
+change (most cells by a narrow river send nothing, step after step).
+water_depths.comp: a quiet cell (sends nothing, no neighbor deeper than
+film_units: only those send) is only counted (totals, max depth) and
+skipped: no neighbor fluxes or concentrations read, nothing written. Not
+quiet: a neighbor's concentration read only where it sends; aux, sediment,
+depth written only when changed. A tile where nothing moved (max change 0,
+no sediment change) no longer sets CPU_DIRTY | RENDER_DIRTY (no download,
+no texture refresh). Note: a sleeping neighbor tile's dry cell with a stale
+nonzero flux is no longer received from (was water out of nothing).
