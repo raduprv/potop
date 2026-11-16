@@ -2531,9 +2531,10 @@ typedef struct
 	float debug[4];                    // x: 1 the camera's culling keeps the boxes it hid (objects_t.occlusion_shown)
 	int32_t work[4];                   // objects to look at (the ranges' total), the ranges, where the strays start in the order, where the ranges start in the cells' buffer (words)
 	int32_t water[4];                  // where the cells' dry bits start in the cells' buffer (words), 1 if they are there
+	int32_t hiz_levels[HIZ_MAX_LEVELS][4]; // the pyramid's levels (hiz_level_table)
 } cull_uniforms_t;
 
-SDL_COMPILE_TIME_ASSERT(cull_uniforms_size, sizeof(cull_uniforms_t) == 320);
+SDL_COMPILE_TIME_ASSERT(cull_uniforms_size, sizeof(cull_uniforms_t) == 320 + 16 * HIZ_MAX_LEVELS);
 
 // Levels of detail (objects_cull.comp): each model's objects counted per
 // level, its impostors after; a model's four vec4s in the model table
@@ -3806,6 +3807,7 @@ static void cull_pass(objects_t *objects, pass_t pass, const frustum_t *frustum,
 		uniforms.hiz_size[0] = (float)objects->occlusion->width;
 		uniforms.hiz_size[1] = (float)objects->occlusion->height;
 		uniforms.hiz_size[2] = (float)objects->occlusion->level_count;
+		hiz_level_table(objects->occlusion, uniforms.hiz_levels);
 		uniforms.hiz_size[3] = 1.0f;
 		uniforms.debug[0] = !objects->occlusion_shown ? 0.0f : (objects->occlusion_all_shown ? 2.0f : 1.0f);
 	}

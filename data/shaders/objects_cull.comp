@@ -152,6 +152,7 @@ layout(std140, set = UNIFORM_SET, binding = 0) uniform cull_block
 	vec4 debug;                    // x: 1 the camera's pass keeps the boxes it hid (occlusion_buffer)
 	ivec4 work;                    // x: the objects looked at, y: the ranges, z: where the strays start in the order, w: where the ranges start in cell_words
 	ivec4 water;                   // x: where the cells' dry bits start in cell_words, y: 1 if they are there (the camera's pass)
+	ivec4 hiz_levels[16];          // the pyramid's levels (hiz_level_table): where each starts in hiz_depths, its width, its height
 };
 
 // The most boxes kept (objects.c's OCCLUSION_DEBUG_RECORDS)
@@ -226,15 +227,10 @@ bool hidden_by_terrain(vec3 corners[8], uint slot)
 
 		level = clamp(ceil(log2(max(max(extent.x, extent.y), 1.0))) - 2.0, 0.0, hiz_size.z - 1.0);
 	}
-	// Where the level starts in the buffer: the levels below it before it
-	int level_offset = 0;
-	ivec2 size = ivec2(hiz_size.xy);
+	// Where the level starts in the buffer, its size (hiz_level_table's)
+	int level_offset = hiz_levels[int(level)].x;
+	ivec2 size = hiz_levels[int(level)].yz;
 
-	for (int i = 0; i < int(level); i++)
-	{
-		level_offset += size.x * size.y;
-		size = max(size / 2, ivec2(1));
-	}
 	level_size = vec2(size);
 	// The texels over the outline: by level 0's texels, halved level by
 	// level (a level is its size's floor: each texel covers 2^level of level

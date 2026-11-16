@@ -1428,3 +1428,15 @@ level's square. columns in grid.z, rows in control.w (was a square side).
 In the shader, before ground_height: each plane tested with the height
 unknown (the most the plane's y term can give between 0 and the highest
 ground + 2 blades). Same picture.
+
+## Hi-Z: two levels a pass, level table as uniforms (39z7)
+
+hiz_build.comp makes two levels a dispatch (the second straight from the
+source, through the first's coverage: each dispatch reads only what the one
+before wrote): mode 0 copies level 0 from the image and makes level 1 from
+it; mode 1 makes levels L and L + 1 from L - 1. About half the passes.
+hiz_level_table (offset, width, height per level) goes to the grass
+scatter's and the culling's uniforms (hiz_levels[16]) instead of a loop
+summing the levels below for every object and blade. Checked with a
+temporary CPU readback: 10 levels at 640x360 (odd sizes on the way), every
+texel the max of what it covers, 0 wrong; same picture.

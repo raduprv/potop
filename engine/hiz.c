@@ -128,8 +128,6 @@ void hiz_build(hiz_t *hiz, SDL_GPUTexture *depth_texture, uint32_t width, uint32
 	uint32_t base_width = SDL_max((width + 1) / 2, 1u);
 	uint32_t base_height = SDL_max((height + 1) / 2, 1u);
 	SDL_GPUCommandBuffer *command_buffer = gpu.command_buffer;
-	uint32_t offset = 0;
-
 	hiz->ready = false;
 	if (hiz->build_pipeline == NULL || hiz->first_pipeline == NULL || depth_texture == NULL || command_buffer == NULL)
 	{
@@ -162,36 +160,60 @@ void hiz_build(hiz_t *hiz, SDL_GPUTexture *depth_texture, uint32_t width, uint32
 		SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
 		SDL_EndGPURenderPass(pass);
 	}
-	// Level 0 into the buffer, then each level from the one before, a
-	// compute pass each (so that each reads what the one before wrote)
-	for (uint32_t i = 0; i < hiz->level_count; i++)
+	// Level 0 into the buffer (and level 1 from the image), then two levels
+	// at a time from the last one made, a compute pass each (so that each
+	// reads what the one before wrote; the passes are what cost)
 	{
-		uint32_t level_width = SDL_max(base_width >> i, 1u);
-		uint32_t level_height = SDL_max(base_height >> i, 1u);
-		uint32_t source_width = i == 0 ? base_width : SDL_max(base_width >> (i - 1), 1u);
-		uint32_t source_height = i == 0 ? base_height : SDL_max(base_height >> (i - 1), 1u);
-		uint32_t source_offset = i == 0 ? 0 : offset - source_width * source_height;
-		SDL_GPUStorageBufferReadWriteBinding destination;
-		SDL_GPUComputePass *pass;
-		int32_t uniforms[8] = { (int32_t)source_width, (int32_t)source_height, (int32_t)level_width, (int32_t)level_height,
-			(int32_t)source_offset, (int32_t)offset, i == 0 ? 0 : 1, 0 };
+		int32_t table[HIZ_MAX_LEVELS][4];
+		uint32_t level = 0;
 
-		SDL_zero(destination);
-		destination.buffer = hiz->buffer;
-		pass = SDL_BeginGPUComputePass(command_buffer, NULL, 0, &destination, 1);
-		if (pass == NULL)
+		hiz_level_table(hiz, table);
+		while (level < hiz->level_count)
 		{
-			return;
+			// Mode 0: level 0 (and 1); mode 1: levels level and level + 1 from level - 1
+			bool from_image = level == 0;
+			uint32_t source = from_image ? 0 : level - 1;
+			bool has_second = level + 1 < hiz->level_count;
+			SDL_GPUStorageBufferReadWriteBinding destination;
+			SDL_GPUComputePass *pass;
+			int32_t uniforms[12] = { table[source][1], table[source][2], table[level][1], table[level][2],
+				has_second ? table[level + 1][1] : 0, has_second ? table[level + 1][2] : 0, from_image ? 0 : 1, 0,
+				table[source][0], table[level][0], has_second ? table[level + 1][0] : 0, 0 };
+
+			SDL_zero(destination);
+			destination.buffer = hiz->buffer;
+			pass = SDL_BeginGPUComputePass(command_buffer, NULL, 0, &destination, 1);
+			if (pass == NULL)
+			{
+				return;
+			}
+			SDL_BindGPUComputePipeline(pass, hiz->build_pipeline);
+			SDL_BindGPUComputeStorageTextures(pass, 0, &hiz->first_level, 1);
+			SDL_PushGPUComputeUniformData(command_buffer, 0, uniforms, sizeof(uniforms));
+			SDL_DispatchGPUCompute(pass, ((uint32_t)table[level][1] * (uint32_t)table[level][2] + 63) / 64, 1, 1);
+			SDL_EndGPUComputePass(pass);
+			level += has_second ? 2 : 1;
 		}
-		SDL_BindGPUComputePipeline(pass, hiz->build_pipeline);
-		SDL_BindGPUComputeStorageTextures(pass, 0, &hiz->first_level, 1);
-		SDL_PushGPUComputeUniformData(command_buffer, 0, uniforms, sizeof(uniforms));
-		SDL_DispatchGPUCompute(pass, (level_width * level_height + 63) / 64, 1, 1);
-		SDL_EndGPUComputePass(pass);
-		offset += level_width * level_height;
 	}
 	SDL_memcpy(hiz->view_projection, view_projection, sizeof(hiz->view_projection));
 	hiz->ready = true;
+}
+
+void hiz_level_table(const hiz_t *hiz, int32_t table[HIZ_MAX_LEVELS][4])
+{
+	uint32_t offset = 0;
+
+	SDL_memset(table, 0, sizeof(int32_t) * HIZ_MAX_LEVELS * 4);
+	for (uint32_t i = 0; i < hiz->level_count && i < HIZ_MAX_LEVELS; i++)
+	{
+		uint32_t level_width = SDL_max(hiz->width >> i, 1u);
+		uint32_t level_height = SDL_max(hiz->height >> i, 1u);
+
+		table[i][0] = (int32_t)offset;
+		table[i][1] = (int32_t)level_width;
+		table[i][2] = (int32_t)level_height;
+		offset += level_width * level_height;
+	}
 }
 
 SDL_GPUBuffer *hiz_buffer(const hiz_t *hiz)

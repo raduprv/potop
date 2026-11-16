@@ -3,11 +3,15 @@
 #extension GL_EXT_samplerless_texture_functions : require
 #include "common.glsl"
 
-// The depth pyramid in its buffer (see hiz.h), one level a dispatch: level
-// 0 copied from the image the fragment shader made (mode 0), or a level
-// made from the one before it (mode 1): each texel the farthest depth of
-// the texels it covers below. A source of odd size gives the last texel of
-// a row or column three texels, so nothing is left out.
+// The depth pyramid in its buffer (see hiz.h), two levels a dispatch (the
+// number of passes is what costs, not the work): from the image the
+// fragment shader made (mode 0: level 0 copied, and level 1), or from a
+// level in the buffer (mode 1: the next two). Each texel the farthest depth
+// of the texels it covers below; a source of odd size gives the last texel
+// of a row or column three texels, so nothing is left out. The second
+// level is made straight from the source too (what its texel covers there,
+// through the first level's coverage), so a dispatch reads only what the
+// one before wrote.
 
 layout(local_size_x = 64) in;
 
@@ -18,47 +22,74 @@ layout(std430, set = READWRITE_SET, binding = 0) buffer pyramid_buffer { float d
 
 layout(std140, set = UNIFORM_SET, binding = 0) uniform build_block
 {
-	ivec2 source_size;
-	ivec2 destination_size;
-	int source_offset;              // where the level below starts in the buffer (mode 1)
-	int destination_offset;
-	int mode;                       // 0: level 0 from the image; 1: from the level below
-	int padding;
+	ivec4 sizes;                    // the source's width and height, the first level's (one coarser; mode 0: level 0 itself)
+	ivec4 second;                   // the second level's width and height (0: none), mode (0: from the image, 1: from the buffer), unused
+	ivec4 offsets;                  // where the source starts in the buffer (mode 1), the first level, the second
 };
+
+float source_depth(ivec2 texel)
+{
+	return second.z == 0 ? texelFetch(first_level, texel, 0).r : depths[offsets.x + texel.y * sizes.x + texel.x];
+}
+
+// The texels of a level below (size below_size) one texel of the level above
+// (size above_size) covers, along one axis
+ivec2 covered(int texel, int above_size, int below_size)
+{
+	int first = texel * 2;
+	int last = texel == above_size - 1 ? below_size - 1 : min(first + 1, below_size - 1);
+
+	return ivec2(first, last);
+}
 
 void main()
 {
 	int index = int(gl_GlobalInvocationID.x);
-	ivec2 texel = ivec2(index % destination_size.x, index / destination_size.x);
-	ivec2 first;
-	ivec2 last;
-	float farthest = 0.0;
+	// Mode 0: the threads run over level 0 (copied), level 1 the second;
+	// mode 1: over the first level, the one after it the second
+	ivec2 first_size = sizes.zw;
+	ivec2 texel = ivec2(index % first_size.x, index / first_size.x);
 
-	if (texel.y >= destination_size.y)
+	if (texel.y >= first_size.y)
 	{
 		return;
 	}
-	if (mode == 0)
+	if (second.z == 0)
 	{
-		depths[destination_offset + index] = texelFetch(first_level, texel, 0).r;
-		return;
+		depths[offsets.y + index] = texelFetch(first_level, texel, 0).r;
 	}
-	first = texel * 2;
-	last = min(first + 1, source_size - 1);
-	if (texel.x == destination_size.x - 1)
+	else
 	{
-		last.x = source_size.x - 1;
-	}
-	if (texel.y == destination_size.y - 1)
-	{
-		last.y = source_size.y - 1;
-	}
-	for (int y = first.y; y <= last.y; y++)
-	{
-		for (int x = first.x; x <= last.x; x++)
+		ivec2 along_x = covered(texel.x, first_size.x, sizes.x);
+		ivec2 along_y = covered(texel.y, first_size.y, sizes.y);
+		float farthest = 0.0;
+
+		for (int y = along_y.x; y <= along_y.y; y++)
 		{
-			farthest = max(farthest, depths[source_offset + y * source_size.x + x]);
+			for (int x = along_x.x; x <= along_x.y; x++)
+			{
+				farthest = max(farthest, source_depth(ivec2(x, y)));
+			}
 		}
+		depths[offsets.y + index] = farthest;
 	}
-	depths[destination_offset + index] = farthest;
+	// The second level: its texel's cover in the first level, and that in
+	// the source (mode 0: the first level is the source itself, level 0)
+	if (second.x > 0 && texel.x < second.x && texel.y < second.y)
+	{
+		ivec2 middle_x = covered(texel.x, second.x, first_size.x);
+		ivec2 middle_y = covered(texel.y, second.y, first_size.y);
+		ivec2 along_x = second.z == 0 ? middle_x : ivec2(covered(middle_x.x, first_size.x, sizes.x).x, covered(middle_x.y, first_size.x, sizes.x).y);
+		ivec2 along_y = second.z == 0 ? middle_y : ivec2(covered(middle_y.x, first_size.y, sizes.y).x, covered(middle_y.y, first_size.y, sizes.y).y);
+		float farthest = 0.0;
+
+		for (int y = along_y.x; y <= along_y.y; y++)
+		{
+			for (int x = along_x.x; x <= along_x.y; x++)
+			{
+				farthest = max(farthest, source_depth(ivec2(x, y)));
+			}
+		}
+		depths[offsets.z + texel.y * second.x + texel.x] = farthest;
+	}
 }

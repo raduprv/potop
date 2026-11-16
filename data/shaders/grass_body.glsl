@@ -118,6 +118,7 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform grass_block
 	vec4 hiz_size;             // level 0's width and height, the level count, 1 if it is there
 	vec4 look;                 // the blades' color: the grass material's first layer, its macro repeats per meter, the variation's strength, its hue's
 	vec4 tint;                 // rgb: multiplies the ground's grass color; w: the share of dry blades
+	ivec4 hiz_levels[16];      // the pyramid's levels (hiz_level_table): where each starts in hiz_depths, its width, its height
 };
 
 // --- Noise, as terrain.frag's ------------------------------------------------
@@ -302,14 +303,8 @@ bool hidden_by_pyramid(vec3 foot, vec3 top, float radius)
 
 	vec2 extent = (screen_maximum - screen_minimum) * hiz_size.xy;
 	int level = int(clamp(ceil(log2(max(max(extent.x, extent.y), 1.0))), 0.0, hiz_size.z - 1.0));
-	int level_offset = 0;
-	ivec2 size = ivec2(hiz_size.xy);
-
-	for (int i = 0; i < level; i++)
-	{
-		level_offset += size.x * size.y;
-		size = max(size / 2, ivec2(1));
-	}
+	int level_offset = hiz_levels[level].x;
+	ivec2 size = hiz_levels[level].yz;
 	ivec2 base_size = ivec2(hiz_size.xy);
 	ivec2 first = clamp(clamp(ivec2(floor(screen_minimum * hiz_size.xy)), ivec2(0), base_size - 1) >> level, ivec2(0), size - 1);
 	ivec2 last = clamp(clamp(ivec2(floor(screen_maximum * hiz_size.xy)), ivec2(0), base_size - 1) >> level, ivec2(0), size - 1);

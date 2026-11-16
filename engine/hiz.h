@@ -67,6 +67,11 @@ void hiz_build(hiz_t *hiz, SDL_GPUTexture *depth_texture, uint32_t width, uint32
 
 // The buffer the culling reads (always one, if hiz_create went well; what
 // is in it only means something when ready)
+// Each level's place: where it starts in the buffer (floats), its width,
+// its height, 0 (the culling's shaders get it as uniforms, rather than
+// summing the levels below in a loop for every object and blade)
+void hiz_level_table(const hiz_t *hiz, int32_t table[HIZ_MAX_LEVELS][4]);
+
 SDL_GPUBuffer *hiz_buffer(const hiz_t *hiz);
 
 #endif

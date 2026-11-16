@@ -43,9 +43,10 @@ typedef struct
 	float hiz_size[4];                     // level 0's width and height, the level count, 1 if it is there
 	float look[4];                         // the blades' color: the grass material's first layer, its macro repeats per meter, the variation's strength, its hue's
 	float tint[4];                         // rgb: multiplies the ground's grass color; w: the share of dry blades
+	int32_t hiz_levels[HIZ_MAX_LEVELS][4]; // the pyramid's levels (hiz_level_table)
 } grass_scatter_uniforms_t;
 
-SDL_COMPILE_TIME_ASSERT(grass_scatter_uniforms_size, sizeof(grass_scatter_uniforms_t) == 224 + 16 * MATERIAL_COUNT + 112);
+SDL_COMPILE_TIME_ASSERT(grass_scatter_uniforms_size, sizeof(grass_scatter_uniforms_t) == 224 + 16 * MATERIAL_COUNT + 112 + 16 * HIZ_MAX_LEVELS);
 
 // grass.vert's block (std140, vertex slot 1)
 typedef struct
@@ -294,6 +295,7 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 		uniforms.hiz_size[0] = (float)world->occlusion->width;
 		uniforms.hiz_size[1] = (float)world->occlusion->height;
 		uniforms.hiz_size[2] = (float)world->occlusion->level_count;
+		hiz_level_table(world->occlusion, uniforms.hiz_levels);
 		uniforms.hiz_size[3] = 1.0f;
 	}
 
