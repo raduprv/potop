@@ -216,7 +216,9 @@ float prop_noise(vec3 point)
 // middle, of its radius (raggedness: its radius times this). Whether a
 // patch is there goes by the colonies at its middle (point is the model's
 // times scale, plus offset), and by open here, softly: a patch fades where
-// the stone stops being open, it is not cut off along a line
+// the stone stops being open, it is not cut off along a line. (A cell's
+// number first, one hash: no patch can be there unless it is below
+// amount * open, the most chance there is; most cells are done with then)
 float prop_lichen(vec3 point, float scale, float offset, float amount, float open, float raggedness, out float number_out,
 	out float across_out)
 {
@@ -233,6 +235,11 @@ float prop_lichen(vec3 point, float scale, float offset, float amount, float ope
 			{
 				vec3 other = cell + vec3(x, y, z);
 				float number = prop_hash(other + 5.7);
+
+				if (number >= amount * open)
+				{
+					continue;
+				}
 				vec3 middle = other + vec3(prop_hash(other), prop_hash(other + 11.3), prop_hash(other + 27.1));
 				float colonies = prop_noise((middle - offset) / scale * 1.7 + 9.0);
 				float chance = amount * open * smoothstep(0.3, 0.7, colonies + 0.3 * amount);
@@ -727,7 +734,7 @@ void main()
 		// (more where the sky is hidden: deep in a wood, in a hollow)
 		float hidden = 0.0;
 
-		if (sky_occlusion.y > 0.5 && ground_map.z > 0.5)
+		if (moss_amount > 0.001 && sky_occlusion.y > 0.5 && ground_map.z > 0.5)
 		{
 			ivec2 ground_cell = clamp(ivec2(floor(world_position.xz / ground_map.y + 0.5)), ivec2(0), ivec2(int(ground_map.x) - 1));
 
@@ -738,7 +745,12 @@ void main()
 		moss = moss_amount > 0.001 ? smoothstep(bar - 0.2, bar + 0.2, score) : 0.0;
 		// (under a roof it stays dry: little grows)
 		moss *= 1.0 - 0.6 * building_shelter;
-		moss *= smoothstep(0.25, 0.55, prop_noise(model_point * 31.0) * 0.7 + moss * 0.5);
+		// (none here: its four fine noises not worked out)
+		if (moss > 0.0)
+		{
+			moss *= smoothstep(0.25, 0.55, prop_noise(model_point * 31.0) * 0.7 + moss * 0.5);
+		}
+		if (moss > 0.0)
 		{
 			vec3 lush = mix(vec3(0.05, 0.09, 0.015), vec3(0.14, 0.21, 0.03), prop_noise(model_point * 23.0));
 			vec3 dry = vec3(0.13, 0.13, 0.045);
@@ -757,7 +769,8 @@ void main()
 		// many small
 		{
 			float open = sky * (1.0 - crevice) * (1.0 - moss);
-			int sizes = 2;
+			// (none to grow, or nowhere open: no cells looked at)
+			int sizes = lichen_amount * open > 0.0 ? 2 : 0;
 
 			for (int size = 0; size < sizes; size++)
 			{

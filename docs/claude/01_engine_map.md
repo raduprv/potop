@@ -1309,3 +1309,12 @@ shaders lean on, the previews need it too. The plant preview's object
 pipeline also lacked object.vert's location 7 (emissive groups, UINT2;
 INSTANCE_FLOATS 11 there now): caught by VK_INSTANCE_LAYERS=
 VK_LAYER_KHRONOS_validation under lavapipe.
+
+## Lichen and moss: work skipped where there is none (39v)
+
+prop_lichen: a cell's number hash first; number >= amount * open means no
+patch can be there (chance <= amount * open), so its middle's three hashes
+and the colonies noise are skipped. No cells at all when lichen_amount *
+open is 0. Moss: the sky-hidden lookup only with moss_amount; its four fine
+noises (31, 23, 85, 37) only where moss > 0. Exactly the same picture
+(prop editor boulder: 0 pixels differ).
