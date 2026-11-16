@@ -49,7 +49,7 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform plant_material_block
 #include "clouds.glsl"
 #define GROUND_BINDING 8
 #include "ground_water.glsl"
-#define LIGHT_BINDING 14
+#define LIGHT_BINDING 13
 
 // How much more moss where the sky is hidden (sky_occlusion.glsl)
 const float MOSS_IN_SHADE = 1.2;
@@ -112,7 +112,7 @@ void main()
 {
 	scene_depth_write();
 	// The fade, the highlight and the level of detail, as object.frag has them
-	// (NO_MARKS_FADE added: the water's marks left on the spot are not its)
+	// (NO_MARKS_FADE added for a stray: taken off, nothing else now)
 	float marks_off = floor(fade / NO_MARKS_FADE);
 	float packed_fade = fade - NO_MARKS_FADE * marks_off;
 	float level_steps = floor(packed_fade / 4.0);
@@ -273,15 +273,11 @@ void main()
 	}
 	// Wet in the rain (rain.h): darker, the more it faces up, and shinier
 	float wet = snow_cover ? 0.0 : weather.y * (0.35 + 0.65 * clamp(normal.y, 0.0, 1.0));
-	// What the water left on it (ground_water.glsl): the mark, the wet, the algae
-	int water_marks_kind = cut_out ? WATER_MARKS_FOLIAGE : WATER_MARKS_BARK;
-	water_marks_t water_marks = water_marks_at(world_position);
-	if (marks_off > 0.5)
-	{
-		water_marks = water_marks_present_only(water_marks);
-	}
+	// The water there now (ground_water.glsl): wet under it
+	int water_kind = cut_out ? WATER_FOLIAGE : WATER_BARK;
+	water_at_t water = water_at(world_position);
 
-	apply_water_marks(water_marks, world_position, water_marks_kind, albedo, wet);
+	apply_water_wet(water, water_kind, wet);
 
 	albedo *= 1.0 - 0.3 * wet;
 	float sun_shade = 0.5 + 0.5 * shade;      // the sun reaches in more than the sky does
@@ -289,7 +285,7 @@ void main()
 	// say: they are not looked up. Not for leaves and the snow on them,
 	// which let it through, nor wet bark, which shines, nor where there is
 	// water about, whose light plays on it)
-	bool sun_reaches = cut_out || snow_cover || diffuse > 0.0 || wet > 0.0 || water_marks.to_surface < 1e5;
+	bool sun_reaches = cut_out || snow_cover || diffuse > 0.0 || wet > 0.0 || water.to_surface < 1e5;
 	float shadowed = sun_reaches ? sun_visibility(shadow_position, near_shadow_position) * cloud_light(world_position, sun_direction) : 0.0;
 	// What shines through is yellower than what it lights
 	vec3 around = surroundings(normal) + sky_light.rgb;
@@ -309,7 +305,7 @@ void main()
 
 		lit += sun_color * shadowed * glint * pow(max(dot(reflect(-sun_direction, normal), towards_eye), 0.0), 8.0) * 0.8;
 	}
-	lit += water_marks_light(water_marks, world_position, water_marks_kind, sun_color * shadowed);
+	lit += water_light(water, world_position, sun_color * shadowed);
 	lit = mix(lit, sky_color, clamp(haze_amount(world_position), 0.0, 1.0));
 	lit = apply_underwater(lit, world_position, length(world_position - eye_position), sun_color * diffuse * shadowed);
 	if (highlighted)

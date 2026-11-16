@@ -18,7 +18,7 @@ How to build and run Potop, what every part does and how to tune it.
 * [Baked maps](baked_maps.md)
 * [Waterfalls](waterfalls.md)
 * [Ice on the water](ice.md)
-* [What the water leaves on things](water_marks.md)
+* [What the water does to things](water_marks.md)
 * [How the ground reacts](ground.md)
 * [What the ground shows (the material map)](material_map.md)
 * [Sky](sky.md)

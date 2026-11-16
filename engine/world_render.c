@@ -640,10 +640,7 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 			* (1.0f - SDL_min(4.0f * season_snow(world->objects.month, world->objects.snow_first_month, world->objects.snow_last_month), 1.0f));
 		scene.weather[3] = world->objects.snow_amount;
 		// (what lies under water takes no snow: ground_water.glsl)
-		// (a baked map's water never moves: no marks to remember, what is
-		// under it has always been: ground_map.w 2)
-		scene_ground_set(world->renderer.height_texture, water_gpu_depth_texture(&world->water),
-			world->settings->render.water_marks && !world->terrain.baked ? world->water_marks.texture : NULL);
+		scene_ground_set(world->renderer.height_texture, water_gpu_depth_texture(&world->water));
 		// (the one there is, while a new one is worked out too)
 		world->renderer.sky_occlusion_texture = world->settings->render.sky_occlusion && world->sky_occlusion.texture != NULL
 			&& world->sky_occlusion.map_size == world->terrain.size ? world->sky_occlusion.texture : NULL;
@@ -665,8 +662,7 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 		scene.ground_map[0] = (float)world->terrain.size;
 		scene.ground_map[1] = world->terrain.cell_size_meters;
 		scene.ground_map[2] = scene_ground_ready() ? 1.0f : 0.0f;
-		scene.ground_map[3] = world->terrain.baked ? 2.0f
-			: (world->settings->render.water_marks && scene_ground_marks_ready() && world->water_marks.cleared ? 1.0f : 0.0f);
+		scene.ground_map[3] = 0.0f;
 		scene.weather[2] = (float)SDL_fmod(world->elapsed_seconds, 3600.0);
 		{
 			float azimuth = world->daylight.sun_azimuth_degrees * SDL_PI_F / 180.0f;
@@ -738,22 +734,11 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 		// The grass's blades in view, made anew (grass.h)
 		update_ground_overlay(world, &scene);
 		trace_mark("ground overlay (snow, petals)");
-		// What the water leaves on things (the objects' shaders read it)
-		if (world->settings->render.water_marks && !world->terrain.baked)
-		{
-			water_marks_update(&world->water_marks, water_gpu_depth_texture(&world->water), world->terrain.size,
-				(float)SDL_max(world->elapsed_seconds - world->water_marks_seconds, 0.0), world->water.total_units > 0);
-		}
-		else if (world->water_marks.texture != NULL)
-		{
-			water_marks_release(&world->water_marks);
-		}
-		world->water_marks_seconds = world->elapsed_seconds;
 		update_ice(world);
 		waterfalls_update(&world->waterfalls, &world->particles, &world->terrain, &world->water,
 			camera->first_person ? camera->walker_x : camera->target_x,
 			camera->first_person ? camera->walker_z : camera->target_z, world->elapsed_seconds, world->water_iced);
-		trace_mark("water marks, ice, waterfalls");
+		trace_mark("ice, waterfalls");
 		grass_world_of(world, &scene, &grass_world);
 		// (what was drawn the frame before hides the blades behind it, as
 		// it hides the objects: objects occlusion off, neither)

@@ -158,7 +158,6 @@ typedef struct
 	float moss_shell_meters;      // how tall that moss stands
 	float moss_shell_distance_meters; // how far from the eye its shells are drawn
 	bool water_ice;               // the water freezes in the winter, and holds still under the ice (water_ice.h)
-	bool water_marks;             // what the water leaves on things: the flood's mud mark, the drying, the algae (water_marks.h; off: only the water there now)
 	bool ground_overlay;          // snow and petals settle on the ground and go again (ground_overlay.h; off: none but the snow line's)
 	bool material_map;            // the ground shows the material map (material_map.h; off: works its materials out per pixel, as before)
 	bool terrain_from_gpu;        // the terrain's heights, normals and surface made on the GPU from the simulation's ground (off: by the CPU from its copy)

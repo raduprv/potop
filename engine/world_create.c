@@ -74,7 +74,6 @@ bool world_create(world_t *world)
 	}
 	grass_create(&world->grass);
 	ground_overlay_create(&world->ground_overlay);
-	water_marks_create(&world->water_marks);
 	water_ice_create(&world->ice);
 	if (!water_renderer_create(&world->water_renderer))
 	{
@@ -185,7 +184,6 @@ void world_destroy(world_t *world)
 		ambient_occlusion_destroy(&world->ambient_occlusion);
 		grass_destroy(&world->grass);
 		ground_overlay_destroy(&world->ground_overlay);
-		water_marks_destroy(&world->water_marks);
 		water_ice_destroy(&world->ice);
 		gpu_timer_destroy(&world->gpu_timer);
 		shadow_map_destroy(&world->near_shadow);

@@ -1273,3 +1273,17 @@ its shadow arguments. grass.vert has no samplers left; grass.frag only the
 variation texture (underwater.glsl's), lights at binding 1.
 Known: a blade near the eye is all shade or all sun (an edge across it is
 lost); accepted.
+
+## Water marks taken out (39s)
+
+ground_water.glsl now only water_at() (under, to_surface: the four cells
+round, 4 depth fetches + heights where wet), apply_water_wet, water_light
+(caustics). Moss on rocks: smoothstep(0, 0.03, under), no memory. Removed:
+water_marks.c/.h/.comp, render.water_marks, world->water_marks, the marks
+sampler (GROUND_BINDING + 2; scene_ground_bind binds 5 now,
+OBJECT_FRAGMENT_SAMPLERS 13, LIGHT_BINDING 13), scene_ground_set's third
+argument, scene_ground_marks_ready, ground_map.w (0, unused).
+Left in place, now pointless: objects.c's strays (RECORD_NO_MARKS in
+objects_cull.comp, NO_MARKS_FADE added to the fade and taken off in the
+shaders). Next: Fable's per-instance flag (water near it or not) to skip
+water_at on dry land.

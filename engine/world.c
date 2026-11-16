@@ -288,7 +288,6 @@ bool world_generate(world_t *world, uint32_t seed)
 		world_apply_features(world, &none);
 	}
 	world->ground_overlay.cleared = false;
-	water_marks_clear(&world->water_marks);
 	water_ice_clear(&world->ice);
 	if (world->water.depth != NULL)
 	{
@@ -547,9 +546,7 @@ bool world_load(world_t *world, session_t *session, const char *path, map_file_i
 		map_features_free(&features);
 	}
 	map_file_close(reader);
-	// (nothing left on things from the map before; the ice as the season
-	// says)
-	water_marks_clear(&world->water_marks);
+	// (the ice as the season says)
 	water_ice_clear(&world->ice);
 	// (a map from before the material map: the cover from its objects)
 	if (world->terrain.materials_dirty)

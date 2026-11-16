@@ -40,7 +40,7 @@ typedef struct
 	float moon_shape[4];           // x: its phase (0 new .. 0.5 full .. 1), y: the cosine of its angular radius, z: how bright its disc, w: earthshine
 	float aurora[4];               // xy: towards the north (x, z); z: how much it shows (0: none, aurora.h); w: its clock (seconds)
 	float weather[4];              // x: how hard it rains (0..1, rain.h), y: how wet things are (0..1), z: the rain's clock (seconds), w: the snow on things (0..1)
-	float ground_map[4];           // the ground and water textures (scene_ground_bind): cells per side, cell size (m), 1 if they are there, 1 if the water's marks are
+	float ground_map[4];           // the ground and water textures (scene_ground_bind): cells per side, cell size (m), 1 if they are there, unused
 	float sky_occlusion[4];        // x: how strong, y: 1 if there is one (sky_occlusion.h), z: its layers' texels per side (0: none)
 	float wind[4];                 // the plants' wind (objects_t.wind_uniform's first four)
 	float gusts[4];                // its gusts (wind_uniform's 4, 5), -, how pale a gust's wave makes the grass
@@ -56,14 +56,13 @@ void scene_uniforms_fill(scene_uniforms_t *scene, const camera_t *camera, const 
 // Pushed to uniform slot 0 of both stages (every lit shader reads it there)
 void scene_uniforms_push(const scene_uniforms_t *scene);
 
-// The ground's heights (R32F), the water on it (RG32F: depth) and what the
-// water left on things (water_marks.h) the objects' shaders read
-// (ground_water.glsl); NULL: none (stand ins are bound)
-void scene_ground_set(SDL_GPUTexture *height_texture, SDL_GPUTexture *water_texture, SDL_GPUTexture *marks_texture);
-// Bound to fragment sampler slots first .. first + 2
+// The ground's heights (R32F) and the water on it (RG32F: depth) the
+// objects' shaders read (ground_water.glsl); NULL: none (stand ins are bound)
+void scene_ground_set(SDL_GPUTexture *height_texture, SDL_GPUTexture *water_texture);
+// Bound to fragment sampler slots first .. first + 4 (the sky's below)
 void scene_ground_bind(SDL_GPURenderPass *pass, uint32_t first);
 // The sky's occlusion (sky_occlusion.h; NULL: none), its layers and its
-// bounce texture, the fourth, fifth and sixth of them
+// bounce texture, the third, fourth and fifth of them
 void scene_ground_set_sky_occlusion(SDL_GPUTexture *sky_occlusion_texture, SDL_GPUTexture *layers_texture, SDL_GPUTexture *bounce_texture);
 // The ground's heights, the sky's occlusion, its layers and its bounce
 // texture alone at first and the next three (the impostors' shader)
@@ -78,8 +77,7 @@ void scene_ground_bind_sky_vertex4(SDL_GPURenderPass *pass, uint32_t first, SDL_
 // shader at first and the next two (the fog's)
 void scene_ground_bind_sky_compute(SDL_GPUComputePass *compute, uint32_t first);
 // Whether the ground and the water are there (scene_uniforms_t.ground_map's
-// z), and the marks (w)
+// z)
 bool scene_ground_ready(void);
-bool scene_ground_marks_ready(void);
 
 #endif

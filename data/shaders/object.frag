@@ -53,7 +53,7 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform material_block
 #include "clouds.glsl"
 #define GROUND_BINDING 8
 #include "ground_water.glsl"
-#define LIGHT_BINDING 14
+#define LIGHT_BINDING 13
 #include "lights.glsl"
 #include "decals.glsl"
 
@@ -171,7 +171,7 @@ void main()
 	// A highlighted object comes with 2 added to its fade (see objects.h),
 	// and 4 times how much (of 255) of what its next level of detail leaves
 	// out is gone (objects_cull.comp)
-	// (NO_MARKS_FADE added: the water's marks left on the spot are not its)
+	// (NO_MARKS_FADE added for a stray: taken off, nothing else now)
 	float marks_off = floor(fade / NO_MARKS_FADE);
 	float packed_fade = fade - NO_MARKS_FADE * marks_off;
 	float level_steps = floor(packed_fade / 4.0);
@@ -237,15 +237,11 @@ void main()
 	// Wet in the rain (rain.h): darker, the more the surface faces up, and
 	// shinier (below)
 	float wet = weather.y * (0.35 + 0.65 * clamp(normal.y, 0.0, 1.0));
-	// What the water left on it (ground_water.glsl): the mark, the wet, the algae
-	int water_marks_kind = alpha_tested != 0 ? WATER_MARKS_FOLIAGE : WATER_MARKS_SOLID;
-	water_marks_t water_marks = water_marks_at(world_position);
-	if (marks_off > 0.5)
-	{
-		water_marks = water_marks_present_only(water_marks);
-	}
+	// The water there now (ground_water.glsl): wet under it
+	int water_kind = alpha_tested != 0 ? WATER_FOLIAGE : WATER_SOLID;
+	water_at_t water = water_at(world_position);
 
-	apply_water_marks(water_marks, world_position, water_marks_kind, albedo, wet);
+	apply_water_wet(water, water_kind, wet);
 
 	albedo *= 1.0 - 0.3 * wet;
 	// The snow on it (weather.w, main.c's): on what faces up, in patches
@@ -345,7 +341,7 @@ void main()
 		lit += sun_color * shadowed * shine * wet * 0.25;
 	}
 	float view_distance = length(world_position - eye_position);
-	lit += water_marks_light(water_marks, world_position, water_marks_kind, sun_color * shadowed);
+	lit += water_light(water, world_position, sun_color * shadowed);
 	float fog_amount = haze_amount(world_position);
 
 	lit = mix(lit, sky_color, clamp(fog_amount, 0.0, 1.0));

@@ -48,7 +48,6 @@
 #include "terrain_renderer.h"
 #include "water.h"
 #include "water_ice.h"
-#include "water_marks.h"
 #include "water_renderer.h"
 #include "waterfalls.h"
 #include "areas.h"
@@ -106,8 +105,6 @@ typedef struct
 	ambient_occlusion_t ambient_occlusion; // the small scale ambient occlusion from the scene's depth (ambient_occlusion.h)
 	grass_t grass;                 // blades made on the GPU every frame (grass.h)
 	ground_overlay_t ground_overlay; // snow and petals on the ground (ground_overlay.h)
-	water_marks_t water_marks;     // what the water leaves on things (water_marks.h)
-	double water_marks_seconds;    // game time it was last given
 	water_ice_t ice;               // the ice on the water (water_ice.h)
 	int frames_since_load;         // the first frames after a map was loaded: their times logged (what the GPU took up)
 	double ice_seconds;            // game time it was last given

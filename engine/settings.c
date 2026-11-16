@@ -108,7 +108,6 @@ static const setting_field_t setting_fields[] =
 	FIELD("render", "terrain_from_gpu", SETTING_BOOL, render.terrain_from_gpu),
 	FIELD("render", "material_map", SETTING_BOOL, render.material_map),
 	FIELD("render", "ground_overlay", SETTING_BOOL, render.ground_overlay),
-	FIELD("render", "water_marks", SETTING_BOOL, render.water_marks),
 	FIELD("render", "water_ice", SETTING_BOOL, render.water_ice),
 	FIELD("render", "moss_shells", SETTING_INT, render.moss_shells),
 	FIELD("render", "moss_shell_meters", SETTING_FLOAT, render.moss_shell_meters),
@@ -505,7 +504,6 @@ void settings_set_defaults(settings_t *settings)
 	settings->render.terrain_from_gpu = true;
 	settings->render.material_map = true;
 	settings->render.ground_overlay = true;
-	settings->render.water_marks = true;
 	settings->render.water_ice = true;
 	settings->render.moss_shells = 8;
 	settings->render.moss_shell_meters = 0.02f;

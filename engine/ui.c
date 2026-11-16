@@ -1618,8 +1618,6 @@ static const ui_setting_t ui_settings[] = {
 	HEADING(TAB_WATER, "Water on things"),
 	{ TAB_WATER, "render", "water_ice", "Ice", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
 		"The water freezes through the winter, from the shore out (not where it runs fast), and holds still under the ice; a flood breaks it" },
-	{ TAB_WATER, "render", "water_marks", "Flood marks", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
-		"What the water leaves on things: the mud up to where it stood, the drying, the algae (off: only the water there now)" },
 	{ TAB_WATER, "render", "moss_shells", "Moss shells", 0, 16, 1, EFFECT_LIVE, NULL, NULL,
 		"The moss under water on the rocks stands up in this many layers near the camera (0: painted on alone)" },
 	{ TAB_WATER, "render", "moss_shell_meters", "Moss height", 0.005f, 0.05f, 0.001f, EFFECT_LIVE, "%.3f m", NULL, NULL },

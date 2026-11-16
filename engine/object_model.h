@@ -24,8 +24,9 @@
 #define OBJECT_MODEL_MAX_MATERIALS 16
 // object.frag's samplers (objects and actors): the shadow maps (0, 1), the
 // variation (2), the base color (3), the clouds' shadows (4), the normal
-// map (5), occlusion-roughness-metal (6), emissive (7)
-#define OBJECT_FRAGMENT_SAMPLERS 14
+// map (5), occlusion-roughness-metal (6), emissive (7), the ground's (8:
+// the ground, the water, the sky's occlusion, its layers, the bounce)
+#define OBJECT_FRAGMENT_SAMPLERS 13
 #define OBJECT_MODEL_NAME_LENGTH 128
 #define OBJECT_MODEL_MAX_MONTH_CELLS 32
 // A vertex in its vertex buffer: position, normal, uv
