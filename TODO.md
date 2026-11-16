@@ -265,6 +265,14 @@ from an older version get their terrain difference baked in once).
   rotate and pan, pinch to zoom, buttons for water and sponge.
 - Anything listing directories inside data/ must not rely on that working
   on the APK's assets; writes go to SDL_GetPrefPath.
+- Vertex formats for phones (memory bandwidth): everything is float32 now,
+  80 bytes a plant vertex (position + normal + uv 32, tangent 16, plant
+  data + snow 32), 60 an instance. Packed when loaded (normal and tangent
+  BYTE4_NORM or SHORT4_NORM: SDL_GPU has no 10-10-10-2 vertex format; uv
+  HALF2; plant data UBYTE4_NORM; snow HALF4) about 36. Touches every
+  object pipeline (object, plant, building, prop, shadows, the shared
+  shadow buffers, impostor baking, the editors' previews): one job, done
+  and measured on a phone. 8 bit normals may band on buildings.
 
 ## Performance notes
 
