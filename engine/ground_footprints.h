@@ -7,8 +7,8 @@
 // times a second, done again only when what stands changed (an object
 // added, taken away, moved) or the map's bytes were cleared (a restamp, a
 // load). A footprint may lay a cover (a terrain material: a smithy's floor
-// on the ground itself), put back on every look if something took it (a
-// flood). Where a building stood and stands no more, the ground is left
+// on the ground itself), laid when the footprints are worked out (not put
+// back after a flood: its mud stays on the floor). Where a building stood and stands no more, the ground is left
 // bare earth (the cover: dirt).
 
 #ifndef GROUND_FOOTPRINTS_H

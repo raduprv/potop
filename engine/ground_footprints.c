@@ -303,8 +303,8 @@ static void mark_outline(ground_footprints_t *footprints, terrain_t *terrain, co
 	}
 }
 
-// The covers the footprints lay, where something took them (a flood, a
-// restamp): put back
+// The covers the footprints lay (when the footprints are worked out again:
+// what stands changed, a restamp, a load)
 static void lay_covers(ground_footprints_t *footprints, terrain_t *terrain)
 {
 	int32_t rectangle[4] = { INT32_MAX, INT32_MAX, INT32_MIN, INT32_MIN };
@@ -351,9 +351,11 @@ void ground_footprints_update(ground_footprints_t *footprints, terrain_t *terrai
 	footprints->seconds_to_next_look = GROUND_FOOTPRINTS_LOOK_SECONDS;
 	find_standing(footprints, objects);
 	signature = signature_of(footprints, objects);
+	// (nothing changed: the covers are left as they are, a flood's silt on
+	// a floor stays until what stands changes; they were put back every
+	// look and the floor showed through the mud in blocks)
 	if (signature == footprints->signature && !stale)
 	{
-		lay_covers(footprints, terrain);
 		return;
 	}
 	footprints->signature = signature;
