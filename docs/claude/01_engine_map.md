@@ -1538,3 +1538,14 @@ the building batches (multi-draw per material) cannot be split, so the
 buildings' group goes first of all instead (the biggest occluders), then
 the others, props, shells, plants, the alpha groups, impostors. Coarse
 (per model, per cell), as Radu asked: near enough. Same picture.
+
+## A material's levels in one call (39z15)
+
+Fable: a model's four levels of detail each had a draw per material (zero
+instances where no object is at that level), each bound and pushed. The
+draw table's others (group 2) are now sorted model, material, level, and
+draw_models sends a material's consecutive levels in one multi-draw
+(SDL_DrawGPUIndexedPrimitivesIndirect, count = the run): the uniforms are
+the material's, the same for each level. Not merged on the camera where
+a level fades what the next leaves out (draw_drop_levels: per draw).
+Checked on a generated 768 map with forests: same picture.

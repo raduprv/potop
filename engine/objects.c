@@ -2840,6 +2840,24 @@ static int compare_table_draws(void *context, const void *left, const void *righ
 			return by_material;
 		}
 	}
+	// The others: a model's levels of one material together (draw_models
+	// sends them in one call: a tree seen at level 0 only still had a draw
+	// for each of the others, of no objects, each bound and pushed)
+	if (a->group == 2)
+	{
+		if (a->model != b->model)
+		{
+			return a->model < b->model ? -1 : 1;
+		}
+		if (a->material != b->material)
+		{
+			return a->material < b->material ? -1 : 1;
+		}
+		if (a->level != b->level)
+		{
+			return a->level < b->level ? -1 : 1;
+		}
+	}
 	return a->order < b->order ? -1 : (a->order > b->order ? 1 : 0);
 }
 
@@ -4638,10 +4656,28 @@ static int draw_models(const objects_t *objects, SDL_GPURenderPass *pass, bool a
 
 			SDL_BindGPUFragmentSamplers(pass, 5, maps, 3);
 		}
+		// The same material's other levels right after it, in one call:
+		// all the same to the shaders (but where the camera's next level
+		// fades what it leaves out, each level its own: draw_drop_levels)
+		int run = 1;
+
+		while (n + run < objects->draw_count)
+		{
+			int next = ordered ? objects->draw_order[n + run] : n + run;
+
+			if (next != d + run || objects->draw_models[next] != objects->draw_models[d] || objects->draw_materials[next] != objects->draw_materials[d]
+				|| (objects->prepared_pass == PASS_CAMERA && objects->lod_enabled
+					&& (objects->draw_drop_levels[d] != 0.0f || objects->draw_drop_levels[next] != 0.0f)))
+			{
+				break;
+			}
+			run++;
+		}
 		SDL_DrawGPUIndexedPrimitivesIndirect(pass,
 			objects->argument_buffers[objects->prepared_pass],
-			(uint32_t)(sizeof(uint32_t) * DRAW_ARGUMENT_WORDS * (size_t)d), 1);
+			(uint32_t)(sizeof(uint32_t) * DRAW_ARGUMENT_WORDS * (size_t)d), (uint32_t)run);
 		draw_calls++;
+		n += run - 1;
 	}
 	return draw_calls;
 }
