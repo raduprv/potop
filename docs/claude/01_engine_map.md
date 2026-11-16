@@ -1331,3 +1331,19 @@ layout (R8, one under the other): interleaved on upload, split on
 download. Checked: same picture as before with the occlusion worked out
 (set render.sky_occlusion_directions_per_frame 32 makes it finish in ~11 s
 under lavapipe).
+
+## Value noise from a lattice texture (39x)
+
+For phones and old Intel GPUs: value_noise (terrain_body.glsl,
+grass_body.glsl) and prop_noise (prop_body.glsl, props and buildings) no
+longer hash 4 / 8 corners: engine/noise_lattice.c makes a 512x512 byte
+lattice (PCG, the same every run), materials.c puts it in the variation
+texture's green (now RGBA8: red the cloudy noise as before, blue the
+lattice moved by (37, 17): the next slice for the 3D noise). One textureLod
+at mip 0 of (mod(cell, 512) + smoothstep(fraction) + 0.5) / 512 gives the
+same interpolation as before; 3D: slice z is the 2D lattice moved by z *
+(37, 17), green and blue are z and z + 1, mixed by the third smoothstep.
+material_map.c's CPU value_noise is noise_lattice_value (the patches
+match the shaders). The pattern is new (other dice: the ground's patches,
+the moss and lichen on a given stone land elsewhere), same rules. Period:
+512 cells (at x0.6, 850 m).

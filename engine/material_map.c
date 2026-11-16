@@ -3,10 +3,11 @@
 // The bake follows terrain_materials.glsl's terrain_material_weights and
 // terrain_material_patches (the part that does not change by the frame:
 // the soils, the slope, the noon sun, the noises), and keeps the material
-// with the strongest claim. Its noise is the shaders' (hash_2d,
-// value_noise), so the patches land where they did.
+// with the strongest claim. Its noise is the shaders' (value_noise: the
+// lattice, noise_lattice.h), so the patches land where they did.
 
 #include "material_map.h"
+#include "noise_lattice.h"
 
 #include <SDL3/SDL.h>
 
@@ -68,32 +69,10 @@ static inline float fraction_of(float value)
 	return value - SDL_floorf(value);
 }
 
-// terrain.frag's hash_2d
-static inline float hash_2d(float x, float y)
-{
-	float a = fraction_of(x * 0.1031f);
-	float b = fraction_of(y * 0.1031f);
-	float c = a;
-	float d = a * (b + 33.33f) + b * (c + 33.33f) + c * (a + 33.33f);
-
-	a += d;
-	b += d;
-	c += d;
-	return fraction_of((a + b) * c);
-}
-
+// The shaders' value_noise (the lattice in the variation texture's green)
 static inline float value_noise(float x, float y)
 {
-	float cell_x = SDL_floorf(x);
-	float cell_y = SDL_floorf(y);
-	float fx = x - cell_x;
-	float fy = y - cell_y;
-	float bx = fx * fx * (3.0f - 2.0f * fx);
-	float by = fy * fy * (3.0f - 2.0f * fy);
-	float low = lerp_float(hash_2d(cell_x, cell_y), hash_2d(cell_x + 1.0f, cell_y), bx);
-	float high = lerp_float(hash_2d(cell_x, cell_y + 1.0f), hash_2d(cell_x + 1.0f, cell_y + 1.0f), bx);
-
-	return lerp_float(low, high, by);
+	return noise_lattice_value(x, y);
 }
 
 // The variation texture, filtered, repeating (u, v in repeats)

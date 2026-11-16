@@ -130,14 +130,21 @@ float hash_2d(vec2 position)
 	return fract((value.x + value.y) * value.z);
 }
 
+// The value noise (0..1 at lattice cells), one read: the lattice in the
+// variation texture's green (noise_lattice.h), the cell plus the
+// smoothstep of where in it, plus half a texel: the bilinear filter blends
+// the four corners by the smoothstep's weights. At mip 0 (the derivatives
+// of that uv mean nothing). The CPU's: noise_lattice_value
+const float NOISE_LATTICE_SIZE = 512.0;
+
 float value_noise(vec2 position)
 {
 	vec2 cell = floor(position);
-	vec2 fraction = fract(position);
+	vec2 fraction = position - cell;
 	vec2 blend = fraction * fraction * (3.0 - 2.0 * fraction);
 
-	return mix(mix(hash_2d(cell), hash_2d(cell + vec2(1.0, 0.0)), blend.x),
-		mix(hash_2d(cell + vec2(0.0, 1.0)), hash_2d(cell + vec2(1.0, 1.0)), blend.x), blend.y);
+	// (the cell wrapped first: far out, the filter keeps its fraction)
+	return textureLod(variation_texture, (mod(cell, NOISE_LATTICE_SIZE) + blend + 0.5) / NOISE_LATTICE_SIZE, 0.0).g;
 }
 
 #include "terrain_materials.glsl"

@@ -69,9 +69,10 @@ typedef struct
 {
 	SDL_GPUTexture *color_height_array; // RGBA8: color in RGB, roughness in A
 	SDL_GPUTexture *normal_array;  // RGBA8: tangent space normal in RGB
-	// Tileable cloudy grayscale noise (R8), used for the global variation
+	// Tileable cloudy grayscale noise (red), used for the global variation
 	// over all materials and for the moving cloud shadows. Loaded from
-	// data/textures/variation.png if present, generated otherwise.
+	// data/textures/variation.png if present, generated otherwise. Green
+	// and blue: the value noise's lattice (noise_lattice.h; read at mip 0)
 	SDL_GPUTexture *variation_texture;
 	// Its pixels, kept for the material map's bake (material_map.c)
 	uint8_t *variation_pixels;

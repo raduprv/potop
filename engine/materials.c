@@ -1,6 +1,7 @@
 // Terrain surface materials. See materials.h.
 
 #include "materials.h"
+#include "noise_lattice.h"
 #include "file_io.h"
 #include "ini_parser.h"
 #include "math3d.h"
@@ -665,9 +666,35 @@ static SDL_GPUTexture *create_variation_texture(uint8_t **pixels_out)
 		SDL_Log("Variation texture: no textures/variation.png, generated one");
 	}
 
-	texture = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREFORMAT_R8_UNORM, (uint32_t)size, (uint32_t)size, 1, 0,
-		SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET);
-	gpu_upload_texture(texture, 0, 0, 0, 0, (uint32_t)size, (uint32_t)size, pixels, (size_t)size * (size_t)size);
+	// Red: the cloudy noise; green: the value noise's lattice; blue: the
+	// same moved by a slice (the 3D noise's next slice up, noise_lattice.h)
+	{
+		const uint8_t *points = noise_lattice();
+		uint8_t *texels = SDL_malloc((size_t)size * (size_t)size * 4);
+
+		if (texels == NULL || points == NULL || size != NOISE_LATTICE_SIZE)
+		{
+			SDL_free(texels);
+			SDL_free(pixels);
+			return NULL;
+		}
+		for (int y = 0; y < size; y++)
+		{
+			for (int x = 0; x < size; x++)
+			{
+				uint8_t *texel = &texels[((size_t)y * (size_t)size + (size_t)x) * 4];
+
+				texel[0] = pixels[y * size + x];
+				texel[1] = points[y * size + x];
+				texel[2] = points[((y + NOISE_LATTICE_SLICE_Y) & (size - 1)) * size + ((x + NOISE_LATTICE_SLICE_X) & (size - 1))];
+				texel[3] = 255;
+			}
+		}
+		texture = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, (uint32_t)size, (uint32_t)size, 1, 0,
+			SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET);
+		gpu_upload_texture(texture, 0, 0, 0, 0, (uint32_t)size, (uint32_t)size, texels, (size_t)size * (size_t)size * 4);
+		SDL_free(texels);
+	}
 	gpu_generate_mipmaps(texture);
 	*pixels_out = pixels;
 	return texture;

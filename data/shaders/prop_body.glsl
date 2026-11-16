@@ -196,16 +196,24 @@ float prop_hash(vec3 point)
 	return fract(point.x * point.y * point.z * (point.x + point.y + point.z));
 }
 
+// The 3D value noise (0..1 at lattice points), one read: slice z of the
+// lattice is the 2D one (the variation texture's green, noise_lattice.h)
+// moved by z times (37, 17); blue holds the next slice up at the same
+// texel. The bilinear filter blends x and y (the cell plus the smoothstep,
+// plus half a texel), the two slices by the third smoothstep. At mip 0
+const float NOISE_LATTICE_SIZE = 512.0;
+const vec2 NOISE_LATTICE_SLICE = vec2(37.0, 17.0);
+
 float prop_noise(vec3 point)
 {
 	vec3 cell = floor(point);
-	vec3 inside = fract(point);
+	vec3 inside = point - cell;
 	vec3 weight = inside * inside * (3.0 - 2.0 * inside);
+	// (the texel wrapped first: far out, the filter keeps its fraction)
+	vec2 texel = mod(cell.xy + NOISE_LATTICE_SLICE * cell.z, NOISE_LATTICE_SIZE);
+	vec2 slices = textureLod(variation_texture, (texel + weight.xy + 0.5) / NOISE_LATTICE_SIZE, 0.0).gb;
 
-	return mix(mix(mix(prop_hash(cell), prop_hash(cell + vec3(1.0, 0.0, 0.0)), weight.x),
-			mix(prop_hash(cell + vec3(0.0, 1.0, 0.0)), prop_hash(cell + vec3(1.0, 1.0, 0.0)), weight.x), weight.y),
-		mix(mix(prop_hash(cell + vec3(0.0, 0.0, 1.0)), prop_hash(cell + vec3(1.0, 0.0, 1.0)), weight.x),
-			mix(prop_hash(cell + vec3(0.0, 1.0, 1.0)), prop_hash(cell + vec3(1.0, 1.0, 1.0)), weight.x), weight.y), weight.z);
+	return mix(slices.x, slices.y, weight.z);
 }
 
 // Lichen: round patches, one round each cell's own point (at random in
