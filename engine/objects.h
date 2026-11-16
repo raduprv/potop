@@ -195,6 +195,17 @@ typedef struct
 	int run_count;
 	int run_capacity;
 	int run_cells;
+	// Near first: each model's nearest visible cell this frame (the
+	// camera's pass; FLT_MAX: not seen in a cell, a loose one: last), and
+	// the draws ordered by it (objects_draw: what is near hides what is
+	// behind it from the depth test before that is shaded)
+	float *model_distance;
+	int model_distance_capacity;
+	bool model_distance_valid;
+	int *draw_order;
+	void *draw_order_keys;
+	int draw_order_capacity;
+	bool draw_order_ready;         // draw_order made for this frame's camera draws
 	float *grid_minimum_y;
 	float *grid_maximum_y;
 	float *grid_draw_distance;

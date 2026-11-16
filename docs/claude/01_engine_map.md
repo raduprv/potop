@@ -1527,3 +1527,14 @@ terrain comes after the actors: its shading is the dearest per pixel and
 what stands on it is in the depth buffer already, so early-Z turns away its
 hidden pixels. Same picture. (Things behind hills are drawn first now, but
 the Hi-Z culling already leaves most of them out.)
+
+## Objects drawn near first, roughly (39z14)
+
+find_cells (camera) keeps model_distance: each model's nearest visible
+cell (by the type runs: mark_type_distance; loose ones and strays FLT_MAX,
+drawn last). objects_draw sorts the draws by it (order_draws: a model's
+draws stay together, in their order) and draw_models walks that order;
+the building batches (multi-draw per material) cannot be split, so the
+buildings' group goes first of all instead (the biggest occluders), then
+the others, props, shells, plants, the alpha groups, impostors. Coarse
+(per model, per cell), as Radu asked: near enough. Same picture.

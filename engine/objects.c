@@ -2,6 +2,8 @@
 
 #include "lights.h"
 #include "objects.h"
+
+#include <float.h>
 #include "profile.h"
 #include "clouds.h"
 #include "gpu.h"
@@ -955,6 +957,9 @@ void objects_destroy(objects_t *objects)
 	SDL_free(objects->run_first);
 	SDL_free(objects->run_start);
 	SDL_free(objects->run_type);
+	SDL_free(objects->model_distance);
+	SDL_free(objects->draw_order);
+	SDL_free(objects->draw_order_keys);
 	SDL_free(objects->ray_cell_stamps);
 	objects->ray_cell_stamps = NULL;
 	SDL_free(objects->grid_minimum_y);
@@ -3402,6 +3407,21 @@ static void mark_type_models(const objects_t *objects, uint8_t *table, int type_
 	}
 }
 
+// A type's models seen this near (the nearest kept)
+static void mark_type_distance(objects_t *objects, int type_index, float distance)
+{
+	const object_type_t *type = &objects->types.types[type_index];
+	const int models[3] = { type->model, type->damaged_model, type->destroyed_model };
+
+	for (int m = 0; m < 3; m++)
+	{
+		if (models[m] >= 0 && models[m] < objects->model_count && distance < objects->model_distance[models[m]])
+		{
+			objects->model_distance[models[m]] = distance;
+		}
+	}
+}
+
 // The pass's table of models in view made ready (empty); NULL: none kept
 // (the draws then go by model_used)
 static uint8_t *begin_models_in_view(objects_t *objects, pass_t pass)
@@ -3610,6 +3630,29 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 			objects->cell_visible_capacity_bytes[p] = 0;
 		}
 	}
+	// (the camera's: each model's nearest visible cell, for the draws' order)
+	objects->model_distance_valid = false;
+	if (pass == PASS_CAMERA && in_view != NULL && objects->model_count > 0)
+	{
+		if (objects->model_distance_capacity < objects->model_count)
+		{
+			float *grown = SDL_realloc(objects->model_distance, sizeof(float) * (size_t)objects->model_count);
+
+			if (grown != NULL)
+			{
+				objects->model_distance = grown;
+				objects->model_distance_capacity = objects->model_count;
+			}
+		}
+		if (objects->model_distance_capacity >= objects->model_count)
+		{
+			for (int m = 0; m < objects->model_count; m++)
+			{
+				objects->model_distance[m] = FLT_MAX;
+			}
+			objects->model_distance_valid = true;
+		}
+	}
 	objects->cell_words_used = words;
 	SDL_memset(objects->cell_visible_staging, 0, sizeof(uint32_t) * 2u * words);
 	for (int j = 0; j < objects->grid_size; j++)
@@ -3621,7 +3664,7 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 			int last = objects->grid_first[cell + 1];
 			vec3_t cell_minimum;
 			vec3_t cell_maximum;
-			float cell_distance;
+			float cell_distance = 0.0f;
 
 			if (first == last)
 			{
@@ -3679,6 +3722,10 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 				for (int r = objects->run_first[cell]; r < objects->run_first[cell + 1] && objects->run_start[r] < last; r++)
 				{
 					mark_type_models(objects, in_view, objects->run_type[r]);
+					if (objects->model_distance_valid)
+					{
+						mark_type_distance(objects, objects->run_type[r], cell_distance);
+					}
 				}
 			}
 			else if (in_view != NULL)
@@ -3686,6 +3733,10 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 				for (int k = first; k < last; k++)
 				{
 					mark_type_models(objects, in_view, objects->instances[k].type);
+					if (objects->model_distance_valid)
+					{
+						mark_type_distance(objects, objects->instances[k].type, cell_distance);
+					}
 				}
 			}
 		}
@@ -4209,6 +4260,68 @@ static void deciduous_season(float month, float season_out[4])
 	season_out[3] = 0.0f;
 }
 
+typedef struct
+{
+	float distance;
+	int draw;
+} draw_order_key_t;
+
+static int by_draw_distance(const void *left, const void *right)
+{
+	const draw_order_key_t *a = left;
+	const draw_order_key_t *b = right;
+
+	if (a->distance != b->distance)
+	{
+		return a->distance < b->distance ? -1 : 1;
+	}
+	return a->draw - b->draw;
+}
+
+// The camera's draws, their models' nearest first (a model's draws stay
+// together, in their order); false: none made (memory), the list's order
+static bool order_draws(objects_t *objects)
+{
+	draw_order_key_t *keys;
+
+	if (!objects->model_distance_valid || objects->draw_count <= 0)
+	{
+		return false;
+	}
+	if (objects->draw_order_capacity < objects->draw_count)
+	{
+		int *order = SDL_realloc(objects->draw_order, sizeof(int) * (size_t)objects->draw_count);
+		void *grown_keys;
+
+		if (order == NULL)
+		{
+			return false;
+		}
+		objects->draw_order = order;
+		grown_keys = SDL_realloc(objects->draw_order_keys, sizeof(draw_order_key_t) * (size_t)objects->draw_count);
+		if (grown_keys == NULL)
+		{
+			return false;
+		}
+		objects->draw_order_keys = grown_keys;
+		objects->draw_order_capacity = objects->draw_count;
+	}
+	keys = objects->draw_order_keys;
+	for (int d = 0; d < objects->draw_count; d++)
+	{
+		int model = objects->draw_models[d];
+
+		keys[d].distance = model >= 0 && model < objects->model_count ? objects->model_distance[model] : FLT_MAX;
+		keys[d].draw = d;
+	}
+	SDL_qsort(keys, (size_t)objects->draw_count, sizeof(draw_order_key_t), by_draw_distance);
+	for (int d = 0; d < objects->draw_count; d++)
+	{
+		objects->draw_order[d] = keys[d].draw;
+	}
+	return true;
+}
+
 static int draw_models(const objects_t *objects, SDL_GPURenderPass *pass, bool alpha_pass, draw_kind_t kind)
 {
 	int draw_calls = 0;
@@ -4305,8 +4418,17 @@ static int draw_models(const objects_t *objects, SDL_GPURenderPass *pass, bool a
 		}
 		first_draw = count;
 	}
-	for (int d = first_draw; d < objects->draw_count; d++)
+	// (the camera's: nearest models first, objects_draw's order)
+	bool ordered = objects->prepared_pass == PASS_CAMERA && objects->draw_order_ready;
+
+	for (int n = ordered ? 0 : first_draw; n < objects->draw_count; n++)
 	{
+		int d = ordered ? objects->draw_order[n] : n;
+
+		if (d < first_draw)
+		{
+			continue;
+		}
 		const object_model_t *model = &objects->models[objects->draw_models[d]];
 		const object_material_t *material;
 		SDL_GPUTextureSamplerBinding texture_binding;
@@ -4707,6 +4829,15 @@ void objects_draw(objects_t *objects, SDL_GPURenderPass *pass, const render_sett
 	scene_ground_bind(pass, 8);
 	// (the plants' and impostors' vertex shaders: sky_vertex.glsl)
 	scene_ground_bind_sky_vertex4(pass, 0, shadow != NULL ? shadow->depth_texture : NULL);
+	// Near first (by each model's nearest visible cell), and the big
+	// ones that hide most first of all: the buildings, then the rest
+	objects->draw_order_ready = order_draws(objects);
+	if (objects->building_pipeline != NULL)
+	{
+		SDL_BindGPUGraphicsPipeline(pass, objects->building_pipeline);
+		lights_bind(pass);
+		objects->draw_call_count += draw_models(objects, pass, false, DRAW_BUILDINGS);
+	}
 	SDL_BindGPUGraphicsPipeline(pass, objects->pipeline);
 	lights_bind(pass);
 	objects->draw_call_count += draw_models(objects, pass, false, DRAW_OTHERS);
@@ -4715,12 +4846,6 @@ void objects_draw(objects_t *objects, SDL_GPURenderPass *pass, const render_sett
 		SDL_BindGPUGraphicsPipeline(pass, objects->prop_pipeline);
 		lights_bind(pass);
 		objects->draw_call_count += draw_models(objects, pass, false, DRAW_PROPS);
-	}
-	if (objects->building_pipeline != NULL)
-	{
-		SDL_BindGPUGraphicsPipeline(pass, objects->building_pipeline);
-		lights_bind(pass);
-		objects->draw_call_count += draw_models(objects, pass, false, DRAW_BUILDINGS);
 	}
 	if (objects->prop_shell_pipeline != NULL && settings->moss_shells > 0 && settings->moss_shell_distance_meters > 0.0f)
 	{
