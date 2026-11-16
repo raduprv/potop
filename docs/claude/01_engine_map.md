@@ -945,7 +945,11 @@ the grid's order, so the GPU could not be given "slots a to b". Now:
   range_buffers[pass] (order start, work start). The far shadow map:
   every cell, so about the whole list, as before.
 - The shader: one thread per item of work (work.x), slot_of_work finds
-  its range by a binary search, the slot from the order. visible() is the
+  its range by a binary search (in COUNT only: it keeps the slot in
+  decision_buffer after the 2 * slot_count decisions, SCATTER reads it
+  back), the slot from the order. MODE_OFFSETS is one work group of 256:
+  a shared-memory prefix sum over the counts, then the draws strided over
+  the threads. visible() is the
   same as before. A stray (strays/stray_slots, each once: stray_marks per
   instance) has FLAG_STRAY in its slot's cell word (pack_slot): skipped
   where the sort left it (order index < work.z = instance_count), looked
