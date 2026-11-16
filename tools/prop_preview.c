@@ -431,8 +431,7 @@ void prop_preview_draw(prop_preview_t *preview, SDL_GPURenderPass *pass, const p
 
 	// The scene as the shaders know it: the sun, the sky, no shadows
 	SDL_zero(scene);
-	gpu_clip_matrix(view_projection.m, scene.view_projection);
-	SDL_memcpy(scene.inverse_view_projection, inverse.m, sizeof(scene.inverse_view_projection));
+	scene_uniforms_set_look(&scene, projection, view->eye, view->target);
 	SDL_memcpy(scene.light_view_projection, mat4_identity().m, sizeof(scene.light_view_projection));
 	SDL_memcpy(scene.near_light_view_projection, mat4_identity().m, sizeof(scene.near_light_view_projection));
 	SDL_memcpy(scene.eye_position, view->eye, sizeof(scene.eye_position));

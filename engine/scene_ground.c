@@ -156,3 +156,22 @@ void scene_ground_bind_sky_vertex4(SDL_GPURenderPass *pass, uint32_t first, SDL_
 		SDL_BindGPUVertexSamplers(pass, first, bindings, 4);
 	}
 }
+
+// (here, not in scene_uniforms.c: the tools link this file alone)
+void scene_uniforms_set_look(scene_uniforms_t *scene, mat4_t projection, const float eye[3], const float target[3])
+{
+	vec3_t eye_point = vec3_make(eye[0], eye[1], eye[2]);
+	vec3_t target_point = vec3_make(target[0], target[1], target[2]);
+	vec3_t up = vec3_make(0.0f, 1.0f, 0.0f);
+	mat4_t view_projection = mat4_multiply(projection, mat4_look_at(eye_point, target_point, up));
+	mat4_t relative = mat4_multiply(projection, mat4_look_at(vec3_make(0.0f, 0.0f, 0.0f), vec3_subtract(target_point, eye_point), up));
+	mat4_t inverse;
+
+	gpu_clip_matrix(view_projection.m, scene->view_projection);
+	mat4_inverse(view_projection, &inverse);
+	SDL_memcpy(scene->inverse_view_projection, inverse.m, sizeof(scene->inverse_view_projection));
+	gpu_clip_matrix(relative.m, scene->view_projection_relative);
+	mat4_inverse(relative, &inverse);
+	SDL_memcpy(scene->inverse_view_projection_relative, inverse.m, sizeof(scene->inverse_view_projection_relative));
+	SDL_memcpy(scene->eye_position, eye, sizeof(float) * 3);
+}

@@ -15,8 +15,9 @@
 #define GROUND_HALF_WIDTH 15.0f
 #define GROUND_TEXTURE_SIZE 64
 
-// As the game's (objects.c): placement and size, rotation, fade
-#define INSTANCE_FLOATS 9
+// As the game's (objects.c): placement and size, rotation, fade, the
+// emissive groups put out (two words: none here)
+#define INSTANCE_FLOATS 11
 
 static const SDL_GPUVertexBufferDescription vertex_buffers[3] =
 {
@@ -24,7 +25,7 @@ static const SDL_GPUVertexBufferDescription vertex_buffers[3] =
 	{ 1, sizeof(float) * INSTANCE_FLOATS, SDL_GPU_VERTEXINPUTRATE_INSTANCE, 0 },
 	{ 2, sizeof(float) * 4, SDL_GPU_VERTEXINPUTRATE_VERTEX, 0 },
 };
-static const SDL_GPUVertexAttribute vertex_attributes[7] =
+static const SDL_GPUVertexAttribute vertex_attributes[8] =
 {
 	{ 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, 0 },
 	{ 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, sizeof(float) * 3 },
@@ -33,6 +34,7 @@ static const SDL_GPUVertexAttribute vertex_attributes[7] =
 	{ 4, 1, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, sizeof(float) * 4 },
 	{ 5, 1, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT, sizeof(float) * 8 },
 	{ 6, 2, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, 0 },
+	{ 7, 1, SDL_GPU_VERTEXELEMENTFORMAT_UINT2, sizeof(float) * 9 },   // object.vert's emissive groups put out
 };
 
 // The plants' (objects.c): the same, and what each vertex is on the plant
@@ -190,7 +192,7 @@ bool plant_preview_create(plant_preview_t *preview)
 		info.vertex_buffers = vertex_buffers;
 		info.vertex_buffer_count = 3;
 		info.vertex_attributes = vertex_attributes;
-		info.vertex_attribute_count = 7;
+		info.vertex_attribute_count = 8;
 		info.cull = SDL_GPU_CULLMODE_BACK;
 		info.depth_test = true;
 		info.depth_write = true;
@@ -591,8 +593,7 @@ void plant_preview_draw(plant_preview_t *preview, SDL_GPURenderPass *pass, const
 	// The scene as object.frag knows it: the sun, the sky, no shadows, no
 	// clouds, no fog to speak of
 	SDL_zero(scene);
-	gpu_clip_matrix(view_projection.m, scene.view_projection);
-	SDL_memcpy(scene.inverse_view_projection, inverse.m, sizeof(scene.inverse_view_projection));
+	scene_uniforms_set_look(&scene, projection, view->eye, view->target);
 	SDL_memcpy(scene.light_view_projection, mat4_identity().m, sizeof(scene.light_view_projection));
 	SDL_memcpy(scene.near_light_view_projection, mat4_identity().m, sizeof(scene.near_light_view_projection));
 	SDL_memcpy(scene.eye_position, view->eye, sizeof(scene.eye_position));

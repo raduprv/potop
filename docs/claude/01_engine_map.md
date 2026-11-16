@@ -1297,3 +1297,15 @@ grid object's fade (not loose, not strays, not impostors); the three
 shaders decode it and water_at(position, dry) returns at once. Actors
 (their own instances) always look. Checked by forcing dry -> under water:
 everything but the cow went wet.
+
+## The tools' previews and the scene block (39u)
+
+world_to_clip / clip_to_eye use view_projection_relative and its inverse
+(from the eye); the plant, prop and house previews filled only
+view_projection, so nothing was drawn (just the clear color). They now
+call scene_uniforms_set_look (in scene_ground.c: the tools link that file,
+not scene_uniforms.c). Whenever the scene block gets a new matrix the
+shaders lean on, the previews need it too. The plant preview's object
+pipeline also lacked object.vert's location 7 (emissive groups, UINT2;
+INSTANCE_FLOATS 11 there now): caught by VK_INSTANCE_LAYERS=
+VK_LAYER_KHRONOS_validation under lavapipe.

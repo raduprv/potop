@@ -53,6 +53,12 @@ typedef struct
 void scene_uniforms_fill(scene_uniforms_t *scene, const camera_t *camera, const terrain_t *terrain, const render_settings_t *settings,
 	const shadow_map_t *far_shadow, const shadow_map_t *near_shadow, float time_seconds);
 
+// The eye and its matrices for a look from eye at target through projection
+// (the tools' previews, no camera_t): view_projection and its inverse, the
+// same from the eye (world_to_clip, clip_to_eye: without them nothing is
+// drawn), eye_position
+void scene_uniforms_set_look(scene_uniforms_t *scene, mat4_t projection, const float eye[3], const float target[3]);
+
 // Pushed to uniform slot 0 of both stages (every lit shader reads it there)
 void scene_uniforms_push(const scene_uniforms_t *scene);
 
