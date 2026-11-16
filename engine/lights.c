@@ -741,6 +741,7 @@ static uint32_t cluster_spheres(uint32_t *cluster_data, const float (*spheres)[4
 	static uint32_t cluster_counts[LIGHTS_CLUSTERS];
 	static int tiles[DECALS_MAX > LIGHTS_MAX ? DECALS_MAX : LIGHTS_MAX][4];
 	static int slices[DECALS_MAX > LIGHTS_MAX ? DECALS_MAX : LIGHTS_MAX][2];
+	uint32_t used = 0;
 
 	SDL_zeroa(cluster_counts);
 	for (int l = 0; l < count; l++)
@@ -789,6 +790,24 @@ static uint32_t cluster_spheres(uint32_t *cluster_data, const float (*spheres)[4
 		tiles[l][3] = SDL_clamp((int)((maximum_y * 0.5f + 0.5f) * LIGHTS_TILES_Y), 0, LIGHTS_TILES_Y - 1);
 		slices[l][0] = slice_of(distances[l] - radius, slices_per_log);
 		slices[l][1] = slice_of(distances[l] + radius, slices_per_log);
+		// Not enough room left for all its clusters: left out whole, not in
+		// some of them (the room went to the clusters in their order: a
+		// light cut off along the tiles' rows, the top of a lit wall gone
+		// where a scope or a crowd of windows filled the clusters). The
+		// spheres come nearest first: the far ones go
+		{
+			uint32_t cost = (uint32_t)(tiles[l][2] - tiles[l][0] + 1) * (uint32_t)(tiles[l][3] - tiles[l][1] + 1)
+				* (uint32_t)(slices[l][1] - slices[l][0] + 1);
+
+			if (total + used + cost > LIGHTS_INDICES_MAX)
+			{
+				tiles[l][0] = 1;
+				tiles[l][2] = 0;
+				(*dropped)++;
+				continue;
+			}
+			used += cost;
+		}
 		for (int s = slices[l][0]; s <= slices[l][1]; s++)
 		{
 			for (int y = tiles[l][1]; y <= tiles[l][3]; y++)
@@ -974,10 +993,11 @@ void lights_update(lights_t *lights, const particles_t *particles, const objects
 				&lights->dropped);
 		}
 	}
-	// The nearest, as many as there is room for
+	// The nearest first (the clusters' room goes to them first, see
+	// cluster_spheres), as many as there is room for
+	SDL_qsort(gathered, (size_t)count, sizeof(gathered_light_t), by_distance);
 	if (count > LIGHTS_MAX)
 	{
-		SDL_qsort(gathered, (size_t)count, sizeof(gathered_light_t), by_distance);
 		lights->dropped += count - LIGHTS_MAX;
 		count = LIGHTS_MAX;
 	}

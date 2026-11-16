@@ -41,7 +41,7 @@
 #define LIGHTS_TILES_Y 9
 #define LIGHTS_SLICES 24
 #define LIGHTS_CLUSTERS (LIGHTS_TILES_X * LIGHTS_TILES_Y * LIGHTS_SLICES)
-#define LIGHTS_INDICES_MAX 65536       // light references over all clusters
+#define LIGHTS_INDICES_MAX 262144      // light and decal references over all clusters (1 MB; past it the farthest are left out whole)
 #define LIGHTS_NEAR_METERS 1.0f        // the first slice ends here
 #define LIGHTS_FAR_METERS 300.0f       // no light farther than this is gathered
 #define LIGHTS_PLACED_MAX 256          // with the Light tool

@@ -1370,3 +1370,15 @@ row first; the tiles count from clip space's bottom). The slice still
 needs the log of the distance. Zero size or no layout (the editors' empty
 buffers): no cluster. Checked at night with lamps and the torch: the same
 picture as before.
+
+## Lights cut off along the tiles (bug, 39z2)
+
+Radu, at night through a scope: a lit window's light cut along a tile row
+and column (the top of the lit wall missing). The index room
+(LIGHTS_INDICES_MAX) ran out: the room was handed to the clusters in their
+order ((slice * 9 + y) * 16 + x), so the last clusters (far slices, top
+rows) got none and a light showed in some of its tiles only. Zoomed in,
+each light covers many more tiles. Now: the lights sorted nearest first
+always; in cluster_spheres a light (or decal) whose tiles x slices do not
+fit what is left is left out whole (dropped++), never cut; the room is
+262144 (was 65536; 1 MB, only the used part goes up each frame).
