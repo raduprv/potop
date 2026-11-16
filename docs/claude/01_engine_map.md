@@ -179,9 +179,12 @@ render time 3.1 ms to 1.5, pictures the same to the pixel. Memory: about
 Not done: props (prop.frag's uniforms per draw), the others (object.vert's
 wind per model), plants, the alpha tested (cut out details).
 
-## Contact shadows (35s)
+## Contact shadows (35s; since 39q in the ambient occlusion's step 2)
 
-engine/contact_shadows.c, data/shaders/contact_shadows.frag. A full screen
+39q: merged into ambient_occlusion_apply.frag (see the ambient occlusion
+below): contact_shadows.c/.h/.frag and render.contact_shadows are gone; the
+reach and strength settings stay, fed through occlusion_frame.zw. The
+history below is of the old separate pass. A full screen
 pass after the sky, before the depth pyramid and the water's capture
 (world_render.c, at the pause before the water): each pixel within 40 m
 reconstructs its point and facing from the depth (the nearer neighbor of
@@ -986,6 +989,16 @@ multiply the color: GPU_BLEND_MULTIPLY).
   then only the sky's share of the light taken away (as the contact
   shadows work out the sun's: facing, sun_visibility, sky and ground
   bounce), faded out toward render.ambient_occlusion_distance.
+- 39q: step 2 does the contact shadows too (Radu: one thing, no toggles
+  and ifs across shaders; Fable found the sun's shadow worked out three
+  times a pixel). One point, one facing (the contact shadows' careful
+  one: the nearer neighbor; an edge both ways or no facing: no march),
+  one sun_visibility, one multiply. The light kept: (sun * (1 - contact
+  taken) + sky * (1 - occlusion taken)) / (sun + sky). The march (12
+  steps, within 40 m, CONTACT_DISTANCE) runs only where the sun reaches
+  and it faces it; occlusion_frame.z reach (contact_shadow_meters),
+  .w strength (contact_shadow_strength; 0 without shadow maps).
+  render.ambient_occlusion switches both.
 - Settings (render.): ambient_occlusion (true), ambient_occlusion_meters
   (1.0), ambient_occlusion_strength (1.0), ambient_occlusion_distance
   (150 m); in both settings tables (settings_window.c, ui.c), live.

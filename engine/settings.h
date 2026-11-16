@@ -140,8 +140,7 @@ typedef struct
 	int32_t near_shadow_map_size;
 	float near_shadow_meters;
 	float shadow_strength;        // 0 = no shadows, 1 = full
-	bool contact_shadows;         // the small shadows the maps miss, from the scene's depth (contact_shadows.h)
-	float contact_shadow_meters;  // how far toward the sun they look
+	float contact_shadow_meters;  // the contact shadows (with the ambient occlusion, ambient_occlusion.h): how far toward the sun they look
 	float contact_shadow_strength; // how dark, of the maps' shadows (1: as dark; up to 1.5)
 	bool ambient_occlusion;       // the small scale ambient occlusion from the scene's depth (ambient_occlusion.h)
 	float ambient_occlusion_meters;   // how far round a point it looks (its radius)

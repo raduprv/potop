@@ -817,8 +817,8 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 			bool drawn = false;
 
 			render_target_pause(&world->scene_target, pass);
-			// (the ambient occlusion and the contact shadows over what is
-			// drawn so far: before the water, which takes the scene's
+			// (the ambient occlusion and the contact shadows (one pass) over
+			// what is drawn so far: before the water, which takes the scene's
 			// color as it is for its reflections)
 			if (world->settings->render.ambient_occlusion && !camera->underwater)
 			{
@@ -827,12 +827,6 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 				ambient_occlusion_draw(&world->ambient_occlusion, world->scene_target.color_texture, world->scene_target.depth_texture,
 					(uint32_t)world->scene_target.width, (uint32_t)world->scene_target.height, &scene, &world->settings->render,
 					shadows ? world->shadow.depth_texture : NULL, shadows ? world->near_shadow.depth_texture : NULL);
-			}
-			if (world->settings->render.contact_shadows && world->lit_render.shadow_strength > 0.0f && !camera->underwater)
-			{
-				contact_shadows_draw(&world->contact_shadows, world->scene_target.color_texture, world->scene_target.depth_texture,
-					(uint32_t)world->scene_target.width, (uint32_t)world->scene_target.height, &scene, &world->settings->render,
-					world->shadow.depth_texture, world->near_shadow.depth_texture);
 			}
 			hiz_build(&world->hiz, world->scene_target.depth_texture, (uint32_t)world->scene_target.width,
 				(uint32_t)world->scene_target.height, camera->view_projection.m);

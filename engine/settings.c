@@ -93,7 +93,6 @@ static const setting_field_t setting_fields[] =
 	FIELD("render", "near_shadow_map_size", SETTING_INT, render.near_shadow_map_size),
 	FIELD("render", "shadow_depth_16_bit", SETTING_BOOL, render.shadow_depth_16_bit),
 	FIELD("render", "near_shadow_meters", SETTING_FLOAT, render.near_shadow_meters),
-	FIELD("render", "contact_shadows", SETTING_BOOL, render.contact_shadows),
 	FIELD("render", "contact_shadow_meters", SETTING_FLOAT, render.contact_shadow_meters),
 	FIELD("render", "contact_shadow_strength", SETTING_FLOAT, render.contact_shadow_strength),
 	FIELD("render", "ambient_occlusion", SETTING_BOOL, render.ambient_occlusion),
@@ -487,7 +486,6 @@ void settings_set_defaults(settings_t *settings)
 	settings->render.shadow_strength = 0.85f;
 	settings->render.near_shadow_map_size = 4096;
 	settings->render.near_shadow_meters = 100.0f;
-	settings->render.contact_shadows = true;
 	settings->render.contact_shadow_meters = 0.4f;
 	settings->render.contact_shadow_strength = 1.0f;
 	settings->render.ambient_occlusion = true;

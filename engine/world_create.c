@@ -182,7 +182,6 @@ void world_destroy(world_t *world)
 		sky_renderer_destroy(&world->sky_renderer);
 		rain_destroy(&world->rain);
 		fog_destroy(&world->fog);
-		contact_shadows_destroy(&world->contact_shadows);
 		ambient_occlusion_destroy(&world->ambient_occlusion);
 		grass_destroy(&world->grass);
 		ground_overlay_destroy(&world->ground_overlay);
