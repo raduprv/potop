@@ -285,6 +285,135 @@ void console_run_command(console_t *console, potop_t *potop, const char *line, c
 				navigation_surface_height(&potop->world.navigation, &potop->world.terrain, &agent, points[k][0], points[k][1], ground + 0.5f));
 		}
 	}
+	else if (SDL_strcmp(command, "water") == 0)
+	{
+		// (the CPU's copy of the water: read back from the GPU as tiles
+		// change, a step or so behind)
+		water_t *water = &potop->world.water;
+		float x;
+		float z;
+		int32_t cell_x;
+		int32_t cell_y;
+		int32_t tile;
+		char line[256];
+
+		if (has_second)
+		{
+			if (!read_number(first, &x) || !read_number(second, &z))
+			{
+				SDL_Log("water [x z]");
+				return;
+			}
+		}
+		else
+		{
+			// Where the middle of the screen looks: the nearer of the
+			// objects (a roof) and the ground
+			int pixel_width = 1;
+			int pixel_height = 1;
+			vec3_t origin;
+			vec3_t direction;
+			vec3_t ground_hit;
+			object_ray_hit_t hit;
+			float nearest = potop->camera.far_distance;
+			bool found = false;
+
+			SDL_GetWindowSizeInPixels(potop->window, &pixel_width, &pixel_height);
+			camera_pixel_ray(&potop->camera, (float)pixel_width * 0.5f, (float)pixel_height * 0.5f, pixel_width, pixel_height, &origin,
+				&direction);
+			if (terrain_raycast(&potop->world.terrain, origin, direction, nearest, &ground_hit))
+			{
+				nearest = vec3_length(vec3_subtract(ground_hit, origin));
+				x = ground_hit.x;
+				z = ground_hit.z;
+				found = true;
+			}
+			if (objects_raycast(&potop->world.objects, origin, direction, nearest, OBJECTS_RAY_ALL, &hit, 1) > 0 && hit.distance < nearest)
+			{
+				x = hit.point.x;
+				z = hit.point.z;
+				found = true;
+			}
+			if (!found)
+			{
+				SDL_Log("water: the middle of the screen looks at nothing (water x z)");
+				return;
+			}
+		}
+		if (water->depth == NULL)
+		{
+			SDL_Log("water: no water simulation on this map");
+			return;
+		}
+		cell_x = (int32_t)SDL_floorf(x / water->cell_size_meters + 0.5f);
+		cell_y = (int32_t)SDL_floorf(z / water->cell_size_meters + 0.5f);
+		if (cell_x < 0 || cell_y < 0 || cell_x >= water->size || cell_y >= water->size)
+		{
+			SDL_Log("water: %.1f %.1f is off the map", (double)x, (double)z);
+			return;
+		}
+		tile = water_tile_index_of_cell(water, cell_x, cell_y);
+		{
+			static const char *const state_names[] = { "dry", "sleeping", "active" };
+			int index = cell_y * water->size + cell_x;
+			int state = water->tile_state[tile];
+
+			SDL_Log("water at %.2f %.2f: cell %d %d, ground %.3f m, depth %.1f mm, wall %u cm%s; tile %d (%s, max depth %.1f mm)",
+				(double)x, (double)z, cell_x, cell_y, (double)terrain_sample_height_meters(&potop->world.terrain,
+				(float)cell_x * water->cell_size_meters, (float)cell_y * water->cell_size_meters),
+				(double)((float)water->depth[index] * TERRAIN_METERS_PER_HEIGHT_UNIT * 1000.0f),
+				water->obstacle_centimeters != NULL ? (unsigned)water->obstacle_centimeters[index] : 0u, water->baked ? " (baked)" : "",
+				tile, state >= 0 && state < 3 ? state_names[state] : "?",
+				(double)((float)water->tile_max_depth[tile] * TERRAIN_METERS_PER_HEIGHT_UNIT * 1000.0f));
+		}
+		// The cells round it: depth in mm (. dry), the wall's height in cm
+		// after a slash where there is one; north (smaller z) on top
+		for (int dy = -2; dy <= 2; dy++)
+		{
+			int length = SDL_snprintf(line, sizeof(line), "  z %5d:", cell_y + dy);
+
+			for (int dx = -2; dx <= 2; dx++)
+			{
+				int at_x = cell_x + dx;
+				int at_y = cell_y + dy;
+				char part[32];
+
+				if (at_x < 0 || at_y < 0 || at_x >= water->size || at_y >= water->size)
+				{
+					SDL_strlcpy(part, "       -    ", sizeof(part));
+				}
+				else
+				{
+					int at = at_y * water->size + at_x;
+					float millimeters = (float)water->depth[at] * TERRAIN_METERS_PER_HEIGHT_UNIT * 1000.0f;
+					unsigned wall = water->obstacle_centimeters != NULL ? water->obstacle_centimeters[at] : 0u;
+					char depth_text[16];
+
+					if (millimeters <= 0.0f)
+					{
+						SDL_strlcpy(depth_text, ".", sizeof(depth_text));
+					}
+					else
+					{
+						SDL_snprintf(depth_text, sizeof(depth_text), "%.1f", (double)millimeters);
+					}
+					if (wall > 0u)
+					{
+						SDL_snprintf(part, sizeof(part), " %7s/%-4u%s", depth_text, wall, dx == 0 && dy == 0 ? "*" : " ");
+					}
+					else
+					{
+						SDL_snprintf(part, sizeof(part), " %7s     %s", depth_text, dx == 0 && dy == 0 ? "*" : " ");
+					}
+				}
+				if (length > 0 && length < (int)sizeof(line))
+				{
+					length += SDL_snprintf(line + length, sizeof(line) - (size_t)length, "%s", part);
+				}
+			}
+			SDL_Log("%s", line);
+		}
+	}
 	else if (SDL_strcmp(command, "cell") == 0)
 	{
 		// (what an actor type finds at x z: navigation_describe)
