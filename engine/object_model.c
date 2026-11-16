@@ -1520,6 +1520,10 @@ static bool load_pobj(object_model_t *model, const char *relative_path, object_t
 			{
 				SDL_memcpy(&gpu_vertices[(size_t)v * (size_t)OBJECT_PLANT_VERTEX_FLOATS + 4], &snow_vertices[v], sizeof(object_file_snow_vertex_t));
 			}
+			// (its snow's flag and its month cell: object_plant_snow_word)
+			gpu_vertices[(size_t)v * (size_t)OBJECT_PLANT_VERTEX_FLOATS + 7] = object_plant_snow_word(
+				gpu_vertices[(size_t)v * (size_t)OBJECT_PLANT_VERTEX_FLOATS + 7],
+				object_month_cell_of(model->month_cells, model->month_cell_count, source_vertices[v].uv));
 		}
 		gpu_upload_buffer(model->plant_buffer, 0, gpu_vertices, bytes);
 		SDL_free(gpu_vertices);

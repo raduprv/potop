@@ -4051,7 +4051,9 @@ static uint16_t half_of(float value)
 }
 
 // The plant's pictures that show others this month (plant.glsl): their
-// cells and how far, after the uniforms' first floats; how many. Through
+// cells and how far, after the uniforms' first floats, by the model's own
+// cell (each vertex knows its own: object_month_cell_of; one that moves
+// nothing this month at zero); how many (0: none moves). Through
 // the snow's months and the month either side of them (with the snow from
 // December to February: November to March), by the snow on things
 // instead, for an evergreen (by_snow: a conifer's foliage never falls; a
@@ -4074,20 +4076,18 @@ static int plant_month_cells(const objects_t *objects, const object_model_t *mod
 	{
 		int levels[4] = { (last + 1) % 12, (first + 11) % 12, first, (first + span / 2) % 12 };
 
-		for (int c = 0; c < model->month_cell_count && count < PLANT_MONTH_CELLS; c++)
+		bool any_moves = false;
+
+		for (int c = 0; c < model->month_cell_count && c < PLANT_MONTH_CELLS; c++)
 		{
 			const object_file_month_cell_t *cell = &model->month_cells[c];
-			bool any = false;
 
 			for (int k = 0; k < 4; k++)
 			{
-				any |= cell->month_offsets[levels[k]][0] != 0.0f || cell->month_offsets[levels[k]][1] != 0.0f;
+				any_moves |= cell->month_offsets[levels[k]][0] != 0.0f || cell->month_offsets[levels[k]][1] != 0.0f;
 			}
-			if (!any)
-			{
-				continue;
-			}
-			SDL_memcpy(&cells_out[count * 4], cell->cell, sizeof(float) * 4);
+			count = c + 1;
+			SDL_memcpy(&cells_out[c * 4], cell->cell, sizeof(float) * 4);
 			{
 				uint32_t words[4];
 
@@ -4099,29 +4099,29 @@ static int plant_month_cells(const objects_t *objects, const object_model_t *mod
 					words[2 * k] = (uint32_t)half_of(a[0]) | ((uint32_t)half_of(a[1]) << 16);
 					words[2 * k + 1] = (uint32_t)half_of(b[0]) | ((uint32_t)half_of(b[1]) << 16);
 				}
-				SDL_memcpy(&offsets_out[count * 4], words, sizeof(words));
+				SDL_memcpy(&offsets_out[c * 4], words, sizeof(words));
 			}
-			count++;
 		}
-		return -count;
+		return any_moves ? -count : 0;
 	}
 
-	for (int c = 0; c < model->month_cell_count && count < PLANT_MONTH_CELLS; c++)
 	{
-		const object_file_month_cell_t *cell = &model->month_cells[c];
+		bool any_moves = false;
 
-		if (cell->month_offsets[month_index][0] == 0.0f && cell->month_offsets[month_index][1] == 0.0f)
+		for (int c = 0; c < model->month_cell_count && c < PLANT_MONTH_CELLS; c++)
 		{
-			continue;
+			const object_file_month_cell_t *cell = &model->month_cells[c];
+
+			SDL_memcpy(&cells_out[c * 4], cell->cell, sizeof(float) * 4);
+			offsets_out[c * 4 + 0] = cell->month_offsets[month_index][0];
+			offsets_out[c * 4 + 1] = cell->month_offsets[month_index][1];
+			offsets_out[c * 4 + 2] = 0.0f;
+			offsets_out[c * 4 + 3] = 0.0f;
+			any_moves |= cell->month_offsets[month_index][0] != 0.0f || cell->month_offsets[month_index][1] != 0.0f;
+			count = c + 1;
 		}
-		SDL_memcpy(&cells_out[count * 4], cell->cell, sizeof(float) * 4);
-		offsets_out[count * 4 + 0] = cell->month_offsets[month_index][0];
-		offsets_out[count * 4 + 1] = cell->month_offsets[month_index][1];
-		offsets_out[count * 4 + 2] = 0.0f;
-		offsets_out[count * 4 + 3] = 0.0f;
-		count++;
+		return any_moves ? count : 0;
 	}
-	return count;
 }
 
 // Which of them a draw takes

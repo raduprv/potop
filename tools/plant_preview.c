@@ -383,6 +383,8 @@ void plant_preview_set_mesh(plant_preview_t *preview, const plant_mesh_t *mesh)
 				{
 					SDL_memcpy(&plant_data[i * 8 + 4], &mesh->snow_vertices[i], sizeof(object_file_snow_vertex_t));
 				}
+				plant_data[i * 8 + 7] = object_plant_snow_word(plant_data[i * 8 + 7],
+					object_month_cell_of(mesh->month_cells, SDL_min(mesh->month_cell_count, PLANT_MAX_MONTH_CELLS), mesh->vertices[i].uv));
 			}
 			gpu_upload_buffer(preview->plant_buffer, 0, plant_data, sizeof(float) * 8 * mesh->vertex_count);
 			SDL_free(plant_data);
@@ -540,18 +542,22 @@ static void draw_plant_part(const plant_preview_t *preview, SDL_GPURenderPass *p
 	vertex_uniforms[21] = plant->sag;
 	vertex_uniforms[23] = preview->horizontal_radius;
 	// The pictures that show others this month (plant.glsl)
-	for (int c = 0; alpha_tested && c < preview->month_cell_count && cell_count < PREVIEW_MONTH_CELLS; c++)
+	// (by the model's cell: each vertex knows its own, plant_snow.w; one
+	// that moves nothing this month at zero)
 	{
-		const object_file_month_cell_t *cell = &preview->month_cells[c];
+		bool any = false;
 
-		if (cell->month_offsets[month_index][0] == 0.0f && cell->month_offsets[month_index][1] == 0.0f)
+		for (int c = 0; alpha_tested && c < preview->month_cell_count && c < PREVIEW_MONTH_CELLS; c++)
 		{
-			continue;
+			const object_file_month_cell_t *cell = &preview->month_cells[c];
+
+			SDL_memcpy(&vertex_uniforms[24 + c * 4], cell->cell, sizeof(float) * 4);
+			vertex_uniforms[24 + PREVIEW_MONTH_CELLS * 4 + c * 4 + 0] = cell->month_offsets[month_index][0];
+			vertex_uniforms[24 + PREVIEW_MONTH_CELLS * 4 + c * 4 + 1] = cell->month_offsets[month_index][1];
+			any = any || cell->month_offsets[month_index][0] != 0.0f || cell->month_offsets[month_index][1] != 0.0f;
+			cell_count = c + 1;
 		}
-		SDL_memcpy(&vertex_uniforms[24 + cell_count * 4], cell->cell, sizeof(float) * 4);
-		vertex_uniforms[24 + PREVIEW_MONTH_CELLS * 4 + cell_count * 4 + 0] = cell->month_offsets[month_index][0];
-		vertex_uniforms[24 + PREVIEW_MONTH_CELLS * 4 + cell_count * 4 + 1] = cell->month_offsets[month_index][1];
-		cell_count++;
+		cell_count = any ? cell_count : 0;
 	}
 	vertex_uniforms[22] = (float)cell_count;
 	SDL_PushGPUFragmentUniformData(gpu.command_buffer, 1, fragment_uniforms, sizeof(fragment_uniforms));

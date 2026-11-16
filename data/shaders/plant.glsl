@@ -87,29 +87,38 @@ vec3 plant_sagged(vec4 snow, float height, vec3 position)
 // blended
 #define PLANT_MONTH_CELLS 32
 
-vec2 plant_month_uv(vec2 uv, vec4 cells[PLANT_MONTH_CELLS], vec4 offsets[PLANT_MONTH_CELLS], int count, float snow_amount,
-	float card_random)
+// The vertex's own cell is known (its plant_snow.w: plant_cell_of, -1
+// none: the cells' order the model's, object_month_cell_of), offsets that
+// cell's
+vec2 plant_month_uv(vec2 uv, int cell, vec4 offsets, int count, float snow_amount, float card_random)
 {
-	int cell_count = abs(count);
-
-	for (int i = 0; i < cell_count && i < PLANT_MONTH_CELLS; i++)
+	if (count == 0 || cell < 0 || cell >= PLANT_MONTH_CELLS)
 	{
-		if (uv.x >= cells[i].x && uv.y >= cells[i].y && uv.x <= cells[i].z && uv.y <= cells[i].w)
-		{
-			if (count > 0)
-			{
-				return uv + offsets[i].xy;
-			}
-			// (none: green; 1 .. 4 its pictures)
-			int level = clamp(int(floor(snow_amount * 4.0 + 0.4 + (card_random - 0.5) * 0.9)), 0, 4);
-			uvec4 words = floatBitsToUint(offsets[i]);
-
-			if (level == 0)
-			{
-				return uv;
-			}
-			return uv + unpackHalf2x16(words[level - 1]);
-		}
+		return uv;
 	}
-	return uv;
+	if (count > 0)
+	{
+		return uv + offsets.xy;
+	}
+	// (none: green; 1 .. 4 its pictures)
+	int level = clamp(int(floor(snow_amount * 4.0 + 0.4 + (card_random - 0.5) * 0.9)), 0, 4);
+	uvec4 words = floatBitsToUint(offsets);
+
+	if (level == 0)
+	{
+		return uv;
+	}
+	return uv + unpackHalf2x16(words[level - 1]);
+}
+
+// From a plant vertex's plant_snow.w (object_plant_snow_word): its month
+// cell (-1 none), and whether it is of the snow lying on it
+int plant_cell_of(float snow_word)
+{
+	return int(snow_word + 0.5) / 2 - 1;
+}
+
+bool plant_snow_lying(float snow_word)
+{
+	return (int(snow_word + 0.5) & 1) != 0;
 }

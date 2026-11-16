@@ -36,13 +36,22 @@ vec3 rotate(vec4 rotation, vec3 vector)
 
 void main()
 {
-	texture_uv = shape.y > 0.5 ? plant_month_uv(model_uv, month_cells, month_offsets, int(snow.z), snow.x, plant_data.z) : model_uv;
+	if (shape.y > 0.5)
+	{
+		int cell = plant_cell_of(plant_snow.w);
+
+		texture_uv = plant_month_uv(model_uv, cell, month_offsets[clamp(cell, 0, PLANT_MONTH_CELLS - 1)], int(snow.z), snow.x, plant_data.z);
+	}
+	else
+	{
+		texture_uv = model_uv;
+	}
 	if (plant_card_fallen(season, plant_autumn_of(season, instance_placement.xyz), plant_data))
 	{
 		gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 		return;
 	}
-	if (plant_snow.w > 0.5 && snow.x < PLANT_SNOW_SHOWN)
+	if (plant_snow_lying(plant_snow.w) && snow.x < PLANT_SNOW_SHOWN)
 	{
 		gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 		return;

@@ -301,6 +301,30 @@ typedef struct
 	float month_offsets[12][2];
 } object_file_month_cell_t;
 
+// The first of a plant's month cells (at most the shaders' 32: plant.glsl's
+// PLANT_MONTH_CELLS) a vertex's texture coordinates fall in, -1 none: fixed
+// for every vertex, so worked out once as it is loaded and handed to
+// plant.vert with its snow (plant_snow.w: its flag, 0 or 1, plus 2 times
+// the cell plus one), not looked for among them all at every vertex
+static inline int object_month_cell_of(const object_file_month_cell_t *cells, int count, const float uv[2])
+{
+	for (int c = 0; c < count && c < 32; c++)
+	{
+		if (uv[0] >= cells[c].cell[0] && uv[1] >= cells[c].cell[1] && uv[0] <= cells[c].cell[2] && uv[1] <= cells[c].cell[3])
+		{
+			return c;
+		}
+	}
+	return -1;
+}
+
+// plant_snow.w as plant.vert takes it: the snow lying on it (0 or 1) and
+// its month cell (object_month_cell_of)
+static inline float object_plant_snow_word(float snow_flag, int cell)
+{
+	return (snow_flag > 0.5f ? 1.0f : 0.0f) + 2.0f * (float)(cell + 1);
+}
+
 typedef struct
 {
 	uint32_t width;

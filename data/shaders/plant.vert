@@ -41,7 +41,7 @@ layout(location = 4) in vec4 instance_rotation;          // quaternion (x, y, z,
 layout(location = 5) in float instance_fade;             // 1 = fully there, 0 = gone
 layout(location = 6) in vec4 model_tangent;              // along the texture's U; w: the bitangent's sign
 layout(location = 7) in vec4 plant_data;                 // along its branch or card, height on the plant, its own number, out in the crown or thickness
-layout(location = 8) in vec4 plant_snow;                 // its baked snow (object_format.h, OBJECT_FILE_SNOW): where all of it takes it; w 1: of the snow lying on it
+layout(location = 8) in vec4 plant_snow;                 // its baked snow (object_format.h, OBJECT_FILE_SNOW): where all of it takes it; w: of the snow lying on it, and its month cell (plant_cell_of, plant_snow_lying)
 
 layout(std140, set = UNIFORM_SET, binding = 1) uniform wind_block
 {
@@ -143,7 +143,7 @@ void main()
 		}
 	}
 	// (the snow lying on it: not there without snow)
-	if (plant_snow.w > 0.5 && snow.x < PLANT_SNOW_SHOWN)
+	if (plant_snow_lying(plant_snow.w) && snow.x < PLANT_SNOW_SHOWN)
 	{
 		gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 		world_position = vec3(0.0);
@@ -167,7 +167,16 @@ void main()
 	// (over the ground: over the plant's foot)
 	sky_light = sky_light_at(world_position, world_position.y - instance_placement.y, turned_normal);
 	world_tangent = vec4(rotate(instance_rotation, model_tangent.xyz), model_tangent.w);
-	texture_uv = cut_out.x > 0.5 ? plant_month_uv(model_uv, month_cells, month_offsets, int(snow.z), snow.x, plant_data.z) : model_uv;
+	if (cut_out.x > 0.5)
+	{
+		int cell = plant_cell_of(plant_snow.w);
+
+		texture_uv = plant_month_uv(model_uv, cell, month_offsets[clamp(cell, 0, PLANT_MONTH_CELLS - 1)], int(snow.z), snow.x, plant_data.z);
+	}
+	else
+	{
+		texture_uv = model_uv;
+	}
 	fade = instance_fade;
 	level_drops = cut_out.y > 0.0 && cut_out.x < 0.5 && abs(model_tangent.w) > cut_out.y + 0.5 ? 1.0 : 0.0;
 	// A small offset along the normal keeps lit faces from shadowing
