@@ -299,6 +299,34 @@ static bool tile_exists_at(const physics_t *physics, float x, float z)
 static void wake_body_in_rectangle(physics_t *physics, objects_t *objects, const terrain_t *terrain, int i, float minimum_x, float minimum_z,
 	float maximum_x, float maximum_z);
 
+// A ground tile's heights before it was made again for erosion (its
+// corner cell, cells per side): the loose bodies there woken only where it
+// moved under them. NULL: none (a tool's change: as before)
+static struct
+{
+	float *heights;
+	int32_t first_x;
+	int32_t first_y;
+	int count;
+} previous_ground;
+
+static float previous_ground_at(const terrain_t *terrain, float x, float z)
+{
+	float u = SDL_clamp(x / terrain->cell_size_meters - (float)previous_ground.first_x, 0.0f, (float)(previous_ground.count - 1));
+	float v = SDL_clamp(z / terrain->cell_size_meters - (float)previous_ground.first_y, 0.0f, (float)(previous_ground.count - 1));
+	int column = SDL_min((int)u, previous_ground.count - 2);
+	int row = SDL_min((int)v, previous_ground.count - 2);
+	float fraction_u = u - (float)column;
+	float fraction_v = v - (float)row;
+	const float *heights = previous_ground.heights;
+	int count = previous_ground.count;
+	float low = heights[row * count + column] + (heights[row * count + column + 1] - heights[row * count + column]) * fraction_u;
+	float high = heights[(row + 1) * count + column]
+		+ (heights[(row + 1) * count + column + 1] - heights[(row + 1) * count + column]) * fraction_u;
+
+	return low + (high - low) * fraction_v;
+}
+
 // The bodies in a rectangle where the ground changed: the fixed ones put on
 // the new ground, the loose ones woken where it went from under them. By
 // the objects' grid (the cells over the rectangle) and the loose bodies'
@@ -381,31 +409,46 @@ static void wake_body_in_rectangle(physics_t *physics, objects_t *objects, const
 		if (body->x >= minimum_x && body->x <= maximum_x && body->z >= minimum_z && body->z <= maximum_z)
 		{
 			object_instance_t *instance = &objects->instances[body->instance];
-			float before = instance->ground_height;
 
 			objects_refresh_ground(objects, terrain, body->instance);
-			// (DEBUG, temporary: the rocks that hop when water moves)
-			if (SDL_fabsf(instance->ground_height - before) > 0.01f)
-			{
-				SDL_Log("DEBUG hop: fixed %s at (%.1f, %.1f) put on new ground %+.3f m (rectangle %.0f..%.0f, %.0f..%.0f)",
-					objects->types.types[instance->type].name, (double)instance->x, (double)instance->z,
-					(double)(instance->ground_height - before), (double)minimum_x, (double)maximum_x, (double)minimum_z, (double)maximum_z);
-			}
 			b3Body_SetTransform(body->id, vector(instance->x, objects_instance_base_y(instance), instance->z), instance_rotation(instance));
 		}
 		return;
 	}
 	if (body->x >= minimum_x && body->x <= maximum_x && body->z >= minimum_z && body->z <= maximum_z)
 	{
-		float clearance = lift_above_ground(body->id, terrain);
+		float clearance;
 
-		// (DEBUG, temporary: the rocks that hop when water moves)
-		if (clearance < -0.01f || clearance > 0.05f)
+		// A tile made again for erosion somewhere in it (64 m across): only
+		// where the ground under this one moved. A loose rock rests a few
+		// centimeters into the ground the middle of its box samples (on a
+		// slope, its shape against the tile's triangles): it was lifted,
+		// with a hop, every time water eroded anything in its tile
+		if (previous_ground.heights != NULL)
 		{
-			SDL_Log("DEBUG hop: loose %s at (%.1f, %.1f) clearance %+.3f m: %s (rectangle %.0f..%.0f, %.0f..%.0f)",
-				objects->types.types[objects->instances[body->instance].type].name, (double)body->x, (double)body->z, (double)clearance,
-				clearance < 0.0f ? "lifted" : "woken", (double)minimum_x, (double)maximum_x, (double)minimum_z, (double)maximum_z);
+			b3AABB box = b3Body_ComputeAABB(body->id);
+			float middle_x = 0.5f * (box.lowerBound.x + box.upperBound.x);
+			float middle_z = 0.5f * (box.lowerBound.z + box.upperBound.z);
+			float change = terrain_sample_height_meters(terrain, middle_x, middle_z) - previous_ground_at(terrain, middle_x, middle_z);
+
+			if (SDL_fabsf(change) < 0.02f)
+			{
+				return;
+			}
+			// (it rose: the body goes up with it, no further; it sank: the
+			// body is woken, it falls on its own)
+			if (change > 0.0f)
+			{
+				b3WorldTransform transform = b3Body_GetTransform(body->id);
+
+				transform.p.y += change;
+				b3Body_SetTransform(body->id, transform.p, transform.q);
+			}
+			b3Body_SetAwake(body->id, true);
+			body->awake = true;
+			return;
 		}
+		clearance = lift_above_ground(body->id, terrain);
 
 		// Only where the ground under it changed: it was lifted, or
 		// the ground went away under it
@@ -599,12 +642,27 @@ static void follow_terrain(physics_t *physics, objects_t *objects, terrain_t *te
 		chunk->physics_eroded = false;
 		if (tile->exists && tile_difference(physics, terrain, tile_x, tile_y) > settings->terrain_resync_meters)
 		{
+			// (its heights as they were: the bodies woken where the ground
+			// under them moved, not all in the tile)
+			static float heights[(TERRAIN_CHUNK_SIZE + 1) * (TERRAIN_CHUNK_SIZE + 1)];
+			const uint16_t *compressed = b3GetHeightFieldCompressedHeights(tile->field);
+			const int count = TERRAIN_CHUNK_SIZE + 1;
+
+			for (int k = 0; k < count * count; k++)
+			{
+				heights[k] = tile->field->minHeight + tile->field->heightScale * (float)compressed[k];
+			}
 			build_tile(physics, terrain, tile_x, tile_y);
 			frame_profile_count(FRAME_PHYSICS_REBUILDS, 1);
 			resynced++;
 			// Bodies resting there have to notice the new ground
+			previous_ground.heights = heights;
+			previous_ground.first_x = tile_x * TERRAIN_CHUNK_SIZE;
+			previous_ground.first_y = tile_y * TERRAIN_CHUNK_SIZE;
+			previous_ground.count = count;
 			wake_bodies_in_rectangle(physics, objects, terrain, (float)tile_x * physics->tile_meters, (float)tile_y * physics->tile_meters,
 				(float)(tile_x + 1) * physics->tile_meters, (float)(tile_y + 1) * physics->tile_meters);
+			previous_ground.heights = NULL;
 		}
 	}
 	if (terrain->any_chunk_physics_dirty)

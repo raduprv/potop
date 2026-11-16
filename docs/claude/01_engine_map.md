@@ -1480,3 +1480,13 @@ woken by a film of water (its speed, flux over next to no depth, passes
 wake_flow) settles onto the collision tiles with a hop. Now a sleeping
 body wakes from the water only when the deepest water under its points is
 at least max(5 cm, 15% of its height) (water_push_t.deepest).
+FOUND (debug logs): the erosion resync of a physics ground tile (64 m)
+called wake_bodies_in_rectangle over the whole tile; lift_above_ground
+lifted every loose rock whose box bottom was under the heightmap at its
+middle (they rest 5-30 cm "into" it on slopes, against the tile's
+triangles) to ground + 2 cm: a hop, all over the tile. Now the resync
+keeps the tile's old heights (previous_ground) and a loose body is touched
+only where the ground under it moved by 2 cm or more: risen, the body goes
+up by that much (not to the top) and wakes; sunk, it wakes and falls.
+Tools' changes keep the old lift. (The wet / deep_enough wake conditions
+from the two misses stay: harmless, sensible.)
