@@ -1519,3 +1519,11 @@ update counts are emptied by the arguments passes that run anyway, after
 they read them (water_control.comp CONTROL_RESET_UPDATE_AFTER on the
 first, CONTROL_RESET_ACTIVE_AFTER on the second: nothing after it reads
 the active count); the first substep's by STEP_BEGIN | RESET_TILE_LISTS.
+
+## Terrain drawn last of the opaque things (39z13)
+
+render_frame drew the terrain first, then objects, grass, actors. Now the
+terrain comes after the actors: its shading is the dearest per pixel and
+what stands on it is in the depth buffer already, so early-Z turns away its
+hidden pixels. Same picture. (Things behind hills are drawn first now, but
+the Hi-Z culling already leaves most of them out.)

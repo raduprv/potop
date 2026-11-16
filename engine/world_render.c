@@ -762,11 +762,6 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 			SDL_SetGPUViewport(pass, &viewport);
 			scene_uniforms_push(&scene);
 		}
-		gpu_timer_begin(&world->gpu_timer, GPU_PASS_TERRAIN);
-		terrain_renderer_draw(&world->renderer, pass, &world->terrain, camera, &world->lit_render, &options->brush, &world->shadow,
-			&world->near_shadow);
-		gpu_timer_end(&world->gpu_timer, GPU_PASS_TERRAIN);
-		trace_mark("terrain drawn");
 		if (pass == NULL)
 		{
 			return;
@@ -787,6 +782,15 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 			(float)world->elapsed_seconds);
 		gpu_timer_end(&world->gpu_timer, GPU_PASS_OBJECTS);
 		trace_mark("actors drawn");
+		// The terrain last of the opaque things: its shading is the dearest
+		// per pixel, and what stands on it (houses, trees, grass, animals)
+		// is drawn already: the depth test turns its hidden pixels away
+		// before they are shaded
+		gpu_timer_begin(&world->gpu_timer, GPU_PASS_TERRAIN);
+		terrain_renderer_draw(&world->renderer, pass, &world->terrain, camera, &world->lit_render, &options->brush, &world->shadow,
+			&world->near_shadow);
+		gpu_timer_end(&world->gpu_timer, GPU_PASS_TERRAIN);
+		trace_mark("terrain drawn");
 		// Under water there is no sky to see: what is not drawn is the
 		// water's color (the clear color)
 		if (!camera->underwater)
