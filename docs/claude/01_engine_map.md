@@ -1549,3 +1549,10 @@ draw_models sends a material's consecutive levels in one multi-draw
 the material's, the same for each level. Not merged on the camera where
 a level fades what the next leaves out (draw_drop_levels: per draw).
 Checked on a generated 768 map with forests: same picture.
+
+## Textures not bound again (39z16)
+
+draw_models keeps what it bound last (the color texture's slot, the three
+maps, the sampler) and skips binding the same again: models sharing an
+atlas, a set's props, a material's next draw. Starts unknown after the
+batches (they bind their own).

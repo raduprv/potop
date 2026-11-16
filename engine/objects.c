@@ -4438,6 +4438,11 @@ static int draw_models(const objects_t *objects, SDL_GPURenderPass *pass, bool a
 	}
 	// (the camera's: nearest models first, objects_draw's order)
 	bool ordered = objects->prepared_pass == PASS_CAMERA && objects->draw_order_ready;
+	// What is bound now (models sharing an atlas, a set's props: not bound
+	// again; the batches above left theirs, so none known yet)
+	SDL_GPUTexture *bound_texture = NULL;
+	SDL_GPUSampler *bound_sampler = NULL;
+	SDL_GPUTexture *bound_maps[3] = { NULL, NULL, NULL };
 
 	for (int n = ordered ? 0 : first_draw; n < objects->draw_count; n++)
 	{
@@ -4643,7 +4648,11 @@ static int draw_models(const objects_t *objects, SDL_GPURenderPass *pass, bool a
 
 		texture_binding.texture = material->texture;
 		texture_binding.sampler = sampler;
-		SDL_BindGPUFragmentSamplers(pass, objects->prepared_pass == PASS_CAMERA ? 3 : 0, &texture_binding, 1);
+		if (texture_binding.texture != bound_texture || sampler != bound_sampler)
+		{
+			SDL_BindGPUFragmentSamplers(pass, objects->prepared_pass == PASS_CAMERA ? 3 : 0, &texture_binding, 1);
+			bound_texture = texture_binding.texture;
+		}
 		if (objects->prepared_pass == PASS_CAMERA)
 		{
 			SDL_GPUTextureSamplerBinding maps[3] =
@@ -4654,8 +4663,15 @@ static int draw_models(const objects_t *objects, SDL_GPURenderPass *pass, bool a
 					sampler },
 			};
 
-			SDL_BindGPUFragmentSamplers(pass, 5, maps, 3);
+			if (maps[0].texture != bound_maps[0] || maps[1].texture != bound_maps[1] || maps[2].texture != bound_maps[2] || sampler != bound_sampler)
+			{
+				SDL_BindGPUFragmentSamplers(pass, 5, maps, 3);
+				bound_maps[0] = maps[0].texture;
+				bound_maps[1] = maps[1].texture;
+				bound_maps[2] = maps[2].texture;
+			}
 		}
+		bound_sampler = sampler;
 		// The same material's other levels right after it, in one call:
 		// all the same to the shaders (but where the camera's next level
 		// fades what it leaves out, each level its own: draw_drop_levels)
