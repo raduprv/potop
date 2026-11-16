@@ -101,6 +101,7 @@ typedef struct
 typedef struct
 {
 	bool vsync;
+	float max_fps;                // the frames a second at most (the loop waits out the rest of each); 0: no limit
 	bool start_fullscreen;        // the window starts as fullscreen (no change of size after start)
 	bool start_maximized;         // ... or maximized (a window still)
 	float sky_color[3];           // at the horizon, and what distant land fades into

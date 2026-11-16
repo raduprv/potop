@@ -1242,6 +1242,29 @@ void potop_frame_end(potop_t *potop)
 	}
 	trace_end();
 	frame_profile_finish();
+	// The frame rate limit: the rest of the frame's time waited out (each
+	// frame a period after the one before; fallen a whole period behind, the
+	// count starts over from now)
+	if (potop->settings.render.max_fps > 0.0f && !potop->input.in_background)
+	{
+		uint64_t period = (uint64_t)(1e9 / (double)SDL_max(potop->settings.render.max_fps, 1.0f));
+		uint64_t now = SDL_GetTicksNS();
+		uint64_t next = potop->next_frame_ns;
+
+		if (next == 0 || now >= next + period)
+		{
+			next = now;
+		}
+		else if (now < next)
+		{
+			SDL_DelayPrecise(next - now);
+		}
+		potop->next_frame_ns = next + period;
+	}
+	else
+	{
+		potop->next_frame_ns = 0;
+	}
 	potop->game_counter = SDL_GetPerformanceCounter();
 	// In the background vsync often does not hold the loop back: a rest
 	if (potop->input.in_background)

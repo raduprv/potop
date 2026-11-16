@@ -388,6 +388,8 @@ static const ui_setting_t ui_settings[] = {
 	{ TAB_RENDER, "render", "far_upload_meters", "Far from", 0, 2000, 10, EFFECT_LIVE, "%.0f m", NULL,
 		"Ground and water nearer than this are always redrawn at once (if on screen)", false },
 	{ TAB_RENDER, "render", "vsync", "Vertical sync", 0, 0, 0, EFFECT_LIVE, NULL, NULL, NULL, false },
+	{ TAB_RENDER, "render", "max_fps", "Frame rate limit", 0, 360, 1, EFFECT_LIVE, "%.0f fps", NULL,
+		"The game draws at most this many frames a second (less heat, less power; with vsync too); 0: no limit", false },
 	{ TAB_RENDER, "render", "start_fullscreen", "Start fullscreen", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
 		"The game starts fullscreen (from the next start; F11 still switches)", false },
 	{ TAB_RENDER, "render", "start_maximized", "Start maximized", 0, 0, 0, EFFECT_LIVE, NULL, NULL,

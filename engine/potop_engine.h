@@ -54,6 +54,7 @@ struct potop_s
 	const char *stage_name;        // what is being made (the loading screen)
 	uint64_t stage_counter;
 	uint64_t previous_counter;
+	uint64_t next_frame_ns;            // when the next frame may begin (render.max_fps; 0: not known)
 	uint64_t game_counter;             // when the game's part of the frame began (the frame profile's FRAME_GAME)
 	float frame_seconds;
 	// A test without the picture (potop_options_t.sim_seconds)

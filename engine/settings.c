@@ -61,6 +61,7 @@ static const setting_field_t setting_fields[] =
 	FIELD("camera", "run_meters_per_second", SETTING_FLOAT, camera.run_meters_per_second),
 
 	FIELD("render", "vsync", SETTING_BOOL, render.vsync),
+	FIELD("render", "max_fps", SETTING_FLOAT, render.max_fps),
 	FIELD("render", "start_fullscreen", SETTING_BOOL, render.start_fullscreen),
 	FIELD("render", "start_maximized", SETTING_BOOL, render.start_maximized),
 	FIELD("render", "sky_color", SETTING_COLOR, render.sky_color),
@@ -450,6 +451,7 @@ void settings_set_defaults(settings_t *settings)
 	settings->camera.run_meters_per_second = 10.0f;
 
 	settings->render.vsync = true;
+	settings->render.max_fps = 0.0f;
 	settings->render.sky_color[0] = 0.62f;
 	settings->render.sky_color[1] = 0.74f;
 	settings->render.sky_color[2] = 0.86f;
