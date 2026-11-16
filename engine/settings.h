@@ -359,6 +359,7 @@ typedef struct
 	bool debug_far_shadow_off;     // the far shadow map neither drawn nor used (the Debug tab: where the frame's time goes)
 	bool debug_near_shadow_off;    // ... the near one
 	bool debug_far_shadow_no_plants; // the far shadow map drawn without the plants (trees, bushes, grass, crops: the Debug tab)
+	bool debug_grass_freeze;       // the grass's scatter not run: the last frame's blades drawn again (the Debug tab: what the scatter costs)
 	bool water_depth_write;
 	bool water_cull_back_faces;
 } render_settings_t;

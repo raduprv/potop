@@ -220,6 +220,12 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 	float view_minimum_z;
 	float view_maximum_z;
 
+	// (debugging, what the scatter costs: the blades of the last frame it
+	// ran kept as they are, drawn again; only the wind still moves them)
+	if (render->debug_grass_freeze && grass->prepared && settings->grass)
+	{
+		return;
+	}
 	grass->prepared = false;
 	if (grass->failed || !settings->grass || world->height_texture == NULL || world->water_texture == NULL || world->flow_texture == NULL
 		|| world->soil_weight_texture == NULL || world->normal_texture == NULL || world->surface_texture == NULL

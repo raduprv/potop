@@ -447,6 +447,8 @@ static const ui_setting_t ui_settings[] = {
 		"The near shadow map (round you: the small things, the actors) neither drawn nor used: what it costs", false },
 	{ TAB_DEBUG, "render", "debug_far_shadow_no_plants", "Far shadow map without plants", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
 		"The big shadow map drawn without the trees, bushes, grass and crops: how their far shadows look and what they cost", false },
+	{ TAB_DEBUG, "render", "debug_grass_freeze", "Freeze grass scatter", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
+		"The grass's blades not made again each frame: the last ones drawn as they are (the wind still moves them): what making them costs", false },
 	HEADING(TAB_DEBUG, "Water drawing"),
 	{ TAB_DEBUG, "render", "water_depth_test", "Water depth test", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
 		"Off: the water is drawn over everything, hills in front of it included (debugging)", false },
