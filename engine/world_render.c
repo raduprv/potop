@@ -693,6 +693,9 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 			frame.darkness = lights_darkness(world->daylight.sun_elevation_degrees);
 			SDL_memcpy(frame.view_projection, scene.view_projection, sizeof(frame.view_projection));
 			SDL_memcpy(frame.eye, scene.eye_position, sizeof(frame.eye));
+			// (as render_target_begin will make it)
+			frame.scene_pixels[0] = (float)SDL_max((int)SDL_lroundf((float)pixel_width * SDL_clamp(world->lit_render.render_scale, 0.25f, 2.0f)), 1);
+			frame.scene_pixels[1] = (float)SDL_max((int)SDL_lroundf((float)pixel_height * SDL_clamp(world->lit_render.render_scale, 0.25f, 2.0f)), 1);
 			frame.seconds = world->elapsed_seconds;
 			frame.enabled_decals = world->settings->render.decals;
 			frame.window_lights = world->lit_render.window_lights;

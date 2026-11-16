@@ -1357,3 +1357,16 @@ weighted 2-f and 1+f), for both maps; the spread parameter is gone. So the
 far map's edges a little harder (about 4 texels across instead of 5), the
 near map's a little softer (4 instead of 3.5). Radu's choice; if the near
 map's twigs wash out, the fallback is 9 taps at 0.75 for the near map only.
+
+## Light clusters from gl_FragCoord (39z)
+
+cluster_of (lights.glsl; lights and decals both call it) no longer
+projects the point (world_to_clip, a divide): the tile comes from
+gl_FragCoord over light_screen.xy (new vec4 in the light buffer after
+light_slicing; light_header_t.scene_pixels, from lights_frame_t, filled in
+world_render.c as render_target_begin sizes the scene: window times
+render_scale). y: 1 - gl_FragCoord.y / height (SDL GPU's framebuffer top
+row first; the tiles count from clip space's bottom). The slice still
+needs the log of the distance. Zero size or no layout (the editors' empty
+buffers): no cluster. Checked at night with lamps and the torch: the same
+picture as before.

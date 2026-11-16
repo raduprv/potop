@@ -17,6 +17,8 @@ typedef struct
 	float slices_per_log;              // slice = log(distance / near) * this
 	float far_meters;
 	float darkness;                    // 0 full day .. 1 night (lights_darkness): the lit windows' glow
+	float scene_pixels[2];             // the scene pass's width and height (pixels): a pixel's tile from gl_FragCoord (0: none, no clusters)
+	float padding[2];
 } light_header_t;
 
 typedef struct
@@ -1038,6 +1040,8 @@ void lights_update(lights_t *lights, const particles_t *particles, const objects
 	header->slices_per_log = slices_per_log;
 	header->far_meters = LIGHTS_FAR_METERS;
 	header->darkness = frame->darkness;
+	header->scene_pixels[0] = frame->scene_pixels[0];
+	header->scene_pixels[1] = frame->scene_pixels[1];
 	for (int l = 0; l < count; l++)
 	{
 		gpu_lights[l] = gathered[l].light;

@@ -9,6 +9,7 @@ layout(std430, set = TEXTURE_SET, binding = LIGHT_BINDING) readonly buffer light
 {
 	uvec4 light_layout;                  // tiles across, tiles down, slices, how many lights
 	vec4 light_slicing;                  // x: the first slice's end (meters), y: slices per log of the distance, w: the darkness (0 day .. 1 night)
+	vec4 light_screen;                   // xy: the scene pass's width and height in pixels (0: no clusters)
 	vec4 light_data[];                   // per light: position and radius, color (linear, intensity in), then its side (xyz: the way it faces, w: above 0, one sided: lighting only what is in front of the plane that far behind it, facing that way)
 };
 
@@ -17,20 +18,21 @@ layout(std430, set = TEXTURE_SET, binding = LIGHT_BINDING + 1) readonly buffer c
 	uint cluster_data[];                 // per cluster four words (lights.c), the indices, then the decals (decals.glsl)
 };
 
-// The cluster a point is in (lights.c: the screen in tiles, each cut in
-// slices by the distance from the eye); false when it is behind the eye.
-// A cluster has four words: its lights' first index and count, its decals'
+// The cluster of this pixel, point its place in the world (lights.c: the
+// screen in tiles, each cut in slices by the distance from the eye); false
+// when there are none (no layout: an editor's empty buffers). The tile
+// from gl_FragCoord (the framebuffer's top row first; the tiles count from
+// the bottom, as clip space's y), not by projecting point again. A cluster
+// has four words: its lights' first index and count, its decals'
 // (decals.glsl)
 bool cluster_of(vec3 point, out uint cluster)
 {
-	vec4 clip = world_to_clip(point);
-
 	cluster = 0u;
-	if (clip.w <= 0.0)
+	if (light_layout.x == 0u || light_screen.x <= 0.0 || light_screen.y <= 0.0)
 	{
 		return false;
 	}
-	vec2 screen = clamp(clip.xy / clip.w * 0.5 + 0.5, 0.0, 0.9999);
+	vec2 screen = clamp(vec2(gl_FragCoord.x / light_screen.x, 1.0 - gl_FragCoord.y / light_screen.y), 0.0, 0.9999);
 	uint tile_x = uint(screen.x * float(light_layout.x));
 	uint tile_y = uint(screen.y * float(light_layout.y));
 	float distance_to_eye = length(point - eye_position);

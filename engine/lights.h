@@ -114,6 +114,7 @@ typedef struct
 	float intensity_scale;             // render.local_light_intensity
 	float darkness;                    // 0 full day .. 1 night (lights_darkness)
 	float view_projection[16];         // as the shaders get it (scene_uniforms_t)
+	float scene_pixels[2];             // the scene pass's size (pixels; lights.glsl: the tile from gl_FragCoord)
 	float eye[3];
 	double seconds;                    // the game's clock (flicker, the decals' age)
 	bool enabled_decals;               // render.decals
