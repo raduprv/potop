@@ -1332,6 +1332,7 @@ void actors_update(actors_t *actors, float seconds)
 		animation_log = path != NULL && animation_log_type != NULL ? SDL_IOFromFile(path, "w") : NULL;
 	}
 	animation_log_clock += seconds;
+	actors->pose_clock++;
 	for (int i = 0; i < actors->count; i++)
 	{
 		actor_t *actor = &actors->actors[i];
@@ -1394,7 +1395,13 @@ void actors_update(actors_t *actors, float seconds)
 				actor->walk_curve = SDL_max(actor->walk_curve - WALK_CURVE_PER_SECOND * seconds, wanted);
 			}
 		}
-		update_pose(actors, actor);
+		// The pose itself only when it is drawn (ensure_pose); a flyer's
+		// now (its pose lifts it: where it is, its box, come from it)
+		if (actors->types[actor->type].flies)
+		{
+			update_pose(actors, actor);
+			actor->pose_frame = actors->pose_clock;
+		}
 		if (animation_log != NULL && SDL_strcmp(actors->types[actor->type].name, animation_log_type) == 0)
 		{
 			log_animation(actors, actor);
@@ -1536,6 +1543,7 @@ uint32_t actors_add(actors_t *actors, const terrain_t *terrain, int type, float 
 	actor->random_state = actor->id * 2654435761u;
 	pick_cruise_height(&actors->types[type], actor);
 	update_pose(actors, actor);
+	actor->pose_frame = actors->pose_clock;
 	actors->shadow_dirty = true;
 	return actor->id;
 }
@@ -4545,7 +4553,50 @@ typedef struct
 	float padding_more[4];           // (object.frag's deciduous: none)
 } actor_material_uniforms_t;
 
-static void draw_actor(const actors_t *actors, SDL_GPURenderPass *pass, const actor_t *actor, uint32_t color_sampler_slot,
+// Posed nearer than this every frame, farther every second frame, past the
+// second every fourth (meters from the camera)
+static const float POSE_EVERY_FRAME_METERS = 30.0f;
+static const float POSE_EVERY_SECOND_METERS = 60.0f;
+// Not posed for longer than this (frames): its feet's places are stale, the
+// ground under them looked for elsewhere; they start over (as at its birth)
+static const uint32_t POSE_STALE_FRAMES = 8u;
+
+// Its pose made for this frame, if it was not (drawn twice a frame: the near
+// shadow map, the scene; far away: only every few frames, the last kept).
+// What is not drawn is not posed at all (actors_update leaves it: the pig
+// behind the hill does not dance for nobody)
+static void ensure_pose(actors_t *actors, actor_t *actor)
+{
+	uint32_t age = actors->pose_clock - actor->pose_frame;
+	uint32_t interval = 1u;
+
+	if (age == 0u)
+	{
+		return;
+	}
+	if (actors->pose_eye_known)
+	{
+		float dx = actor->x - actors->pose_eye.x;
+		float dy = actor->y - actors->pose_eye.y;
+		float dz = actor->z - actors->pose_eye.z;
+		float squared = dx * dx + dy * dy + dz * dz;
+
+		interval = squared > POSE_EVERY_SECOND_METERS * POSE_EVERY_SECOND_METERS ? 4u
+			: (squared > POSE_EVERY_FRAME_METERS * POSE_EVERY_FRAME_METERS ? 2u : 1u);
+	}
+	if (age < interval)
+	{
+		return;
+	}
+	if (age > POSE_STALE_FRAMES)
+	{
+		actor->feet_known = false;
+	}
+	update_pose(actors, actor);
+	actor->pose_frame = actors->pose_clock;
+}
+
+static void draw_actor(actors_t *actors, SDL_GPURenderPass *pass, actor_t *actor, uint32_t color_sampler_slot,
 	const float highlight_parameters[4])
 {
 	const actor_model_t *model = &actors->models[actors->types[actor->type].model];
@@ -4555,6 +4606,8 @@ static void draw_actor(const actors_t *actors, SDL_GPURenderPass *pass, const ac
 	SDL_GPUBufferBinding vertex_binding = { model->vertex_buffer, 0 };
 	SDL_GPUBufferBinding index_binding = { model->index_buffer, 0 };
 	SDL_GPUTextureSamplerBinding texture_binding = { model->texture, gpu.linear_repeat };
+
+	ensure_pose(actors, actor);
 
 	uniforms.placement[0] = actor->x;
 	uniforms.placement[1] = actor->y - actor->root_lift;
@@ -4614,9 +4667,11 @@ void actors_draw(actors_t *actors, SDL_GPURenderPass *pass, const camera_t *came
 	SDL_BindGPUFragmentSamplers(pass, 2, &variation_binding, 1);
 	SDL_BindGPUFragmentSamplers(pass, 4, &cloud_shadow_binding, 1);
 	scene_ground_bind(pass, 8);
+	actors->pose_eye = camera->eye_position;
+	actors->pose_eye_known = true;
 	for (int i = 0; i < actors->count; i++)
 	{
-		const actor_t *actor = &actors->actors[i];
+		actor_t *actor = &actors->actors[i];
 		vec3_t minimum;
 		vec3_t maximum;
 		SDL_GPUGraphicsPipeline *wanted;
@@ -4672,7 +4727,7 @@ void actors_render_shadow(actors_t *actors, SDL_GPURenderPass *pass, const shado
 	SDL_BindGPUGraphicsPipeline(pass, actors->shadow_pipeline);
 	for (int i = 0; i < actors->count; i++)
 	{
-		const actor_t *actor = &actors->actors[i];
+		actor_t *actor = &actors->actors[i];
 		vec3_t minimum;
 		vec3_t maximum;
 

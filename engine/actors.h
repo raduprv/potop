@@ -247,6 +247,7 @@ typedef struct
 	// turn coming and going bends it smoothly (no switching of clips)
 	float walk_curve;
 	float bone_rows[ACTOR_FILE_MAX_BONES * 12]; // the pose's skinning matrices
+	uint32_t pose_frame;               // the frame (actors_t.pose_clock) bone_rows were posed in (see ensure_pose)
 	float action_rate;                 // the current action's playing speed (walk: with the pace)
 	// How far the pose lifts the model's root above the bind pose. Eternal
 	// Lands' birds fly by their animations, a meter or two up: a flyer is
@@ -385,6 +386,12 @@ typedef struct
 
 	actor_t *actors;
 	int count;
+	// Poses are made only for what is drawn (ensure_pose): the frames
+	// counted, and where the camera was the last time (how far away an
+	// actor is: far ones posed every few frames)
+	uint32_t pose_clock;
+	vec3_t pose_eye;
+	bool pose_eye_known;
 	int capacity;
 	uint32_t next_id;
 	// Actors were added, removed or moved: the shadow maps must be redrawn
