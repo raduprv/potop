@@ -36,6 +36,7 @@ layout(location = 7) flat in vec4 rotation;
 layout(location = 8) flat in float fade;
 layout(location = 9) flat in vec4 toward_eye;
 layout(location = 10) flat in float leafy;
+layout(location = 12) in float haze;                     // impostor.vert's haze_amount
 layout(location = 11) flat in vec4 sky_light;           // impostor.vert's: the light sent back (rgb), the sky seen (a)
 
 layout(std140, set = UNIFORM_SET, binding = 1) uniform impostor_draw_block
@@ -143,7 +144,7 @@ void main()
 	vec3 lit = albedo * (sun_color * diffuse * shadowed + (surroundings(normal) * sky_light.a + sky_light.rgb) + local_light(position, normal, leafy * 0.4));
 	float view_distance = length(position - eye_position);
 
-	lit = mix(lit, sky_color, clamp(haze_amount(position), 0.0, 1.0));
+	lit = mix(lit, sky_color, haze);
 	lit = apply_underwater(lit, position, view_distance, sun_color * diffuse * shadowed);
 	fragment_color = vec4(mix(lit, tint.rgb * (0.3 + dot(lit, vec3(0.3, 0.6, 0.1))), tint.a), cut_alpha);
 }

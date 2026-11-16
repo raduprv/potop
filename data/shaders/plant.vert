@@ -67,6 +67,7 @@ layout(location = 6) out vec4 world_tangent;
 layout(location = 7) flat out float level_drops;
 layout(location = 8) out vec4 plant_info;               // plant_data, as given
 layout(location = 9) out float turned;                  // how far its card has turned in the autumn (0..1)
+layout(location = 11) out float haze;                   // how much the haze hides it (scene.glsl's haze_amount, per vertex: it changes slowly over a blade, a card, a picture)
 layout(location = 10) out vec4 sky_light;              // the light the land round sends back (rgb), the sky seen (a): sky_vertex.glsl
 
 vec3 rotate(vec4 rotation, vec3 vector)
@@ -173,5 +174,6 @@ void main()
 	// themselves, as on the terrain
 	shadow_position = light_view_projection * vec4(world_position + turned_normal * 0.05, 1.0);
 	near_shadow_position = near_light_view_projection * vec4(world_position + turned_normal * 0.05, 1.0);
+	haze = clamp(haze_amount(world_position), 0.0, 1.0);
 	gl_Position = world_to_clip(world_position);
 }

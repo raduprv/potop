@@ -33,6 +33,7 @@ layout(location = 0) out vec3 world_position;
 layout(location = 1) out vec3 world_normal;
 layout(location = 2) out vec3 albedo;
 layout(location = 3) out float sunlit;            // what the shadow maps and the clouds leave of the sun on it (the scatter's)
+layout(location = 4) out float haze;               // how much the haze hides it (scene.glsl's haze_amount, per vertex: it changes slowly over a blade, a card, a picture)
 layout(location = 5) out float along;             // 0 at its foot .. 1 at its tip
 layout(location = 6) out vec4 sky_light;          // the light the land round sends back (rgb), the sky seen (a)
 
@@ -153,5 +154,6 @@ void main()
 	world_position = point;
 	sunlit = bytes.y;
 	sky_light = vec4(shared_light.rgb * exp2(shared_light.a * 255.0 - 128.0), bytes.z);
+	haze = clamp(haze_amount(point), 0.0, 1.0);
 	gl_Position = world_to_clip(point);
 }

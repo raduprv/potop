@@ -1392,3 +1392,11 @@ materials.c decodes each color layer's smallest level (BC7, bcdec:
 texture_cache_layer_smallest) into materials->layer_average, and
 terrain_renderer.c sends terrain_block.macro_averages[material] (rgb raw,
 a luminance) and grass_green (linear, x0.8). Same picture.
+
+## Haze per vertex for grass, plants, impostors (39z4)
+
+grass.vert (location 4), plant.vert (11), impostor.vert (12) work out
+haze_amount (clamped) per vertex; the fragments mix by the interpolated
+value instead of the exps per pixel. A blade, a card, an impostor's square
+are small against how slowly the haze changes. Terrain, props, objects,
+water keep theirs per pixel (big triangles).

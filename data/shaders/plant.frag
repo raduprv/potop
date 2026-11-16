@@ -70,6 +70,7 @@ layout(location = 6) centroid in vec4 world_tangent;
 layout(location = 7) flat in float level_drops;
 layout(location = 8) centroid in vec4 plant_info;              // along, height, its own number, out in the crown or thickness
 layout(location = 9) centroid in float turned;
+layout(location = 11) centroid in float haze;                    // plant.vert's haze_amount
 layout(location = 10) centroid in vec4 sky_light;               // plant.vert's: the light the land round sends back (rgb), the sky seen (a)
 
 layout(location = 0) out vec4 fragment_color;
@@ -306,7 +307,7 @@ void main()
 		lit += sun_color * shadowed * glint * pow(max(dot(reflect(-sun_direction, normal), towards_eye), 0.0), 8.0) * 0.8;
 	}
 	lit += water_light(water, world_position, sun_color * shadowed);
-	lit = mix(lit, sky_color, clamp(haze_amount(world_position), 0.0, 1.0));
+	lit = mix(lit, sky_color, haze);
 	lit = apply_underwater(lit, world_position, length(world_position - eye_position), sun_color * diffuse * shadowed);
 	if (highlighted)
 	{

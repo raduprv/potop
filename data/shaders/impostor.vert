@@ -37,6 +37,7 @@ layout(location = 7) flat out vec4 rotation;
 layout(location = 8) flat out float fade;
 layout(location = 9) flat out vec4 toward_eye;           // xyz: from the object towards the eye (world); w: the sphere's radius (meters)
 layout(location = 10) flat out float leafy;
+layout(location = 12) out float haze;                    // how much the haze hides it (scene.glsl's haze_amount, per vertex: it changes slowly over a blade, a card, a picture)
 layout(location = 11) flat out vec4 sky_light;          // at its middle: the light sent back (rgb, onto a face up), the sky seen (a)
 
 vec4 conjugate(vec4 quaternion)
@@ -117,5 +118,6 @@ void main()
 	fade = instance_fade;
 	toward_eye = vec4(eye_direction, radius);
 	leafy = look.x;
+	haze = clamp(haze_amount(world_position), 0.0, 1.0);
 	gl_Position = world_to_clip(world_position);
 }

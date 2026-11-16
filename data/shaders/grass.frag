@@ -22,6 +22,7 @@ layout(location = 0) centroid in vec3 world_position;
 layout(location = 1) centroid in vec3 world_normal;
 layout(location = 2) centroid in vec3 albedo;
 layout(location = 3) centroid in float sunlit;            // grass.vert's: what the shadow maps and the clouds leave of the sun (a blade's)
+layout(location = 4) centroid in float haze;             // grass.vert's haze_amount
 layout(location = 5) centroid in float along;
 layout(location = 6) centroid in vec4 sky_light;           // grass.vert's: the light sent back (rgb), the sky seen (a)
 
@@ -72,7 +73,7 @@ void main()
 
 		lit += sun_color * shadowed * shine * (0.04 + 0.25 * weather.y) * along;
 	}
-	lit = mix(lit, sky_color, clamp(haze_amount(world_position), 0.0, 1.0));
+	lit = mix(lit, sky_color, haze);
 	lit = apply_underwater(lit, world_position, length(world_position - eye_position), sun_color * diffuse * shadowed);
 	fragment_color = vec4(lit, 1.0);
 }
