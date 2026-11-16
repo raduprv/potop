@@ -1440,3 +1440,15 @@ scatter's and the culling's uniforms (hiz_levels[16]) instead of a loop
 summing the levels below for every object and blade. Checked with a
 temporary CPU readback: 10 levels at 640x360 (odd sizes on the way), every
 texel the max of what it covers, 0 wrong; same picture.
+
+## Terrain textures: water-only refresh (39z8)
+
+water_tiles.comp TILES_RENDER marked every tile whose water changed
+GROUND_DIRTY, so water_ground.comp rewrote its height, normals (nine height
+reads) and surface though the ground had not moved. Now it sets
+TILE_FLAG_WATER_SHOWN_DIRTY (64); TILES_GROUND lists such a tile (without
+GROUND_DIRTY / SETTLING) as tile | GROUND_ENTRY_WATER_ONLY, and
+water_ground.comp writes only the surface's wetness (g) and water on it
+(a), keeping silt (r) and bare rock (b) as shown. Ground changes (erosion,
+collapse, the CPU's edits through water_sources) still set GROUND_DIRTY:
+the full rewrite.

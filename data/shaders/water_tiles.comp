@@ -65,9 +65,10 @@ void main()
 		// Unchanged since the step before: the previous step catches up.
 		if ((flags & TILE_FLAG_RENDER_DIRTY) != 0u)
 		{
-			// (the ground's textures show the water on it too)
+			// (the ground's textures show the water on it too: only that
+			// written again, the ground has its own flag when it moves)
 			flags &= ~(TILE_FLAG_RENDER_DIRTY | TILE_FLAG_RENDER_PREVIOUS);
-			control[tile_word(tile, TILE_FLAGS)] = flags | TILE_FLAG_GROUND_DIRTY | (render_stepped != 0 ? TILE_FLAG_RENDER_PREVIOUS : 0u);
+			control[tile_word(tile, TILE_FLAGS)] = flags | TILE_FLAG_WATER_SHOWN_DIRTY | (render_stepped != 0 ? TILE_FLAG_RENDER_PREVIOUS : 0u);
 			control[list_word(atomicAdd(control[HEADER_LIST_COUNT], 1u))] = tile | RENDER_ENTRY_NEW;
 		}
 		else if (render_stepped != 0 && (flags & TILE_FLAG_RENDER_PREVIOUS) != 0u)
@@ -101,12 +102,19 @@ void main()
 	else if (mode == TILES_GROUND)
 	{
 		// The tiles whose terrain textures are out of date or still fading
+		// (all of them), or only the water on them (that alone)
 		uint flags = control[tile_word(tile, TILE_FLAGS)];
+		uint cleared = flags & ~(TILE_FLAG_GROUND_DIRTY | TILE_FLAG_GROUND_SETTLING | TILE_FLAG_WATER_SHOWN_DIRTY);
 
 		if (ground_more.y != 0 || (flags & (TILE_FLAG_GROUND_DIRTY | TILE_FLAG_GROUND_SETTLING)) != 0u)
 		{
-			control[tile_word(tile, TILE_FLAGS)] = flags & ~(TILE_FLAG_GROUND_DIRTY | TILE_FLAG_GROUND_SETTLING);
+			control[tile_word(tile, TILE_FLAGS)] = cleared;
 			control[list_word(atomicAdd(control[HEADER_LIST_COUNT], 1u))] = tile;
+		}
+		else if ((flags & TILE_FLAG_WATER_SHOWN_DIRTY) != 0u)
+		{
+			control[tile_word(tile, TILE_FLAGS)] = cleared;
+			control[list_word(atomicAdd(control[HEADER_LIST_COUNT], 1u))] = tile | GROUND_ENTRY_WATER_ONLY;
 		}
 	}
 	else if (mode == TILES_EROSION_COLOR)

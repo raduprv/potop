@@ -20,6 +20,11 @@
 // flicker; a tile still on its way asks to be drawn again
 // (TILE_FLAG_GROUND_SETTLING). This was the CPU's work, on its copy of the
 // ground brought back from here.
+//
+// A tile whose water alone changed (GROUND_ENTRY_WATER_ONLY: the water
+// flowed, the ground did not move) gets only the surface's wetness and
+// water on it written again: not its height, its normals (nine height
+// reads), its silt and bare rock (kept as shown).
 
 #define WATER_RW_TEXTURES 3
 #include "water_sim.glsl"
@@ -61,7 +66,8 @@ void main()
 	{
 		return;
 	}
-	uint tile = control[list_word(gl_WorkGroupID.x)];
+	uint entry = control[list_word(gl_WorkGroupID.x)];
+	uint tile = entry & ~GROUND_ENTRY_WATER_ONLY;
 	int tile_x = int(tile) % tiles_per_side;
 	int tile_y = int(tile) / tiles_per_side;
 	int reach = max(ground_more.x, 1);
@@ -74,6 +80,21 @@ void main()
 		shared_settling = 0u;
 	}
 	barrier();
+	// Only the water changed: the water on it and the wetness, the rest as shown
+	if ((entry & GROUND_ENTRY_WATER_ONLY) != 0u)
+	{
+		for (uint k = 0u; k < 16u; k++)
+		{
+			uint local_index = gl_LocalInvocationID.x + 256u * k;
+			ivec2 texel = ivec2(tile_x * TILE_SIZE + int(local_index & 63u), tile_y * TILE_SIZE + int(local_index >> 6));
+			uint cell = (tile << 12) | local_index;
+			vec4 shown = imageLoad(surface_image, texel);
+			float water_meters = float(depths[cell]) * METERS_PER_UNIT;
+
+			imageStore(surface_image, texel, vec4(shown.r, wetness_of(cell), shown.b, smoothstep(0.005, 0.03, water_meters)));
+		}
+		return;
+	}
 	for (uint k = 0u; k < 16u; k++)
 	{
 		uint local_index = gl_LocalInvocationID.x + 256u * k;

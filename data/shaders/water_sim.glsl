@@ -106,6 +106,10 @@
 #define TILE_FLAG_TERRAIN_DIRTY 4u  // erosion changed the ground: the CPU's copy is out of date
 #define TILE_FLAG_GROUND_DIRTY 16u  // the terrain's textures (water_ground.comp) are out of date
 #define TILE_FLAG_GROUND_SETTLING 32u // its silt and bare rock shown are still fading towards the ground's
+#define TILE_FLAG_WATER_SHOWN_DIRTY 64u // only its water changed: the terrain's "water on it" (and wetness) out of date, not its ground
+// A tile in the ground list that only needs the water on it written again
+// (water_ground.comp: not its heights and normals)
+#define GROUND_ENTRY_WATER_ONLY 0x80000000u
 // A tile to wake that is only to be drawn again (the CPU changed its ground
 // or its moisture): not woken
 #define WAKE_GROUND_ONLY 255u
