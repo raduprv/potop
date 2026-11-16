@@ -47,13 +47,12 @@
 // two uvec4s):
 //
 //   0..2   its foot (x, y, z: float bits)
-//   3      half floats: its tip from its foot, x and z (how it leans now:
-//          its own way, the wind's gust and sway, laid down by the water)
-//   4      half floats: its tip from its foot, y; its width
+//   3      half floats: its height, its width (a far one's widened)
+//   4      half floats: laid down towards x, z (its length: how far)
 //   5      bytes: the way its face looks (0..1 of a turn), the sun left it,
 //          the sky seen, the silt
 //   6      bytes: its color (sqrt of half of it, linear: the darks keep
-//          their steps), how much a gust bows it now (the wave's sheen)
+//          their steps), unused
 //   7      bytes: the light the land round sends back, shared exponent
 //          (r, g, b, 2^(e - 128))
 //
@@ -126,8 +125,6 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform grass_block
 	vec4 hiz_size;             // level 0's width and height, the level count, 1 if it is there
 	vec4 look;                 // the blades' color: the grass material's first layer, its macro repeats per meter, the variation's strength, its hue's
 	vec4 tint;                 // rgb: multiplies the ground's grass color; w: the share of dry blades
-	vec4 wind;                 // xy: where it blows towards (x, z); z: how hard (0..1); w: time (seconds)
-	vec4 gusts;                // x: 2 pi over the gusts' spacing (per meter); y: how fast they roll (m/s); z: how far a blade bows in a gale (radians)
 	vec4 coarse;               // x: from how far off (m) a blade is one triangle (0: never); y: how much wider then
 	ivec4 hiz_levels[16];      // the pyramid's levels (hiz_level_table): where each starts in hiz_depths, its width, its height
 };
@@ -403,7 +400,7 @@ uint pack_shared_exponent(vec3 light)
 
 // The blade's record (see the top), the parts that are the same all up it
 // worked out here
-void write_blade(uint base, vec3 root, float height, float width, float facing_turn, vec3 tip, float sheen)
+void write_blade(uint base, vec3 root, float height, float width, float facing_turn, vec2 flatten)
 {
 	vec2 surface_uv = (root.xz / map.y + 0.5) / map.x;
 	vec4 surface = textureLod(surface_texture, surface_uv, 0.0);
@@ -418,10 +415,10 @@ void write_blade(uint base, vec3 root, float height, float width, float facing_t
 	blades[base] = floatBitsToUint(root.x);
 	blades[base + 1u] = floatBitsToUint(root.y);
 	blades[base + 2u] = floatBitsToUint(root.z);
-	blades[base + 3u] = packHalf2x16(tip.xz);
-	blades[base + 4u] = packHalf2x16(vec2(tip.y, width));
+	blades[base + 3u] = packHalf2x16(vec2(height, width));
+	blades[base + 4u] = packHalf2x16(flatten);
 	blades[base + 5u] = packUnorm4x8(vec4(facing_turn, sun, sky.a, surface.r));
-	blades[base + 6u] = packUnorm4x8(vec4(sqrt(clamp(color * 0.5, 0.0, 1.0)), sheen));
+	blades[base + 6u] = packUnorm4x8(vec4(sqrt(clamp(color * 0.5, 0.0, 1.0)), 0.0));
 	blades[base + 7u] = pack_shared_exponent(sky.rgb);
 }
 
@@ -430,40 +427,6 @@ float blade_hash(vec2 position)
 	return fract(sin(dot(position, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
-// Its tip from its foot now (grass.vert draws the curve up to it): it leans
-// a little its own way (across its face), bows with the wind (the gusts
-// rolling over the meadow, object.vert's, and its own quick sway), lies
-// down where the water laid it; a little nearer the more it bows (it
-// bends, it does not stretch). sheen: how much a gust bows it (0..1: the
-// paler wave)
-vec3 blade_tip(vec3 root, float height, vec2 facing, vec2 flatten, float own, float own_2, out float sheen)
-{
-	vec2 lean = vec2(-facing.y, facing.x) * (own - 0.5) * 0.7;
-	float clock = wind.w;
-
-	sheen = 0.0;
-	if (wind.z > 0.0)
-	{
-		float travel = dot(root.xz, wind.xy) * gusts.x - clock * gusts.x * gusts.y;
-		float gust = clamp(0.5 + 0.35 * sin(travel) + 0.15 * sin(travel * 2.7 + 1.3), 0.0, 1.0);
-		float sway = 0.25 * sin(clock * (2.3 + 1.4 * own) + own_2 * 6.2831853);
-
-		sheen = smoothstep(0.45, 0.9, gust) * clamp(wind.z * 3.0, 0.0, 1.0);
-		lean += wind.xy * wind.z * gusts.z * (0.35 + 0.65 * gust + sway);
-	}
-	{
-		float laid = length(flatten);
-
-		if (laid > 0.001)
-		{
-			lean = mix(lean, flatten / laid * 1.5, clamp(laid, 0.0, 1.0));
-		}
-	}
-	float angle = min(length(lean), 1.5);
-	vec2 towards = angle > 1e-4 ? normalize(lean) : facing;
-
-	return vec3(towards.x * sin(angle), cos(angle), towards.y * sin(angle)) * height * (1.0 - 0.18 * angle / 1.5);
-}
 
 void main()
 {
@@ -626,11 +589,8 @@ void main()
 		}
 	}
 	vec3 root = vec3(world_xz.x, y, world_xz.y);
+	// (grass.vert's own hash of it, the same)
 	float own = blade_hash(root.xz);
-	float own_2 = blade_hash(root.xz + 17.31);
-	float facing_angle = more.w * 6.2831853;
-	float sheen;
-	vec3 tip = blade_tip(root, height, vec2(cos(facing_angle), sin(facing_angle)), flatten, own, own_2, sheen);
 	// Far off, a blade is one triangle, its foot to its tip, a little wider
 	// (a few pixels: the segments' bow is not seen, and four triangles of a
 	// pixel each cost the most of anything drawn). Where that starts
@@ -654,6 +614,7 @@ void main()
 	{
 		place = atomicAdd(counts[5], 1u);
 	}
-	// Which way its face looks (a share of a turn), its width, its tip
-	write_blade(place * BLADE_FLOATS, root, height, width, more.w, tip, sheen);
+	// Which way its face looks (a share of a turn), its width, laid down
+	// towards (and how far)
+	write_blade(place * BLADE_FLOATS, root, height, width, more.w, flatten);
 }

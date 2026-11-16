@@ -43,13 +43,11 @@ typedef struct
 	float hiz_size[4];                     // level 0's width and height, the level count, 1 if it is there
 	float look[4];                         // the blades' color: the grass material's first layer, its macro repeats per meter, the variation's strength, its hue's
 	float tint[4];                         // rgb: multiplies the ground's grass color; w: the share of dry blades
-	float wind[4];                         // where it blows towards (x, z), how hard, the time: the blades' lean is the scatter's
-	float gusts[4];                        // 2 pi over the gusts' spacing, how fast they roll, how far a blade bows in a gale
 	float coarse[4];                       // from how far off a blade is one triangle (the far list), how much wider then
 	int32_t hiz_levels[HIZ_MAX_LEVELS][4]; // the pyramid's levels (hiz_level_table)
 } grass_scatter_uniforms_t;
 
-SDL_COMPILE_TIME_ASSERT(grass_scatter_uniforms_size, sizeof(grass_scatter_uniforms_t) == 224 + 16 * MATERIAL_COUNT + 160 + 16 * HIZ_MAX_LEVELS);
+SDL_COMPILE_TIME_ASSERT(grass_scatter_uniforms_size, sizeof(grass_scatter_uniforms_t) == 224 + 16 * MATERIAL_COUNT + 128 + 16 * HIZ_MAX_LEVELS);
 
 // grass.vert's block (std140, vertex slot 1)
 typedef struct
@@ -293,13 +291,6 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 	uniforms.tint[1] = settings->grass_tint[1];
 	uniforms.tint[2] = settings->grass_tint[2];
 	uniforms.tint[3] = SDL_clamp(settings->grass_dry_share, 0.0f, 1.0f);
-	if (world->wind_uniform != NULL)
-	{
-		SDL_memcpy(uniforms.wind, world->wind_uniform, sizeof(float) * 4);
-		uniforms.gusts[0] = world->wind_uniform[4];
-		uniforms.gusts[1] = world->wind_uniform[5];
-	}
-	uniforms.gusts[2] = GRASS_GALE_BOW;
 	uniforms.coarse[0] = SDL_max(settings->grass_coarse_meters, 0.0f);
 	uniforms.coarse[1] = SDL_clamp(settings->grass_coarse_width, 0.5f, 3.0f);
 	if (world->occlusion != NULL && world->occlusion->ready && hiz_buffer(world->occlusion) != NULL)
