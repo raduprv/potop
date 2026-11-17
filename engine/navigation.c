@@ -3612,6 +3612,27 @@ static uint64_t mesh_water_signature(const navigation_t *navigation, const water
 	return hash | 1u;
 }
 
+// Has a cell whose ground is taken an object's top with room for the
+// class within its reach of a height (a terrace's step, a stair: not in
+// the way, a way up; a wall under its roof is in the way)?
+static bool mesh_cell_steppable(const navigation_t *navigation, const navigation_mesh_class_t *class, int32_t cell, float height)
+{
+	int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
+	int count = cell_nodes(navigation, cell, nodes);
+
+	for (int k = 1; k < count; k++)
+	{
+		const navigation_surface_t *surface = extra_surface(navigation, nodes[k]);
+
+		if ((surface->clearance == NAVIGATION_CLEARANCE_OPEN || (float)surface->clearance * NAVIGATION_CLEARANCE_UNIT_METERS >= SDL_min(class->height,
+			50.0f)) && SDL_fabsf(surface->height - height) <= SDL_min(class->reach, 50.0f))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 // A tile of a class built anew from its region's cells (the region up to
 // date): its rectangles, the portals among them, then the ones to the
 // tiles round it
@@ -3674,7 +3695,9 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 						continue;
 					}
 					clearance = navigation->terrain_clearance[near_z * navigation->size + near_x];
-					if (clearance != NAVIGATION_CLEARANCE_OPEN && (float)clearance * NAVIGATION_CLEARANCE_UNIT_METERS < SDL_min(class->height, 50.0f))
+					if (clearance != NAVIGATION_CLEARANCE_OPEN && (float)clearance * NAVIGATION_CLEARANCE_UNIT_METERS < SDL_min(class->height, 50.0f)
+						&& !mesh_cell_steppable(navigation, class, near_z * navigation->size + near_x, navigation->ground_height[cell_z * navigation->size
+							+ cell_x]))
 					{
 						eroded = true;
 						break;
