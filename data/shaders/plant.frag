@@ -187,16 +187,17 @@ void main()
 			normal = -normal;
 		}
 		albedo = pow(color.rgb, vec3(2.2));
-		// Each card its own shade of green, its tip lighter and yellower:
-		// the new growth, bright yellow green (the conifers' most)
+		// Each card its own shade of green, its tip a little lighter and
+		// yellower: the new growth (the conifers' most). Subtle: as light as
+		// the leaf itself, a quarter more (a dark needle's tip stays dark,
+		// only greener), half of it at most over the picture's own
 		{
 			float tip = smoothstep(0.5, 0.97, plant_info.x) * parameters.y;
-			// (a light yellow green of its own, the picture's light and dark
-			// still in it: a dark needle's tip would stay dark, only greener)
-			vec3 young = vec3(0.16, 0.34, 0.035) * clamp(0.45 + 9.0 * luminance(albedo), 0.45, 1.6);
+			// (the yellow green's hue, at the leaf's own lightness)
+			vec3 young = vec3(0.16, 0.34, 0.035) / 0.28 * luminance(albedo) * 1.25;
 
 			albedo *= 0.88 + 0.24 * plant_info.z;
-			albedo = mix(albedo, young, clamp(tip * 0.8, 0.0, 0.85));
+			albedo = mix(albedo, young, clamp(tip * 0.6, 0.0, 0.5));
 		}
 		// The autumn: its color, keeping the picture's light and dark
 		if (turned > 0.0)
