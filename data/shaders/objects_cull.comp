@@ -1,5 +1,9 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#ifdef SUBGROUPS
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#endif
 #include "common.glsl"
 
 // The objects' culling on the GPU (see objects.h). Every object has a fixed
@@ -501,6 +505,39 @@ uint slot_of_work(uint item)
 
 shared uint offset_sums[256];
 
+// counts[index] += 1 for each thread, its old value back. With subgroups
+// (Vulkan 1.1, gpu.h), the threads adding to the same count gathered: per
+// round, the first thread's count and every thread with the same, one
+// atomic for all of them (as many rounds as different counts: a forest's
+// few models, few)
+uint count_add(uint index)
+{
+#ifdef SUBGROUPS
+	uint result = 0u;
+
+	for (;;)
+	{
+		uint leader = subgroupBroadcastFirst(index);
+
+		if (index == leader)
+		{
+			uvec4 same = subgroupBallot(true);
+			uint base = 0u;
+
+			if (subgroupElect())
+			{
+				base = atomicAdd(counts[index], subgroupBallotBitCount(same));
+			}
+			result = subgroupBroadcastFirst(base) + subgroupBallotExclusiveBitCount(same);
+			break;
+		}
+	}
+	return result;
+#else
+	return atomicAdd(counts[index], 1u);
+#endif
+}
+
 void main()
 {
 	uint stride = gl_NumWorkGroups.x * 256u;
@@ -535,7 +572,7 @@ void main()
 			}
 			if (visible(slot, model, fade, impostor, level, level_fade))
 			{
-				atomicAdd(counts[3u * (impostor ? LOD_LEVELS * uint(model_count) + model : level * uint(model_count) + model)], 1u);
+				count_add(3u * (impostor ? LOD_LEVELS * uint(model_count) + model : level * uint(model_count) + model));
 				decisions[2u * slot] = fade + (impostor ? IMPOSTOR : 0.0);
 				decisions[2u * slot + 1u] = float(level) + 0.5 * level_fade;
 			}
@@ -658,7 +695,7 @@ void main()
 			{
 				model += level * uint(model_count);
 			}
-			place = atomicAdd(counts[3u * model + 1u], 1u);
+			place = count_add(3u * model + 1u);
 			if (place >= counts[3u * model + 2u] + counts[3u * model])
 			{
 				continue;

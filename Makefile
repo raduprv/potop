@@ -92,7 +92,7 @@ all: $(TARGET) $(EDITOR)
 
 # The compute shaders with subgroup variants (Vulkan 1.1: SPIR-V 1.3;
 # loaded only where the device has it, gpu.h)
-SUBGROUP_SHADERS = grass.comp grass_map.comp
+SUBGROUP_SHADERS = grass.comp grass_map.comp objects_cull.comp
 SUBGROUP_BINARIES = $(SUBGROUP_SHADERS:%=data/shaders/spirv/%.subgroups.spv)
 
 shaders: $(SHADER_BINARIES) $(SUBGROUP_BINARIES)

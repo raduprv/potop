@@ -457,7 +457,7 @@ static const ui_setting_t ui_settings[] = {
 	{ TAB_DEBUG, "render", "debug_far_shadow_no_plants", "Far shadow map without plants", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
 		"The big shadow map drawn without the trees, bushes, grass and crops: how their far shadows look and what they cost", false },
 	{ TAB_DEBUG, "render", "gpu_subgroups", "Subgroup compute", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
-		"The grass's scatter with one atomic a subgroup instead of one a thread (Vulkan 1.1; off: the plain shaders, to compare)", false },
+		"The grass's scatter and the objects' culling with one atomic a subgroup instead of one a thread (Vulkan 1.1; off: the plain shaders, to compare)", false },
 	{ TAB_DEBUG, "render", "debug_water_ripples", "Water ripples in colors", 0, 0, 0, EFFECT_LIVE, NULL, "0:Off|1:Slope|2:Normal|3:Variance|4:Glint alone",
 		"Slope: the small ripples' (red x, green z, gray none); normal: the whole surface's; variance: the glint's widening (blue none .. red much); glint: the sun's alone", false },
 	{ TAB_DEBUG, "render", "debug_grass_freeze", "Freeze grass scatter", 0, 0, 0, EFFECT_LIVE, NULL, NULL,

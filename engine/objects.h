@@ -276,6 +276,8 @@ typedef struct
 	SDL_GPUBuffer *argument_storage[3];
 	SDL_GPUBuffer *argument_buffers[3];   // copies of the above, for the indirect draws
 	SDL_GPUComputePipeline *cull_pipeline;
+	SDL_GPUComputePipeline *cull_subgroups_pipeline; // its subgroup variant (gpu.vulkan_11; NULL: none)
+	bool use_subgroups;                // render.gpu_subgroups (taken at the draw: the next frame's culling)
 	const hiz_t *occlusion;            // the terrain's depth pyramid (the game's), for the camera's pass
 	SDL_GPUComputePipeline *update_pipeline;
 	int prepared_pass;                 // the pass the instance buffer was last filled for, -1 none

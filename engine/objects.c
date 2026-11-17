@@ -572,6 +572,7 @@ static bool create_pipelines(objects_t *objects)
 		objects->prop_shell_pipeline = objects->prop_pipeline != NULL ? create_prop_pipeline(true) : NULL;
 		objects->building_pipeline = create_building_pipeline();
 		objects->cull_pipeline = gpu_load_compute("objects_cull.comp", &cull_layout);
+		objects->cull_subgroups_pipeline = gpu.vulkan_11 ? gpu_load_compute("objects_cull.comp.subgroups", &cull_layout) : NULL;
 		objects->update_pipeline = gpu_load_compute("objects_update.comp", &update_layout);
 		// (the debug view's: the culling always has a buffer to bind; the
 		// view itself may be missing)
@@ -1009,6 +1010,10 @@ void objects_destroy(objects_t *objects)
 					SDL_ReleaseGPUBuffer(gpu.device, pass_buffers[k]);
 				}
 			}
+		}
+		if (objects->cull_subgroups_pipeline != NULL)
+		{
+			SDL_ReleaseGPUComputePipeline(gpu.device, objects->cull_subgroups_pipeline);
 		}
 		if (objects->cull_pipeline != NULL)
 		{
@@ -3280,7 +3285,8 @@ static void dispatch_cull(objects_t *objects, SDL_GPUCommandBuffer *command_buff
 	{
 		return;
 	}
-	SDL_BindGPUComputePipeline(compute, objects->cull_pipeline);
+	SDL_BindGPUComputePipeline(compute, objects->use_subgroups && objects->cull_subgroups_pipeline != NULL ? objects->cull_subgroups_pipeline
+		: objects->cull_pipeline);
 	SDL_BindGPUComputeStorageBuffers(compute, 0, read_only, 8);
 	uniforms->mode = mode;
 	SDL_PushGPUComputeUniformData(command_buffer, 0, uniforms, sizeof(*uniforms));
@@ -4927,6 +4933,7 @@ void objects_draw(objects_t *objects, SDL_GPURenderPass *pass, const render_sett
 	SDL_GPUTextureSamplerBinding variation_binding = { variation_texture, gpu.linear_repeat };
 	SDL_GPUTexture *cloud_shadows = clouds_shadow_texture();
 
+	objects->use_subgroups = settings->gpu_subgroups;
 	// The buildings' look, as the settings have it now (live)
 	objects->look[0] = settings->roof_lightness;
 	objects->look[1] = settings->roof_fade;
