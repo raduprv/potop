@@ -288,9 +288,10 @@ void main()
 	// which let it through, nor wet bark, which shines, nor where there is
 	// water about, whose light plays on it)
 	bool sun_reaches = cut_out || snow_cover || diffuse > 0.0 || wet > 0.0 || water.to_surface < 1e5;
-	// (the leaves: the far map alone, looked up out of their own crown,
-	// plant.vert)
-	float shadowed = sun_reaches ? (cut_out ? sun_visibility_far(shadow_position) : sun_visibility(shadow_position, near_shadow_position))
+	// (the leaves: the far map alone, their crown's own shadow too, plant.vert;
+	// a shadow there takes 70% of the sun, not all: a crown lets some
+	// through, its shaded side was near black)
+	float shadowed = sun_reaches ? (cut_out ? mix(1.0, sun_visibility_far(shadow_position), 0.7) : sun_visibility(shadow_position, near_shadow_position))
 		* cloud_light(world_position, sun_direction) : 0.0;
 	// What shines through is yellower than what it lights
 	vec3 around = surroundings(normal) + sky_light.rgb;
