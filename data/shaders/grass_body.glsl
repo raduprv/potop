@@ -86,7 +86,14 @@ layout(set = TEXTURE_SET, binding = 7) uniform sampler2D surface_texture;      /
 layout(set = TEXTURE_SET, binding = 8) uniform sampler2D variation_texture;    // R8: tileable cloudy noise
 layout(set = TEXTURE_SET, binding = 9) uniform sampler2D material_map_texture; // RGBA8: the material map (material_map.h)
 layout(set = TEXTURE_SET, binding = 10) uniform sampler2D overlay_texture;     // RGBA16F: snow, petals (ground_overlay.h)
+#ifdef GRASS_BAKE
 layout(set = TEXTURE_SET, binding = 11) uniform sampler2DArray material_color_array;  // the terrain's materials: RGB color
+#else
+// The grass map (the bake's, this frame, round what the view reaches): a
+// texel per two cells each way, filtered; rgb the grass's color there
+// (sqrt of half of it, linear), a how much grows (grass_bake.comp)
+layout(set = TEXTURE_SET, binding = 11) uniform sampler2D grass_map_texture;
+#endif
 layout(set = TEXTURE_SET, binding = 12) uniform sampler2D sky_occlusion_texture;      // R8 a cell (sky_occlusion.h)
 layout(set = TEXTURE_SET, binding = 13) uniform sampler2D sky_layers_texture;         // RGBA8: the four layers in the air
 layout(set = TEXTURE_SET, binding = 14) uniform sampler2D sky_bounce_texture;         // RGBA8: what hides the sky
@@ -98,7 +105,11 @@ layout(set = TEXTURE_SET, binding = 15) uniform sampler2D cloud_shadow_texture; 
 #define CLOUDS_EXPLICIT_LOD
 #include "clouds.glsl"
 
+#ifdef GRASS_BAKE
+layout(set = READWRITE_SET, binding = 0, rgba8) uniform writeonly image2D grass_map_image;
+#else
 layout(std430, set = READWRITE_SET, binding = 0) buffer blade_buffer { uint blades[]; };
+#endif
 // The depth pyramid of the frame before (hiz.h): every level, one after
 // the other, row by row (a blade behind what was drawn then is left out).
 // (In a compute shader's first set the read only buffers come after the
@@ -107,7 +118,9 @@ layout(std430, set = READWRITE_SET, binding = 0) buffer blade_buffer { uint blad
 layout(std430, set = READONLY_SET, binding = 16) readonly buffer hiz_buffer { float hiz_depths[]; };
 // The count of blades written, then the draw's arguments (vertices,
 // instances, first vertex, first instance)
+#ifndef GRASS_BAKE
 layout(std430, set = READWRITE_SET, binding = 1) buffer count_buffer { uint counts[]; };
+#endif
 
 layout(std140, set = UNIFORM_SET, binding = 1) uniform grass_block
 {
@@ -202,9 +215,11 @@ float ground_height(vec2 world_xz)
 	return mix(mix(corners.w, corners.z, fraction.x), mix(corners.x, corners.y, fraction.x), fraction.y);
 }
 
+#ifdef GRASS_BAKE
 // How much grass grows here (0..1; y: the ground's height), and the silt
 // over it: as much as the terrain shows the grass material there
-// (terrain_materials.glsl, as terrain.frag works it out)
+// (terrain_materials.glsl, as terrain.frag works it out). (Under a
+// building is the blade's own cell's to say: grass_map_amount)
 float grass_amount(vec2 world_xz, float y, out float silt)
 {
 	vec2 grid_position = world_xz / map.y;
@@ -219,12 +234,6 @@ float grass_amount(vec2 world_xz, float y, out float silt)
 	float amount = 0.0;
 
 	silt = clamp(surface.r * (0.8 + 0.6 * detail_noise), 0.0, 1.0);
-	// Under a building none (the material map's ground byte, worked out from
-	// the objects' footprints: ground_footprints.h; its own cell, not moved)
-	if ((int(texelFetch(material_map_texture, cell_of(world_xz), 0).a * 255.0 + 0.5) & MATERIAL_GROUND_NO_GRASS) != 0)
-	{
-		return 0.0;
-	}
 #ifdef MATERIAL_MAP
 	// The cell the terrain shows there (moved as the terrain moves it, the
 	// patches between cells left out: a blade does not see them): grass, or
@@ -269,6 +278,32 @@ float grass_amount(vec2 world_xz, float y, out float silt)
 #endif
 	return amount;
 }
+#else
+// The grass map's texel coordinates (filtered) of a point
+vec2 grass_map_uv(vec2 world_xz)
+{
+	float half_size = floor((map.x + 1.0) * 0.5);
+
+	return ((world_xz / map.y - 0.5) * 0.5 + 0.5) / half_size;
+}
+
+// How much grass grows here (0..1), and the silt over it: the bake's
+// (grass_amount there, filtered), but under a building none (the material
+// map's ground byte, worked out from the objects' footprints:
+// ground_footprints.h; the blade's own cell, not moved)
+float grass_map_amount(vec2 world_xz, out float silt)
+{
+	vec2 uv = (world_xz / map.y + 0.5) / map.x;
+	float detail_noise = value_noise(world_xz * 0.11);
+
+	silt = clamp(textureLod(surface_texture, uv, 0.0).r * (0.8 + 0.6 * detail_noise), 0.0, 1.0);
+	if ((int(texelFetch(material_map_texture, cell_of(world_xz), 0).a * 255.0 + 0.5) & MATERIAL_GROUND_NO_GRASS) != 0)
+	{
+		return 0.0;
+	}
+	return textureLod(grass_map_texture, grass_map_uv(world_xz), 0.0).a;
+}
+#endif
 
 // Whether what was drawn the frame before hides a blade, its foot to its
 // top a little wider (objects_cull.comp's test, for a sliver): its nearest
@@ -355,17 +390,28 @@ float hash_1d(vec2 position)
 // the tip, the silt's brown, the gust's sheen): the ground's grass under it
 // (the far, smooth scale of its texture), the terrain's variation over its
 // materials (as terrain.frag has it), darker wet, its own shade, some dry
-vec3 blade_color(vec3 root, vec4 surface)
+#ifdef GRASS_BAKE
+// The grass's color at a place, before each blade's own shade (the bake's)
+vec3 grass_base_color(vec2 world_xz, vec4 surface)
 {
-	vec3 ground = textureLod(material_color_array, vec3(root.xz * look.y, look.x), 3.0).rgb;
+	vec3 ground = textureLod(material_color_array, vec3(world_xz * look.y, look.x), 3.0).rgb;
 	vec3 color = pow(ground, vec3(2.2)) * tint.rgb;
-	float large = textureLod(variation_texture, root.xz * terrain.w, 0.0).r;
-	float small = textureLod(variation_texture, root.xz * terrain.w * 3.83 + 0.61, 0.0).r;
+	float large = textureLod(variation_texture, world_xz * terrain.w, 0.0).r;
+	float small = textureLod(variation_texture, world_xz * terrain.w * 3.83 + 0.61, 0.0).r;
 	float amount = (large - 0.5) * 0.7 + (small - 0.5) * 0.3;
 
 	color *= 1.0 + amount * look.z * 2.0;
 	color *= mix(vec3(1.0), amount > 0.0 ? vec3(1.08, 1.02, 0.86) : vec3(0.90, 1.02, 0.94), min(abs(amount) * 2.0, 1.0) * look.w);
 	color *= 1.0 - 0.3 * surface.g;
+	return color;
+}
+#else
+// A blade's color: the grass map's there, its own shade, some dry
+vec3 blade_color(vec3 root, vec4 surface)
+{
+	vec3 stored = textureLod(grass_map_texture, grass_map_uv(root.xz), 0.0).rgb;
+	vec3 color = stored * stored * 2.0;
+
 	color *= 0.85 + 0.3 * hash_1d(root.xz + 17.31);
 	if (hash_1d(root.xz) < tint.w)
 	{
@@ -373,6 +419,7 @@ vec3 blade_color(vec3 root, vec4 surface)
 	}
 	return color;
 }
+#endif
 
 // How much of the sun the clouds over a point leave it (as object.frag's)
 float cloud_light(vec3 position, vec3 towards_sun)
@@ -397,6 +444,37 @@ uint pack_shared_exponent(vec3 light)
 	return packUnorm4x8(vec4(scaled, (exponent + 128.0) / 255.0));
 }
 
+#ifdef GRASS_BAKE
+// The grass map round what the view reaches (grass_bake.comp: grass.c's
+// grass_prepare, before the scatter, every frame: nothing kept to go out
+// of date, whatever changed the ground): a thread a texel of the rectangle
+// (its first texel grid_origin.xy, grid.z across, control.w down), each its
+// two by two cells' middle: the grass's color and how much grows there
+void main()
+{
+	uint columns = uint(grid.z);
+	uint count = columns * uint(control.w);
+	int half_size = int(floor((map.x + 1.0) * 0.5));
+
+	for (uint index = gl_GlobalInvocationID.x; index < count; index += gl_NumWorkGroups.x * 256u)
+	{
+		ivec2 texel = ivec2(grid_origin.xy) + ivec2(index % columns, index / columns);
+
+		if (texel.x < 0 || texel.y < 0 || texel.x >= half_size || texel.y >= half_size)
+		{
+			continue;
+		}
+		vec2 world_xz = (vec2(texel) * 2.0 + 0.5) * map.y;
+		float y = ground_height(world_xz);
+		float silt;
+		float amount = grass_amount(world_xz, y, silt);
+		vec4 surface = textureLod(surface_texture, (world_xz / map.y + 0.5) / map.x, 0.0);
+		vec3 color = grass_base_color(world_xz, surface);
+
+		imageStore(grass_map_image, texel, vec4(sqrt(clamp(color * 0.5, 0.0, 1.0)), amount));
+	}
+}
+#else
 // The blade's record (see the top), the parts that are the same all up it
 // worked out here
 void write_blade(uint base, vec3 root, float height, float width, float facing_turn, vec2 flatten)
@@ -539,7 +617,7 @@ void main()
 		return;
 	}
 	float silt;
-	float amount = grass_amount(world_xz, y, silt);
+	float amount = grass_map_amount(world_xz, silt);
 
 	// Fewer where less grows (none where the ground hardly shows grass),
 	// the edges ragged
@@ -617,3 +695,4 @@ void main()
 	// towards (and how far)
 	write_blade(place * BLADE_FLOATS, root, height, width, more.w, flatten);
 }
+#endif

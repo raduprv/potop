@@ -11,6 +11,7 @@
 #define GRASS_CLEAR 1
 #define GRASS_SCATTER 2
 #define GRASS_ARGUMENTS 3
+#define GRASS_BAKE 4                   // (its own pipelines: the grass map)
 #define GRASS_BLADE_FLOATS 8
 #define GRASS_THREADS 256
 #define GRASS_MAXIMUM_GROUPS 65535u
@@ -80,6 +81,11 @@ bool grass_create(grass_t *grass)
 	layout.threads_x = GRASS_THREADS;
 	grass->scatter_pipeline = gpu_load_compute("grass.comp", &layout);
 	grass->map_scatter_pipeline = gpu_load_compute("grass_map.comp", &layout);
+	// (the bake: the grass map its one read-write texture, no buffers)
+	layout.readwrite_storage_buffers = 0;
+	layout.readwrite_storage_textures = 1;
+	grass->bake_pipeline = gpu_load_compute("grass_bake.comp", &layout);
+	grass->map_bake_pipeline = gpu_load_compute("grass_bake_map.comp", &layout);
 	SDL_zero(info);
 	info.vertex_shader = gpu_load_shader("grass.vert", 0, 0, 2);
 	info.fragment_shader = gpu_load_shader("grass.frag", 1, LIGHTS_STORAGE_BUFFERS, 1);
@@ -110,6 +116,7 @@ bool grass_create(grass_t *grass)
 	grass->argument_buffer = gpu_create_buffer(SDL_GPU_BUFFERUSAGE_INDIRECT, sizeof(uint32_t) * 8);
 	grass->no_occlusion_buffer = gpu_create_buffer(SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ, sizeof(float) * 4);
 	grass->failed = grass->scatter_pipeline == NULL || grass->pipeline == NULL || grass->count_buffer == NULL || grass->argument_buffer == NULL
+		|| grass->bake_pipeline == NULL || grass->map_bake_pipeline == NULL
 		|| grass->no_occlusion_buffer == NULL;
 	if (grass->failed)
 	{
@@ -132,6 +139,18 @@ void grass_destroy(grass_t *grass)
 	if (grass->map_scatter_pipeline != NULL)
 	{
 		SDL_ReleaseGPUComputePipeline(gpu.device, grass->map_scatter_pipeline);
+	}
+	if (grass->bake_pipeline != NULL)
+	{
+		SDL_ReleaseGPUComputePipeline(gpu.device, grass->bake_pipeline);
+	}
+	if (grass->map_bake_pipeline != NULL)
+	{
+		SDL_ReleaseGPUComputePipeline(gpu.device, grass->map_bake_pipeline);
+	}
+	if (grass->grass_map != NULL)
+	{
+		SDL_ReleaseGPUTexture(gpu.device, grass->grass_map);
 	}
 	if (grass->scatter_pipeline != NULL)
 	{
@@ -180,15 +199,36 @@ static void dispatch(grass_t *grass, SDL_GPUCommandBuffer *command_buffer, const
 	uint32_t groups = (threads + GRASS_THREADS - 1) / GRASS_THREADS;
 
 	SDL_zeroa(read_write);
-	read_write[0].buffer = grass->blade_buffer;
-	read_write[1].buffer = grass->count_buffer;
-	compute = SDL_BeginGPUComputePass(command_buffer, NULL, 0, read_write, 2);
-	if (compute == NULL)
+	if (mode == GRASS_BAKE)
 	{
-		return;
+		// (the grass map written: its one read-write texture)
+		SDL_GPUStorageTextureReadWriteBinding map_binding;
+
+		SDL_zero(map_binding);
+		map_binding.texture = grass->grass_map;
+		compute = SDL_BeginGPUComputePass(command_buffer, &map_binding, 1, NULL, 0);
+		if (compute == NULL)
+		{
+			return;
+		}
+		SDL_BindGPUComputePipeline(compute, world->material_map ? grass->map_bake_pipeline : grass->bake_pipeline);
 	}
-	SDL_BindGPUComputePipeline(compute, world->material_map && grass->map_scatter_pipeline != NULL ? grass->map_scatter_pipeline
-		: grass->scatter_pipeline);
+	else
+	{
+		read_write[0].buffer = grass->blade_buffer;
+		read_write[1].buffer = grass->count_buffer;
+		// (the scatter reads the grass map where the bake has the
+		// materials' colors)
+		samplers[11].texture = grass->grass_map != NULL ? grass->grass_map : world->variation_texture;
+		samplers[11].sampler = gpu.linear_clamp;
+		compute = SDL_BeginGPUComputePass(command_buffer, NULL, 0, read_write, 2);
+		if (compute == NULL)
+		{
+			return;
+		}
+		SDL_BindGPUComputePipeline(compute, world->material_map && grass->map_scatter_pipeline != NULL ? grass->map_scatter_pipeline
+			: grass->scatter_pipeline);
+	}
 	SDL_BindGPUComputeSamplers(compute, 0, samplers, 16);
 	{
 		SDL_GPUBuffer *pyramid = world->occlusion != NULL && uniforms->hiz_size[3] > 0.5f ? hiz_buffer(world->occlusion) : grass->no_occlusion_buffer;
@@ -352,6 +392,47 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 		view_minimum_z -= 3.0f;
 		view_maximum_x += 3.0f;
 		view_maximum_z += 3.0f;
+	}
+	// The grass map first: the grass's color and how much grows round what
+	// the view reaches (as far as the grass goes), a texel per two cells
+	// each way (and one more round it: it is filtered), made again every
+	// frame (nothing kept to go out of date: the silt, the wet, the snow,
+	// the materials as they are now)
+	{
+		int half_size = (world->map_size + 1) / 2;
+		float cell = world->cell_size_meters;
+		int first_x = (int)SDL_floorf((SDL_max(camera->eye_position.x - distance, view_minimum_x) / cell - 0.5f) * 0.5f) - 1;
+		int first_z = (int)SDL_floorf((SDL_max(camera->eye_position.z - distance, view_minimum_z) / cell - 0.5f) * 0.5f) - 1;
+		int last_x = (int)SDL_ceilf((SDL_min(camera->eye_position.x + distance, view_maximum_x) / cell - 0.5f) * 0.5f) + 1;
+		int last_z = (int)SDL_ceilf((SDL_min(camera->eye_position.z + distance, view_maximum_z) / cell - 0.5f) * 0.5f) + 1;
+
+		if (grass->grass_map == NULL || grass->grass_map_size != half_size)
+		{
+			if (grass->grass_map != NULL)
+			{
+				SDL_ReleaseGPUTexture(gpu.device, grass->grass_map);
+			}
+			grass->grass_map = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, (uint32_t)half_size,
+				(uint32_t)half_size, 1, 1, SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE);
+			grass->grass_map_size = grass->grass_map != NULL ? half_size : 0;
+			if (grass->grass_map == NULL)
+			{
+				return;
+			}
+		}
+		first_x = SDL_max(first_x, 0);
+		first_z = SDL_max(first_z, 0);
+		last_x = SDL_min(last_x, half_size - 1);
+		last_z = SDL_min(last_z, half_size - 1);
+		if (last_x < first_x || last_z < first_z)
+		{
+			return;
+		}
+		uniforms.grid[2] = (float)(last_x - first_x + 1);
+		uniforms.grid_origin[0] = (float)first_x;
+		uniforms.grid_origin[1] = (float)first_z;
+		uniforms.control[3] = last_z - first_z + 1;
+		dispatch(grass, command_buffer, world, &uniforms, GRASS_BAKE, (uint32_t)((last_x - first_x + 1) * (last_z - first_z + 1)));
 	}
 	// Ring by ring: level 0 out to the full radius on the fine grid, level
 	// L >= 1 from full_radius * 2^(L-1) to twice that, on a grid 2^(L-1)

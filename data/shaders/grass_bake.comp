@@ -1,0 +1,7 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_control_flow_attributes : require
+// The grass map (grass_body.glsl's GRASS_BAKE): the grass's color and how
+// much grows, round what the view reaches, every frame
+#define GRASS_BAKE
+#include "grass_body.glsl"

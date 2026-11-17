@@ -34,6 +34,13 @@ typedef struct
 {
 	SDL_GPUComputePipeline *scatter_pipeline;
 	SDL_GPUComputePipeline *map_scatter_pipeline; // the same from the material map (grass_map.comp)
+	// The grass map: the grass's color and how much grows, a texel per two
+	// cells each way, made round what the view reaches every frame before
+	// the scatter (grass_bake.comp, grass_bake_map.comp), read by it
+	SDL_GPUComputePipeline *bake_pipeline;
+	SDL_GPUComputePipeline *map_bake_pipeline;
+	SDL_GPUTexture *grass_map;
+	int grass_map_size;
 	SDL_GPUGraphicsPipeline *pipeline;
 	SDL_GPUBuffer *blade_buffer;           // grass.vert's instances: 8 floats a blade
 	uint32_t blade_capacity;               // blades it holds
