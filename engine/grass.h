@@ -41,7 +41,6 @@ typedef struct
 	SDL_GPUComputePipeline *map_bake_pipeline;
 	SDL_GPUTexture *grass_map;
 	int grass_map_size;
-	bool grass_map_baked;                  // all of it baked (grass_invalidate: to be again)
 	SDL_GPUGraphicsPipeline *pipeline;
 	SDL_GPUBuffer *blade_buffer;           // grass.vert's instances: 8 floats a blade
 	uint32_t blade_capacity;               // blades it holds
@@ -96,10 +95,6 @@ bool grass_create(grass_t *grass);
 void grass_destroy(grass_t *grass);
 
 // Scatters the blades in view, before the scene's pass begins
-// The grass map baked again, all of it, before the next scatter (the
-// ground under the grass changed: a map loaded, the material map made again)
-void grass_invalidate(grass_t *grass);
-
 void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings_t *render, const objects_settings_t *settings,
 	const grass_world_t *world);
 
