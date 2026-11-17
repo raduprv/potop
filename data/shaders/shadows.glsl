@@ -78,3 +78,21 @@ float sun_visibility(vec4 far_clip, vec4 near_clip)
 {
 	return sun_visibility_taps(far_clip, near_clip, false);
 }
+
+// The far map's alone (a plant's leaves: plant.frag; no jump where the near
+// map gives way, the crown's own fine shadow not on it)
+float sun_visibility_far(vec4 far_clip)
+{
+	if (shadow_strength <= 0.0 || shadow_texel_size <= 0.0)
+	{
+		return 1.0;
+	}
+	vec3 far_position = far_clip.xyz / far_clip.w * 0.5 + 0.5;
+
+	far_position.y = 1.0 - far_position.y;
+	if (far_position.x < 0.0 || far_position.x > 1.0 || far_position.y < 0.0 || far_position.y > 1.0 || far_position.z > 1.0)
+	{
+		return 1.0;
+	}
+	return mix(1.0, shadow_lookup(shadow_texture, far_position, shadow_texel_size), shadow_strength);
+}
