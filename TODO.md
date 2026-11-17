@@ -78,6 +78,19 @@ flag and stable ids. At the end: maps as recipes (seed, size, painted
 layers, object changes with their final state; a version number, and maps
 from an older version get their terrain difference baked in once).
 
+## Navigation mesh (Nov 2026: phases 1-3 in, navigation.h)
+
+- The small class at 0.5 m: the region build rasterizes objects into 1 m
+  cells; a 0.5 m grid for the small class (hens through fences, people in
+  narrow rooms) needs that build at 0.5 m first.
+- Phase 4, memory for big maps (8k): the per cell grid only while a tile
+  is built (heights from the terrain, feet on objects from the tile's
+  surfaces); the mesh (and the flyers' coarse grid) kept. Baked maps save
+  the mesh with the map.
+- Phase 5, any number of levels: the build reads the objects' collision
+  straight into columns of surfaces (now 3 above the terrain at most).
+- Then the cells' A* and the path pulling can go.
+
 ## Particles
 
 - Preview window: pick an effect, play it in front of the camera, change its

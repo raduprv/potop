@@ -578,6 +578,10 @@ vec3 apply_navigation_overlay(vec3 color, vec3 position, vec2 edge_width)
 	uint state = uint(texelFetch(navigation_texture, cell, 0).r * 255.0 + 0.5);
 	vec3 tint = vec3(0.0);
 	float amount = 0.0;
+	// (128 added: a cell on the edge of a rectangle of the navigation mesh)
+	bool mesh_edge = state >= 128u;
+
+	state &= 127u;
 
 	if (state == 1u) { tint = vec3(1.0, 0.05, 0.05); amount = 0.55; }
 	if (state == 2u) { tint = vec3(1.0, 0.5, 0.0); amount = 0.45; }
@@ -589,6 +593,10 @@ vec3 apply_navigation_overlay(vec3 color, vec3 position, vec2 edge_width)
 	if (state == 8u) { tint = vec3(1.0, 0.95, 0.1); amount = 0.15; }
 	if (state == 9u) { tint = vec3(0.1, 0.9, 0.9); amount = 0.45; }
 	color = mix(color, tint, amount);
+	if (mesh_edge)
+	{
+		color = mix(color, vec3(1.0, 0.1, 0.8), 0.35);
+	}
 
 	vec2 edge_distance = abs(fract(cell_position + 0.5) - 0.5);
 	float border = max(1.0 - smoothstep(0.0, edge_width.x, edge_distance.x), 1.0 - smoothstep(0.0, edge_width.y, edge_distance.y));

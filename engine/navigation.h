@@ -53,6 +53,34 @@
 // blocks of 4 x 4 cells around what does (a mountain), climbing costing a
 // little. How high they fly along the way is theirs (see actors.h).
 //
+// The navigation mesh (navigation.use_navmesh, simulation.navmesh): the
+// same surfaces gathered into rectangles a search goes over instead of the
+// cells. Per region (a tile) and per class of agent (small: a hen, a man;
+// large, radius NAVIGATION_MESH_LARGE_RADIUS and up: a cow, a bear), the
+// usable surfaces are merged greedily into rectangles (up to
+// NAVIGATION_MESH_RECT_MOST cells a side) where every cell is alike (the
+// room above, the blockers' groups, a small object, the slope's cost, the
+// same kind: ground or an object's top) and any step between neighbors is
+// within the class's reach (the least of its agents': anyone of the class
+// goes anywhere inside). Cells with water at the build stay rectangles of
+// one cell (looked at with the water as it is, as the cells are); the
+// tile is built again when its water's cells change, when its region is
+// (its generation), or when an agent of a lesser reach (or, large, a wider
+// one) joins the class. The large class's rectangles keep away from what
+// takes all the room, by its widest agent's radius. Rectangles meet at
+// portals (a run of the shared edge, its worst step: per agent at search
+// time whether it climbs that), within the tile and across to the next
+// (linked when either is built). A* over the rectangles (the agent's own
+// rules for the room, the groups, small objects and the water, at the
+// time), then the corridor pulled tight (the funnel), the agent's radius
+// off the portals' ends. The doors are links between the rectangles of
+// their ends' cells. The straight line (navigation_line_passable) walks the
+// rectangles, looking only where it crosses from one to the next. Where
+// the mesh has nothing (the start on a cell the large class keeps off, a
+// map's edge) the cells' way is taken, as before. Both classes are built
+// from the 1 m cells for now (the small one at 0.5 m wants the region
+// build at 0.5 m first: TODO.md).
+//
 // The search's working memory belongs to the navigation and is reused
 // between searches without clearing (nodes carry the number of the search
 // that last touched them). Searches only read the map; for searches on
@@ -169,6 +197,91 @@ typedef struct
 	float priority;
 	int32_t node;
 } navigation_heap_entry_t;
+
+// The navigation mesh (see the top)
+#define NAVIGATION_MESH_CLASSES 2
+#define NAVIGATION_MESH_LARGE_RADIUS 0.35f      // meters: from this radius an agent is of the large class
+#define NAVIGATION_MESH_RECT_MOST 16            // cells a side of a rectangle at most
+
+// Where one rectangle leads into the next: a run of the edge they share
+typedef struct
+{
+	int32_t from;                      // the rectangle in this tile it leaves
+	int32_t to;                        // the one it enters: its tile * 65536 + its index
+	float a[2];                        // the run's ends (x, z, meters)
+	float b[2];
+	float rise;                        // the worst step across it (meters)
+	bool cross_surface;                // between the ground and an object's top (a step only, no slope)
+} navigation_portal_t;
+
+typedef struct
+{
+	int32_t x;                         // its first cell (x, z)
+	int32_t z;
+	uint8_t width;                     // cells
+	uint8_t depth;
+	uint8_t kind;                      // 0: the ground, 1: an object's top
+	uint8_t clearance;                 // the least room above (NAVIGATION_CLEARANCE_UNIT_METERS each, or OPEN)
+	uint8_t blocked;                   // the blockers' groups over it
+	uint8_t small;                     // a small object's height on it (as navigation_t.small_height)
+	float cost;                        // what a meter on it costs (its slope; 1 on an object's top)
+	float height_low;
+	float height_high;
+	int32_t wet_node;                  // a cell with water at the build: its node (the water looked at then); -1: dry
+	int32_t first_portal;              // in its tile's portals
+	int32_t portal_count;
+	// The search's (tag as navigation_search_node_t's)
+	uint32_t tag;
+	float search_cost;
+	int32_t came_from;                 // -1: the start
+	float entry[2];                    // where the search came in
+	float came_a[2];                   // the portal it came through (or a door's two ends)
+	float came_b[2];
+	bool came_by_door;
+} navigation_rect_t;
+
+typedef struct
+{
+	bool built;
+	uint32_t generation;               // its region's at the build
+	uint32_t class_epoch;              // its class's at the build
+	uint64_t water_signature;          // its water's cells at the build
+	uint64_t water_checked_ticks;      // when they were last compared (SDL_GetTicks)
+	uint32_t checked_search;           // the search that last found it current
+	navigation_rect_t *rects;
+	int32_t rect_count;
+	int32_t rect_capacity;
+	navigation_portal_t *portals;      // within the tile, by rectangle
+	int32_t portal_count;
+	int32_t portal_capacity;
+	navigation_portal_t *border[4];    // to the next tile (+x, -x, +z, -z)
+	int32_t border_count[4];
+	int32_t border_capacity[4];
+	int16_t *ground_rect;              // per cell of the region: the rectangle its ground is in (-1: none)
+	int16_t *extra_rect;               // per extra surface slot of the region
+} navigation_mesh_tile_t;
+
+typedef struct
+{
+	float reach;                       // the least step (or slope over a cell) of its agents seen
+	float height;                      // the lowest of them
+	int32_t erosion_cells;             // cells kept off what takes all the room (its widest)
+	uint32_t epoch;                    // a change of the above: its tiles built again
+	navigation_mesh_tile_t *tiles;     // per region
+} navigation_mesh_class_t;
+
+typedef struct
+{
+	navigation_mesh_class_t classes[NAVIGATION_MESH_CLASSES];
+	uint32_t search_number;
+	float last_build_milliseconds;     // statistics: the last tile's
+	int64_t tiles_built;
+	uint64_t last_search_ticks;
+	int64_t searches;                  // statistics: over the rectangles
+	int64_t search_fallbacks;          // of which the cells' way (nothing at the start)
+	int64_t lines;
+	int64_t line_fallbacks;
+} navigation_mesh_t;
 
 // What a search knows of a node: all of it side by side (one cache line,
 // not three)
@@ -292,6 +405,10 @@ typedef struct
 	int32_t water_cells_per_cell;
 	float water_cells_for_size;
 	uint64_t last_search_ticks;        // its A* (performance counter ticks)
+	// The navigation mesh (see the top): used for the walkers' searches and
+	// lines when on (simulation.navmesh, each frame)
+	bool use_navmesh;
+	navigation_mesh_t mesh;
 	uint64_t last_pull_ticks;          // and pulling its path tight
 } navigation_t;
 
@@ -373,6 +490,10 @@ typedef enum
 	NAVIGATION_OVERLAY_SMALL           // a small object: around it if it can, through if it must
 } navigation_overlay_t;
 
+// (the navigation mesh on: the cells on the edge of a rectangle of the
+// agent's class have NAVIGATION_OVERLAY_MESH_EDGE added)
+#define NAVIGATION_OVERLAY_MESH_EDGE 128
+
 // Fills size * size bytes of navigation_overlay_t for the agent
 void navigation_fill_overlay(navigation_t *navigation, const terrain_t *terrain, const water_t *water,
 	const navigation_agent_t *agent, uint8_t *overlay_out);
@@ -402,6 +523,10 @@ void navigation_build_all(navigation_t *navigation, const terrain_t *terrain, co
 // up to date if they are stale: where somebody stands, whose feet the
 // surface queries read (they do not build anything themselves)
 void navigation_prepare_around(navigation_t *navigation, float x, float z);
+
+// The navigation mesh in words (the console's navmesh): the tiles built,
+// their rectangles and portals, the memory, the last build and search
+void navigation_mesh_describe(const navigation_t *navigation, char *text_out, size_t text_size);
 
 // The blockers as they are now (each frame: only a change costs anything;
 // the paths through where it changed are looked at again)

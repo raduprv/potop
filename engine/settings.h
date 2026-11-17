@@ -492,6 +492,9 @@ typedef struct
 	// A path search (actors) gives up after this many grid cells (1 m) and
 	// takes the reached cell nearest the goal
 	int32_t path_search_cells;
+	// The walkers' searches over the navigation mesh's rectangles (off: over
+	// the cells, as before; navigation.h)
+	bool navmesh;
 	// Objects smaller than this across are left out of the navigation:
 	// actors walk through them (pebbles). Bigger ones are in the way or
 	// stepped on, as each actor can (a bear steps on a stone a rabbit goes

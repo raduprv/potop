@@ -257,6 +257,13 @@ void console_run_command(console_t *console, potop_t *potop, const char *line, c
 		camera_go_to(&potop->camera, &potop->world.terrain, x, height, z);
 		say_where(potop);
 	}
+	else if (SDL_strcmp(command, "navmesh") == 0)
+	{
+		char text[768];
+
+		navigation_mesh_describe(&potop->world.navigation, text, sizeof(text));
+		SDL_Log("%s", text);
+	}
 	else if (SDL_strcmp(command, "path") == 0)
 	{
 		// (from where you stand to x z, for an actor type: the points its
