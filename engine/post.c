@@ -37,21 +37,19 @@ static void grade_color(int preset, const float in[3], float out[3])
 	}
 	else if (preset == 2)
 	{
-		// Gloomy: most of the color gone, the blacks lifted into a damp
-		// gray-blue, the whites dulled, all of it a bit darker and cold
-		const float shadow_tint[3] = { 0.30f, 0.36f, 0.40f };
-		const float highlight_tint[3] = { 0.95f, 0.97f, 1.0f };
+		// Gloomy: most of the color gone, a hard S curve (1.2 times the
+		// contrast in the middle), the blacks barely blue, the whites dulled
+		// and cold, all of it a touch darker
+		const float shadow_tint[3] = { 0.8f, 1.0f, 1.2f };
 		const float cold[3] = { 0.93f, 0.98f, 1.04f };
-		float dim = SDL_powf(clamp_unit(luminance), 1.15f);
 
 		for (int i = 0; i < 3; i++)
 		{
-			float color = luminance + 0.4f * (in[i] - luminance);
+			float color = clamp_unit(luminance + 0.4f * (in[i] - luminance));
 
-			color = SDL_powf(clamp_unit(color), 1.15f);
-			color = 0.5f + 0.85f * (color - 0.5f);
-			color = color * (dim * highlight_tint[i] + (1.0f - dim)) + 0.07f * (1.0f - dim) * shadow_tint[i] / 0.36f;
-			out[i] = clamp_unit(0.04f + 0.9f * color * cold[i]);
+			color = SDL_powf(color, 1.1f);
+			color = color + 0.4f * (color * color * (3.0f - 2.0f * color) - color);
+			out[i] = clamp_unit(0.03f * (1.0f - color) * shadow_tint[i] + 0.9f * color * cold[i]);
 		}
 	}
 	else
