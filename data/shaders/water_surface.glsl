@@ -61,7 +61,7 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform water_block
 	int reflections;                // 1: the scene's copy is bound (screen space reflections)
 	int dome;                       // 0: no volumetric clouds, 1: their dome holds the whole sky, 2: its upper half
 	vec4 depth_to_distance;         // x, y: the scene's depth to the distance along the view, y / (depth - x); zw: 1 / its size
-	vec4 ice_parameters;            // x 1: the ice is bound; y: the small ripples' choppiness
+	vec4 ice_parameters;            // x 1: the ice is bound; y: the small ripples' choppiness; z: the ripples in colors (debug)
 	vec4 reflection_range;          // x: the land mirrored out to this far from the eye (m), y: fading out over the last this much; beyond, the sky alone; z: the refraction (0: none)
 };
 
@@ -450,6 +450,23 @@ void main()
 	vec3 glint = sun_color * pow(max(dot(reflect(-sun_direction, normal), view_direction), 0.0), glint_power) * 3.0 * visibility
 		* (glint_power + 2.0) / 152.0;
 	vec3 color = mix(body_lit, reflection, fresnel) + glint;
+
+	// (debug: the ripples in colors, nothing else)
+	if (ice_parameters.z > 0.5)
+	{
+		int shown = int(ice_parameters.z + 0.5);
+		vec3 debug_color = shown == 1 ? vec3(0.5 + 2.0 * ripple.xy * ripple_strength, 0.5)
+			: shown == 2 ? normal * 0.5 + 0.5
+			: shown == 3 ? mix(vec3(0.0, 0.0, 1.0), vec3(1.0, 0.0, 0.0), clamp(normal_variance * 30.0, 0.0, 1.0))
+			: glint;
+
+		fragment_color = vec4(debug_color, 1.0);
+#ifdef WATER_SPLIT_REFLECTIONS
+		ray_out = vec4(0.0);
+		sky_out = vec4(0.0);
+#endif
+		return;
+	}
 
 	// Foam needs fast AND reasonably deep water: a thin sheet running down
 	// a slope is quick but does not churn

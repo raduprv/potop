@@ -28,7 +28,7 @@ typedef struct
 	// The scene's depth (0..1) back to the distance along the view:
 	// distance = y / (depth - x); z, w: 1 / the copy's size
 	float depth_to_distance[4];
-	float ice[4];                  // x 1: the ice is bound (water_ice.h); y: the ripples' choppiness
+	float ice[4];                  // x 1: the ice is bound (water_ice.h); y: the ripples' choppiness; z: the ripples in colors (Debug)
 	// The land and the trees mirrored out to x meters from the eye (the
 	// scope's zoom farther), fading out over the last y; beyond, the sky
 	// alone (no march: far water is a few pixels of shimmer)
@@ -602,6 +602,7 @@ void water_renderer_draw(water_renderer_t *renderer, SDL_GPURenderPass *pass, co
 
 		SDL_BindGPUFragmentSamplers(pass, 11, &ripples, 1);
 		uniforms.ice[1] = SDL_clamp(settings->water_choppiness, 0.0f, 4.0f);
+		uniforms.ice[2] = (float)settings->debug_water_ripples;
 	}
 	SDL_PushGPUFragmentUniformData(gpu.command_buffer, 1, &uniforms, sizeof(uniforms));
 
