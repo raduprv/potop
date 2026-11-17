@@ -122,8 +122,11 @@ static float ripple_random(uint32_t index, uint32_t seed)
 	return (float)(ripple_hash(index, seed) >> 8) / 16777216.0f;
 }
 // The small ripples: a height of many waves, each its own way, length and
-// phase (whole numbers of them across the tile, so it repeats), from 3 to
-// 24 a tile, the shorter lower; each a little sharpened at its crest
+// phase (whole numbers of them across the tile, so it repeats), from 6 to
+// 32 a tile (fewer than 6: rounded to a whole number, their ways were few,
+// the diagonals among them, and the tile got a grain), turned by the golden
+// angle one from the next (every way about as much), the shorter lower
+// and less steep; each a little sharpened at its crest
 // (exp(0.6 (sin - 1)): narrower crests, wider troughs, as choppy water;
 // sharper, every crest caught the glint as a hairline). Value noise showed its
 // lattice (diamonds); waves have none. Its slopes (in heights a tile)
@@ -131,7 +134,7 @@ static float ripple_random(uint32_t index, uint32_t seed)
 // (SNORM cannot be blitted everywhere)
 static SDL_GPUTexture *make_ripple_texture(void)
 {
-	enum { WAVE_COUNT = 64 };
+	enum { WAVE_COUNT = 96 };
 	float wave_x[WAVE_COUNT];
 	float wave_y[WAVE_COUNT];
 	float wave_phase[WAVE_COUNT];
@@ -156,8 +159,8 @@ static SDL_GPUTexture *make_ripple_texture(void)
 	}
 	for (int i = 0; i < WAVE_COUNT; i++)
 	{
-		float waves = 3.0f * SDL_powf(8.0f, (float)i / (WAVE_COUNT - 1));
-		float angle = 6.2831853f * ripple_random((uint32_t)i, 1u);
+		float waves = 6.0f * SDL_powf(5.333f, (float)i / (WAVE_COUNT - 1));
+		float angle = 2.39996323f * (float)i + 0.6f * ripple_random((uint32_t)i, 1u);
 		float across_x = SDL_roundf(waves * SDL_cosf(angle));
 		float across_y = SDL_roundf(waves * SDL_sinf(angle));
 
@@ -168,7 +171,7 @@ static SDL_GPUTexture *make_ripple_texture(void)
 		wave_x[i] = 6.2831853f * across_x;
 		wave_y[i] = 6.2831853f * across_y;
 		wave_phase[i] = 6.2831853f * ripple_random((uint32_t)i, 2u);
-		wave_height[i] = SDL_powf(SDL_sqrtf(across_x * across_x + across_y * across_y), -1.3f);
+		wave_height[i] = SDL_powf(SDL_sqrtf(across_x * across_x + across_y * across_y), -1.6f);
 	}
 	for (int y = 0; y < RIPPLE_SIZE; y++)
 	{

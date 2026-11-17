@@ -120,25 +120,29 @@ const float RIPPLE_SLOPE_RANGE = 4.0;   // (water_renderer.c's)
 // One layer: its slope added to slope, how much the slopes under the
 // texel read differ (their variance: the levels of detail average the
 // squares too) to variance
-void ripple_layer(vec2 uv, float steepness, inout vec2 slope, inout float variance)
+// (turned: the tile read along way, a unit vector; its slope turned back)
+void ripple_layer(vec2 position, float size, vec2 way, vec2 drift, float steepness, inout vec2 slope, inout float variance)
 {
-	vec4 texel = texture(ripple_texture, uv);
+	vec2 along = vec2(way.x * position.x + way.y * position.y, -way.y * position.x + way.x * position.y);
+	vec4 texel = texture(ripple_texture, along / size + drift);
 	vec2 mean = texel.rg * RIPPLE_SLOPE_RANGE;
 	vec2 squares = texel.ba * (RIPPLE_SLOPE_RANGE * RIPPLE_SLOPE_RANGE);
 
-	slope += mean * steepness;
+	slope += vec2(way.x * mean.x - way.y * mean.y, way.y * mean.x + way.x * mean.y) * steepness;
 	variance += max(squares.x + squares.y - dot(mean, mean), 0.0) * steepness * steepness;
 }
 
-// x, y: the slope; z: its variance under the pixel
+// x, y: the slope; z: its variance under the pixel. Three sizes of the
+// tile (its waves 6 to 32 across: 1 m down to 3 cm), each turned its own
+// way (the same tile alike at every size would line up) and drifting
 vec3 ripple_slope(vec2 position)
 {
 	vec2 slope = vec2(0.0);
 	float variance = 0.0;
 
-	ripple_layer((position + time_seconds * vec2(0.11, 0.05)) / 4.0, 0.5, slope, variance);
-	ripple_layer((position + time_seconds * vec2(-0.06, 0.09)) / 1.7 + vec2(0.37, 0.71), 0.35, slope, variance);
-	ripple_layer((position + time_seconds * vec2(0.04, -0.07)) / 0.7 + vec2(0.83, 0.19), 0.25, slope, variance);
+	ripple_layer(position, 6.0, vec2(1.0, 0.0), time_seconds * vec2(0.018, 0.008), 0.5, slope, variance);
+	ripple_layer(position, 2.5, vec2(-0.5, 0.866), vec2(0.37, 0.71) + time_seconds * vec2(-0.024, 0.036), 0.35, slope, variance);
+	ripple_layer(position, 1.1, vec2(-0.643, -0.766), vec2(0.83, 0.19) + time_seconds * vec2(0.036, -0.064), 0.25, slope, variance);
 	return vec3(slope, variance);
 }
 
