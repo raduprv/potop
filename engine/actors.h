@@ -232,6 +232,13 @@ typedef struct
 	float y;                           // the ground under it, kept up to date
 	float yaw_radians;                 // which way it faces: 0 = +Z
 	float turn_rate;                   // radians a second it turns, eased (> 0: to its left, towards +X from +Z)
+	float angular_speed;               // radians a second it turns now (its turns' inertia: inertial_turn)
+	// Where its walk steers for (not straight walkers): a point a little
+	// ahead along its path, the corner cut (steer_point); kept a while
+	float steer_x;
+	float steer_z;
+	float steer_seconds;               // till it is found again (0: now)
+	int steer_index;                   // the path_index it was found at
 	float scale;
 	float rotation[4];                 // the model's turn (yaw and lean on slopes), quaternion
 	// Animation

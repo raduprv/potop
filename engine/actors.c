@@ -1618,6 +1618,15 @@ void actors_clear(actors_t *actors)
 #define GAIT_STRIDE_LEAST 0.8f        // the stride stretched no more than this either way
 #define GAIT_STRIDE_MOST 1.25f
 #define WAYPOINT_METERS 0.6f          // past a waypoint on the way
+// Its turns' inertia (inertial_turn): from still to its fastest turn in
+// this long, and as long to stop
+#define TURN_RAMP_SECONDS 0.2f
+// Where a walk steers for (steer_point): this far ahead along the path at
+// a standstill, more the faster (up to the most), found again this often
+#define STEER_AHEAD_METERS 1.5f
+#define STEER_AHEAD_PER_SPEED 0.3f    // meters more per meter a second
+#define STEER_AHEAD_MOST_METERS 2.5f
+#define STEER_SECONDS 0.2f
 #define STRAIGHT_WAYPOINT_METERS 0.25f // past a straight walker's waypoint (its mind's spot)
 #define LOOK_SECONDS 0.5f             // how often it looks at the path ahead
 #define STUCK_SECONDS 3.0f            // this long without getting half a meter: search again
@@ -1704,6 +1713,7 @@ static void stop_moving(actor_t *actor)
 	actor->moving = false;
 	actor->path_count = 0;
 	actor->path_index = 0;
+	actor->steer_seconds = 0.0f;
 }
 
 // The log, for one actor: what it finds at a point
@@ -1812,6 +1822,7 @@ static bool plan_path_logged(const actors_t *actors, actor_t *actor, const actor
 	}
 
 	actor->path_index = 0;
+	actor->steer_seconds = 0.0f;
 	actor->path_generation = navigation->generation;
 	actor->look_seconds = LOOK_SECONDS;
 	actor->path_partial = result == NAVIGATION_PATH_PARTIAL;
@@ -1887,6 +1898,7 @@ bool actors_walk_straight(actors_t *actors, uint32_t id, const float (*points)[2
 	}
 	actor->path_count = count;
 	actor->path_index = 0;
+	actor->steer_seconds = 0.0f;
 	actor->path_complete = true;
 	actor->path_partial = false;
 	actor->straight = true;
@@ -2015,6 +2027,110 @@ void actors_stop(actors_t *actors, uint32_t id)
 
 // Looks at the stretch of path it can see: if something changed there and
 // the way is blocked now, searches again. False if it had to give up.
+// A turn of turn radians wanted (wrapped), at most most_per_second: how
+// much of it this frame, with inertia. The turning speed gains and loses
+// at most its most in TURN_RAMP_SECONDS (no turn from still to full and
+// back in a frame: that read as a robot), and is never more than it can
+// lose again before it faces the way (no swinging past and back)
+static float inertial_turn(actor_t *actor, float turn, float most_per_second, float seconds)
+{
+	float acceleration = most_per_second / TURN_RAMP_SECONDS;
+	float can_stop = SDL_sqrtf(2.0f * acceleration * SDL_fabsf(turn));
+	float wanted = (turn >= 0.0f ? 1.0f : -1.0f) * SDL_min(most_per_second, can_stop);
+	float change = acceleration * seconds;
+	float applied;
+
+	actor->angular_speed = SDL_clamp(actor->angular_speed, -most_per_second, most_per_second);
+	actor->angular_speed += SDL_clamp(wanted - actor->angular_speed, -change, change);
+	applied = actor->angular_speed * seconds;
+	// (the last bit: onto the way exactly, the turn over)
+	if ((applied >= 0.0f) == (turn >= 0.0f) && SDL_fabsf(applied) >= SDL_fabsf(turn))
+	{
+		applied = turn;
+		actor->angular_speed = 0.0f;
+	}
+	return applied;
+}
+
+// Where a walk on its path steers for (not a straight walker's: its
+// waypoints are its mind's exact spots): a point a little ahead along the
+// path (more the faster it goes), so it starts round a corner before it
+// is at it, as one does; the waypoints it has cut past (one it is near and
+// can walk straight past to the next) left behind. Only where it can walk
+// straight to it (navigation_line_passable); else its waypoint, as before.
+// Found again every STEER_SECONDS and when its waypoint changes
+static void steer_point(actors_t *actors, actor_t *actor, const navigation_t *navigation, const terrain_t *terrain, const water_t *water,
+	float seconds, float *target_x, float *target_z)
+{
+	const actor_type_t *type = &actors->types[actor->type];
+	navigation_agent_t agent = agent_of(type);
+	float ahead = SDL_min(STEER_AHEAD_METERS + STEER_AHEAD_PER_SPEED * SDL_fabsf(actor->speed), STEER_AHEAD_MOST_METERS);
+
+	actor->steer_seconds -= seconds;
+	if (actor->steer_seconds > 0.0f && actor->steer_index == actor->path_index)
+	{
+		*target_x = actor->steer_x;
+		*target_z = actor->steer_z;
+		return;
+	}
+	actor->steer_seconds = STEER_SECONDS;
+	// (waypoints cut past: near one, the next straight ahead walkable)
+	for (int k = 0; k < 3 && actor->path_index < actor->path_count - 1; k++)
+	{
+		float dx = actor->path[actor->path_index][0] - actor->x;
+		float dz = actor->path[actor->path_index][1] - actor->z;
+
+		if (dx * dx + dz * dz > ahead * ahead * 0.25f || !navigation_line_passable(navigation, terrain, water, &agent, actor->x, actor->z,
+			actor->y, actor->path[actor->path_index + 1][0], actor->path[actor->path_index + 1][1], NULL, NULL, NULL))
+		{
+			break;
+		}
+		actor->path_index++;
+	}
+	actor->steer_index = actor->path_index;
+	actor->steer_x = actor->path[actor->path_index][0];
+	actor->steer_z = actor->path[actor->path_index][1];
+	// Ahead along the path from where it is: past its waypoint as far as
+	// is left
+	{
+		float from_x = actor->x;
+		float from_z = actor->z;
+		float left = ahead;
+		float point_x = from_x;
+		float point_z = from_z;
+
+		for (int k = actor->path_index; k < actor->path_count && left > 0.0f; k++)
+		{
+			float dx = actor->path[k][0] - from_x;
+			float dz = actor->path[k][1] - from_z;
+			float length = SDL_sqrtf(dx * dx + dz * dz);
+			float amount = length > left ? left / length : 1.0f;
+
+			point_x = from_x + dx * amount;
+			point_z = from_z + dz * amount;
+			left -= length;
+			from_x = actor->path[k][0];
+			from_z = actor->path[k][1];
+		}
+		// (only past its waypoint: short of it, the waypoint is on the way
+		// anyway)
+		if (left < ahead - 1e-3f && navigation_line_passable(navigation, terrain, water, &agent, actor->x, actor->z, actor->y, point_x,
+			point_z, NULL, NULL, NULL))
+		{
+			float to_waypoint_x = actor->path[actor->path_index][0] - actor->x;
+			float to_waypoint_z = actor->path[actor->path_index][1] - actor->z;
+
+			if (to_waypoint_x * to_waypoint_x + to_waypoint_z * to_waypoint_z < ahead * ahead)
+			{
+				actor->steer_x = point_x;
+				actor->steer_z = point_z;
+			}
+		}
+	}
+	*target_x = actor->steer_x;
+	*target_z = actor->steer_z;
+}
+
 static bool look_ahead(actors_t *actors, actor_t *actor, navigation_t *navigation, const terrain_t *terrain, const water_t *water)
 {
 	const actor_type_t *type = &actors->types[actor->type];
@@ -2556,7 +2672,7 @@ static void wander_move(actors_t *actors, actor_t *actor, const navigation_t *na
 	// standing: on the spot at its turning speed, its turn clips)
 	float most = (SDL_fabsf(actor->speed) > 0.05f ? SDL_min(walk_turn_radians_per_second(actors, actor, actor->speed),
 		degrees_to_radians(type->turn_degrees_per_second)) : degrees_to_radians(type->turn_degrees_per_second)) * seconds;
-	float new_yaw = wrap_angle(actor->yaw_radians + SDL_clamp(turn, -most, most));
+	float new_yaw = wrap_angle(actor->yaw_radians + inertial_turn(actor, turn, most / seconds, seconds));
 	float wanted_speed;
 	float step_x;
 	float step_z;
@@ -2564,6 +2680,7 @@ static void wander_move(actors_t *actors, actor_t *actor, const navigation_t *na
 	if (big_body(actors, actor) && !body_fits(actors, actor, actor->x, actor->z, new_yaw) && body_fits(actors, actor, actor->x, actor->z, actor->yaw_radians))
 	{
 		new_yaw = actor->yaw_radians;
+		actor->angular_speed = 0.0f;
 	}
 	actor->yaw_radians = new_yaw;
 	actor->spot_yaw_radians = new_yaw;
@@ -3069,13 +3186,19 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 	{
 		float target_x = actor->path[actor->path_index][0];
 		float target_z = actor->path[actor->path_index][1];
-		float heading = SDL_atan2f(target_x - actor->x, target_z - actor->z);
+		float heading;
 		float turn;
 		float most = degrees_to_radians(type->turn_degrees_per_second) * seconds;
 		bool steered_off = false;
 		bool turn_refused = false;
 		bool creep_ahead = false;
 
+		// (not walking straight: round the corners, a point ahead)
+		if (!actor->straight)
+		{
+			steer_point(actors, actor, navigation, terrain, water, seconds, &target_x, &target_z);
+		}
+		heading = SDL_atan2f(target_x - actor->x, target_z - actor->z);
 		// Walking straight, its nose against something and its way round
 		// behind it: it backs out clear first (straight, no turning), then
 		// turns; not if something (a body, another) is behind it too
@@ -3152,7 +3275,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 		}
 		turn = wrap_angle(heading - actor->yaw_radians);
 		{
-			float new_yaw = wrap_angle(actor->yaw_radians + SDL_clamp(turn, -most, most));
+			float new_yaw = wrap_angle(actor->yaw_radians + inertial_turn(actor, turn, most / seconds, seconds));
 
 			// (walking straight: a turn its body does not fit through is not
 			// made; it goes on ahead to make room if it can (out of a door's
@@ -3170,6 +3293,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 					actor->backing_meters = BACK_MOST_METERS * 0.5f;
 				}
 				new_yaw = actor->yaw_radians;
+				actor->angular_speed = 0.0f;
 			}
 			actor->yaw_radians = new_yaw;
 		}
@@ -3455,8 +3579,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 	{
 		float heading = SDL_atan2f(actor->face_x - actor->x, actor->face_z - actor->z);
 		float turn = wrap_angle(heading - actor->yaw_radians);
-		float most = degrees_to_radians(type->turn_degrees_per_second) * seconds;
-		float new_yaw = wrap_angle(actor->yaw_radians + SDL_clamp(turn, -most, most));
+		float new_yaw = wrap_angle(actor->yaw_radians + inertial_turn(actor, turn, degrees_to_radians(type->turn_degrees_per_second), seconds));
 
 		// (a big straight walker's body not fitting that way round: it
 		// stays as it is, near enough)
@@ -3464,6 +3587,10 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 			|| !body_fits(actors, actor, actor->x, actor->z, actor->yaw_radians))
 		{
 			actor->yaw_radians = new_yaw;
+		}
+		else
+		{
+			actor->angular_speed = 0.0f;
 		}
 	}
 	// (a test's log: a big one's body caught in something, each time it
@@ -3650,6 +3777,7 @@ static void begin_arrival(actors_t *actors, actor_t *actor, const navigation_t *
 
 	actor->path_count = 0;
 	actor->path_index = 0;
+	actor->steer_seconds = 0.0f;
 	actor->circle_direction = random_unit(actor) < 0.5f ? -1.0f : 1.0f;
 	if (lowest_circle <= goal_ground + type->fly_height_maximum_meters)
 	{
@@ -3721,6 +3849,7 @@ static bool plan_flight(actors_t *actors, actor_t *actor, navigation_t *navigati
 		}
 	}
 	actor->path_index = 0;
+	actor->steer_seconds = 0.0f;
 	actor->path_generation = navigation->generation;
 	actor->path_partial = result == NAVIGATION_PATH_PARTIAL;
 	if (result == NAVIGATION_PATH_NONE || actor->path_count == 0)
@@ -3971,8 +4100,7 @@ static void move_flyer(actors_t *actors, actor_t *actor, navigation_t *navigatio
 	{
 		float heading = SDL_atan2f(target_x - actor->x, target_z - actor->z);
 		float wanted_turn = wrap_angle(heading - actor->yaw_radians);
-		float most = degrees_to_radians(type->turn_degrees_per_second) * seconds;
-		float applied = SDL_clamp(wanted_turn, -most, most);
+		float applied = inertial_turn(actor, wanted_turn, degrees_to_radians(type->turn_degrees_per_second), seconds);
 
 		actor->yaw_radians = wrap_angle(actor->yaw_radians + applied);
 		turn_rate = applied / seconds;
