@@ -36,8 +36,10 @@ float shadow_lookup(sampler2DShadow map, vec3 position, float texel_size)
 }
 
 // Fraction of sunlight reaching this point: 1 = fully lit. The arguments
-// are the point in each map's clip space.
-float sun_visibility(vec4 far_clip, vec4 near_clip)
+// are the point in each map's clip space. single: one comparison a map
+// (the sampler's own 2 x 2), not shadow_lookup's four (a blade of grass:
+// its sun is the blade's, an average anyway)
+float sun_visibility_taps(vec4 far_clip, vec4 near_clip, bool single)
 {
 	if (shadow_strength <= 0.0)
 	{
@@ -62,11 +64,17 @@ float sun_visibility(vec4 far_clip, vec4 near_clip)
 	if (shadow_texel_size > 0.0 && near_weight < 1.0 && far_position.x >= 0.0 && far_position.x <= 1.0 && far_position.y >= 0.0 && far_position.y <= 1.0
 		&& far_position.z <= 1.0)
 	{
-		far_lit = shadow_lookup(shadow_texture, far_position, shadow_texel_size);
+		far_lit = single ? textureLod(shadow_texture, far_position, 0.0) : shadow_lookup(shadow_texture, far_position, shadow_texel_size);
 	}
 	if (near_weight > 0.0)
 	{
-		near_lit = shadow_lookup(near_shadow_texture, near_position, near_shadow_texel_size);
+		near_lit = single ? textureLod(near_shadow_texture, near_position, 0.0)
+			: shadow_lookup(near_shadow_texture, near_position, near_shadow_texel_size);
 	}
 	return mix(1.0, mix(far_lit, near_lit, near_weight), shadow_strength);
+}
+
+float sun_visibility(vec4 far_clip, vec4 near_clip)
+{
+	return sun_visibility_taps(far_clip, near_clip, false);
 }

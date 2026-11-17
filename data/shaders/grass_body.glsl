@@ -193,14 +193,13 @@ float ground_height(vec2 world_xz)
 	int size = int(map.x);
 	vec2 grid_position = clamp(world_xz / map.y, vec2(0.0), vec2(float(size - 1)));
 	ivec2 low = ivec2(floor(grid_position));
-	ivec2 high = min(low + 1, ivec2(size - 1));
 	vec2 fraction = grid_position - vec2(low);
-	float a = texelFetch(height_texture, low, 0).r;
-	float b = texelFetch(height_texture, ivec2(high.x, low.y), 0).r;
-	float c = texelFetch(height_texture, ivec2(low.x, high.y), 0).r;
-	float d = texelFetch(height_texture, high, 0).r;
+	// The four cells round it in one gather: sampled halfway between their
+	// middles (its sampler clamps: past the last cell, the last again);
+	// x (low, high), y (high, high), z (high, low), w (low, low)
+	vec4 corners = textureGather(height_texture, (vec2(low) + 1.0) / float(size), 0);
 
-	return mix(mix(a, b, fraction.x), mix(c, d, fraction.x), fraction.y);
+	return mix(mix(corners.w, corners.z, fraction.x), mix(corners.x, corners.y, fraction.x), fraction.y);
 }
 
 // How much grass grows here (0..1; y: the ground's height), and the silt
@@ -408,7 +407,7 @@ void write_blade(uint base, vec3 root, float height, float width, float facing_t
 	// Half up it, a little towards the sun
 	vec3 middle = root + vec3(0.0, height * 0.5, 0.0);
 	vec3 looked_up = middle + sun_direction * 0.3;
-	float sun = sun_visibility(light_view_projection * vec4(looked_up, 1.0), near_light_view_projection * vec4(looked_up, 1.0))
+	float sun = sun_visibility_taps(light_view_projection * vec4(looked_up, 1.0), near_light_view_projection * vec4(looked_up, 1.0), true)
 		* cloud_light(middle, sun_direction);
 	vec4 sky = sky_light_at(middle, height * 0.5, vec3(0.0, 1.0, 0.0));
 
