@@ -1,7 +1,0 @@
-#version 450
-#extension GL_GOOGLE_include_directive : require
-#extension GL_EXT_control_flow_attributes : require
-// The grass map from the material map (render.material_map on)
-#define GRASS_BAKE
-#define MATERIAL_MAP
-#include "grass_body.glsl"
