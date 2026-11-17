@@ -5,6 +5,11 @@
 //     a TIME ID KIND STATE X Z MOVING HOUR    an animal, sampled
 //     e TIME ID KIND X Z TEXT                 something its mind did
 //     s HOME KIND NAME X Z YAW HALF_W HALF_D  a home's spot (at the end)
+//     g X Z                                   a walking test's goal (at the end)
+//     r X Z WIDTH DEPTH KIND                  the navigation mesh's rectangles
+//                                             of the walking test's type round
+//                                             its trail (at the end; kind 0
+//                                             the ground, 1 an object's top)
 //     o X0 Z0 CELL CELLS ROWS...              the obstacles round the trails
 //                                             (at the end; each row a line,
 //                                             a digit a cell: 1 a body at
@@ -82,6 +87,16 @@ void game_trace_update(game_t *game, potop_t *potop, float seconds)
 
 		sample(game, potop, game->farmer.actor, "farmer", states[game->farmer.state]);
 	}
+	// (the walking test's: going or still)
+	if (game->walk_test_actor != 0)
+	{
+		potop_actor_info_t actor;
+
+		if (potop_actor_get(potop, game->walk_test_actor, &actor))
+		{
+			sample(game, potop, game->walk_test_actor, game->walk_test_type, actor.moving ? "going" : "still");
+		}
+	}
 }
 
 void game_trace_event(game_t *game, potop_t *potop, uint32_t actor_id, const char *text)
@@ -99,6 +114,10 @@ void game_trace_event(game_t *game, potop_t *potop, uint32_t actor_id, const cha
 		{
 			kind = game_animal_kind_name(game->animals[i].kind);
 		}
+	}
+	if (actor_id == game->walk_test_actor && game->walk_test_actor != 0)
+	{
+		kind = game->walk_test_type;
 	}
 	SDL_IOprintf(game->trace, "e %.2f %u %s %.3f %.3f %s\n", potop_elapsed_seconds(potop), actor_id, kind, (double)actor.x, (double)actor.z, text);
 }
@@ -146,6 +165,28 @@ void game_trace_finish(game_t *game, potop_t *potop)
 			maximum_x = SDL_max(maximum_x, actor.x);
 			minimum_z = SDL_min(minimum_z, actor.z);
 			maximum_z = SDL_max(maximum_z, actor.z);
+		}
+	}
+	// The walking test: its goals, its trail's box, the mesh round it
+	if (game->walk_test_actor != 0)
+	{
+		static float rects[8192][5];
+		int count;
+
+		for (int g = 0; g < game->walk_test_goal_count; g++)
+		{
+			SDL_IOprintf(game->trace, "g %.3f %.3f\n", (double)game->walk_test_goals[g][0], (double)game->walk_test_goals[g][1]);
+		}
+		minimum_x = SDL_min(minimum_x, game->walk_test_trail[0][0]);
+		minimum_z = SDL_min(minimum_z, game->walk_test_trail[0][1]);
+		maximum_x = SDL_max(maximum_x, game->walk_test_trail[1][0]);
+		maximum_z = SDL_max(maximum_z, game->walk_test_trail[1][1]);
+		count = potop_debug_navmesh_rects(potop, game->walk_test_type, minimum_x - TRACE_MARGIN_METERS, minimum_z - TRACE_MARGIN_METERS,
+			maximum_x + TRACE_MARGIN_METERS, maximum_z + TRACE_MARGIN_METERS, rects, (int)SDL_arraysize(rects));
+		for (int k = 0; k < count; k++)
+		{
+			SDL_IOprintf(game->trace, "r %.2f %.2f %.2f %.2f %d\n", (double)rects[k][0], (double)rects[k][1], (double)rects[k][2], (double)rects[k][3],
+				(int)rects[k][4]);
 		}
 	}
 	if (minimum_x < maximum_x)

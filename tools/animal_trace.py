@@ -20,6 +20,12 @@
 # turn on the spot of more than SPIN_DEGREES within a second, walking in
 # place), violet jitter (not walking, yet moved: the physics pushing it,
 # at a feeder mostly), grey given up (wander_gave_up); not walking, pale.
+#
+# A walking test (potop --walk_test TYPE X,Z;... --trace FILE): its goals
+# (big blue crosses, numbered) and the navigation mesh's rectangles round
+# its trail (the ground's outlined in pale violet, objects' tops filled
+# pale cyan) under the rest; its events (walk_test_there, walk_test_short,
+# walk_test_no_way) counted.
 
 import argparse
 import math
@@ -32,6 +38,9 @@ STATE_COLOURS = {
 	"roam": (40, 160, 60),
 	"busy": (220, 180, 30),
 	"going_in": (40, 90, 220),
+	# a walking test's
+	"going": (220, 30, 120),
+	"still": (120, 120, 120),
 	"going_down": (130, 60, 190),
 	"asleep": (90, 40, 130),
 	"getting_up": (30, 180, 200),
@@ -77,6 +86,8 @@ def read_trace(path):
 	events = []                       # (t, id, kind, x, z, text)
 	spots = []                        # (home, kind, name, x, z, yaw, half_w, half_d)
 	obstacles = None
+	goals = []                        # (x, z)
+	rects = []                        # (x, z, width, depth, kind)
 	with open(path) as stream:
 		lines = iter(stream)
 		for line in lines:
@@ -91,12 +102,18 @@ def read_trace(path):
 			elif line.startswith("s "):
 				p = line.split()
 				spots.append((int(p[1]), p[2], p[3], float(p[4]), float(p[5]), float(p[6]), float(p[7]), float(p[8])))
+			elif line.startswith("g "):
+				p = line.split()
+				goals.append((float(p[1]), float(p[2])))
+			elif line.startswith("r "):
+				p = line.split()
+				rects.append((float(p[1]), float(p[2]), float(p[3]), float(p[4]), int(p[5])))
 			elif line.startswith("o "):
 				p = line.split()
 				x0, z0, cell, cells = float(p[1]), float(p[2]), float(p[3]), int(p[4])
 				rows = [next(lines).strip() for _ in range(cells)]
 				obstacles = (x0, z0, cell, cells, rows)
-	return samples, events, spots, obstacles, yaws
+	return samples, events, spots, obstacles, yaws, goals, rects
 
 
 # Whether a body stands at its feet there (under a raised hen house, a
@@ -121,7 +138,7 @@ def main():
 	parser.add_argument("--walk", action="store_true", help="colour the trails by how they walk (game/wander.c)")
 	arguments = parser.parse_args()
 
-	samples, events, spots, obstacles, yaws = read_trace(arguments.trace)
+	samples, events, spots, obstacles, yaws, goals, rects = read_trace(arguments.trace)
 	for animal in list(samples):
 		samples[animal] = [s for s in samples[animal] if arguments.time_from <= s[0] <= arguments.time_to
 			and (arguments.kind is None or s[1] == arguments.kind)]
@@ -253,6 +270,14 @@ def main():
 	def at(x, z):
 		return ((x - x0) * scale, size - 1 - (z - z0) * scale)
 
+	# (the walking test's mesh under the obstacles)
+	for x, z, width, depth, kind in rects:
+		a = at(x, z + depth)
+		b = at(x + width, z)
+		if kind == 1:
+			draw.rectangle([a[0], a[1], b[0], b[1]], fill=(200, 240, 245), outline=(90, 170, 190))
+		else:
+			draw.rectangle([a[0], a[1], b[0], b[1]], outline=(200, 170, 225))
 	if obstacles is not None:
 		for row in range(cells):
 			line = rows[row]
@@ -260,6 +285,11 @@ def main():
 				if line[column] != "0":
 					a = at(x0 + column * cell, z0 + (row + 1) * cell)
 					draw.rectangle([a[0], a[1], a[0] + cell * scale, a[1] + cell * scale], fill=OBSTACLE_COLOURS[line[column]])
+	for number, (x, z) in enumerate(goals):
+		p = at(x, z)
+		draw.line([p[0] - 9, p[1] - 9, p[0] + 9, p[1] + 9], fill=(20, 60, 230), width=3)
+		draw.line([p[0] - 9, p[1] + 9, p[0] + 9, p[1] - 9], fill=(20, 60, 230), width=3)
+		draw.text((p[0] + 10, p[1] - 12), str(number), fill=(20, 60, 230))
 	for home, kind, name, x, z, yaw, half_w, half_d in spots:
 		if half_w > 0.0 or half_d > 0.0:
 			c, s = math.cos(yaw), math.sin(yaw)

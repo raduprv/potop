@@ -3,6 +3,7 @@
 //
 //     potop [--map NAME] [--seed N] [--width W --height H] [--houses [CATEGORY]]
 //           [--set SECTION.KEY=VALUE]... [--hour H] [--sim SECONDS [--sim-step S]] [--trace FILE]
+//           [--walk_test TYPE X,Z[;X,Z...] [--walk_from X,Z]]
 //
 // --houses: no map, small flat ground with every house (objects.ini's
 // category "buildings", or "fable", or the one named) in rows
@@ -12,6 +13,9 @@
 // that many game seconds as fast as they go, then it quits
 // --trace: the animals' minds into FILE (game/trace.c), for
 // tools/animal_trace.py
+// --walk_test: an actor of the type put down where the player stands (or
+// at --walk_from) and sent to each goal in turn (game/walk_test.c); with
+// --trace its trail, the goals and the navigation mesh round it
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -20,6 +24,9 @@
 #include "system_monitor.h"
 
 static const char *trace_path = NULL;
+static const char *walk_test_type = NULL;
+static const char *walk_test_goals = NULL;
+static const char *walk_test_from = NULL;
 
 static void read_command_line(potop_options_t *options, int argument_count, char **arguments)
 {
@@ -92,6 +99,17 @@ static void read_command_line(potop_options_t *options, int argument_count, char
 			trace_path = value;
 			i++;
 		}
+		else if (SDL_strcmp(argument, "--walk_test") == 0 && i + 2 < argument_count)
+		{
+			walk_test_type = value;
+			walk_test_goals = arguments[i + 2];
+			i += 2;
+		}
+		else if (SDL_strcmp(argument, "--walk_from") == 0)
+		{
+			walk_test_from = value;
+			i++;
+		}
 	}
 }
 
@@ -120,6 +138,10 @@ int main(int argument_count, char **arguments)
 	if (trace_path != NULL)
 	{
 		game_trace_start(&game, trace_path);
+	}
+	if (walk_test_type != NULL)
+	{
+		game_walk_test_set(&game, walk_test_type, walk_test_goals, walk_test_from);
 	}
 	while (potop_frame_begin(potop, &input, &seconds))
 	{
@@ -182,6 +204,7 @@ int main(int argument_count, char **arguments)
 		game_input.aim = input.aim;
 		game_input.pointer_free = input.pointer_free;
 		game_update(&game, potop, &game_input, seconds);
+		game_walk_test_update(&game, potop, seconds);
 		game_trace_update(&game, potop, seconds);
 		potop_frame_end(potop);
 		game_after_update(&game, potop);

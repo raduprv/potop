@@ -385,6 +385,18 @@ typedef struct
 	// now and then, their events; NULL: none
 	void *trace;                   // (an SDL_IOStream)
 	float trace_seconds;           // till the next sample
+	// A walking test (walk_test.c, --walk_test TYPE X,Z[;X,Z...]): an actor
+	// of the type put down (at walk_test_from, or where the player stands)
+	// and sent to each goal in turn, into the trace
+	char walk_test_type[32];
+	float walk_test_goals[16][2];
+	int walk_test_goal_count;
+	int walk_test_next;            // the goal it is going to
+	bool walk_test_from_set;
+	float walk_test_from[2];
+	uint32_t walk_test_actor;      // 0: not put down yet
+	float walk_test_wait;          // seconds till it is put down / still since it stopped
+	float walk_test_trail[2][2];   // the trail's box (minimum, maximum), for the trace's map
 	// The workers (workers.c): a smith in each smithy near the eye
 	worker_mind_t workers[GAME_WORKERS_MAX];
 	int worker_count;
@@ -431,6 +443,10 @@ const char *game_bear_state_name(bear_state_t state);
 // detour, in late), at where it is; finish: the homes' spots and the
 // obstacles round the trails, then closed
 bool game_trace_start(game_t *game, const char *path);
+// (walk_test.c) the test asked for (the command line's): false if it
+// does not read
+bool game_walk_test_set(game_t *game, const char *type_name, const char *goals, const char *from);
+void game_walk_test_update(game_t *game, potop_t *potop, float seconds);
 void game_trace_update(game_t *game, potop_t *potop, float seconds);
 void game_trace_event(game_t *game, potop_t *potop, uint32_t actor_id, const char *text);
 

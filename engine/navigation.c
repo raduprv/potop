@@ -470,7 +470,17 @@ static void rotate_point(const float rotation[4], const float point[3], float ou
 }
 
 // One object's room in the cells of [first_x, last_x] x [first_z, last_z]
-// (a part of one region): its triangles sampled every quarter meter
+// (a part of one region): its triangles sampled every eighth of a meter,
+// each cell's samples sorted into height bands of BAND_METERS. Bands with
+// at least BAND_GAP empty ones between them are apart: each run of bands
+// is a piece of its own (its room, its top to stand on), so a terrace
+// under its porch's roof is a floor with room above it, not one block from
+// the ground to the roof (a wall, a pillar, sampled all the way up, stays
+// one)
+#define BANDS 16                     // over NAVIGATION_OBJECT_HEIGHT_METERS
+#define BAND_METERS (NAVIGATION_OBJECT_HEIGHT_METERS / (float)BANDS)
+#define BAND_GAP 2
+
 static void rasterize_object(const navigation_t *navigation, const objects_t *objects, const object_instance_t *instance, int model_index,
 	int32_t first_x, int32_t first_z, int32_t last_x, int32_t last_z, object_cells_t *out)
 {
@@ -480,7 +490,10 @@ static void rasterize_object(const navigation_t *navigation, const objects_t *ob
 	float base_y = objects_instance_base_y(instance);
 	float ceiling = base_y + NAVIGATION_OBJECT_HEIGHT_METERS;
 	const int32_t subcells = NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS;
-	float *bottom = SDL_malloc(sizeof(float) * (3 + (size_t)subcells) * (size_t)width * (size_t)depth);
+	// Per cell and band: the lowest and highest sample, the highest
+	// walkable one, and that per quarter meter
+	size_t band_count = (size_t)width * (size_t)depth * BANDS;
+	float *bottom = SDL_malloc(sizeof(float) * (3 + (size_t)subcells) * band_count);
 	float *top;
 	float *walk_top;
 	float *sub_walk_top;
@@ -489,16 +502,16 @@ static void rasterize_object(const navigation_t *navigation, const objects_t *ob
 	{
 		return;
 	}
-	top = bottom + width * depth;
-	walk_top = top + width * depth;
-	sub_walk_top = walk_top + width * depth;
-	for (int32_t i = 0; i < width * depth; i++)
+	top = bottom + band_count;
+	walk_top = top + band_count;
+	sub_walk_top = walk_top + band_count;
+	for (size_t i = 0; i < band_count; i++)
 	{
 		bottom[i] = 1e30f;
 		top[i] = -1e30f;
 		walk_top[i] = -1e30f;
 	}
-	for (int32_t i = 0; i < width * depth * subcells; i++)
+	for (size_t i = 0; i < band_count * (size_t)subcells; i++)
 	{
 		sub_walk_top[i] = -1e30f;
 	}
@@ -560,13 +573,15 @@ static void rasterize_object(const navigation_t *navigation, const objects_t *ob
 				float z = corners[0][2] + edge_a[2] * a + edge_b[2] * b;
 				int32_t cell_x = (int32_t)SDL_floorf(x / NAVIGATION_CELL_METERS) - first_x;
 				int32_t cell_z = (int32_t)SDL_floorf(z / NAVIGATION_CELL_METERS) - first_z;
-				int32_t local;
+				int32_t band;
+				size_t local;
 
 				if (y > ceiling || cell_x < 0 || cell_z < 0 || cell_x >= width || cell_z >= depth)
 				{
 					continue;
 				}
-				local = cell_z * width + cell_x;
+				band = SDL_clamp((int32_t)SDL_floorf((y - base_y) / BAND_METERS), 0, BANDS - 1);
+				local = ((size_t)cell_z * (size_t)width + (size_t)cell_x) * BANDS + (size_t)band;
 				bottom[local] = SDL_min(bottom[local], y);
 				top[local] = SDL_max(top[local], y);
 				if (walkable)
@@ -575,7 +590,7 @@ static void rasterize_object(const navigation_t *navigation, const objects_t *ob
 					float inside_z = z / NAVIGATION_CELL_METERS - SDL_floorf(z / NAVIGATION_CELL_METERS);
 					int32_t sub_x = SDL_clamp((int32_t)(inside_x * NAVIGATION_SUBCELLS), 0, NAVIGATION_SUBCELLS - 1);
 					int32_t sub_z = SDL_clamp((int32_t)(inside_z * NAVIGATION_SUBCELLS), 0, NAVIGATION_SUBCELLS - 1);
-					float *sub = &sub_walk_top[local * subcells + sub_z * NAVIGATION_SUBCELLS + sub_x];
+					float *sub = &sub_walk_top[local * (size_t)subcells + (size_t)(sub_z * NAVIGATION_SUBCELLS + sub_x)];
 
 					walk_top[local] = SDL_max(walk_top[local], y);
 					*sub = SDL_max(*sub, y);
@@ -583,24 +598,55 @@ static void rasterize_object(const navigation_t *navigation, const objects_t *ob
 			}
 		}
 	}
+	// Each cell's runs of bands, a piece each
 	for (int32_t cell_z = 0; cell_z < depth; cell_z++)
 	{
 		for (int32_t cell_x = 0; cell_x < width; cell_x++)
 		{
-			int32_t local = cell_z * width + cell_x;
+			size_t first_band = ((size_t)cell_z * (size_t)width + (size_t)cell_x) * BANDS;
 			object_cell_t item;
+			bool open = false;
+			int32_t empty = 0;
 
-			if (top[local] < bottom[local])
+			for (int32_t band = 0; band <= BANDS; band++)
 			{
-				continue;
+				bool filled = band < BANDS && top[first_band + (size_t)band] >= bottom[first_band + (size_t)band];
+
+				if (filled)
+				{
+					size_t local = first_band + (size_t)band;
+
+					if (!open)
+					{
+						item.cell = (first_z + cell_z) * navigation->size + first_x + cell_x;
+						item.bottom = 1e30f;
+						item.top = -1e30f;
+						item.walk_top = -1e30f;
+						item.type = (int16_t)instance->type;
+						for (int sub = 0; sub < subcells; sub++)
+						{
+							item.sub_walk_top[sub] = -1e30f;
+						}
+						open = true;
+					}
+					item.bottom = SDL_min(item.bottom, bottom[local]);
+					item.top = SDL_max(item.top, top[local]);
+					item.walk_top = SDL_max(item.walk_top, walk_top[local]);
+					for (int sub = 0; sub < subcells; sub++)
+					{
+						item.sub_walk_top[sub] = SDL_max(item.sub_walk_top[sub], sub_walk_top[local * (size_t)subcells + (size_t)sub]);
+					}
+					empty = 0;
+					continue;
+				}
+				empty++;
+				// (a run ends at BAND_GAP empty bands, or at the top)
+				if (open && (empty >= BAND_GAP || band == BANDS))
+				{
+					append_object_cell(out, &item);
+					open = false;
+				}
 			}
-			item.cell = (first_z + cell_z) * navigation->size + first_x + cell_x;
-			item.bottom = bottom[local];
-			item.top = top[local];
-			item.walk_top = walk_top[local];
-			item.type = (int16_t)instance->type;
-			SDL_memcpy(item.sub_walk_top, &sub_walk_top[local * subcells], sizeof(item.sub_walk_top));
-			append_object_cell(out, &item);
 		}
 	}
 	SDL_free(bottom);
@@ -4718,6 +4764,39 @@ static int mesh_line_passable(navigation_t *navigation, const terrain_t *terrain
 		}
 	}
 	return result;
+}
+
+int navigation_mesh_rects(const navigation_t *navigation, const navigation_agent_t *agent, float minimum_x, float minimum_z, float maximum_x,
+	float maximum_z, float (*rects_out)[5], int most)
+{
+	const navigation_mesh_class_t *class = &navigation->mesh.classes[mesh_class_of(agent)];
+	int count = 0;
+
+	for (int32_t r = 0; r < navigation->regions_per_side * navigation->regions_per_side && class->tiles != NULL; r++)
+	{
+		const navigation_mesh_tile_t *tile = &class->tiles[r];
+
+		for (int32_t k = 0; tile->built && k < tile->rect_count && count < most; k++)
+		{
+			const navigation_rect_t *rect = &tile->rects[k];
+			float x0 = (float)rect->x * NAVIGATION_CELL_METERS;
+			float z0 = (float)rect->z * NAVIGATION_CELL_METERS;
+			float x1 = (float)(rect->x + rect->width) * NAVIGATION_CELL_METERS;
+			float z1 = (float)(rect->z + rect->depth) * NAVIGATION_CELL_METERS;
+
+			if (x1 < minimum_x || z1 < minimum_z || x0 > maximum_x || z0 > maximum_z)
+			{
+				continue;
+			}
+			rects_out[count][0] = x0;
+			rects_out[count][1] = z0;
+			rects_out[count][2] = x1 - x0;
+			rects_out[count][3] = z1 - z0;
+			rects_out[count][4] = (float)rect->kind;
+			count++;
+		}
+	}
+	return count;
 }
 
 void navigation_mesh_describe(const navigation_t *navigation, char *text_out, size_t text_size)

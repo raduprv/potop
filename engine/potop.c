@@ -1602,6 +1602,20 @@ bool potop_edit_remove_light(potop_t *potop, float x, float y, float z, float ra
 	return edit_remove_light(&potop->world, position, radius_meters);
 }
 
+int potop_debug_navmesh_rects(potop_t *potop, const char *type_name, float minimum_x, float minimum_z, float maximum_x, float maximum_z,
+	float (*rects_out)[5], int most)
+{
+	int type = actors_find_type(&potop->world.actors, type_name);
+	navigation_agent_t agent;
+
+	if (type < 0)
+	{
+		return 0;
+	}
+	agent = actors_agent(&potop->world.actors, type);
+	return navigation_mesh_rects(&potop->world.navigation, &agent, minimum_x, minimum_z, maximum_x, maximum_z, rects_out, most);
+}
+
 void potop_debug_obstacles(potop_t *potop, float x0, float z0, float cell_meters, int cells, float height, uint8_t *out)
 {
 	world_t *world = &potop->world;
