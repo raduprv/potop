@@ -3432,6 +3432,61 @@ static float node_height(const navigation_t *navigation, int32_t node, int32_t c
 	return node < cell_count(navigation) ? navigation->ground_height[cell] : extra_surface(navigation, node)->height;
 }
 
+// A node's height at a quarter meter of its cell (sub_x, sub_z): the
+// ground's (its middle's), an object's top where it reaches there; false
+// where it does not
+static bool node_sub_height(const navigation_t *navigation, int32_t node, int32_t cell, int32_t sub_x, int32_t sub_z, float *height_out)
+{
+	const navigation_surface_t *surface;
+	uint8_t below;
+
+	if (node < cell_count(navigation))
+	{
+		*height_out = navigation->ground_height[cell];
+		return true;
+	}
+	surface = extra_surface(navigation, node);
+	below = surface->below[sub_z * NAVIGATION_SUBCELLS + sub_x];
+	if (below == NAVIGATION_SUBCELL_NONE)
+	{
+		return false;
+	}
+	*height_out = surface->height - (float)below * NAVIGATION_SUBCELL_UNIT_METERS;
+	return true;
+}
+
+// The step from one node into the next cell's over side (0: +x, 1: -x,
+// 2: +z, 3: -z) where their edges meet: the least of the steps between
+// the quarter meters facing each other (a stair's first tread, not its
+// cell's highest, a meter in); the nodes' heights where neither reaches
+// its edge
+static float node_edge_rise(const navigation_t *navigation, int32_t from_node, int32_t from_cell, int32_t to_node, int32_t to_cell, int side)
+{
+	float least = 1e30f;
+
+	for (int32_t k = 0; k < NAVIGATION_SUBCELLS; k++)
+	{
+		int32_t last = NAVIGATION_SUBCELLS - 1;
+		int32_t from_x = side == 0 ? last : side == 1 ? 0 : k;
+		int32_t from_z = side == 2 ? last : side == 3 ? 0 : k;
+		int32_t to_x = side == 0 ? 0 : side == 1 ? last : k;
+		int32_t to_z = side == 2 ? 0 : side == 3 ? last : k;
+		float from_height;
+		float to_height;
+
+		if (node_sub_height(navigation, from_node, from_cell, from_x, from_z, &from_height)
+			&& node_sub_height(navigation, to_node, to_cell, to_x, to_z, &to_height))
+		{
+			least = SDL_min(least, SDL_fabsf(to_height - from_height));
+		}
+	}
+	if (least >= 1e29f)
+	{
+		least = SDL_fabsf(node_height(navigation, to_node, to_cell) - node_height(navigation, from_node, from_cell));
+	}
+	return least;
+}
+
 // The portals out of the rectangle id over one of its sides (0: +x, 1: -x,
 // 2: +z, 3: -z) into the cells beyond, appended to a list: along the side,
 // a run of cells whose nearest surface beyond (within
@@ -3475,10 +3530,12 @@ static bool mesh_side_portals(navigation_t *navigation, int c, int32_t id, int s
 				{
 					float height = node_height(navigation, inside_node, inside_cell);
 
+					(void)height;
 					for (int n = 0; n < node_count_beyond; n++)
 					{
 						int32_t other = mesh_rect_of_node(navigation, c, nodes[n], beyond_cell);
-						float difference = SDL_fabsf(node_height(navigation, nodes[n], beyond_cell) - height);
+						// (where their edges meet: a stair's first tread)
+						float difference = node_edge_rise(navigation, inside_node, inside_cell, nodes[n], beyond_cell, side);
 
 						if (other >= 0 && other != id && difference <= best)
 						{
@@ -4767,7 +4824,7 @@ static int mesh_line_passable(navigation_t *navigation, const terrain_t *terrain
 }
 
 int navigation_mesh_rects(const navigation_t *navigation, const navigation_agent_t *agent, float minimum_x, float minimum_z, float maximum_x,
-	float maximum_z, float (*rects_out)[5], int most)
+	float maximum_z, float (*rects_out)[6], int most)
 {
 	const navigation_mesh_class_t *class = &navigation->mesh.classes[mesh_class_of(agent)];
 	int count = 0;
@@ -4793,6 +4850,7 @@ int navigation_mesh_rects(const navigation_t *navigation, const navigation_agent
 			rects_out[count][2] = x1 - x0;
 			rects_out[count][3] = z1 - z0;
 			rects_out[count][4] = (float)rect->kind;
+			rects_out[count][5] = rect->height_high;
 			count++;
 		}
 	}

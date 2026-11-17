@@ -6,7 +6,7 @@
 //     e TIME ID KIND X Z TEXT                 something its mind did
 //     s HOME KIND NAME X Z YAW HALF_W HALF_D  a home's spot (at the end)
 //     g X Z                                   a walking test's goal (at the end)
-//     r X Z WIDTH DEPTH KIND                  the navigation mesh's rectangles
+//     r X Z WIDTH DEPTH KIND HEIGHT           the navigation mesh's rectangles
 //                                             of the walking test's type round
 //                                             its trail (at the end; kind 0
 //                                             the ground, 1 an object's top)
@@ -170,7 +170,7 @@ void game_trace_finish(game_t *game, potop_t *potop)
 	// The walking test: its goals, its trail's box, the mesh round it
 	if (game->walk_test_actor != 0)
 	{
-		static float rects[8192][5];
+		static float rects[8192][6];
 		int count;
 
 		for (int g = 0; g < game->walk_test_goal_count; g++)
@@ -185,8 +185,8 @@ void game_trace_finish(game_t *game, potop_t *potop)
 			maximum_x + TRACE_MARGIN_METERS, maximum_z + TRACE_MARGIN_METERS, rects, (int)SDL_arraysize(rects));
 		for (int k = 0; k < count; k++)
 		{
-			SDL_IOprintf(game->trace, "r %.2f %.2f %.2f %.2f %d\n", (double)rects[k][0], (double)rects[k][1], (double)rects[k][2], (double)rects[k][3],
-				(int)rects[k][4]);
+			SDL_IOprintf(game->trace, "r %.2f %.2f %.2f %.2f %d %.2f\n", (double)rects[k][0], (double)rects[k][1], (double)rects[k][2],
+				(double)rects[k][3], (int)rects[k][4], (double)rects[k][5]);
 		}
 	}
 	if (minimum_x < maximum_x)

@@ -120,9 +120,9 @@ float potop_day_hour(const potop_t *potop);
 void potop_debug_obstacles(potop_t *potop, float x0, float z0, float cell_meters, int cells, float height, uint8_t *out);
 // The navigation mesh's rectangles an actor type's searches go over (those
 // built) reaching into the box: x, z, width, depth (meters), kind (0 the
-// ground, 1 an object's top); how many (at most most; 0: no such type)
+// ground, 1 an object's top), its highest height; how many (at most most; 0: no such type)
 int potop_debug_navmesh_rects(potop_t *potop, const char *type_name, float minimum_x, float minimum_z, float maximum_x, float maximum_z,
-	float (*rects_out)[5], int most);
+	float (*rects_out)[6], int most);
 // The weapon in hand loaded again (from the pack)
 void potop_player_reload(potop_t *potop);
 // What the player carries that lights round (a torch, a lantern), at the

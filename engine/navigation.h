@@ -526,9 +526,9 @@ void navigation_prepare_around(navigation_t *navigation, float x, float z);
 
 // The navigation mesh's rectangles of the agent's class (built ones) that
 // reach into the box: x, z (their first corner, meters), width, depth
-// (meters), kind (0 the ground, 1 an object's top), at most most; how many
+// (meters), kind (0 the ground, 1 an object's top), its highest cell's height, at most most; how many
 int navigation_mesh_rects(const navigation_t *navigation, const navigation_agent_t *agent, float minimum_x, float minimum_z, float maximum_x,
-	float maximum_z, float (*rects_out)[5], int most);
+	float maximum_z, float (*rects_out)[6], int most);
 
 // The navigation mesh in words (the console's navmesh): the tiles built,
 // their rectangles and portals, the memory, the last build and search

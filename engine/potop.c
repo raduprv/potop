@@ -1603,7 +1603,7 @@ bool potop_edit_remove_light(potop_t *potop, float x, float y, float z, float ra
 }
 
 int potop_debug_navmesh_rects(potop_t *potop, const char *type_name, float minimum_x, float minimum_z, float maximum_x, float maximum_z,
-	float (*rects_out)[5], int most)
+	float (*rects_out)[6], int most)
 {
 	int type = actors_find_type(&potop->world.actors, type_name);
 	navigation_agent_t agent;
