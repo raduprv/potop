@@ -1694,7 +1694,8 @@ static navigation_agent_t agent_of(const actor_type_t *type)
 	agent.can_swim = type->can_swim;
 	agent.swim_meters_per_second = type->swim_meters_per_second;
 	agent.radius_meters = 0.5f * type->width_meters;
-	agent.groups = type->path_groups;
+	// (a shut door stops one that does not open doors: navigation.h)
+	agent.groups = (uint8_t)((type->path_groups & ~NAVIGATION_GROUP_SHUT_DOOR) | (type->opens_doors ? 0u : NAVIGATION_GROUP_SHUT_DOOR));
 	agent.opens_doors = type->opens_doors;
 	return agent;
 }

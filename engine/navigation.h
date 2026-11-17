@@ -126,7 +126,7 @@ typedef struct
 	bool can_swim;
 	float swim_meters_per_second;      // a current faster than this is a wall
 	float radius_meters;               // half its width: straight stretches of a path keep this far from what is in the way
-	uint8_t groups;                    // bits: a blocker for one of these stops it (navigation_set_blockers; 0: none does)
+	uint8_t groups;                    // bits: a blocker for one of these stops it (navigation_set_blockers; 0: none does); NAVIGATION_GROUP_SHUT_DOOR its own
 	bool opens_doors;                  // goes through a shut door (navigation_set_links): it opens it (a person, not a cow)
 } navigation_agent_t;
 
@@ -146,6 +146,12 @@ typedef struct
 	float b[2];                        // the other, out on the other side
 	bool open;
 } navigation_link_t;
+
+// The blockers' groups' last bit is the doors': a shut door's doorway (the
+// cells between its link's two ends) stops an agent with it in its groups,
+// one that does not open doors (actors.c gives it them); the others go
+// through, or by the link
+#define NAVIGATION_GROUP_SHUT_DOOR 0x80u
 
 // A blocker: a rectangle no one of its groups goes through (a locked
 // gate, a fallen tree, a ward), whatever is there. The game sets them
@@ -358,6 +364,8 @@ typedef struct
 	int32_t link_cells[NAVIGATION_LINKS_MAX][2];
 	float link_meters[NAVIGATION_LINKS_MAX];
 	int link_count;
+	navigation_link_t links_given[NAVIGATION_LINKS_MAX]; // as last given (a change: the doorways stamped again)
+	int links_given_count;             // -1: none yet
 	float small_object_meters;
 	float small_detour_meters;
 	uint8_t *extra_count;

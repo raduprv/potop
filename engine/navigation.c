@@ -1595,8 +1595,72 @@ static void touch_blocker(navigation_t *navigation, const navigation_blocker_t *
 
 static bool cell_of_point(const navigation_t *navigation, float x, float z, int32_t *cell_out);
 
+// The doorways of the shut doors: the cells between each link's two ends
+// (not their own) stamped with NAVIGATION_GROUP_SHUT_DOOR (set) or cleared,
+// their regions stamped newer when anything changed
+static void stamp_doors(navigation_t *navigation, bool set)
+{
+	for (int k = 0; k < navigation->link_count && navigation->blocked != NULL; k++)
+	{
+		const navigation_link_t *link = &navigation->links[k];
+		float dx = link->b[0] - link->a[0];
+		float dz = link->b[1] - link->a[1];
+		float length = SDL_sqrtf(dx * dx + dz * dz);
+		int steps = SDL_max(1, (int)SDL_ceilf(length / 0.25f));
+
+		if (link->open && set)
+		{
+			continue;
+		}
+		for (int step = 1; step < steps; step++)
+		{
+			int32_t cell;
+			float amount = (float)step / (float)steps;
+
+			if (!cell_of_point(navigation, link->a[0] + dx * amount, link->a[1] + dz * amount, &cell) || cell == navigation->link_cells[k][0]
+				|| cell == navigation->link_cells[k][1])
+			{
+				continue;
+			}
+			if (set && (navigation->blocked[cell] & NAVIGATION_GROUP_SHUT_DOOR) == 0)
+			{
+				navigation->blocked[cell] |= NAVIGATION_GROUP_SHUT_DOOR;
+				navigation->generation++;
+				navigation->region_generation[region_of_cell(navigation, cell)] = navigation->generation;
+			}
+			else if (!set && (navigation->blocked[cell] & NAVIGATION_GROUP_SHUT_DOOR) != 0)
+			{
+				navigation->blocked[cell] &= (uint8_t)~NAVIGATION_GROUP_SHUT_DOOR;
+				navigation->generation++;
+				navigation->region_generation[region_of_cell(navigation, cell)] = navigation->generation;
+			}
+		}
+	}
+}
+
 void navigation_set_links(navigation_t *navigation, const navigation_link_t *links, int count)
 {
+	// (the doors as they were: their doorways cleared, the new ones stamped
+	// after; nothing changed, nothing done)
+	{
+		bool same = count == navigation->links_given_count;
+
+		count = SDL_clamp(count, 0, NAVIGATION_LINKS_MAX);
+		for (int k = 0; k < count && same; k++)
+		{
+			same = SDL_memcmp(&links[k], &navigation->links_given[k], sizeof(navigation_link_t)) == 0;
+		}
+		if (same)
+		{
+			return;
+		}
+		if (count > 0)
+		{
+			SDL_memcpy(navigation->links_given, links, sizeof(navigation_link_t) * (size_t)count);
+		}
+		navigation->links_given_count = count;
+	}
+	stamp_doors(navigation, false);
 	navigation->link_count = 0;
 	for (int k = 0; k < count && navigation->link_count < NAVIGATION_LINKS_MAX; k++)
 	{
@@ -1617,6 +1681,7 @@ void navigation_set_links(navigation_t *navigation, const navigation_link_t *lin
 		navigation->link_meters[navigation->link_count] = SDL_sqrtf(dx * dx + dz * dz);
 		navigation->link_count++;
 	}
+	stamp_doors(navigation, true);
 }
 
 void navigation_set_blockers(navigation_t *navigation, const navigation_blocker_t *blockers, int count)
@@ -1649,11 +1714,13 @@ void navigation_set_blockers(navigation_t *navigation, const navigation_blocker_
 	{
 		touch_blocker(navigation, &navigation->blockers[i]);
 	}
-	// (all of them: clearing an old one's box may have cleared a kept one's)
+	// (all of them: clearing an old one's box may have cleared a kept one's,
+	// or a shut door's)
 	for (int i = 0; i < count; i++)
 	{
 		stamp_blocker(navigation, &navigation->blockers[i]);
 	}
+	stamp_doors(navigation, true);
 }
 
 void navigation_prepare_around(navigation_t *navigation, float x, float z)
@@ -1803,6 +1870,9 @@ static bool resize(navigation_t *navigation, const terrain_t *terrain)
 	{
 		return false;
 	}
+	// (the doors stamped again on the new cells at their next telling)
+	navigation->links_given_count = -1;
+	navigation->link_count = 0;
 	// Everything is to be built
 	navigation->build_everything = true;
 	return true;
@@ -3123,6 +3193,7 @@ navigation_result_t navigation_find_path(navigation_t *navigation, const terrain
 #define MESH_RAY_MOST_STEPS 512
 #define MESH_START_NEAR_CELLS 2        // a start on no rectangle: the nearest one this far round
 #define MESH_TILE_CELLS_MOST 4096      // a region's cells at most (64 x 64)
+#define MESH_SUB_DROP_MOST_METERS 0.6f // a surface's quarter meters this far under its top are not its (node_sub_height)
 
 // Thresholds a portal's steps are told apart by: a run of steps between the
 // same two of them is one portal (whether an agent climbs them is the same)
@@ -3447,7 +3518,10 @@ static bool node_sub_height(const navigation_t *navigation, int32_t node, int32_
 	}
 	surface = extra_surface(navigation, node);
 	below = surface->below[sub_z * NAVIGATION_SUBCELLS + sub_x];
-	if (below == NAVIGATION_SUBCELL_NONE)
+	// (far under its top: not this surface's, a piece reaching from a
+	// floor to a storey above has its floor's quarters too, and a wall's
+	// threshold let the storey be stepped onto from a terrace)
+	if (below == NAVIGATION_SUBCELL_NONE || (float)below * NAVIGATION_SUBCELL_UNIT_METERS > MESH_SUB_DROP_MOST_METERS)
 	{
 		return false;
 	}
