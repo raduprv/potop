@@ -507,6 +507,8 @@ void main()
 			bent_uv = screen_uv;
 		}
 		color = mix(textureLod(scene_color_texture, bent_uv, 0.0).rgb, color, blend);
+		// TEST (to be removed): the refraction's branch in magenta
+		color = vec3(1.0, 0.0, 1.0);
 		fragment_color = vec4(color, 1.0);
 	}
 	else
