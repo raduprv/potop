@@ -123,8 +123,9 @@ static float ripple_random(uint32_t index, uint32_t seed)
 }
 // The small ripples: a height of many waves, each its own way, length and
 // phase (whole numbers of them across the tile, so it repeats), from 3 to
-// 48 a tile, the shorter lower; each sharpened at its crest (exp(sin - 1):
-// narrow crests, wide troughs, as choppy water). Value noise showed its
+// 24 a tile, the shorter lower; each a little sharpened at its crest
+// (exp(0.6 (sin - 1)): narrower crests, wider troughs, as choppy water;
+// sharper, every crest caught the glint as a hairline). Value noise showed its
 // lattice (diamonds); waves have none. Its slopes (in heights a tile)
 // scaled so their spread is 1, with the levels of detail averaged here
 // (SNORM cannot be blitted everywhere)
@@ -155,7 +156,7 @@ static SDL_GPUTexture *make_ripple_texture(void)
 	}
 	for (int i = 0; i < WAVE_COUNT; i++)
 	{
-		float waves = 3.0f * SDL_powf(16.0f, (float)i / (WAVE_COUNT - 1));
+		float waves = 3.0f * SDL_powf(8.0f, (float)i / (WAVE_COUNT - 1));
 		float angle = 6.2831853f * ripple_random((uint32_t)i, 1u);
 		float across_x = SDL_roundf(waves * SDL_cosf(angle));
 		float across_y = SDL_roundf(waves * SDL_sinf(angle));
@@ -179,7 +180,7 @@ static SDL_GPUTexture *make_ripple_texture(void)
 
 			for (int i = 0; i < WAVE_COUNT; i++)
 			{
-				sum += wave_height[i] * SDL_expf(SDL_sinf(wave_x[i] * u + wave_y[i] * v + wave_phase[i]) - 1.0f);
+				sum += wave_height[i] * SDL_expf(0.6f * (SDL_sinf(wave_x[i] * u + wave_y[i] * v + wave_phase[i]) - 1.0f));
 			}
 			height[y * RIPPLE_SIZE + x] = sum;
 		}

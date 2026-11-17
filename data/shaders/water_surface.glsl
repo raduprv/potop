@@ -344,7 +344,9 @@ void main()
 	// tile's levels of detail) and the change from pixel to pixel (the
 	// waves; any level too fine for the footprint, at a grazing look).
 	// The glint widens by it (Toksvig) instead of glittering in lines
-	float normal_variance = ripple.z * ripple_strength * ripple_strength
+	// (and never quite a mirror: a perfect one draws the ripples' crests
+	// as hairlines of glint)
+	float normal_variance = 0.003 + ripple.z * ripple_strength * ripple_strength
 		+ 0.5 * (dot(dFdx(normal), dFdx(normal)) + dot(dFdy(normal), dFdy(normal)));
 
 	// The ice: its thickness and the snow on it here (between the cells),
