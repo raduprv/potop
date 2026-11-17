@@ -2303,8 +2303,14 @@ static void choose_animation(actors_t *actors, actor_t *actor)
 	{
 		start_walk(actors, actor, type->walk_action);
 		// Treading water when it is not going anywhere
-		// (its stride stretched to end on a foot: the feet so much slower)
-		actor->action_rate = going ? SDL_clamp(actor->speed / (pace * actor->stride_scale), 0.3f, 3.0f) : 0.5f;
+		// (its stride stretched to end on a foot: the feet so much slower;
+		// at least so fast, so a start does not glide, but not while it
+		// slows to a stop: its last steps as slow as it goes, no stepping
+		// in place)
+		bool stopping = (!actor->moving && !actor->wandering) || (actor->moving && actor->path_index == actor->path_count - 1);
+		float slowest = stopping ? 0.05f : 0.3f;
+
+		actor->action_rate = going ? SDL_clamp(actor->speed / (pace * actor->stride_scale), slowest, 3.0f) : 0.5f;
 	}
 	else if (turning > (actor->action >= 0 && (actor->action == type->turn_left_action || actor->action == type->turn_right_action) ? TURN_ON_SPOT_RADIANS
 			: TURN_START_RADIANS)
@@ -3366,15 +3372,21 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 		// Do not overshoot the goal
 		if (actor->path_index == actor->path_count - 1 && actor->path_complete)
 		{
-			float dx = target_x - actor->x;
-			float dz = target_z - actor->z;
+			// (the path's end, not the point it steers for)
+			float dx = actor->path[actor->path_index][0] - actor->x;
+			float dz = actor->path[actor->path_index][1] - actor->z;
 
 			// (to end exactly: at its pace to the last few centimeters, then
 			// a shuffle onto it; turned to it on the spot first when it is
 			// not ahead, not round and round it)
+			// Not an exact end: slowing down as it can (half its braking:
+			// room to spare), all but still at the arrival, so its feet do
+			// not step on in place after it stops
 			if (actor->arrive_meters <= 0.0f)
 			{
-				wanted_speed = SDL_min(wanted_speed, SDL_sqrtf(dx * dx + dz * dz) * 2.0f + 0.2f);
+				float left = SDL_max(SDL_sqrtf(dx * dx + dz * dz) - ARRIVE_METERS, 0.0f);
+
+				wanted_speed = SDL_min(wanted_speed, SDL_sqrtf(2.0f * ACCELERATION * left) + 0.08f);
 			}
 			else
 			{
