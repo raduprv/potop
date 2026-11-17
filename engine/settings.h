@@ -544,11 +544,6 @@ typedef struct
 	// grass_coarse_width times as wide (cheaper: its segments are not seen)
 	float grass_coarse_meters;
 	float grass_coarse_width;
-	// The blades made again only when the view has turned (at all), moved
-	// grass_rescatter_meters, or grass_rescatter_seconds went by (0: every
-	// frame); what the view gets meanwhile they were made a margin wider for
-	float grass_rescatter_meters;
-	float grass_rescatter_seconds;
 	// The particle effects buildings carry (a forge's fire, a chimney's
 	// smoke: object_effects.h) play within this many meters of the eye (0:
 	// nowhere)
