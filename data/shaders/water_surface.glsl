@@ -500,9 +500,13 @@ void main()
 		vec4 bent_clip = world_to_clip(world_position + bend);
 		vec2 bent_uv = vec2(bent_clip.x / bent_clip.w * 0.5 + 0.5, 0.5 - bent_clip.y / bent_clip.w * 0.5);
 		float bent_depth = textureLod(scene_depth_texture, bent_uv, 0.0).r;
-		float bent_distance = depth_to_distance.y / max(bent_depth - depth_to_distance.x, 1e-6);
+		float bent_distance = depth_to_distance.y / (bent_depth - depth_to_distance.x);
 
-		if (bent_clip.w <= 0.0 || bent_distance < view_distance || any(lessThan(bent_uv, vec2(0.0))) || any(greaterThan(bent_uv, vec2(1.0))))
+		// (the surface's own distance as the copy's depth gives it: along
+		// the view, not straight from the eye)
+		float surface_distance = depth_to_distance.y / (gl_FragCoord.z - depth_to_distance.x);
+
+		if (bent_clip.w <= 0.0 || bent_distance < surface_distance || any(lessThan(bent_uv, vec2(0.0))) || any(greaterThan(bent_uv, vec2(1.0))))
 		{
 			bent_uv = screen_uv;
 		}
