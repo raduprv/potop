@@ -143,6 +143,17 @@ bool gpu_create(SDL_Window *window, bool vsync, float anisotropy)
 		}
 		gpu.window = window;
 		gpu.vsync = vsync;
+		// Three frames in flight (SDL's default two): the CPU may record one
+		// more ahead while the GPU works (POTOP_FRAMES_IN_FLIGHT: 1..3)
+		{
+			const char *asked = SDL_getenv("POTOP_FRAMES_IN_FLIGHT");
+			int frames = asked != NULL ? SDL_atoi(asked) : 3;
+
+			if (!SDL_SetGPUAllowedFramesInFlight(gpu.device, (uint32_t)SDL_clamp(frames, 1, 3)))
+			{
+				SDL_LogWarn(SDL_LOG_CATEGORY_RENDER, "GPU: cannot allow %d frames in flight: %s", frames, SDL_GetError());
+			}
+		}
 		apply_present_mode();
 		gpu.swapchain_format = SDL_GetGPUSwapchainTextureFormat(gpu.device, window);
 	}
@@ -658,9 +669,6 @@ void gpu_submit_work(SDL_GPUFence **fence_out)
 bool gpu_begin_frame(void)
 {
 	uint64_t submit_start = SDL_GetPerformanceCounter();
-	uint64_t acquire_start;
-	bool acquired;
-
 	// What was recorded since the last frame goes first
 	gpu_submit_work(NULL);
 	frame_profile_end(FRAME_PRESENT, submit_start);
@@ -671,14 +679,21 @@ bool gpu_begin_frame(void)
 		SDL_LogError(SDL_LOG_CATEGORY_RENDER, "GPU: no command buffer: %s", SDL_GetError());
 		return false;
 	}
-	acquire_start = SDL_GetPerformanceCounter();
-	acquired = SDL_WaitAndAcquireGPUSwapchainTexture(gpu.command_buffer, gpu.window, &gpu.swapchain_texture, &gpu.window_width,
-		&gpu.window_height);
-	frame_profile_end(FRAME_ACQUIRE, acquire_start);
-	if (!acquired || gpu.swapchain_texture == NULL)
+	// The window's picture is not asked for here but at the end
+	// (gpu_end_frame): waiting for it (for a frame in flight to finish)
+	// before the frame is recorded kept the GPU idle while the CPU
+	// recorded; now the recording goes on while the GPU still works on the
+	// frames before. The frame's size the window's now
 	{
-		gpu.swapchain_texture = NULL;
-		return false;
+		int width = 0;
+		int height = 0;
+
+		if (gpu.window == NULL || !SDL_GetWindowSizeInPixels(gpu.window, &width, &height) || width <= 0 || height <= 0)
+		{
+			return false;
+		}
+		gpu.window_width = (uint32_t)width;
+		gpu.window_height = (uint32_t)height;
 	}
 	if (gpu.final_texture == NULL || gpu.final_width != gpu.window_width || gpu.final_height != gpu.window_height)
 	{
@@ -708,6 +723,27 @@ void gpu_end_frame(uint8_t **pixels_out, uint32_t *width_out, uint32_t *height_o
 		return;
 	}
 	gpu_flush_uploads();
+	// The window's picture, as late as can be (gpu_begin_frame); its size
+	// may differ from the frame's for a frame while the window is resized:
+	// the blit scales
+	if (gpu.window != NULL && gpu.final_texture != NULL)
+	{
+		uint64_t acquire_start = SDL_GetPerformanceCounter();
+		uint32_t swapchain_width = 0;
+		uint32_t swapchain_height = 0;
+
+		if (!SDL_WaitAndAcquireGPUSwapchainTexture(gpu.command_buffer, gpu.window, &gpu.swapchain_texture, &swapchain_width,
+			&swapchain_height))
+		{
+			gpu.swapchain_texture = NULL;
+		}
+		frame_profile_end(FRAME_ACQUIRE, acquire_start);
+		if (gpu.swapchain_texture != NULL)
+		{
+			gpu.window_width = swapchain_width;
+			gpu.window_height = swapchain_height;
+		}
+	}
 	if (gpu.swapchain_texture != NULL && gpu.final_texture != NULL)
 	{
 		SDL_GPUBlitInfo blit;
