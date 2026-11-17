@@ -107,9 +107,9 @@ static SDL_GPUGraphicsPipeline *water_pipeline(water_renderer_t *renderer, int b
 #define RIPPLE_SIZE 256
 #define RIPPLE_SLOPE_RANGE 4.0f
 
-static uint32_t ripple_hash(int x, int y, uint32_t seed)
+static uint32_t ripple_hash(uint32_t index, uint32_t seed)
 {
-	uint32_t mixed = (uint32_t)x * 1597334673u ^ (uint32_t)y * 3812015801u ^ seed * 2654435761u;
+	uint32_t mixed = index * 1597334673u ^ seed * 2654435761u;
 
 	mixed ^= mixed >> 15;
 	mixed *= 2246822519u;
@@ -117,38 +117,24 @@ static uint32_t ripple_hash(int x, int y, uint32_t seed)
 	return mixed;
 }
 
-// Value noise repeating every period lattice cells over the tile (x, y: 0..1 of it)
-static float ripple_noise(float x, float y, int period, uint32_t seed)
+static float ripple_random(uint32_t index, uint32_t seed)
 {
-	float cell_x = x * (float)period;
-	float cell_y = y * (float)period;
-	int x0 = (int)SDL_floorf(cell_x);
-	int y0 = (int)SDL_floorf(cell_y);
-	float fraction_x = cell_x - (float)x0;
-	float fraction_y = cell_y - (float)y0;
-	float blend_x = fraction_x * fraction_x * (3.0f - 2.0f * fraction_x);
-	float blend_y = fraction_y * fraction_y * (3.0f - 2.0f * fraction_y);
-	int x1 = (x0 + 1) % period;
-	int y1 = (y0 + 1) % period;
-	float corners[4];
-
-	x0 %= period;
-	y0 %= period;
-	corners[0] = (float)(ripple_hash(x0, y0, seed) >> 8) / 16777216.0f;
-	corners[1] = (float)(ripple_hash(x1, y0, seed) >> 8) / 16777216.0f;
-	corners[2] = (float)(ripple_hash(x0, y1, seed) >> 8) / 16777216.0f;
-	corners[3] = (float)(ripple_hash(x1, y1, seed) >> 8) / 16777216.0f;
-	return (corners[0] + (corners[1] - corners[0]) * blend_x) * (1.0f - blend_y) + (corners[2] + (corners[3] - corners[2]) * blend_x) * blend_y;
+	return (float)(ripple_hash(index, seed) >> 8) / 16777216.0f;
 }
-
-// The small ripples: a height of ridged noise (each octave folded at its
-// middle and squared: sharp crests, wide troughs, as choppy water), four
-// octaves, its slopes (in heights a tile) scaled so their spread is 1, with
-// the levels of detail averaged here (SNORM cannot be blitted everywhere)
+// The small ripples: a height of many waves, each its own way, length and
+// phase (whole numbers of them across the tile, so it repeats), from 3 to
+// 48 a tile, the shorter lower; each sharpened at its crest (exp(sin - 1):
+// narrow crests, wide troughs, as choppy water). Value noise showed its
+// lattice (diamonds); waves have none. Its slopes (in heights a tile)
+// scaled so their spread is 1, with the levels of detail averaged here
+// (SNORM cannot be blitted everywhere)
 static SDL_GPUTexture *make_ripple_texture(void)
 {
-	static const int periods[4] = { 4, 8, 16, 32 };
-	static const float weights[4] = { 1.0f, 0.5f, 0.25f, 0.125f };
+	enum { WAVE_COUNT = 64 };
+	float wave_x[WAVE_COUNT];
+	float wave_y[WAVE_COUNT];
+	float wave_phase[WAVE_COUNT];
+	float wave_height[WAVE_COUNT];
 	uint32_t levels = gpu_mip_count(RIPPLE_SIZE, RIPPLE_SIZE);
 	float *height = SDL_malloc(sizeof(float) * RIPPLE_SIZE * RIPPLE_SIZE);
 	float *slope = SDL_malloc(sizeof(float) * 2 * RIPPLE_SIZE * RIPPLE_SIZE);
@@ -167,18 +153,33 @@ static SDL_GPUTexture *make_ripple_texture(void)
 	{
 		goto done;
 	}
+	for (int i = 0; i < WAVE_COUNT; i++)
+	{
+		float waves = 3.0f * SDL_powf(16.0f, (float)i / (WAVE_COUNT - 1));
+		float angle = 6.2831853f * ripple_random((uint32_t)i, 1u);
+		float across_x = SDL_roundf(waves * SDL_cosf(angle));
+		float across_y = SDL_roundf(waves * SDL_sinf(angle));
+
+		if (across_x == 0.0f && across_y == 0.0f)
+		{
+			across_x = 1.0f;
+		}
+		wave_x[i] = 6.2831853f * across_x;
+		wave_y[i] = 6.2831853f * across_y;
+		wave_phase[i] = 6.2831853f * ripple_random((uint32_t)i, 2u);
+		wave_height[i] = SDL_powf(SDL_sqrtf(across_x * across_x + across_y * across_y), -1.3f);
+	}
 	for (int y = 0; y < RIPPLE_SIZE; y++)
 	{
 		for (int x = 0; x < RIPPLE_SIZE; x++)
 		{
+			float u = (float)x / RIPPLE_SIZE;
+			float v = (float)y / RIPPLE_SIZE;
 			float sum = 0.0f;
 
-			for (int i = 0; i < 4; i++)
+			for (int i = 0; i < WAVE_COUNT; i++)
 			{
-				float value = ripple_noise((float)x / RIPPLE_SIZE, (float)y / RIPPLE_SIZE, periods[i], 17u + (uint32_t)i);
-				float ridge = 1.0f - SDL_fabsf(2.0f * value - 1.0f);
-
-				sum += weights[i] * ridge * ridge;
+				sum += wave_height[i] * SDL_expf(SDL_sinf(wave_x[i] * u + wave_y[i] * v + wave_phase[i]) - 1.0f);
 			}
 			height[y * RIPPLE_SIZE + x] = sum;
 		}
