@@ -496,7 +496,7 @@ void main()
 	{
 		vec2 screen_uv = gl_FragCoord.xy * depth_to_distance.zw;
 		vec3 calm = normalize(surface_normal);
-		vec3 bend = vec3(normal.x - calm.x, 0.0, normal.z - calm.z) * min(water_depth, 1.0) * 2.5 * reflection_range.z;
+		vec3 bend = vec3(normal.x - calm.x, 0.0, normal.z - calm.z) * min(water_depth, 1.0) * 0.125 * reflection_range.z;
 		vec4 bent_clip = world_to_clip(world_position + bend);
 		vec2 bent_uv = vec2(bent_clip.x / bent_clip.w * 0.5 + 0.5, 0.5 - bent_clip.y / bent_clip.w * 0.5);
 		float bent_depth = textureLod(scene_depth_texture, bent_uv, 0.0).r;
