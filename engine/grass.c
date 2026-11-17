@@ -11,6 +11,7 @@
 #define GRASS_CLEAR 1
 #define GRASS_SCATTER 2
 #define GRASS_ARGUMENTS 3
+#define GRASS_RELIGHT 4                // (dispatched indirectly: a thread a blade written)
 #define GRASS_BLADE_FLOATS 8
 #define GRASS_THREADS 256
 #define GRASS_MAXIMUM_GROUPS 65535u
@@ -106,8 +107,9 @@ bool grass_create(grass_t *grass)
 	}
 	grass->count_buffer = gpu_create_buffer(SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ | SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE,
 		sizeof(uint32_t) * 16);
-	// (two draws: the near blades', the far ones')
-	grass->argument_buffer = gpu_create_buffer(SDL_GPU_BUFFERUSAGE_INDIRECT, sizeof(uint32_t) * 8);
+	// (two draws: the near blades', the far ones'; then the relight's
+	// dispatch)
+	grass->argument_buffer = gpu_create_buffer(SDL_GPU_BUFFERUSAGE_INDIRECT, sizeof(uint32_t) * 12);
 	grass->no_occlusion_buffer = gpu_create_buffer(SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ, sizeof(float) * 4);
 	grass->failed = grass->scatter_pipeline == NULL || grass->pipeline == NULL || grass->count_buffer == NULL || grass->argument_buffer == NULL
 		|| grass->no_occlusion_buffer == NULL;
@@ -198,7 +200,14 @@ static void dispatch(grass_t *grass, SDL_GPUCommandBuffer *command_buffer, const
 	uniforms->control[0] = mode;
 	SDL_PushGPUComputeUniformData(command_buffer, 0, world->scene, sizeof(*world->scene));
 	SDL_PushGPUComputeUniformData(command_buffer, 1, uniforms, sizeof(*uniforms));
-	SDL_DispatchGPUCompute(compute, SDL_clamp(groups, 1u, GRASS_MAXIMUM_GROUPS), 1, 1);
+	if (mode == GRASS_RELIGHT)
+	{
+		SDL_DispatchGPUComputeIndirect(compute, grass->argument_buffer, sizeof(uint32_t) * 8);
+	}
+	else
+	{
+		SDL_DispatchGPUCompute(compute, SDL_clamp(groups, 1u, GRASS_MAXIMUM_GROUPS), 1, 1);
+	}
 	SDL_EndGPUComputePass(compute);
 }
 
@@ -255,6 +264,19 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 		if (dx * dx + dy * dy + dz * dz < margin * margin && turned > 0.9999996f && !zoomed
 			&& (settings->grass_rescatter_seconds <= 0.0f || age < (double)settings->grass_rescatter_seconds))
 		{
+			// Only their sun again (the shadows move: the actors', the
+			// sails', the clouds')
+			grass_scatter_uniforms_t relight;
+			SDL_GPUCommandBuffer *relight_commands = gpu_commands();
+
+			SDL_zero(relight);
+			relight.grid_origin[3] = (float)grass->blade_capacity;
+			relight.map[0] = (float)world->map_size;
+			relight.map[1] = world->cell_size_meters;
+			if (relight_commands != NULL && world->scene != NULL)
+			{
+				dispatch(grass, relight_commands, world, &relight, GRASS_RELIGHT, 0);
+			}
 			return;
 		}
 	}
@@ -308,6 +330,7 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 	uniforms.map[0] = (float)world->map_size;
 	uniforms.map[1] = world->cell_size_meters;
 	uniforms.map[2] = world->soil_blend_cells;
+	uniforms.map[3] = margin;
 	SDL_memcpy(uniforms.material_patches, world->material_patches, sizeof(uniforms.material_patches));
 	uniforms.control[1] = world->material_map ? 1 : 0;
 	uniforms.control[2] = world->material_map && world->overlay_texture != NULL ? 1 : 0;
@@ -447,6 +470,10 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 		source.offset = sizeof(uint32_t) * 8;
 		destination.offset = sizeof(uint32_t) * 4;
 		SDL_CopyGPUBufferToBuffer(copy, &source, &destination, sizeof(uint32_t) * 4, false);
+		// (the relight's dispatch: counts 12 .. 14)
+		source.offset = sizeof(uint32_t) * 12;
+		destination.offset = sizeof(uint32_t) * 8;
+		SDL_CopyGPUBufferToBuffer(copy, &source, &destination, sizeof(uint32_t) * 3, false);
 		SDL_EndGPUCopyPass(copy);
 	}
 	grass->prepared = true;

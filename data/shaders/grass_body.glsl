@@ -29,7 +29,11 @@
 //
 //   MODE_CLEAR     one thread: the count back to zero
 //   MODE_SCATTER   one thread per spot of the level's grid
-//   MODE_ARGUMENTS one thread: the draw's arguments
+//   MODE_ARGUMENTS one thread: the draw's arguments (and the relight's)
+//   MODE_RELIGHT  one thread a blade written (dispatched indirectly): the
+//                 frames the blades are kept (grass.c: the view hardly
+//                 moved), the sun the shadow maps and the clouds leave it
+//                 worked out again (the actors', the sails' shadows move)
 //
 // Where grass grows is worked out as terrain.frag works out where it shows
 // the grass material (soil, slope, sun, silt, bare rock, cliffs, snow),
@@ -66,6 +70,7 @@ layout(local_size_x = 256) in;
 #define MODE_CLEAR 1
 #define MODE_SCATTER 2
 #define MODE_ARGUMENTS 3
+#define MODE_RELIGHT 4
 
 // Floats per blade (grass.vert reads them as two vec4s)
 #define BLADE_FLOATS 8u
@@ -115,7 +120,7 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform grass_block
 	vec4 eye;                  // xyz; w: how far the grass goes (meters)
 	vec4 grid;                 // this level's spacing (m), its level, its spots across (its rows: control.w), full_radius (m)
 	vec4 grid_origin;          // x, z of its first spot's cell (meters); z: the finest spacing; w: blades the buffer holds
-	vec4 map;                  // cells per side, cell size (m), the soils' blend (cells), unused
+	vec4 map;                  // cells per side, cell size (m), the soils' blend (cells), the margin the eye may move before the blades are made again (m)
 	vec4 slopes;               // grass from, grass to, cliff from, cliff to (terrain.frag's slope_ranges)
 	vec4 terrain;              // snow line (of the highest ground), its shift with the sun, the highest ground (m), 1 / the variation's tiling (m)
 	vec4 blade;                // a blade's height (m), its width (m), the sun's x, z (towards it)
@@ -397,6 +402,17 @@ uint pack_shared_exponent(vec3 light)
 	return packUnorm4x8(vec4(scaled, (exponent + 128.0) / 255.0));
 }
 
+// The sun the shadow maps and the clouds leave a blade: half up it, a
+// little towards the sun (a blade stands above the ground the maps hold)
+float blade_sun(vec3 root, float height)
+{
+	vec3 middle = root + vec3(0.0, height * 0.5, 0.0);
+	vec3 looked_up = middle + sun_direction * 0.3;
+
+	return sun_visibility_taps(light_view_projection * vec4(looked_up, 1.0), near_light_view_projection * vec4(looked_up, 1.0), true)
+		* cloud_light(middle, sun_direction);
+}
+
 // The blade's record (see the top), the parts that are the same all up it
 // worked out here
 void write_blade(uint base, vec3 root, float height, float width, float facing_turn, vec2 flatten)
@@ -404,11 +420,9 @@ void write_blade(uint base, vec3 root, float height, float width, float facing_t
 	vec2 surface_uv = (root.xz / map.y + 0.5) / map.x;
 	vec4 surface = textureLod(surface_texture, surface_uv, 0.0);
 	vec3 color = blade_color(root, surface);
-	// Half up it, a little towards the sun
+	// (half up it)
 	vec3 middle = root + vec3(0.0, height * 0.5, 0.0);
-	vec3 looked_up = middle + sun_direction * 0.3;
-	float sun = sun_visibility_taps(light_view_projection * vec4(looked_up, 1.0), near_light_view_projection * vec4(looked_up, 1.0), true)
-		* cloud_light(middle, sun_direction);
+	float sun = blade_sun(root, height);
 	vec4 sky = sky_light_at(middle, height * 0.5, vec3(0.0, 1.0, 0.0));
 
 	blades[base] = floatBitsToUint(root.x);
@@ -455,7 +469,32 @@ void main()
 			counts[9] = far_count;
 			counts[10] = 0u;
 			counts[11] = uint(grid_origin.w) - far_count;
+			// (the relight's dispatch: a thread a blade, both lists)
+			counts[12] = (counts[5] + far_count + 255u) / 256u;
+			counts[13] = 1u;
+			counts[14] = 1u;
 		}
+		return;
+	}
+	if (control.x == MODE_RELIGHT)
+	{
+		uint near_count = counts[5];
+		uint total = near_count + counts[6];
+		uint index = gl_GlobalInvocationID.x;
+
+		if (index >= total)
+		{
+			return;
+		}
+		// (the far list from the buffer's end)
+		uint blade_index = index < near_count ? index : uint(grid_origin.w) - 1u - (index - near_count);
+		uint base = blade_index * BLADE_FLOATS;
+		vec3 root = vec3(uintBitsToFloat(blades[base]), uintBitsToFloat(blades[base + 1u]), uintBitsToFloat(blades[base + 2u]));
+		float height = unpackHalf2x16(blades[base + 3u]).x;
+		vec4 bytes = unpackUnorm4x8(blades[base + 5u]);
+
+		bytes.y = blade_sun(root, height);
+		blades[base + 5u] = packUnorm4x8(bytes);
 		return;
 	}
 	uint side = uint(grid.z);
@@ -534,7 +573,14 @@ void main()
 	}
 	// Behind a house, a hill (what the frame before drew), as tall as a
 	// blade gets and as far as it leans
-	if (hidden_by_pyramid(vec3(world_xz.x, y, world_xz.y), vec3(world_xz.x, y + 1.6 * blade.x, world_xz.y), blade.x + 0.1))
+	// (from anywhere the eye may move to before they are made again, the
+	// margin, map.w: a blade by a house's corner is not hidden from a step
+	// aside: as wide again and as much nearer, a band behind the house's
+	// edges written that is not seen now)
+	vec3 to_eye = normalize(eye.xyz - vec3(world_xz.x, y, world_xz.y)) * map.w;
+
+	if (hidden_by_pyramid(vec3(world_xz.x, y, world_xz.y) + to_eye, vec3(world_xz.x, y + 1.6 * blade.x, world_xz.y) + to_eye,
+		blade.x + 0.1 + map.w))
 	{
 		return;
 	}
