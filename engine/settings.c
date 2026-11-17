@@ -631,7 +631,7 @@ void settings_set_defaults(settings_t *settings)
 	settings->render.fog_valley_reach_meters = 250.0f;
 	settings->render.fog_softness_meters = 6.0f;
 	settings->render.fog_glow = 0.6f;
-	settings->render.fog_shafts = 0.7f;
+	settings->render.fog_shafts = 1.0f;
 	settings->render.fog_night_brightness = 0.3f;
 	settings->render.fog_rays = 1.0f;
 	settings->render.fog_form_hour = 19.0f;

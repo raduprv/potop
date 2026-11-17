@@ -167,8 +167,10 @@ float fog_map_exit(vec3 direction)
 // The fog beyond the froxels (past fog_slices.y), out to what the pixel
 // sees, the sky as far as the map goes: the far valleys and the milky
 // horizon when the eye is in it. A few steps through the part of it low
-// enough for fog, dithered by the pixel alone; rgb: the light it sends
-// back, a: how much of what is behind still shows
+// enough for fog, dithered by the pixel and turned a golden step each frame
+// (the anti-aliasing smooths the dots the long steps leave: held still, the
+// pattern showed on the horizon); rgb: the light it sends back, a: how much
+// of what is behind still shows
 vec4 fog_beyond(vec3 direction, float distance_meters, vec2 pixel, sampler2D valley, sampler2DShadow far_shadow)
 {
 	float enter;
@@ -184,9 +186,9 @@ vec4 fog_beyond(vec3 direction, float distance_meters, vec2 pixel, sampler2D val
 	{
 		return vec4(0.0, 0.0, 0.0, 1.0);
 	}
-	const int steps = 10;
+	const int steps = 16;
 	float step_meters = (leave - enter) / float(steps);
-	float jitter = fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+	float jitter = fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))) + fog_slices.w * 0.618034);
 	vec3 gathered = vec3(0.0);
 	float through = 1.0;
 
