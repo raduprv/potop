@@ -180,20 +180,11 @@ void main()
 	fade = instance_fade;
 	level_drops = cut_out.y > 0.0 && cut_out.x < 0.5 && abs(model_tangent.w) > cut_out.y + 0.5 ? 1.0 : 0.0;
 	// A small offset along the normal keeps lit faces from shadowing
-	// themselves, as on the terrain. The leaves look theirs up out of their
-	// own crown, about its radius towards the sun (a third of the plant's
-	// height: the height so far over the share of it, plant_data.y), in the
-	// far map only (plant.frag): no crown darkening itself in blotches that
-	// change as the near map gives way; the shadows of what stands farther
-	// (another tree, a house, a hill) still fall on it
+	// themselves, as on the terrain. (The leaves take the far map alone,
+	// plant.frag: their crown's own shadow from it, broad and soft, the
+	// same at every distance: no jump where the near map gives way)
 	vec3 looked_up = world_position + turned_normal * 0.05;
 
-	if (cut_out.x > 0.5)
-	{
-		float plant_height = (world_position.y - instance_placement.y) / max(plant_data.y, 0.1);
-
-		looked_up += sun_direction * clamp(plant_height * 0.33, 0.0, 8.0);
-	}
 	shadow_position = light_view_projection * vec4(looked_up, 1.0);
 	near_shadow_position = near_light_view_projection * vec4(world_position + turned_normal * 0.05, 1.0);
 	haze = clamp(haze_amount(world_position), 0.0, 1.0);
