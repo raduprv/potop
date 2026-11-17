@@ -176,8 +176,8 @@ void game_walk_test_update(game_t *game, potop_t *potop, float seconds)
 		char text[96];
 
 		SDL_snprintf(text, sizeof(text), distance < WALK_TEST_THERE_METERS ? "walk_test_there %.2f" : "walk_test_short %.2f_m", (double)distance);
-		SDL_Log("Walk test: goal %d (%.2f %.2f): %s, at %.2f %.2f", game->walk_test_next, (double)goal[0], (double)goal[1], text, (double)actor.x,
-			(double)actor.z);
+		SDL_Log("Walk test: goal %d (%.2f %.2f): %s, at %.2f %.2f, %.2f m up", game->walk_test_next, (double)goal[0], (double)goal[1], text,
+			(double)actor.x, (double)actor.z, (double)actor.y);
 		game_trace_event(game, potop, game->walk_test_actor, text);
 	}
 	game->walk_test_next++;

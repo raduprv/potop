@@ -635,6 +635,7 @@ int actors_find_type(const actors_t *actors, const char *name)
 #define IK_TILT_MAXIMUM_RADIANS 0.6f   // a foot turns with the slope at most this much
 #define IK_LIFTED_METERS 0.15f         // a foot this far up (a step) no longer turns with the ground
 #define PLACE_EASE_SECONDS 0.08f       // the body and feet follow the ground with this time constant
+#define PLACE_REACH_EXTRA_METERS 0.3f  // what it stands on: within its step and this much of the body
 #define PLACE_SNAP_METERS 1.5f         // a bigger change is taken at once (put somewhere else)
 
 // left * right, quaternions (x, y, z, w)
@@ -817,6 +818,7 @@ static void place_on_ground(const actors_t *actors, actor_t *actor, const terrai
 	float velocity_z;
 	bool by_feet;
 	float previous_y = actor->y;
+	float center_height;
 	// How much of the way to what it finds it goes this frame (1: all, the
 	// first time and when paused)
 	float easing = seconds > 0.0f && actor->placed ? 1.0f - SDL_expf(-seconds / PLACE_EASE_SECONDS) : 1.0f;
@@ -858,22 +860,49 @@ static void place_on_ground(const actors_t *actors, actor_t *actor, const terrai
 		sample_offsets[0][1] = sample_offsets[1][1] = 0.0f;
 		sample_offsets[2][1] = sample_offsets[3][1] = 0.0f;
 	}
+	// What it stands on under its middle first (within a little more than
+	// its step of the body: a body tilted at a terrace's edge, its back
+	// feet below, still finds the terrace under it), then each sample
+	// against that: one that once fell to the ground beside a tread no
+	// longer drags the body down into the terrace it walks on
+	{
+		navigation_agent_t placing = agent;
+
+		placing.step_meters += PLACE_REACH_EXTRA_METERS;
+		center_height = navigation != NULL && actor->placed ? navigation_surface_height(navigation, terrain, &placing, actor->x, actor->z, actor->y)
+			: actor->y;
+		if (actors->physics != NULL && actor->placed)
+		{
+			float top;
+
+			if (physics_walker_ground(actors->physics, actor->x, actor->z, actor->y, placing.step_meters, &top) && top > center_height)
+			{
+				center_height = top;
+			}
+		}
+		agent = placing;
+	}
 	for (int k = 0; k < 4; k++)
 	{
 		float x = actor->x + right_x * sample_offsets[k][0] + forward_x * sample_offsets[k][1];
 		float z = actor->z + right_z * sample_offsets[k][0] + forward_z * sample_offsets[k][1];
-		float near_height = actor->ground_samples_known ? actor->ground_samples[k] : actor->y;
+		// (what it can be on there is what is within its step of the body:
+		// a sample's own last height let one that once fell to the ground
+		// beside a stair's tread stay there, the body sunk in the terrace
+		// it walked on)
+		float near_height = actor->placed ? center_height : (actor->ground_samples_known ? actor->ground_samples[k] : actor->y);
 
 		samples[k] = navigation != NULL ? navigation_surface_height(navigation, terrain, &agent, x, z, near_height)
 			: terrain_sample_height_meters(terrain, x, z);
-		// (people: what the physics has there too, by the objects' real
-		// shapes: a door's step, an inn's terrace, a stair no wider than a
-		// navigation cell's quarter; anything up to a stride over the feet)
-		if (type->ground_align <= 0.0f && actors->physics != NULL && actor->placed)
+		// What the physics has there too, by the objects' real shapes: a
+		// door's step, an inn's terrace, a stair no wider than a navigation
+		// cell's quarter; anything up to a step over the body (people, and
+		// the animals: on a terrace, up its stair)
+		if (actors->physics != NULL && actor->placed)
 		{
 			float top;
 
-			if (physics_walker_ground(actors->physics, x, z, near_height, type->step_meters, &top) && top > samples[k])
+			if (physics_walker_ground(actors->physics, x, z, near_height, agent.step_meters, &top) && top > samples[k])
 			{
 				samples[k] = top;
 			}
@@ -900,10 +929,29 @@ static void place_on_ground(const actors_t *actors, actor_t *actor, const terrai
 			float foot_x = actor->foot_x[i];
 			float foot_z = actor->foot_z[i];
 			bool on_object = false;
-			float ground = navigation_surface_height_on(navigation, terrain, &agent, foot_x, foot_z, actor->foot_ground[i], &on_object);
+			float ground = navigation_surface_height_on(navigation, terrain, &agent, foot_x, foot_z, actor->placed ? center_height : actor->foot_ground[i],
+				&on_object);
 			float ground_x = navigation_surface_height(navigation, terrain, &agent, foot_x + IK_NORMAL_METERS, foot_z, ground);
 			float ground_z = navigation_surface_height(navigation, terrain, &agent, foot_x, foot_z + IK_NORMAL_METERS, ground);
-			float normal[3] = { -(ground_x - ground) / IK_NORMAL_METERS, 1.0f, -(ground_z - ground) / IK_NORMAL_METERS };
+			float normal[3];
+
+			// (and the physics' real shapes under the foot: a tread, a
+			// terrace's flags; then level)
+			if (actors->physics != NULL)
+			{
+				float top;
+
+				if (physics_walker_ground(actors->physics, foot_x, foot_z, center_height, agent.step_meters, &top) && top > ground + 0.01f)
+				{
+					ground = top;
+					ground_x = top;
+					ground_z = top;
+					on_object = true;
+				}
+			}
+			normal[0] = -(ground_x - ground) / IK_NORMAL_METERS;
+			normal[1] = 1.0f;
+			normal[2] = -(ground_z - ground) / IK_NORMAL_METERS;
 			float normal_length = vector_length(normal);
 			float wanted_weight = on_object ? 1.0f : 0.0f;
 
