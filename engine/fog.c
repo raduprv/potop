@@ -99,6 +99,7 @@ static bool create(fog_t *fog)
 	rays = integrate;
 	fog->rays_mask_pipeline = gpu_load_compute("fog_rays_mask.comp", &rays);
 	fog->rays_pipeline = gpu_load_compute("fog_rays.comp", &rays);
+	fog->rays_wide_pipeline = gpu_load_compute("fog_rays_wide.comp", &rays);
 	fog->inject_pipeline = gpu_load_compute("fog_inject.comp", &inject);
 	fog->integrate_pipeline = gpu_load_compute("fog_integrate.comp", &integrate);
 	fog->apply_pipeline = make_apply("fog_apply.frag", "valley fog");
@@ -108,7 +109,7 @@ static bool create(fog_t *fog)
 	fog->valley_texture = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREFORMAT_R32G32_FLOAT, VALLEY_SIZE, VALLEY_SIZE, 1, 1,
 		SDL_GPU_TEXTUREUSAGE_SAMPLER);
 	fog->created = true;
-	return fog->rays_mask_pipeline != NULL && fog->rays_pipeline != NULL && fog->inject_pipeline != NULL && fog->integrate_pipeline != NULL && fog->apply_pipeline != NULL && fog->simple_pipeline != NULL
+	return fog->rays_mask_pipeline != NULL && fog->rays_pipeline != NULL && fog->rays_wide_pipeline != NULL && fog->inject_pipeline != NULL && fog->integrate_pipeline != NULL && fog->apply_pipeline != NULL && fog->simple_pipeline != NULL
 		&& fog->valley != NULL && fog->valley_texture != NULL;
 }
 
@@ -119,6 +120,10 @@ void fog_destroy(fog_t *fog)
 		if (fog->rays_mask_pipeline != NULL)
 		{
 			SDL_ReleaseGPUComputePipeline(gpu.device, fog->rays_mask_pipeline);
+		}
+		if (fog->rays_wide_pipeline != NULL)
+		{
+			SDL_ReleaseGPUComputePipeline(gpu.device, fog->rays_wide_pipeline);
 		}
 		if (fog->rays_pipeline != NULL)
 		{
@@ -508,8 +513,12 @@ void fog_draw(fog_t *fog, SDL_GPUTexture *color_texture, SDL_GPUTexture *depth_t
 	// The rays, first: from the screen as it is
 	if (uniforms.sun[2] > 0.0f && fog->rays_mask_pipeline != NULL && make_rays(fog, width, height))
 	{
-		run_rays_pass(fog, fog->rays_mask_pipeline, depth_texture, gpu.nearest_clamp, fog->rays_mask_texture, scene, &uniforms);
-		run_rays_pass(fog, fog->rays_pipeline, fog->rays_mask_texture, gpu.linear_clamp, fog->rays_texture, scene, &uniforms);
+		// (the mask into the rays' texture, its first eighth of the way into
+		// the mask's, the whole way back into the rays': ping-pong, the two
+		// the same size and format)
+		run_rays_pass(fog, fog->rays_mask_pipeline, depth_texture, gpu.nearest_clamp, fog->rays_texture, scene, &uniforms);
+		run_rays_pass(fog, fog->rays_pipeline, fog->rays_texture, gpu.linear_clamp, fog->rays_mask_texture, scene, &uniforms);
+		run_rays_pass(fog, fog->rays_wide_pipeline, fog->rays_mask_texture, gpu.linear_clamp, fog->rays_texture, scene, &uniforms);
 	}
 	else
 	{

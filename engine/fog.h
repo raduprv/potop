@@ -75,6 +75,7 @@ typedef struct
 	uint32_t rays_size[2];
 	SDL_GPUComputePipeline *rays_mask_pipeline;
 	SDL_GPUComputePipeline *rays_pipeline;
+	SDL_GPUComputePipeline *rays_wide_pipeline;    // the third pass (fog_rays_wide.comp)
 	SDL_GPUComputePipeline *inject_pipeline;
 	SDL_GPUComputePipeline *integrate_pipeline;
 	SDL_GPUGraphicsPipeline *apply_pipeline;

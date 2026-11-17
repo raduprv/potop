@@ -1,0 +1,8 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+#include "common.glsl"
+#include "scene.glsl"
+// The sun's rays' third pass: eight places an eighth of the way apart
+// (fog_rays.glsl)
+#define RAYS_WIDE
+#include "fog_rays.glsl"
