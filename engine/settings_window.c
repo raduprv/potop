@@ -222,6 +222,8 @@ static const ui_setting_t ui_settings[] = {
 		"How steep the small ripples over the waves are (more where it flows); 0: smooth between the waves", false },
 	{ TAB_WATER, "render", "water_refraction", "Refraction", 0, 3, 0.05f, EFFECT_LIVE, "%.2f", NULL,
 		"How far the ripples bend the bottom seen through the water (needs the reflections: their copy of the scene); 0: none", false },
+	{ TAB_WATER, "render", "puddles", "Puddles", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
+		"After rain the ground holds puddles in its hollows (and the thin water on it): flat, dark, mirroring what is on screen", false },
 	{ TAB_WATER, "render", "water_reflections_half_size", "Reflections at half size", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
 		"The reflections found for a quarter of the pixels and spread over the rest (faster, a little softer; off: every pixel)", false },
 	{ TAB_WATER, "render", "terrain_from_gpu", "Terrain from the GPU", 0, 0, 0, EFFECT_LIVE, NULL, NULL,

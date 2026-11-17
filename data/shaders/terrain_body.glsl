@@ -39,6 +39,7 @@ layout(set = TEXTURE_SET, binding = 14) uniform sampler2D sky_layers_texture;   
 layout(set = TEXTURE_SET, binding = 15) uniform sampler2D sky_bounce_texture;        // RGBA8: the light the land round sends back (sky_occlusion.glsl)
 #define CLOUD_SHADOW_TEXTURE
 #include "underwater.glsl"
+#include "puddles.glsl"
 
 layout(std140, set = UNIFORM_SET, binding = 1) uniform terrain_block
 {
@@ -62,7 +63,7 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform terrain_block
 	int navigation_overlay;                 // 1 shows it
 	int material_map;                       // 1: the materials from the material map (0: worked out here, the old way)
 	vec4 macro_averages[MATERIAL_COUNT];    // each material's macro texture's average (its smallest level: rgb as held; a its luminance)
-	vec4 grass_green;                       // rock_weathering's green: the grass texture's average, linear, times 0.8
+	vec4 grass_green;                       // rock_weathering's green: the grass texture's average, linear, times 0.8; w: 1 puddles
 };
 #include "clouds.glsl"
 #define SKY_OCCLUSION_NO_GROUND
@@ -876,6 +877,24 @@ void main()
 		}
 	}
 
+	// (the sky it sees: less in hollows, under trees, round rocks)
+	float sky_raw = texture(sky_occlusion_texture, (world_position.xz / cell_size + 0.5) / float(map_size)).r;
+
+	// Puddles (puddles.glsl): flat, darker (the wet soil under the water),
+	// a mirror (the sky here; the scene over it, puddles.frag); their edges
+	// soft
+	if (grass_green.w > 0.5)
+	{
+		float puddle = puddle_amount(world_position.xz, surface, sky_raw);
+
+		if (puddle > 0.0)
+		{
+			shading_normal = normalize(mix(shading_normal, vec3(0.0, 1.0, 0.0), puddle));
+			albedo *= mix(1.0, 0.6, puddle);
+			roughness = mix(roughness, 0.03, puddle);
+		}
+	}
+
 	// Lighting: sun (blocked by shadows) plus hemisphere ambient (sky
 	// above, warm bounce below)
 	float facing_sun = max(dot(shading_normal, sun_direction), 0.0);
@@ -884,8 +903,6 @@ void main()
 	float sun_light = facing_sun > 0.0 ? sun_visibility(shadow_position, near_shadow_position) * clouds : 0.0;
 	float diffuse = facing_sun * sun_light;
 	vec3 ground_bounce = ground_bounce_color(1.0);
-	// (the sky it sees: less in hollows, under trees, round rocks)
-	float sky_raw = texture(sky_occlusion_texture, (world_position.xz / cell_size + 0.5) / float(map_size)).r;
 	float sky_share = sky_seen(sky_raw);
 	vec3 ambient = mix(ground_bounce, sky_color, shading_normal.y * 0.5 + 0.5) * ambient_intensity * sky_share
 		+ bounce_light(world_position, shading_normal, 1.0 - sky_raw);

@@ -152,6 +152,7 @@ typedef struct
 	float water_clarity_meters;   // depth at which the deep color takes over
 	float water_opacity_per_meter;
 	bool water_reflections;       // the water mirrors the land and the trees (on screen) and the volumetric clouds; off: the sky alone
+	bool puddles;                 // the ground holds puddles after rain (and the thin water on it): flat, dark, mirroring the scene (puddles.h)
 	bool water_reflections_half_size; // the reflections marched for a quarter of the pixels, apart (faster, a little softer)
 	float water_choppiness;       // how steep the small ripples over the waves are (0: a mirror between the waves)
 	float water_refraction;       // how far the ripples bend what is seen under the water (with the reflections: the scene's copy); 0: not at all

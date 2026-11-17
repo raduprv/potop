@@ -823,8 +823,10 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 		// reflections march over the scene drawn so far: a copy of it (the
 		// water is drawn into the same target)
 		{
+			// (the puddles mirror the same copy: wanted whenever there may be some)
+			bool puddles = world->lit_render.puddles && !camera->underwater;
 			bool capture = world->lit_render.water_reflections && !camera->underwater
-				&& water_renderer_visible(&world->water, &world->terrain, camera);
+				&& (puddles || water_renderer_visible(&world->water, &world->terrain, camera));
 			const clouds_t *mirrored_clouds = world->lit_render.volumetric_clouds && !world->clouds.failed ? &world->clouds : NULL;
 			bool drawn = false;
 
@@ -847,6 +849,12 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 			{
 				water_renderer_capture(&world->water_renderer, world->scene_target.color_texture, world->scene_target.depth_texture,
 					world->scene_target.width, world->scene_target.height);
+				if (puddles && world->water_renderer.captured)
+				{
+					puddles_draw(&world->puddles, world->scene_target.color_texture, world->scene_target.width, world->scene_target.height,
+						world->water_renderer.scene_color, world->water_renderer.scene_depth, &scene, camera, &world->renderer,
+						water_gpu_depth_texture(&world->water));
+				}
 				// The reflections at half size: the water in passes of its own
 				if (world->lit_render.water_reflections_half_size)
 				{

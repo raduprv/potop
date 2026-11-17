@@ -182,6 +182,7 @@ void world_destroy(world_t *world)
 		rain_destroy(&world->rain);
 		fog_destroy(&world->fog);
 		ambient_occlusion_destroy(&world->ambient_occlusion);
+		puddles_destroy(&world->puddles);
 		grass_destroy(&world->grass);
 		ground_overlay_destroy(&world->ground_overlay);
 		water_ice_destroy(&world->ice);

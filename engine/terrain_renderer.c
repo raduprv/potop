@@ -68,7 +68,7 @@ typedef struct
 	int32_t material_map;
 	int32_t padding[2];
 	float macro_averages[MATERIAL_COUNT][4];   // each material's macro texture's average (rgb as the texture holds it; a: its luminance)
-	float grass_green[4];                      // rock_weathering's green: the grass's own texture's average, linear, times 0.8
+	float grass_green[4];                      // rock_weathering's green: the grass's own texture's average, linear, times 0.8; w: 1 puddles (puddles.glsl)
 } terrain_fragment_uniforms_t;
 
 // The per chunk block of terrain.vert (chunk_block), std140
@@ -1678,6 +1678,7 @@ void terrain_renderer_draw(terrain_renderer_t *renderer, SDL_GPURenderPass *pass
 			fragment.grass_green[c] = SDL_powf((float)average[c] / 255.0f, 2.2f) * 0.8f;
 		}
 	}
+	fragment.grass_green[3] = settings->puddles ? 1.0f : 0.0f;
 	fragment.brush_line[0] = brush->start_x;
 	fragment.brush_line[1] = brush->start_z;
 	fragment.brush_line[2] = brush->end_x;

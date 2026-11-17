@@ -19,6 +19,7 @@
 #include "clouds.h"
 #include "cloud_paint.h"
 #include "ambient_occlusion.h"
+#include "puddles.h"
 #include "daylight.h"
 #include "erosion.h"
 #include "fireflies.h"
@@ -102,6 +103,7 @@ typedef struct
 	aurora_t aurora;               // the northern lights (aurora.h): the game's (and the World window's) say
 	rain_t rain;                   // the rain as it is seen, and the rainbow (rain.h)
 	fog_t fog;                     // the valley fog (fog.h)
+	puddles_t puddles;                   // what the puddles mirror (puddles.h)
 	ambient_occlusion_t ambient_occlusion; // the small scale ambient occlusion from the scene's depth (ambient_occlusion.h)
 	grass_t grass;                 // blades made on the GPU every frame (grass.h)
 	ground_overlay_t ground_overlay; // snow and petals on the ground (ground_overlay.h)
