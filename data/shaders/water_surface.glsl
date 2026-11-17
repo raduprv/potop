@@ -506,9 +506,15 @@ void main()
 		{
 			bent_uv = screen_uv;
 		}
+		bool fell_back = bent_uv == screen_uv;
 		color = mix(textureLod(scene_color_texture, bent_uv, 0.0).rgb, color, blend);
-		// TEST (to be removed): the refraction's branch in magenta
-		color = vec3(1.0, 0.0, 1.0);
+		// TEST (to be removed): how far the bend moves it, in pixels: magenta
+		// full at 20 (black: none); green where it fell back (in front)
+		{
+			float pixels = length((bent_uv - screen_uv) / depth_to_distance.zw);
+
+			color = fell_back ? vec3(0.0, 0.6, 0.0) : vec3(1.0, 0.0, 1.0) * clamp(pixels / 20.0, 0.0, 1.0);
+		}
 		fragment_color = vec4(color, 1.0);
 	}
 	else
