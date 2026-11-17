@@ -18,8 +18,10 @@
 //              go towards white; plain or punchy), ACES or Reinhard
 //              (tone_mapper).
 //
-// Off: the light cut at 1, as before. Either way: gamma, and a speck of
-// noise so gradients do not break into bands.
+// Off: the light cut at 1, as before. Either way: gamma, then the color
+// grading (color_grade: a look, as a 32^3 table from the picture's colors
+// to the graded ones, made here from the preset's numbers whenever it
+// changes), and a speck of noise so gradients do not break into bands.
 
 #ifndef POST_H
 #define POST_H
@@ -48,6 +50,9 @@ typedef struct
 	int scene_height;
 	// The exposure, 1 x 1: this frame's is written from last frame's
 	SDL_GPUTexture *exposure[2];
+	// The color grading's table (32^3) and the preset it was made for (-1: none yet)
+	SDL_GPUTexture *grade_texture;
+	int grade_preset;
 	int exposure_index;
 	double last_seconds;
 	// The temporal anti-aliasing (post_temporal): its pass, the two

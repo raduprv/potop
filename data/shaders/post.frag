@@ -11,6 +11,7 @@
 layout(set = TEXTURE_SET, binding = 0) uniform sampler2D scene_texture;     // linear light
 layout(set = TEXTURE_SET, binding = 1) uniform sampler2D bloom_texture;     // the bloom's top level
 layout(set = TEXTURE_SET, binding = 2) uniform sampler2D exposure_texture;  // 1 x 1
+layout(set = TEXTURE_SET, binding = 3) uniform sampler3D grade_texture;     // the color grading's table (32^3)
 
 layout(std140, set = UNIFORM_SET, binding = 0) uniform post_block
 {
@@ -20,6 +21,7 @@ layout(std140, set = UNIFORM_SET, binding = 0) uniform post_block
 	float bloom_levels;             // what the top level is the sum of
 	float night_vision;             // 0..1: dim light loses its colors and turns blue
 	float night_vision_luminance;   // the scene's light under which it starts
+	float grade_strength;           // 0: no color grading
 };
 
 layout(location = 0) in vec2 screen_uv;
@@ -132,6 +134,15 @@ void main()
 	else
 	{
 		shown = pow(clamp(color, 0.0, 1.0), vec3(1.0 / 2.2));
+	}
+	// The color grading: the picture's color looked up in the table (its
+	// texels' centers at the ends), as much of it as asked
+	if (grade_strength > 0.0)
+	{
+		const float grade_size = 32.0;
+		vec3 graded = textureLod(grade_texture, clamp(shown, 0.0, 1.0) * ((grade_size - 1.0) / grade_size) + 0.5 / grade_size, 0.0).rgb;
+
+		shown = mix(shown, graded, grade_strength);
 	}
 	// Half a step of 8 bits up or down, triangular: smooth gradients stay
 	// smooth instead of breaking into bands

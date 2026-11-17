@@ -310,6 +310,9 @@ typedef struct
 	bool bloom;
 	float bloom_strength;         // how much of the blurred picture is mixed in (0..1)
 	int32_t tone_mapper;          // 0: AgX, 1: AgX punchy, 2: ACES, 3: Reinhard
+	// The color grading (post.h): a look laid over the finished picture
+	int32_t color_grade;          // 0: none (as tone mapped), 1: neutral, 2: gloomy
+	float color_grade_strength;   // 0..1: how much of it
 	// Seeing in the dark (post.h): where the picture is dim, colors fade
 	// and turn blue, as the eye's rods take over (the Purkinje shift)
 	float night_vision;           // 0: off .. 1: full

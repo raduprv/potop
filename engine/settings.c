@@ -198,6 +198,8 @@ static const setting_field_t setting_fields[] =
 	FIELD("render", "bloom", SETTING_BOOL, render.bloom),
 	FIELD("render", "bloom_strength", SETTING_FLOAT, render.bloom_strength),
 	FIELD("render", "tone_mapper", SETTING_INT, render.tone_mapper),
+	FIELD("render", "color_grade", SETTING_INT, render.color_grade),
+	FIELD("render", "color_grade_strength", SETTING_FLOAT, render.color_grade_strength),
 	FIELD("render", "night_vision", SETTING_FLOAT, render.night_vision),
 	FIELD("render", "night_vision_luminance", SETTING_FLOAT, render.night_vision_luminance),
 	FIELD("render", "local_lights", SETTING_BOOL, render.local_lights),
@@ -611,6 +613,8 @@ void settings_set_defaults(settings_t *settings)
 	settings->render.bloom = true;
 	settings->render.bloom_strength = 0.05f;
 	settings->render.tone_mapper = 1;
+	settings->render.color_grade = 0;
+	settings->render.color_grade_strength = 1.0f;
 	settings->render.night_vision = 0.7f;
 	settings->render.night_vision_luminance = 0.05f;
 	settings->render.local_lights = true;

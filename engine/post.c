@@ -11,6 +11,101 @@
 #define MINIMUM_EXPOSURE 0.0625f
 #define MAXIMUM_EXPOSURE 16.0f
 
+// The color grading's table: this many steps a side
+#define GRADE_SIZE 32
+
+static float clamp_unit(float value)
+{
+	return SDL_clamp(value, 0.0f, 1.0f);
+}
+
+// One color (the screen's, 0..1) through a preset's look
+static void grade_color(int preset, const float in[3], float out[3])
+{
+	float luminance = 0.2126f * in[0] + 0.7152f * in[1] + 0.0722f * in[2];
+
+	if (preset == 1)
+	{
+		// Neutral: the punchy tone mapping's color taken back a little, the
+		// contrast a touch softer
+		for (int i = 0; i < 3; i++)
+		{
+			float color = luminance + 0.8f * (in[i] - luminance);
+
+			out[i] = clamp_unit(0.5f + 0.94f * (color - 0.5f));
+		}
+	}
+	else if (preset == 2)
+	{
+		// Gloomy: most of the color gone, the blacks lifted into a damp
+		// gray-blue, the whites dulled, all of it a bit darker and cold
+		const float shadow_tint[3] = { 0.30f, 0.36f, 0.40f };
+		const float highlight_tint[3] = { 0.95f, 0.97f, 1.0f };
+		const float cold[3] = { 0.93f, 0.98f, 1.04f };
+		float dim = SDL_powf(clamp_unit(luminance), 1.15f);
+
+		for (int i = 0; i < 3; i++)
+		{
+			float color = luminance + 0.4f * (in[i] - luminance);
+
+			color = SDL_powf(clamp_unit(color), 1.15f);
+			color = 0.5f + 0.85f * (color - 0.5f);
+			color = color * (dim * highlight_tint[i] + (1.0f - dim)) + 0.07f * (1.0f - dim) * shadow_tint[i] / 0.36f;
+			out[i] = clamp_unit(0.04f + 0.9f * color * cold[i]);
+		}
+	}
+	else
+	{
+		out[0] = in[0];
+		out[1] = in[1];
+		out[2] = in[2];
+	}
+}
+
+// The table for a preset, into the texture (made if there is none yet)
+static void build_grade(post_t *post, int preset)
+{
+	size_t size = (size_t)GRADE_SIZE * GRADE_SIZE * GRADE_SIZE * 4;
+	uint8_t *table;
+
+	if (post->grade_texture == NULL)
+	{
+		post->grade_texture = gpu_create_texture(SDL_GPU_TEXTURETYPE_3D, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, GRADE_SIZE, GRADE_SIZE,
+			GRADE_SIZE, 1, SDL_GPU_TEXTUREUSAGE_SAMPLER);
+		if (post->grade_texture == NULL)
+		{
+			return;
+		}
+	}
+	table = SDL_malloc(size);
+	if (table == NULL)
+	{
+		return;
+	}
+	for (int blue = 0; blue < GRADE_SIZE; blue++)
+	{
+		for (int green = 0; green < GRADE_SIZE; green++)
+		{
+			for (int red = 0; red < GRADE_SIZE; red++)
+			{
+				float in[3] = { (float)red / (GRADE_SIZE - 1), (float)green / (GRADE_SIZE - 1), (float)blue / (GRADE_SIZE - 1) };
+				float out[3];
+				uint8_t *texel = table + (((size_t)blue * GRADE_SIZE + green) * GRADE_SIZE + red) * 4;
+
+				grade_color(preset, in, out);
+				for (int i = 0; i < 3; i++)
+				{
+					texel[i] = (uint8_t)(out[i] * 255.0f + 0.5f);
+				}
+				texel[3] = 255;
+			}
+		}
+	}
+	gpu_upload_volume(post->grade_texture, GRADE_SIZE, GRADE_SIZE, GRADE_SIZE, table, size);
+	SDL_free(table);
+	post->grade_preset = preset;
+}
+
 static void release_levels(post_t *post)
 {
 	for (int i = 0; i < POST_BLOOM_LEVELS; i++)
@@ -95,7 +190,8 @@ bool post_create(post_t *post)
 	SDL_zerop(post);
 	post->down_pipeline = make_pipeline("bloom_down.frag", 1, LEVEL_FORMAT, "bloom down");
 	post->up_pipeline = make_pipeline("bloom_up.frag", 2, LEVEL_FORMAT, "bloom up");
-	post->final_pipeline = make_pipeline("post.frag", 3, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, "post");
+	post->grade_preset = -1;
+	post->final_pipeline = make_pipeline("post.frag", 4, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, "post");
 	post->exposure_pipeline = gpu_load_compute("exposure.comp", &layout);
 	post->temporal_pipeline = make_pipeline("taa.frag", 3, GPU_SCENE_COLOR_FORMAT, "temporal anti-aliasing");
 	for (int i = 0; i < 2; i++)
@@ -107,7 +203,8 @@ bool post_create(post_t *post)
 			gpu_upload_texture(post->exposure[i], 0, 0, 0, 0, 1, 1, &one, sizeof(one));
 		}
 	}
-	post->failed = post->final_pipeline == NULL;
+	build_grade(post, 0);
+	post->failed = post->final_pipeline == NULL || post->grade_texture == NULL;
 	return !post->failed;
 }
 
@@ -129,6 +226,10 @@ void post_destroy(post_t *post)
 		{
 			SDL_ReleaseGPUTexture(gpu.device, post->history[i]);
 		}
+	}
+	if (post->grade_texture != NULL)
+	{
+		SDL_ReleaseGPUTexture(gpu.device, post->grade_texture);
 	}
 	if (post->temporal_pipeline != NULL)
 	{
@@ -356,7 +457,8 @@ void post_draw(post_t *post, SDL_GPUTexture *scene_texture, int scene_width, int
 	bool bloomed = false;
 	float elapsed = post->last_seconds > 0.0 ? (float)SDL_clamp(now_seconds - post->last_seconds, 0.0, 1.0) : 0.0f;
 	float adaptation;
-	SDL_GPUTextureSamplerBinding samplers[3];
+	SDL_GPUTextureSamplerBinding samplers[4];
+	int preset = SDL_clamp(settings->color_grade, 0, 2);
 	struct
 	{
 		int32_t hdr;
@@ -365,7 +467,8 @@ void post_draw(post_t *post, SDL_GPUTexture *scene_texture, int scene_width, int
 		float bloom_levels;
 		float night_vision;
 		float night_vision_luminance;
-		float padding[2];
+		float grade_strength;
+		float padding;
 	} uniforms;
 
 	post->last_seconds = now_seconds;
@@ -392,11 +495,19 @@ void post_draw(post_t *post, SDL_GPUTexture *scene_texture, int scene_width, int
 	uniforms.bloom_levels = (float)post->level_count;
 	uniforms.night_vision = SDL_clamp(settings->night_vision, 0.0f, 1.0f);
 	uniforms.night_vision_luminance = SDL_max(settings->night_vision_luminance, 1e-4f);
+	// The grading's table remade only when the preset changes (none: not looked up)
+	if (preset != 0 && preset != post->grade_preset)
+	{
+		build_grade(post, preset);
+	}
+	uniforms.grade_strength = preset != 0 && preset == post->grade_preset ? clamp_unit(settings->color_grade_strength) : 0.0f;
 	samplers[0].texture = scene_texture;
 	samplers[0].sampler = gpu.linear_clamp;
 	samplers[1].texture = bloomed ? post->up[0] : scene_texture;
 	samplers[1].sampler = gpu.linear_clamp;
 	samplers[2].texture = post->exposure[post->exposure_index] != NULL ? post->exposure[post->exposure_index] : scene_texture;
 	samplers[2].sampler = gpu.nearest_clamp;
-	draw_into(gpu.final_texture, gpu.final_width, gpu.final_height, post->final_pipeline, samplers, 3, &uniforms, sizeof(uniforms));
+	samplers[3].texture = post->grade_texture;
+	samplers[3].sampler = gpu.linear_clamp;
+	draw_into(gpu.final_texture, gpu.final_width, gpu.final_height, post->final_pipeline, samplers, 4, &uniforms, sizeof(uniforms));
 }
