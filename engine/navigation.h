@@ -182,6 +182,7 @@ typedef enum
 #define NAVIGATION_SUBCELLS 4                  // per side of a cell, for exact heights (feet)
 #define NAVIGATION_SUBCELL_UNIT_METERS 0.02f
 #define NAVIGATION_SUBCELL_NONE 255            // the surface does not reach this part of the cell
+#define NAVIGATION_SUBCELL_BLOCKED 254         // nor does it, and something stands there at its height (a wall through the cell)
 
 typedef struct
 {

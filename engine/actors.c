@@ -869,17 +869,11 @@ static void place_on_ground(const actors_t *actors, actor_t *actor, const terrai
 		navigation_agent_t placing = agent;
 
 		placing.step_meters += PLACE_REACH_EXTRA_METERS;
+		// (the navigation's alone: the physics' shapes only refine the
+		// samples round it, within a step of it, so a wall of logs, each a
+		// ledge, is not climbed log by log onto the roof)
 		center_height = navigation != NULL && actor->placed ? navigation_surface_height(navigation, terrain, &placing, actor->x, actor->z, actor->y)
 			: actor->y;
-		if (actors->physics != NULL && actor->placed)
-		{
-			float top;
-
-			if (physics_walker_ground(actors->physics, actor->x, actor->z, actor->y, placing.step_meters, &top) && top > center_height)
-			{
-				center_height = top;
-			}
-		}
 		agent = placing;
 	}
 	for (int k = 0; k < 4; k++)
@@ -902,7 +896,7 @@ static void place_on_ground(const actors_t *actors, actor_t *actor, const terrai
 		{
 			float top;
 
-			if (physics_walker_ground(actors->physics, x, z, near_height, agent.step_meters, &top) && top > samples[k])
+			if (physics_walker_ground(actors->physics, x, z, near_height, type->step_meters, &top) && top > samples[k])
 			{
 				samples[k] = top;
 			}
@@ -941,7 +935,7 @@ static void place_on_ground(const actors_t *actors, actor_t *actor, const terrai
 			{
 				float top;
 
-				if (physics_walker_ground(actors->physics, foot_x, foot_z, center_height, agent.step_meters, &top) && top > ground + 0.01f)
+				if (physics_walker_ground(actors->physics, foot_x, foot_z, center_height, type->step_meters, &top) && top > ground + 0.01f)
 				{
 					ground = top;
 					ground_x = top;

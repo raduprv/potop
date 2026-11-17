@@ -386,8 +386,10 @@ static int32_t nearest_node(const navigation_t *navigation, const terrain_t *ter
 // ---------------------------------------------------------------------------
 // Building the surfaces of a region
 
-// What one object takes in one cell: the room from bottom to top, and the
-// highest surface on it (or below bottom if none)
+// What one piece of an object takes in a quarter meter of a cell: the room
+// from bottom to top, and the highest surface on it (or below bottom if
+// none). An object gives a piece per run of its height there (see
+// rasterize_object)
 typedef struct
 {
 	int32_t cell;
@@ -395,7 +397,7 @@ typedef struct
 	float top;
 	float walk_top;
 	int16_t type;                      // the object's type (for telling what is in the way)
-	float sub_walk_top[NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS]; // walk_top per quarter meter, -1e30 none
+	uint8_t sub;                       // which quarter meter (row by row, x first)
 } object_cell_t;
 
 typedef struct
@@ -471,12 +473,13 @@ static void rotate_point(const float rotation[4], const float point[3], float ou
 
 // One object's room in the cells of [first_x, last_x] x [first_z, last_z]
 // (a part of one region): its triangles sampled every eighth of a meter,
-// each cell's samples sorted into height bands of BAND_METERS. Bands with
-// at least BAND_GAP empty ones between them are apart: each run of bands
-// is a piece of its own (its room, its top to stand on), so a terrace
-// under its porch's roof is a floor with room above it, not one block from
-// the ground to the roof (a wall, a pillar, sampled all the way up, stays
-// one)
+// each quarter meter's samples sorted into height bands of BAND_METERS.
+// Bands with at least BAND_GAP empty ones between them are apart: each run
+// of bands is a piece of its own (its room, its top to stand on), so a
+// terrace under its porch's roof is a floor with room above it, not one
+// block from the ground to the roof (a wall, a pillar, sampled all the
+// way up, stays one). Per quarter meter: a stair's treads beside its
+// railing are treads, the railing over its edge only its own quarters'
 #define BANDS 16                     // over NAVIGATION_OBJECT_HEIGHT_METERS
 #define BAND_METERS (NAVIGATION_OBJECT_HEIGHT_METERS / (float)BANDS)
 #define BAND_GAP 2
@@ -490,13 +493,12 @@ static void rasterize_object(const navigation_t *navigation, const objects_t *ob
 	float base_y = objects_instance_base_y(instance);
 	float ceiling = base_y + NAVIGATION_OBJECT_HEIGHT_METERS;
 	const int32_t subcells = NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS;
-	// Per cell and band: the lowest and highest sample, the highest
-	// walkable one, and that per quarter meter
-	size_t band_count = (size_t)width * (size_t)depth * BANDS;
-	float *bottom = SDL_malloc(sizeof(float) * (3 + (size_t)subcells) * band_count);
+	// Per quarter meter and band: the lowest and highest sample, the highest
+	// walkable one
+	size_t band_count = (size_t)width * (size_t)depth * (size_t)subcells * BANDS;
+	float *bottom = SDL_malloc(sizeof(float) * 3 * band_count);
 	float *top;
 	float *walk_top;
-	float *sub_walk_top;
 
 	if (bottom == NULL)
 	{
@@ -504,16 +506,11 @@ static void rasterize_object(const navigation_t *navigation, const objects_t *ob
 	}
 	top = bottom + band_count;
 	walk_top = top + band_count;
-	sub_walk_top = walk_top + band_count;
 	for (size_t i = 0; i < band_count; i++)
 	{
 		bottom[i] = 1e30f;
 		top[i] = -1e30f;
 		walk_top[i] = -1e30f;
-	}
-	for (size_t i = 0; i < band_count * (size_t)subcells; i++)
-	{
-		sub_walk_top[i] = -1e30f;
 	}
 	// Only the solid triangles: leaves and reeds (cut out by their texture's
 	// alpha) and passable branches are neither in the way nor something to
@@ -573,6 +570,10 @@ static void rasterize_object(const navigation_t *navigation, const objects_t *ob
 				float z = corners[0][2] + edge_a[2] * a + edge_b[2] * b;
 				int32_t cell_x = (int32_t)SDL_floorf(x / NAVIGATION_CELL_METERS) - first_x;
 				int32_t cell_z = (int32_t)SDL_floorf(z / NAVIGATION_CELL_METERS) - first_z;
+				float inside_x;
+				float inside_z;
+				int32_t sub_x;
+				int32_t sub_z;
 				int32_t band;
 				size_t local;
 
@@ -580,71 +581,65 @@ static void rasterize_object(const navigation_t *navigation, const objects_t *ob
 				{
 					continue;
 				}
+				inside_x = x / NAVIGATION_CELL_METERS - SDL_floorf(x / NAVIGATION_CELL_METERS);
+				inside_z = z / NAVIGATION_CELL_METERS - SDL_floorf(z / NAVIGATION_CELL_METERS);
+				sub_x = SDL_clamp((int32_t)(inside_x * NAVIGATION_SUBCELLS), 0, NAVIGATION_SUBCELLS - 1);
+				sub_z = SDL_clamp((int32_t)(inside_z * NAVIGATION_SUBCELLS), 0, NAVIGATION_SUBCELLS - 1);
 				band = SDL_clamp((int32_t)SDL_floorf((y - base_y) / BAND_METERS), 0, BANDS - 1);
-				local = ((size_t)cell_z * (size_t)width + (size_t)cell_x) * BANDS + (size_t)band;
+				local = ((((size_t)cell_z * (size_t)width + (size_t)cell_x) * (size_t)subcells + (size_t)(sub_z * NAVIGATION_SUBCELLS + sub_x))
+					* BANDS) + (size_t)band;
 				bottom[local] = SDL_min(bottom[local], y);
 				top[local] = SDL_max(top[local], y);
 				if (walkable)
 				{
-					float inside_x = x / NAVIGATION_CELL_METERS - SDL_floorf(x / NAVIGATION_CELL_METERS);
-					float inside_z = z / NAVIGATION_CELL_METERS - SDL_floorf(z / NAVIGATION_CELL_METERS);
-					int32_t sub_x = SDL_clamp((int32_t)(inside_x * NAVIGATION_SUBCELLS), 0, NAVIGATION_SUBCELLS - 1);
-					int32_t sub_z = SDL_clamp((int32_t)(inside_z * NAVIGATION_SUBCELLS), 0, NAVIGATION_SUBCELLS - 1);
-					float *sub = &sub_walk_top[local * (size_t)subcells + (size_t)(sub_z * NAVIGATION_SUBCELLS + sub_x)];
-
 					walk_top[local] = SDL_max(walk_top[local], y);
-					*sub = SDL_max(*sub, y);
 				}
 			}
 		}
 	}
-	// Each cell's runs of bands, a piece each
+	// Each quarter meter's runs of bands, a piece each
 	for (int32_t cell_z = 0; cell_z < depth; cell_z++)
 	{
 		for (int32_t cell_x = 0; cell_x < width; cell_x++)
 		{
-			size_t first_band = ((size_t)cell_z * (size_t)width + (size_t)cell_x) * BANDS;
-			object_cell_t item;
-			bool open = false;
-			int32_t empty = 0;
-
-			for (int32_t band = 0; band <= BANDS; band++)
+			for (int32_t sub = 0; sub < subcells; sub++)
 			{
-				bool filled = band < BANDS && top[first_band + (size_t)band] >= bottom[first_band + (size_t)band];
+				size_t first_band = (((size_t)cell_z * (size_t)width + (size_t)cell_x) * (size_t)subcells + (size_t)sub) * BANDS;
+				object_cell_t item;
+				bool open = false;
+				int32_t empty = 0;
 
-				if (filled)
+				for (int32_t band = 0; band <= BANDS; band++)
 				{
-					size_t local = first_band + (size_t)band;
+					bool filled = band < BANDS && top[first_band + (size_t)band] >= bottom[first_band + (size_t)band];
 
-					if (!open)
+					if (filled)
 					{
-						item.cell = (first_z + cell_z) * navigation->size + first_x + cell_x;
-						item.bottom = 1e30f;
-						item.top = -1e30f;
-						item.walk_top = -1e30f;
-						item.type = (int16_t)instance->type;
-						for (int sub = 0; sub < subcells; sub++)
+						size_t local = first_band + (size_t)band;
+
+						if (!open)
 						{
-							item.sub_walk_top[sub] = -1e30f;
+							item.cell = (first_z + cell_z) * navigation->size + first_x + cell_x;
+							item.bottom = 1e30f;
+							item.top = -1e30f;
+							item.walk_top = -1e30f;
+							item.type = (int16_t)instance->type;
+							item.sub = (uint8_t)sub;
+							open = true;
 						}
-						open = true;
+						item.bottom = SDL_min(item.bottom, bottom[local]);
+						item.top = SDL_max(item.top, top[local]);
+						item.walk_top = SDL_max(item.walk_top, walk_top[local]);
+						empty = 0;
+						continue;
 					}
-					item.bottom = SDL_min(item.bottom, bottom[local]);
-					item.top = SDL_max(item.top, top[local]);
-					item.walk_top = SDL_max(item.walk_top, walk_top[local]);
-					for (int sub = 0; sub < subcells; sub++)
+					empty++;
+					// (a run ends at BAND_GAP empty bands, or at the top)
+					if (open && (empty >= BAND_GAP || band == BANDS))
 					{
-						item.sub_walk_top[sub] = SDL_max(item.sub_walk_top[sub], sub_walk_top[local * (size_t)subcells + (size_t)sub]);
+						append_object_cell(out, &item);
+						open = false;
 					}
-					empty = 0;
-					continue;
-				}
-				empty++;
-				// (a run ends at BAND_GAP empty bands, or at the top)
-				if (open && (empty >= BAND_GAP || band == BANDS))
-				{
-					append_object_cell(out, &item);
-					open = false;
 				}
 			}
 		}
@@ -815,9 +810,45 @@ static void pack_surfaces(navigation_t *navigation, int32_t region_index)
 }
 
 // The region's surfaces from what its objects take, cell by cell
+// A cell's surfaces from its pieces: each quarter meter's tops (with the
+// room over them there, up to the lowest piece over them in that quarter;
+// one with no room worth having left out), gathered low to high into
+// surfaces where they follow each other within SURFACE_CHAIN_METERS (a
+// stair's treads one surface, its quarters at each tread's height; a
+// porch's roof another, two meters up). A surface: its highest point, its
+// quarters under it, its room the most four of its quarters have together
+// (a railing over a stair's edge does not take the treads' room), and at
+// least MINIMUM_SURFACE_SUBCELLS of the cell, else nothing to stand on
+#define SURFACE_CHAIN_METERS 0.4f
+#define SURFACE_LEAST_ROOM_METERS 0.3f
+
+typedef struct
+{
+	float height;
+	uint8_t clearance;
+	uint8_t sub;
+} surface_candidate_t;
+
+static int compare_candidates(const void *left, const void *right)
+{
+	const surface_candidate_t *a = left;
+	const surface_candidate_t *b = right;
+
+	return a->height < b->height ? -1 : a->height > b->height ? 1 : 0;
+}
+
+static int compare_clearances(const void *left, const void *right)
+{
+	uint8_t a = *(const uint8_t *)left;
+	uint8_t b = *(const uint8_t *)right;
+
+	return (int)b - (int)a;
+}
+
 static void finish_region(navigation_t *navigation, const terrain_t *terrain, int32_t region_index, object_cells_t *list)
 {
 	navigation_region_t *region = &navigation->regions[region_index];
+	static surface_candidate_t candidates[4096];
 
 	if (list->count == 0)
 	{
@@ -829,107 +860,180 @@ static void finish_region(navigation_t *navigation, const terrain_t *terrain, in
 		int32_t cell = list->items[start].cell;
 		int32_t end = start;
 		float terrain_height;
-		float tops[8];
-		int top_count = 0;
+		int candidate_count = 0;
 
 		while (end < list->count && list->items[end].cell == cell)
 		{
 			end++;
 		}
 		terrain_height = navigation->ground_height[cell];
+		// (the terrain: anything over it anywhere in the cell takes it)
 		navigation->terrain_clearance[cell] = clearance_above(&list->items[start], end - start, terrain_height,
 			&navigation->terrain_blocker[cell]);
-
-		// The objects' tops above the terrain, low to high, close ones as one
-		for (int32_t k = start; k < end && top_count < 8; k++)
+		// Each piece's top, with the room over it in its own quarter
+		for (int32_t k = start; k < end && candidate_count < (int)SDL_arraysize(candidates); k++)
 		{
-			float height = list->items[k].walk_top;
+			const object_cell_t *item = &list->items[k];
+			float lowest = 1e30f;
 
-			if (height > terrain_height + MERGE_METERS)
-			{
-				tops[top_count++] = height;
-			}
-		}
-		for (int a = 1; a < top_count; a++)
-		{
-			for (int b = a; b > 0 && tops[b - 1] > tops[b]; b--)
-			{
-				float swap = tops[b];
-
-				tops[b] = tops[b - 1];
-				tops[b - 1] = swap;
-			}
-		}
-		for (int k = 0; k < top_count; k++)
-		{
-			float height = tops[k];
-			float low = tops[k];
-			uint8_t clearance;
-			int covered_subcells;
-
-			while (k + 1 < top_count && tops[k + 1] - height < MERGE_METERS)
-			{
-				height = tops[++k];
-			}
-			{
-				int16_t unused_type;
-
-				clearance = clearance_above(&list->items[start], end - start, height, &unused_type);
-			}
-			if (clearance == 0 || navigation->extra_count[cell] >= NAVIGATION_MAX_EXTRA_SURFACES)
+			if (item->walk_top <= terrain_height + MERGE_METERS)
 			{
 				continue;
 			}
-			if (region->surface_count == NAVIGATION_REGION_EXTRA_SLOTS)
+			for (int32_t other = start; other < end; other++)
 			{
-				SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Navigation: region %d has more object surfaces than %d; some are left out",
-					region_index, NAVIGATION_REGION_EXTRA_SLOTS);
-				break;
-			}
-			if (region->surfaces == NULL)
-			{
-				region->surfaces = SDL_malloc(sizeof(navigation_surface_t) * NAVIGATION_REGION_EXTRA_SLOTS);
-				if (region->surfaces == NULL)
+				const object_cell_t *above = &list->items[other];
+
+				if (above->sub == item->sub && above->top > item->walk_top + 0.1f)
 				{
-					break;
+					lowest = SDL_min(lowest, above->bottom);
 				}
 			}
-			region->surfaces[region->surface_count].height = height;
-			region->surfaces[region->surface_count].cell = cell;
-			region->surfaces[region->surface_count].clearance = clearance;
-			// Where in the cell it is, and how high: the tops of the objects
-			// that make it (theirs within the merged range). Too small a part
-			// of the cell (a cone's tip) is nothing to stand on: the cell
-			// stays in the way
-			covered_subcells = 0;
+			if (lowest < item->walk_top + SURFACE_LEAST_ROOM_METERS)
+			{
+				continue;
+			}
+			candidates[candidate_count].height = item->walk_top;
+			candidates[candidate_count].clearance = lowest >= 1e29f ? NAVIGATION_CLEARANCE_OPEN : clearance_units(lowest - item->walk_top);
+			candidates[candidate_count].sub = item->sub;
+			candidate_count++;
+		}
+		SDL_qsort(candidates, (size_t)candidate_count, sizeof(surface_candidate_t), compare_candidates);
+		for (int first = 0; first < candidate_count; )
+		{
+			int last = first;
+			float sub_height[NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS];
+			uint8_t sub_clearance[NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS];
+			uint8_t clearances[NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS];
+			float run_height[NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS];
+			uint8_t run_clearance[NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS];
+			int covered = 0;
+			float height;
+			navigation_surface_t *surface;
+
+			while (last + 1 < candidate_count && candidates[last + 1].height - candidates[last].height <= SURFACE_CHAIN_METERS)
+			{
+				last++;
+			}
 			for (int sub = 0; sub < NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS; sub++)
 			{
-				float highest = -1e30f;
-
-				for (int32_t item = start; item < end; item++)
+				run_height[sub] = -1e30f;
+				run_clearance[sub] = 0;
+			}
+			// (a quarter's highest of the run, and its room there)
+			for (int k = first; k <= last; k++)
+			{
+				if (candidates[k].height > run_height[candidates[k].sub])
 				{
-					float sub_top = list->items[item].sub_walk_top[sub];
+					run_height[candidates[k].sub] = candidates[k].height;
+					run_clearance[candidates[k].sub] = candidates[k].clearance;
+				}
+			}
+			first = last + 1;
+			// Its quarters that touch, apart: a wall through the cell (its
+			// quarters no surface) leaves the floor on either side of it two
+			// surfaces, not one way through the wall
+			for (int seed = 0; seed < NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS; seed++)
+			{
+				int stack[NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS];
+				int stack_count = 0;
 
-					if (list->items[item].walk_top >= low - 0.01f && list->items[item].walk_top <= height + 0.01f)
+				if (run_height[seed] < -1e29f)
+				{
+					continue;
+				}
+				covered = 0;
+				height = -1e30f;
+				for (int sub = 0; sub < NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS; sub++)
+				{
+					sub_height[sub] = -1e30f;
+					sub_clearance[sub] = 0;
+				}
+				stack[stack_count++] = seed;
+				sub_height[seed] = run_height[seed];
+				sub_clearance[seed] = run_clearance[seed];
+				run_height[seed] = -1e30f;
+				while (stack_count > 0)
+				{
+					int sub = stack[--stack_count];
+					int sub_x = sub % NAVIGATION_SUBCELLS;
+					int sub_z = sub / NAVIGATION_SUBCELLS;
+
+					height = SDL_max(height, sub_height[sub]);
+					clearances[covered++] = sub_clearance[sub];
+					for (int d = 0; d < 4; d++)
 					{
-						highest = SDL_max(highest, sub_top);
+						int next_x = sub_x + direction_x[d];
+						int next_z = sub_z + direction_z[d];
+						int next;
+
+						if (next_x < 0 || next_z < 0 || next_x >= NAVIGATION_SUBCELLS || next_z >= NAVIGATION_SUBCELLS)
+						{
+							continue;
+						}
+						next = next_z * NAVIGATION_SUBCELLS + next_x;
+						if (run_height[next] > -1e29f)
+						{
+							sub_height[next] = run_height[next];
+							sub_clearance[next] = run_clearance[next];
+							run_height[next] = -1e30f;
+							stack[stack_count++] = next;
+						}
 					}
 				}
-				region->surfaces[region->surface_count].below[sub] = highest < -1e29f ? NAVIGATION_SUBCELL_NONE
-					: (uint8_t)SDL_clamp(SDL_ceilf((height - highest) / NAVIGATION_SUBCELL_UNIT_METERS), 0.0f,
-						(float)(NAVIGATION_SUBCELL_NONE - 1));
-				covered_subcells += highest > -1e29f ? 1 : 0;
+				if (covered < MINIMUM_SURFACE_SUBCELLS || navigation->extra_count[cell] >= NAVIGATION_MAX_EXTRA_SURFACES)
+				{
+					continue;
+				}
+				if (region->surface_count == NAVIGATION_REGION_EXTRA_SLOTS)
+				{
+					SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Navigation: region %d has more object surfaces than %d; some are left out",
+						region_index, NAVIGATION_REGION_EXTRA_SLOTS);
+					break;
+				}
+				if (region->surfaces == NULL)
+				{
+					region->surfaces = SDL_malloc(sizeof(navigation_surface_t) * NAVIGATION_REGION_EXTRA_SLOTS);
+					if (region->surfaces == NULL)
+					{
+						break;
+					}
+				}
+				SDL_qsort(clearances, (size_t)covered, 1, compare_clearances);
+				surface = &region->surfaces[region->surface_count];
+				surface->height = height;
+				surface->cell = cell;
+				surface->clearance = clearances[MINIMUM_SURFACE_SUBCELLS - 1];
+				for (int sub = 0; sub < NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS; sub++)
+				{
+					surface->below[sub] = sub_height[sub] < -1e29f ? NAVIGATION_SUBCELL_NONE
+						: (uint8_t)SDL_clamp(SDL_ceilf((height - sub_height[sub]) / NAVIGATION_SUBCELL_UNIT_METERS), 0.0f,
+							(float)(NAVIGATION_SUBCELL_BLOCKED - 1));
+					// (not its, and something stands there at its height: a
+					// wall, a post; the way to the edge stops there)
+					if (surface->below[sub] == NAVIGATION_SUBCELL_NONE)
+					{
+						for (int32_t item = start; item < end; item++)
+						{
+							if (list->items[item].sub == sub && list->items[item].bottom < height + 0.2f && list->items[item].top > height + 0.3f)
+							{
+								surface->below[sub] = NAVIGATION_SUBCELL_BLOCKED;
+								break;
+							}
+						}
+					}
+				}
+				if (surface->clearance == 0)
+				{
+					continue;
+				}
+				if (navigation->extra_count[cell] == 0)
+				{
+					navigation->extra_first[cell] = (uint16_t)region->surface_count;
+				}
+				region->surface_count++;
+				navigation->extra_count[cell]++;
 			}
-			if (covered_subcells < MINIMUM_SURFACE_SUBCELLS)
-			{
-				continue;
-			}
-			if (navigation->extra_count[cell] == 0)
-			{
-				navigation->extra_first[cell] = (uint16_t)region->surface_count;
-			}
-			region->surface_count++;
-			navigation->extra_count[cell]++;
 		}
 		start = end;
 	}
@@ -2118,7 +2222,7 @@ static float surface_height_at(const navigation_t *navigation, const navigation_
 	int32_t sub = (int32_t)(inside_z * NAVIGATION_SUBCELLS) * NAVIGATION_SUBCELLS + (int32_t)(inside_x * NAVIGATION_SUBCELLS);
 	uint8_t below = surface->below[sub];
 
-	if (below == NAVIGATION_SUBCELL_NONE)
+	if (below >= NAVIGATION_SUBCELL_BLOCKED)
 	{
 		return -1e30f;
 	}
@@ -3193,7 +3297,6 @@ navigation_result_t navigation_find_path(navigation_t *navigation, const terrain
 #define MESH_RAY_MOST_STEPS 512
 #define MESH_START_NEAR_CELLS 2        // a start on no rectangle: the nearest one this far round
 #define MESH_TILE_CELLS_MOST 4096      // a region's cells at most (64 x 64)
-#define MESH_SUB_DROP_MOST_METERS 0.6f // a surface's quarter meters this far under its top are not its (node_sub_height)
 
 // Thresholds a portal's steps are told apart by: a run of steps between the
 // same two of them is one portal (whether an agent climbs them is the same)
@@ -3419,8 +3522,10 @@ static void mesh_build_props(const navigation_t *navigation, const navigation_me
 
 // The node of to_cell (in the tile) that can join from_node's rectangle:
 // usable, in none yet, alike it, the nearest in height; -1 if none
+static float node_edge_rise(const navigation_t *navigation, int32_t from_node, int32_t from_cell, int32_t to_node, int32_t to_cell, int side);
+
 static int32_t mesh_match(const navigation_t *navigation, const navigation_mesh_class_t *class, const navigation_mesh_tile_t *tile,
-	const mesh_build_t *build, int32_t from_node, int32_t from_cell, int32_t to_cell, float reach)
+	const mesh_build_t *build, int32_t from_node, int32_t from_cell, int32_t to_cell, int side, float reach)
 {
 	mesh_node_t from;
 	int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
@@ -3438,7 +3543,8 @@ static int32_t mesh_match(const navigation_t *navigation, const navigation_mesh_
 			continue;
 		}
 		mesh_build_props(navigation, class, build, nodes[k], to_cell, &candidate);
-		if (candidate.usable && mesh_alike(&from, &candidate, reach) && SDL_fabsf(candidate.height - from.height) < best_difference)
+		if (candidate.usable && mesh_alike(&from, &candidate, reach) && SDL_fabsf(candidate.height - from.height) < best_difference
+			&& node_edge_rise(navigation, from_node, from_cell, nodes[k], to_cell, side) <= reach)
 		{
 			best_difference = SDL_fabsf(candidate.height - from.height);
 			best = nodes[k];
@@ -3505,12 +3611,14 @@ static float node_height(const navigation_t *navigation, int32_t node, int32_t c
 
 // A node's height at a quarter meter of its cell (sub_x, sub_z): the
 // ground's (its middle's), an object's top where it reaches there; false
-// where it does not
-static bool node_sub_height(const navigation_t *navigation, int32_t node, int32_t cell, int32_t sub_x, int32_t sub_z, float *height_out)
+// where it does not (blocked_out: and something stands there at its height)
+static bool node_sub_height(const navigation_t *navigation, int32_t node, int32_t cell, int32_t sub_x, int32_t sub_z, float *height_out,
+	bool *blocked_out)
 {
 	const navigation_surface_t *surface;
 	uint8_t below;
 
+	*blocked_out = false;
 	if (node < cell_count(navigation))
 	{
 		*height_out = navigation->ground_height[cell];
@@ -3518,11 +3626,9 @@ static bool node_sub_height(const navigation_t *navigation, int32_t node, int32_
 	}
 	surface = extra_surface(navigation, node);
 	below = surface->below[sub_z * NAVIGATION_SUBCELLS + sub_x];
-	// (far under its top: not this surface's, a piece reaching from a
-	// floor to a storey above has its floor's quarters too, and a wall's
-	// threshold let the storey be stepped onto from a terrace)
-	if (below == NAVIGATION_SUBCELL_NONE || (float)below * NAVIGATION_SUBCELL_UNIT_METERS > MESH_SUB_DROP_MOST_METERS)
+	if (below >= NAVIGATION_SUBCELL_BLOCKED)
 	{
+		*blocked_out = below == NAVIGATION_SUBCELL_BLOCKED;
 		return false;
 	}
 	*height_out = surface->height - (float)below * NAVIGATION_SUBCELL_UNIT_METERS;
@@ -3532,32 +3638,50 @@ static bool node_sub_height(const navigation_t *navigation, int32_t node, int32_
 // The step from one node into the next cell's over side (0: +x, 1: -x,
 // 2: +z, 3: -z) where their edges meet: the least of the steps between
 // the quarter meters facing each other (a stair's first tread, not its
-// cell's highest, a meter in); the nodes' heights where neither reaches
-// its edge
+// cell's highest, a meter in); 1e30 where none face each other (they do
+// not touch there)
 static float node_edge_rise(const navigation_t *navigation, int32_t from_node, int32_t from_cell, int32_t to_node, int32_t to_cell, int side)
 {
 	float least = 1e30f;
 
+	// Along the edge, quarter by quarter: each node's quarter nearest the
+	// edge in that line (a stair's first tread a quarter in from its cell's
+	// edge still faces the ground beyond)
 	for (int32_t k = 0; k < NAVIGATION_SUBCELLS; k++)
 	{
-		int32_t last = NAVIGATION_SUBCELLS - 1;
-		int32_t from_x = side == 0 ? last : side == 1 ? 0 : k;
-		int32_t from_z = side == 2 ? last : side == 3 ? 0 : k;
-		int32_t to_x = side == 0 ? 0 : side == 1 ? last : k;
-		int32_t to_z = side == 2 ? 0 : side == 3 ? last : k;
-		float from_height;
-		float to_height;
+		float from_height = 0.0f;
+		float to_height = 0.0f;
+		bool from_found = false;
+		bool to_found = false;
 
-		if (node_sub_height(navigation, from_node, from_cell, from_x, from_z, &from_height)
-			&& node_sub_height(navigation, to_node, to_cell, to_x, to_z, &to_height))
+		// (over bare ground in from the edge, not past what stands there: a
+		// floor beyond a wall in the same cell does not face the edge)
+		bool stopped = false;
+
+		for (int32_t in = 0; in < NAVIGATION_SUBCELLS && !from_found && !stopped; in++)
+		{
+			int32_t last = NAVIGATION_SUBCELLS - 1;
+			int32_t from_x = side == 0 ? last - in : side == 1 ? in : k;
+			int32_t from_z = side == 2 ? last - in : side == 3 ? in : k;
+
+			from_found = node_sub_height(navigation, from_node, from_cell, from_x, from_z, &from_height, &stopped);
+		}
+		stopped = false;
+		for (int32_t in = 0; in < NAVIGATION_SUBCELLS && !to_found && !stopped; in++)
+		{
+			int32_t last = NAVIGATION_SUBCELLS - 1;
+			int32_t to_x = side == 0 ? in : side == 1 ? last - in : k;
+			int32_t to_z = side == 2 ? in : side == 3 ? last - in : k;
+
+			to_found = node_sub_height(navigation, to_node, to_cell, to_x, to_z, &to_height, &stopped);
+		}
+		if (from_found && to_found)
 		{
 			least = SDL_min(least, SDL_fabsf(to_height - from_height));
 		}
 	}
-	if (least >= 1e29f)
-	{
-		least = SDL_fabsf(node_height(navigation, to_node, to_cell) - node_height(navigation, from_node, from_cell));
-	}
+	// (no line of quarters across: the two do not touch over that edge, a
+	// floor beyond a wall in the same cell)
 	return least;
 }
 
@@ -3920,7 +4044,7 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 					// Along x
 					while (width < NAVIGATION_MESH_RECT_MOST && local_x + width < build.width)
 					{
-						int32_t next = mesh_match(navigation, class, tile, &build, grid_nodes[0][width - 1], cell + width - 1, cell + width, reach);
+						int32_t next = mesh_match(navigation, class, tile, &build, grid_nodes[0][width - 1], cell + width - 1, cell + width, 0, reach);
 
 						if (next < 0)
 						{
@@ -3937,11 +4061,11 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 						{
 							int32_t above_cell = cell + (depth - 1) * navigation->size + i;
 							int32_t next = mesh_match(navigation, class, tile, &build, grid_nodes[depth - 1][i], above_cell, above_cell + navigation->size,
-								reach);
+								2, reach);
 
-							// (and alike its neighbor along the row)
-							if (next >= 0 && i > 0 && SDL_fabsf(node_height(navigation, next, above_cell + navigation->size)
-								- node_height(navigation, grid_nodes[depth][i - 1], above_cell + navigation->size - 1)) > reach)
+							// (and touching its neighbor along the row)
+							if (next >= 0 && i > 0 && node_edge_rise(navigation, grid_nodes[depth][i - 1], above_cell + navigation->size - 1, next,
+								above_cell + navigation->size, 0) > reach)
 							{
 								next = -1;
 							}
@@ -4171,7 +4295,12 @@ static int32_t mesh_locate(navigation_t *navigation, const terrain_t *terrain, c
 				{
 					float difference = SDL_fabsf(node_height(navigation, nodes[k], here) - height);
 
-					score = (difference > agent_reach(agent) ? 10000.0f : 0.0f) + (float)(dx * dx + dz * dz) * 100.0f + difference;
+					// (an object's top that does not reach the point's quarter:
+					// the floor beyond the wall in the same cell, not here)
+					float elsewhere = nodes[k] >= cell_count(navigation) && dx == 0 && dz == 0
+						&& surface_height_at(navigation, extra_surface(navigation, nodes[k]), x, z) < -1e29f ? 50.0f : 0.0f;
+
+					score = (difference > agent_reach(agent) ? 10000.0f : 0.0f) + (float)(dx * dx + dz * dz) * 100.0f + difference + elsewhere;
 				}
 				if (score < best_score)
 				{
