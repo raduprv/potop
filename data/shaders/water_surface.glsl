@@ -40,7 +40,7 @@ layout(set = TEXTURE_SET, binding = 9) uniform sampler2D sky_occlusion_texture; 
 layout(set = TEXTURE_SET, binding = 10) uniform sampler2D sky_layers_texture;     // RGBA8: the four layers in the air (sky_occlusion.glsl)
 #define SKY_OCCLUSION_NO_GROUND
 #include "sky_occlusion.glsl"
-layout(set = TEXTURE_SET, binding = 11) uniform sampler2D ripple_texture;        // RG16 SNORM: the small ripples' slopes (water_renderer.c)
+layout(set = TEXTURE_SET, binding = 11) uniform sampler2D ripple_texture;        // RGBA16 SNORM: the small ripples' slopes, their squares (water_renderer.c)
 #define LIGHT_BINDING 12
 #include "lights.glsl"
 
@@ -117,13 +117,29 @@ float value_noise(vec2 position)
 // centimeters to a meter across, each drifting its own way and slowly
 const float RIPPLE_SLOPE_RANGE = 4.0;   // (water_renderer.c's)
 
-vec2 ripple_slope(vec2 position)
+// One layer: its slope added to slope, how much the slopes under the
+// texel read differ (their variance: the levels of detail average the
+// squares too) to variance
+void ripple_layer(vec2 uv, float steepness, inout vec2 slope, inout float variance)
 {
-	vec2 slope = texture(ripple_texture, (position + time_seconds * vec2(0.11, 0.05)) / 4.0).rg * 0.5;
+	vec4 texel = texture(ripple_texture, uv);
+	vec2 mean = texel.rg * RIPPLE_SLOPE_RANGE;
+	vec2 squares = texel.ba * (RIPPLE_SLOPE_RANGE * RIPPLE_SLOPE_RANGE);
 
-	slope += texture(ripple_texture, (position + time_seconds * vec2(-0.06, 0.09)) / 1.7 + vec2(0.37, 0.71)).rg * 0.35;
-	slope += texture(ripple_texture, (position + time_seconds * vec2(0.04, -0.07)) / 0.7 + vec2(0.83, 0.19)).rg * 0.25;
-	return slope * RIPPLE_SLOPE_RANGE;
+	slope += mean * steepness;
+	variance += max(squares.x + squares.y - dot(mean, mean), 0.0) * steepness * steepness;
+}
+
+// x, y: the slope; z: its variance under the pixel
+vec3 ripple_slope(vec2 position)
+{
+	vec2 slope = vec2(0.0);
+	float variance = 0.0;
+
+	ripple_layer((position + time_seconds * vec2(0.11, 0.05)) / 4.0, 0.5, slope, variance);
+	ripple_layer((position + time_seconds * vec2(-0.06, 0.09)) / 1.7 + vec2(0.37, 0.71), 0.35, slope, variance);
+	ripple_layer((position + time_seconds * vec2(0.04, -0.07)) / 0.7 + vec2(0.83, 0.19), 0.25, slope, variance);
+	return vec3(slope, variance);
 }
 
 // Flow map: a pattern carried downstream by the current would stretch
@@ -154,7 +170,7 @@ flow_phases flow_phases_at(vec2 velocity)
 	return phases;
 }
 
-vec2 flowing_ripple_slope(vec2 position, flow_phases phases)
+vec3 flowing_ripple_slope(vec2 position, flow_phases phases)
 {
 	return mix(ripple_slope(position - phases.offset_b), ripple_slope(position - phases.offset_a), phases.weight_a);
 }
@@ -322,8 +338,14 @@ void main()
 	float current = length(flow_velocity);
 	float ripple_strength = 0.18 * ice_parameters.y * (1.0 + min(current, 2.0) * 0.8) * min(water_depth * 4.0, 1.0)
 		* (1.0 - smoothstep(300.0, 1200.0, view_distance));
-	vec2 ripple = flowing_ripple_slope(world_position.xz, phases) * ripple_strength;
-	vec3 normal = normalize(normalize(surface_normal) + vec3(-ripple.x, 0.0, -ripple.y));
+	vec3 ripple = flowing_ripple_slope(world_position.xz, phases);
+	vec3 normal = normalize(normalize(surface_normal) + vec3(-ripple.x, 0.0, -ripple.y) * ripple_strength);
+	// How much the normal varies under this pixel: the ripples' own (the
+	// tile's levels of detail) and the change from pixel to pixel (the
+	// waves; any level too fine for the footprint, at a grazing look).
+	// The glint widens by it (Toksvig) instead of glittering in lines
+	float normal_variance = ripple.z * ripple_strength * ripple_strength
+		+ 0.5 * (dot(dFdx(normal), dFdx(normal)) + dot(dFdy(normal), dFdy(normal)));
 
 	// The ice: its thickness and the snow on it here (between the cells),
 	// its edge ragged; under it no ripples, only its own small bumps
@@ -422,7 +444,9 @@ void main()
 		reflection = mix(reflection, seen.rgb, seen.a * smoothstep(0.03, 0.06, fresnel) * near_enough);
 #endif
 	}
-	vec3 glint = sun_color * pow(max(dot(reflect(-sun_direction, normal), view_direction), 0.0), 150.0) * 3.0 * visibility;
+	float glint_power = 150.0 / (1.0 + 150.0 * normal_variance);
+	vec3 glint = sun_color * pow(max(dot(reflect(-sun_direction, normal), view_direction), 0.0), glint_power) * 3.0 * visibility
+		* (glint_power + 2.0) / 152.0;
 	vec3 color = mix(body_lit, reflection, fresnel) + glint;
 
 	// Foam needs fast AND reasonably deep water: a thin sheet running down

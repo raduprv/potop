@@ -87,8 +87,9 @@ typedef struct
 	bool captured;                 // this frame's copy is there (the draw uses it, then forgets it)
 	// The ice on the water (water_ice.h; NULL: none). The game sets it each frame
 	SDL_GPUTexture *ice_texture;
-	// The small ripples' slopes (made here at the start, RG16 SNORM, its own
-	// levels of detail): one tile of steep crested ripples, repeated
+	// The small ripples' slopes and their squares (made here at the start,
+	// RGBA16 SNORM, its own levels of detail): one tile of steep crested
+	// ripples, repeated
 	SDL_GPUTexture *ripple_texture;
 } water_renderer_t;
 

@@ -137,8 +137,8 @@ static SDL_GPUTexture *make_ripple_texture(void)
 	float wave_height[WAVE_COUNT];
 	uint32_t levels = gpu_mip_count(RIPPLE_SIZE, RIPPLE_SIZE);
 	float *height = SDL_malloc(sizeof(float) * RIPPLE_SIZE * RIPPLE_SIZE);
-	float *slope = SDL_malloc(sizeof(float) * 2 * RIPPLE_SIZE * RIPPLE_SIZE);
-	int16_t *texels = SDL_malloc(sizeof(int16_t) * 2 * RIPPLE_SIZE * RIPPLE_SIZE);
+	float *slope = SDL_malloc(sizeof(float) * 4 * RIPPLE_SIZE * RIPPLE_SIZE);
+	int16_t *texels = SDL_malloc(sizeof(int16_t) * 4 * RIPPLE_SIZE * RIPPLE_SIZE);
 	SDL_GPUTexture *texture = NULL;
 	double squared_sum = 0.0;
 	float scale;
@@ -147,7 +147,7 @@ static SDL_GPUTexture *make_ripple_texture(void)
 	{
 		goto done;
 	}
-	texture = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREFORMAT_R16G16_SNORM, RIPPLE_SIZE, RIPPLE_SIZE, 1, levels,
+	texture = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREFORMAT_R16G16B16A16_SNORM, RIPPLE_SIZE, RIPPLE_SIZE, 1, levels,
 		SDL_GPU_TEXTUREUSAGE_SAMPLER);
 	if (texture == NULL)
 	{
@@ -195,15 +195,21 @@ static SDL_GPUTexture *make_ripple_texture(void)
 			float slope_x = (height[y * RIPPLE_SIZE + right] - height[y * RIPPLE_SIZE + left]) * 0.5f * RIPPLE_SIZE;
 			float slope_y = (height[front * RIPPLE_SIZE + x] - height[back * RIPPLE_SIZE + x]) * 0.5f * RIPPLE_SIZE;
 
-			slope[(y * RIPPLE_SIZE + x) * 2] = slope_x;
-			slope[(y * RIPPLE_SIZE + x) * 2 + 1] = slope_y;
+			slope[(y * RIPPLE_SIZE + x) * 4] = slope_x;
+			slope[(y * RIPPLE_SIZE + x) * 4 + 1] = slope_y;
 			squared_sum += (double)(slope_x * slope_x + slope_y * slope_y);
 		}
 	}
 	scale = 1.0f / (float)SDL_sqrt(squared_sum / (RIPPLE_SIZE * RIPPLE_SIZE) + 1e-12);
-	for (int i = 0; i < 2 * RIPPLE_SIZE * RIPPLE_SIZE; i++)
+	// Next to each slope its square: averaged down the levels, how much
+	// the slopes under a texel of a far level differ (the glint widened by
+	// it in the shader, instead of glittering)
+	for (int i = 0; i < RIPPLE_SIZE * RIPPLE_SIZE; i++)
 	{
-		slope[i] *= scale;
+		slope[i * 4] *= scale;
+		slope[i * 4 + 1] *= scale;
+		slope[i * 4 + 2] = slope[i * 4] * slope[i * 4] / RIPPLE_SLOPE_RANGE;
+		slope[i * 4 + 3] = slope[i * 4 + 1] * slope[i * 4 + 1] / RIPPLE_SLOPE_RANGE;
 	}
 	// Each level from the one above, two by two averaged, in place
 	for (uint32_t level = 0, size = RIPPLE_SIZE; level < levels; level++, size = SDL_max(size / 2, 1u))
@@ -216,20 +222,20 @@ static SDL_GPUTexture *make_ripple_texture(void)
 			{
 				for (uint32_t x = 0; x < size; x++)
 				{
-					for (int channel = 0; channel < 2; channel++)
+					for (int channel = 0; channel < 4; channel++)
 					{
-						slope[(y * size + x) * 2 + channel] = 0.25f * (slope[((2 * y) * above + 2 * x) * 2 + channel]
-							+ slope[((2 * y) * above + 2 * x + 1) * 2 + channel] + slope[((2 * y + 1) * above + 2 * x) * 2 + channel]
-							+ slope[((2 * y + 1) * above + 2 * x + 1) * 2 + channel]);
+						slope[(y * size + x) * 4 + channel] = 0.25f * (slope[((2 * y) * above + 2 * x) * 4 + channel]
+							+ slope[((2 * y) * above + 2 * x + 1) * 4 + channel] + slope[((2 * y + 1) * above + 2 * x) * 4 + channel]
+							+ slope[((2 * y + 1) * above + 2 * x + 1) * 4 + channel]);
 					}
 				}
 			}
 		}
-		for (uint32_t i = 0; i < 2 * size * size; i++)
+		for (uint32_t i = 0; i < 4 * size * size; i++)
 		{
 			texels[i] = (int16_t)SDL_lroundf(SDL_clamp(slope[i] / RIPPLE_SLOPE_RANGE, -1.0f, 1.0f) * 32767.0f);
 		}
-		gpu_upload_texture(texture, level, 0, 0, 0, size, size, texels, sizeof(int16_t) * 2 * size * size);
+		gpu_upload_texture(texture, level, 0, 0, 0, size, size, texels, sizeof(int16_t) * 4 * size * size);
 	}
 
 done:
