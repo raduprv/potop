@@ -207,7 +207,7 @@ typedef struct
 
 // The navigation mesh (see the top)
 #define NAVIGATION_MESH_CLASSES 2
-#define NAVIGATION_MESH_LARGE_RADIUS 0.35f      // meters: from this radius an agent is of the large class
+#define NAVIGATION_MESH_LARGE_RADIUS 0.33f      // meters: from this radius an agent is of the large class (a bear's 0.35, rounded down)
 #define NAVIGATION_MESH_RECT_MOST 16            // cells a side of a rectangle at most
 
 // Where one rectangle leads into the next: a run of the edge they share
