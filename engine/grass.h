@@ -41,6 +41,12 @@ typedef struct
 	SDL_GPUBuffer *argument_buffer;        // a copy of those, for the indirect draw
 	SDL_GPUBuffer *no_occlusion_buffer;    // bound in the pyramid's place where there is none (a float)
 	bool prepared;                         // grass_prepare filled them for this frame
+	// Where the view was when they were made (they are kept while it only
+	// moves a little: objects.grass_rescatter_meters)
+	float scattered_eye[3];
+	float scattered_forward[3];
+	float scattered_projection[2];
+	uint64_t scattered_ticks;
 	bool failed;                           // the shaders did not load: no grass
 	uint32_t candidate_count;              // statistics: grid spots looked at, last frame
 	uint32_t blade_estimate;               // blades expected at most, last frame

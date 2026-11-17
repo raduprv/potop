@@ -313,6 +313,8 @@ static const setting_field_t setting_fields[] =
 	FIELD("objects", "grass_coarse_meters", SETTING_FLOAT, objects.grass_coarse_meters),
 	FIELD("objects", "effects_meters", SETTING_FLOAT, objects.effects_meters),
 	FIELD("objects", "grass_coarse_width", SETTING_FLOAT, objects.grass_coarse_width),
+	FIELD("objects", "grass_rescatter_meters", SETTING_FLOAT, objects.grass_rescatter_meters),
+	FIELD("objects", "grass_rescatter_seconds", SETTING_FLOAT, objects.grass_rescatter_seconds),
 	FIELD("objects", "brush_fill_seconds", SETTING_FLOAT, objects.brush_fill_seconds),
 
 	FIELD("physics", "enabled", SETTING_BOOL, physics.enabled),
@@ -570,6 +572,8 @@ void settings_set_defaults(settings_t *settings)
 	settings->objects.grass_coarse_meters = 18.0f;
 	settings->objects.effects_meters = 150.0f;
 	settings->objects.grass_coarse_width = 1.3f;
+	settings->objects.grass_rescatter_meters = 4.0f;
+	settings->objects.grass_rescatter_seconds = 0.5f;
 	settings->objects.brush_fill_seconds = 0.6f;
 	settings->render.render_scale = 1.0f;
 	settings->render.taa = true;

@@ -226,6 +226,38 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 	{
 		return;
 	}
+	// The blades kept while the view only moves a little (they stand in the
+	// world, the wind moves them in grass.vert): made again when it turned at
+	// all, zoomed, moved farther than the margin they were made with, or
+	// after a while (the water laying them down, the shadows on them)
+	float margin = SDL_max(settings->grass_rescatter_meters, 0.0f);
+	vec3_t forward_now;
+	{
+		vec4_t near_point = mat4_transform(camera->inverse_view_projection, (vec4_t){ 0.0f, 0.0f, -1.0f, 1.0f });
+		vec4_t far_point = mat4_transform(camera->inverse_view_projection, (vec4_t){ 0.0f, 0.0f, 1.0f, 1.0f });
+
+		forward_now = vec3_normalize(vec3_subtract(vec3_scale(vec3_make(far_point.x, far_point.y, far_point.z), 1.0f / far_point.w),
+			vec3_scale(vec3_make(near_point.x, near_point.y, near_point.z), 1.0f / near_point.w)));
+	}
+	if (margin > 0.0f && grass->prepared && settings->grass)
+	{
+		float dx = camera->eye_position.x - grass->scattered_eye[0];
+		float dy = camera->eye_position.y - grass->scattered_eye[1];
+		float dz = camera->eye_position.z - grass->scattered_eye[2];
+		float turned = forward_now.x * grass->scattered_forward[0] + forward_now.y * grass->scattered_forward[1]
+			+ forward_now.z * grass->scattered_forward[2];
+		bool zoomed = SDL_fabsf(camera->projection.m[0] - grass->scattered_projection[0]) > 1e-4f
+			|| SDL_fabsf(camera->projection.m[5] - grass->scattered_projection[1]) > 1e-4f;
+		double age = (double)(SDL_GetTicksNS() - grass->scattered_ticks) / 1e9;
+
+		// (turned: by more than a twentieth of a degree, the anti-aliasing's
+		// jitter is less)
+		if (dx * dx + dy * dy + dz * dz < margin * margin && turned > 0.9999996f && !zoomed
+			&& (settings->grass_rescatter_seconds <= 0.0f || age < (double)settings->grass_rescatter_seconds))
+		{
+			return;
+		}
+	}
 	grass->prepared = false;
 	if (grass->failed || !settings->grass || world->height_texture == NULL || world->water_texture == NULL || world->flow_texture == NULL
 		|| world->soil_weight_texture == NULL || world->normal_texture == NULL || world->surface_texture == NULL
@@ -263,7 +295,9 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 		uniforms.planes[4 * i] = frustum.planes[i].a;
 		uniforms.planes[4 * i + 1] = frustum.planes[i].b;
 		uniforms.planes[4 * i + 2] = frustum.planes[i].c;
-		uniforms.planes[4 * i + 3] = frustum.planes[i].d;
+		// (pushed out by the margin: what the view gets as it moves that far
+		// before the blades are made again)
+		uniforms.planes[4 * i + 3] = frustum.planes[i].d + margin;
 	}
 	uniforms.eye[0] = camera->eye_position.x;
 	uniforms.eye[1] = camera->eye_position.y;
@@ -347,11 +381,12 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 			view_minimum_z = SDL_min(view_minimum_z, z);
 			view_maximum_z = SDL_max(view_maximum_z, z);
 		}
-		// (a blade's lean, its cell, the near plane's own corners)
-		view_minimum_x -= 3.0f;
-		view_minimum_z -= 3.0f;
-		view_maximum_x += 3.0f;
-		view_maximum_z += 3.0f;
+		// (a blade's lean, its cell, the near plane's own corners; and the
+		// margin the eye may move before they are made again)
+		view_minimum_x -= 3.0f + margin;
+		view_minimum_z -= 3.0f + margin;
+		view_maximum_x += 3.0f + margin;
+		view_maximum_z += 3.0f + margin;
 	}
 	// Ring by ring: level 0 out to the full radius on the fine grid, level
 	// L >= 1 from full_radius * 2^(L-1) to twice that, on a grid 2^(L-1)
@@ -415,6 +450,15 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 		SDL_EndGPUCopyPass(copy);
 	}
 	grass->prepared = true;
+	grass->scattered_eye[0] = camera->eye_position.x;
+	grass->scattered_eye[1] = camera->eye_position.y;
+	grass->scattered_eye[2] = camera->eye_position.z;
+	grass->scattered_forward[0] = forward_now.x;
+	grass->scattered_forward[1] = forward_now.y;
+	grass->scattered_forward[2] = forward_now.z;
+	grass->scattered_projection[0] = camera->projection.m[0];
+	grass->scattered_projection[1] = camera->projection.m[5];
+	grass->scattered_ticks = SDL_GetTicksNS();
 }
 
 void grass_draw(grass_t *grass, SDL_GPURenderPass *pass, const render_settings_t *render, const objects_settings_t *settings,
