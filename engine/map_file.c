@@ -2181,6 +2181,7 @@ static bool read_baked(map_file_reader_t *reader, terrain_t *terrain, water_t *w
 		}
 	}
 	terrain->ground_footprints_stale = true;
+	terrain->grass_map_stale = true;
 
 	// The water, and what it left on the ground: each group's tiles, the
 	// planes it has

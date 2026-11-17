@@ -60,6 +60,7 @@ void material_map_clear(terrain_t *terrain)
 	}
 	terrain_mark_materials_changed(terrain, 0, 0, terrain->size - 1, terrain->size - 1);
 	terrain->ground_footprints_stale = true;
+	terrain->grass_map_stale = true;
 }
 
 // --- The shaders' noise ------------------------------------------------------
@@ -566,6 +567,7 @@ void material_map_restamp(terrain_t *terrain, const objects_t *objects)
 	}
 	terrain_mark_materials_changed(terrain, 0, 0, terrain->size - 1, terrain->size - 1);
 	terrain->ground_footprints_stale = true;
+	terrain->grass_map_stale = true;
 	if (disks == NULL)
 	{
 		material_map_stamp_objects(terrain, objects, 0.0f, 0.0f, -1.0f);

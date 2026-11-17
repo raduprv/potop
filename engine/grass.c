@@ -163,6 +163,11 @@ void grass_destroy(grass_t *grass)
 	SDL_zerop(grass);
 }
 
+void grass_invalidate(grass_t *grass)
+{
+	grass->grass_map_baked = false;
+}
+
 // Out to where every blade of the fine grid shows
 static float full_radius_of(float distance)
 {
@@ -393,18 +398,17 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 		view_maximum_x += 3.0f;
 		view_maximum_z += 3.0f;
 	}
-	// The grass map first: the grass's color and how much grows round what
-	// the view reaches (as far as the grass goes), a texel per two cells
-	// each way (and one more round it: it is filtered), made again every
-	// frame (nothing kept to go out of date: the silt, the wet, the snow,
-	// the materials as they are now)
+	// The grass map first: the grass's color and how much grows, a texel
+	// per two cells each way, baked all at once when it is made and when
+	// the ground under the grass changed as a whole (grass_invalidate); kept
+	// between frames (what changes it bit by bit, the silt, the wet, the
+	// snow, an edit, does not bake it again yet)
 	{
 		int half_size = (world->map_size + 1) / 2;
-		float cell = world->cell_size_meters;
-		int first_x = (int)SDL_floorf((SDL_max(camera->eye_position.x - distance, view_minimum_x) / cell - 0.5f) * 0.5f) - 1;
-		int first_z = (int)SDL_floorf((SDL_max(camera->eye_position.z - distance, view_minimum_z) / cell - 0.5f) * 0.5f) - 1;
-		int last_x = (int)SDL_ceilf((SDL_min(camera->eye_position.x + distance, view_maximum_x) / cell - 0.5f) * 0.5f) + 1;
-		int last_z = (int)SDL_ceilf((SDL_min(camera->eye_position.z + distance, view_maximum_z) / cell - 0.5f) * 0.5f) + 1;
+		int first_x = 0;
+		int first_z = 0;
+		int last_x = half_size - 1;
+		int last_z = half_size - 1;
 
 		if (grass->grass_map == NULL || grass->grass_map_size != half_size)
 		{
@@ -415,24 +419,21 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 			grass->grass_map = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, (uint32_t)half_size,
 				(uint32_t)half_size, 1, 1, SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE);
 			grass->grass_map_size = grass->grass_map != NULL ? half_size : 0;
+			grass->grass_map_baked = false;
 			if (grass->grass_map == NULL)
 			{
 				return;
 			}
 		}
-		first_x = SDL_max(first_x, 0);
-		first_z = SDL_max(first_z, 0);
-		last_x = SDL_min(last_x, half_size - 1);
-		last_z = SDL_min(last_z, half_size - 1);
-		if (last_x < first_x || last_z < first_z)
+		if (!grass->grass_map_baked)
 		{
-			return;
+			uniforms.grid[2] = (float)(last_x - first_x + 1);
+			uniforms.grid_origin[0] = (float)first_x;
+			uniforms.grid_origin[1] = (float)first_z;
+			uniforms.control[3] = last_z - first_z + 1;
+			dispatch(grass, command_buffer, world, &uniforms, GRASS_BAKE, (uint32_t)((last_x - first_x + 1) * (last_z - first_z + 1)));
+			grass->grass_map_baked = true;
 		}
-		uniforms.grid[2] = (float)(last_x - first_x + 1);
-		uniforms.grid_origin[0] = (float)first_x;
-		uniforms.grid_origin[1] = (float)first_z;
-		uniforms.control[3] = last_z - first_z + 1;
-		dispatch(grass, command_buffer, world, &uniforms, GRASS_BAKE, (uint32_t)((last_x - first_x + 1) * (last_z - first_z + 1)));
 	}
 	// Ring by ring: level 0 out to the full radius on the fine grid, level
 	// L >= 1 from full_radius * 2^(L-1) to twice that, on a grid 2^(L-1)

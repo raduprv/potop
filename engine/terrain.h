@@ -124,6 +124,10 @@ typedef struct
 	// The material map's ground bytes were cleared (a restamp, a load): the
 	// objects' footprints are to be worked into it again (ground_footprints.h)
 	bool ground_footprints_stale;
+	// The grass's map (grass.h) to be baked again, all of it (a map loaded,
+	// the material map made again); what changes it bit by bit (the silt,
+	// the wet, the snow, an edit) does not mark it yet
+	bool grass_map_stale;
 
 	// Shadow bookkeeping: tools and stamps set shadow_dirty (both shadow
 	// maps). Erosion only matters to the fine map near the camera (the far

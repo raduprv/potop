@@ -763,6 +763,12 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 		// (what was drawn the frame before hides the blades behind it, as
 		// it hides the objects: objects occlusion off, neither)
 		grass_world.occlusion = world->objects.no_terrain_occlusion ? NULL : world->objects.occlusion;
+		// (the ground under the grass changed as a whole: its map baked again)
+		if (world->terrain.grass_map_stale)
+		{
+			grass_invalidate(&world->grass);
+			world->terrain.grass_map_stale = false;
+		}
 		grass_prepare(&world->grass, camera, &world->lit_render, &world->settings->objects, &grass_world);
 		trace_mark("grass");
 		terrain_renderer_prepare_draw(&world->renderer, &world->terrain, camera, &world->lit_render);
