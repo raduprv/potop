@@ -28,7 +28,7 @@ typedef struct
 	// The scene's depth (0..1) back to the distance along the view:
 	// distance = y / (depth - x); z, w: 1 / the copy's size
 	float depth_to_distance[4];
-	float ice[4];                  // x 1: the ice is bound (water_ice.h); -
+	float ice[4];                  // x 1: the ice is bound (water_ice.h); y: the ripples' choppiness
 	// The land and the trees mirrored out to x meters from the eye (the
 	// scope's zoom farther), fading out over the last y; beyond, the sky
 	// alone (no march: far water is a few pixels of shimmer)
@@ -74,7 +74,7 @@ static SDL_GPUGraphicsPipeline *water_pipeline(water_renderer_t *renderer, int b
 		return renderer->pipelines[bits];
 	}
 	vertex = gpu_load_shader("water.vert", 3, 0, 2);
-	fragment = gpu_load_shader((bits & 16) != 0 ? "water_split.frag" : "water.frag", 11, LIGHTS_STORAGE_BUFFERS, 2);
+	fragment = gpu_load_shader((bits & 16) != 0 ? "water_split.frag" : "water.frag", 12, LIGHTS_STORAGE_BUFFERS, 2);
 	if (vertex != NULL && fragment != NULL)
 	{
 		SDL_zero(info);
@@ -102,9 +102,151 @@ static SDL_GPUGraphicsPipeline *water_pipeline(water_renderer_t *renderer, int b
 	return renderer->pipelines[bits];
 }
 
+// The ripples' tile: this many texels a side, and the slopes' range stored
+// (in units of their spread: SNORM 1 is this many)
+#define RIPPLE_SIZE 256
+#define RIPPLE_SLOPE_RANGE 4.0f
+
+static uint32_t ripple_hash(int x, int y, uint32_t seed)
+{
+	uint32_t mixed = (uint32_t)x * 1597334673u ^ (uint32_t)y * 3812015801u ^ seed * 2654435761u;
+
+	mixed ^= mixed >> 15;
+	mixed *= 2246822519u;
+	mixed ^= mixed >> 13;
+	return mixed;
+}
+
+// Value noise repeating every period lattice cells over the tile (x, y: 0..1 of it)
+static float ripple_noise(float x, float y, int period, uint32_t seed)
+{
+	float cell_x = x * (float)period;
+	float cell_y = y * (float)period;
+	int x0 = (int)SDL_floorf(cell_x);
+	int y0 = (int)SDL_floorf(cell_y);
+	float fraction_x = cell_x - (float)x0;
+	float fraction_y = cell_y - (float)y0;
+	float blend_x = fraction_x * fraction_x * (3.0f - 2.0f * fraction_x);
+	float blend_y = fraction_y * fraction_y * (3.0f - 2.0f * fraction_y);
+	int x1 = (x0 + 1) % period;
+	int y1 = (y0 + 1) % period;
+	float corners[4];
+
+	x0 %= period;
+	y0 %= period;
+	corners[0] = (float)(ripple_hash(x0, y0, seed) >> 8) / 16777216.0f;
+	corners[1] = (float)(ripple_hash(x1, y0, seed) >> 8) / 16777216.0f;
+	corners[2] = (float)(ripple_hash(x0, y1, seed) >> 8) / 16777216.0f;
+	corners[3] = (float)(ripple_hash(x1, y1, seed) >> 8) / 16777216.0f;
+	return (corners[0] + (corners[1] - corners[0]) * blend_x) * (1.0f - blend_y) + (corners[2] + (corners[3] - corners[2]) * blend_x) * blend_y;
+}
+
+// The small ripples: a height of ridged noise (each octave folded at its
+// middle and squared: sharp crests, wide troughs, as choppy water), four
+// octaves, its slopes (in heights a tile) scaled so their spread is 1, with
+// the levels of detail averaged here (SNORM cannot be blitted everywhere)
+static SDL_GPUTexture *make_ripple_texture(void)
+{
+	static const int periods[4] = { 4, 8, 16, 32 };
+	static const float weights[4] = { 1.0f, 0.5f, 0.25f, 0.125f };
+	uint32_t levels = gpu_mip_count(RIPPLE_SIZE, RIPPLE_SIZE);
+	float *height = SDL_malloc(sizeof(float) * RIPPLE_SIZE * RIPPLE_SIZE);
+	float *slope = SDL_malloc(sizeof(float) * 2 * RIPPLE_SIZE * RIPPLE_SIZE);
+	int16_t *texels = SDL_malloc(sizeof(int16_t) * 2 * RIPPLE_SIZE * RIPPLE_SIZE);
+	SDL_GPUTexture *texture = NULL;
+	double squared_sum = 0.0;
+	float scale;
+
+	if (height == NULL || slope == NULL || texels == NULL)
+	{
+		goto done;
+	}
+	texture = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREFORMAT_R16G16_SNORM, RIPPLE_SIZE, RIPPLE_SIZE, 1, levels,
+		SDL_GPU_TEXTUREUSAGE_SAMPLER);
+	if (texture == NULL)
+	{
+		goto done;
+	}
+	for (int y = 0; y < RIPPLE_SIZE; y++)
+	{
+		for (int x = 0; x < RIPPLE_SIZE; x++)
+		{
+			float sum = 0.0f;
+
+			for (int i = 0; i < 4; i++)
+			{
+				float value = ripple_noise((float)x / RIPPLE_SIZE, (float)y / RIPPLE_SIZE, periods[i], 17u + (uint32_t)i);
+				float ridge = 1.0f - SDL_fabsf(2.0f * value - 1.0f);
+
+				sum += weights[i] * ridge * ridge;
+			}
+			height[y * RIPPLE_SIZE + x] = sum;
+		}
+	}
+	for (int y = 0; y < RIPPLE_SIZE; y++)
+	{
+		for (int x = 0; x < RIPPLE_SIZE; x++)
+		{
+			int left = (x + RIPPLE_SIZE - 1) % RIPPLE_SIZE;
+			int right = (x + 1) % RIPPLE_SIZE;
+			int back = (y + RIPPLE_SIZE - 1) % RIPPLE_SIZE;
+			int front = (y + 1) % RIPPLE_SIZE;
+			float slope_x = (height[y * RIPPLE_SIZE + right] - height[y * RIPPLE_SIZE + left]) * 0.5f * RIPPLE_SIZE;
+			float slope_y = (height[front * RIPPLE_SIZE + x] - height[back * RIPPLE_SIZE + x]) * 0.5f * RIPPLE_SIZE;
+
+			slope[(y * RIPPLE_SIZE + x) * 2] = slope_x;
+			slope[(y * RIPPLE_SIZE + x) * 2 + 1] = slope_y;
+			squared_sum += (double)(slope_x * slope_x + slope_y * slope_y);
+		}
+	}
+	scale = 1.0f / (float)SDL_sqrt(squared_sum / (RIPPLE_SIZE * RIPPLE_SIZE) + 1e-12);
+	for (int i = 0; i < 2 * RIPPLE_SIZE * RIPPLE_SIZE; i++)
+	{
+		slope[i] *= scale;
+	}
+	// Each level from the one above, two by two averaged, in place
+	for (uint32_t level = 0, size = RIPPLE_SIZE; level < levels; level++, size = SDL_max(size / 2, 1u))
+	{
+		if (level > 0)
+		{
+			uint32_t above = size * 2;
+
+			for (uint32_t y = 0; y < size; y++)
+			{
+				for (uint32_t x = 0; x < size; x++)
+				{
+					for (int channel = 0; channel < 2; channel++)
+					{
+						slope[(y * size + x) * 2 + channel] = 0.25f * (slope[((2 * y) * above + 2 * x) * 2 + channel]
+							+ slope[((2 * y) * above + 2 * x + 1) * 2 + channel] + slope[((2 * y + 1) * above + 2 * x) * 2 + channel]
+							+ slope[((2 * y + 1) * above + 2 * x + 1) * 2 + channel]);
+					}
+				}
+			}
+		}
+		for (uint32_t i = 0; i < 2 * size * size; i++)
+		{
+			texels[i] = (int16_t)SDL_lroundf(SDL_clamp(slope[i] / RIPPLE_SLOPE_RANGE, -1.0f, 1.0f) * 32767.0f);
+		}
+		gpu_upload_texture(texture, level, 0, 0, 0, size, size, texels, sizeof(int16_t) * 2 * size * size);
+	}
+
+done:
+	SDL_free(height);
+	SDL_free(slope);
+	SDL_free(texels);
+	return texture;
+}
+
 bool water_renderer_create(water_renderer_t *renderer)
 {
 	SDL_zerop(renderer);
+	renderer->ripple_texture = make_ripple_texture();
+	if (renderer->ripple_texture == NULL)
+	{
+		SDL_LogError(SDL_LOG_CATEGORY_RENDER, "Cannot make the water's ripples: %s", SDL_GetError());
+		return false;
+	}
 	// The usual pipeline now, so a broken shader shows at the start
 	return water_pipeline(renderer, 1 | 4) != NULL;
 }
@@ -159,6 +301,10 @@ void water_renderer_destroy(water_renderer_t *renderer)
 		{
 			SDL_ReleaseGPUGraphicsPipeline(gpu.device, renderer->pipelines[i]);
 		}
+	}
+	if (renderer->ripple_texture != NULL)
+	{
+		SDL_ReleaseGPUTexture(gpu.device, renderer->ripple_texture);
 	}
 	if (renderer->march_pipeline != NULL)
 	{
@@ -442,6 +588,12 @@ void water_renderer_draw(water_renderer_t *renderer, SDL_GPURenderPass *pass, co
 		};
 
 		SDL_BindGPUFragmentSamplers(pass, 9, sky, 2);
+	}
+	{
+		SDL_GPUTextureSamplerBinding ripples = { renderer->ripple_texture, gpu.linear_repeat };
+
+		SDL_BindGPUFragmentSamplers(pass, 11, &ripples, 1);
+		uniforms.ice[1] = SDL_clamp(settings->water_choppiness, 0.0f, 4.0f);
 	}
 	SDL_PushGPUFragmentUniformData(gpu.command_buffer, 1, &uniforms, sizeof(uniforms));
 

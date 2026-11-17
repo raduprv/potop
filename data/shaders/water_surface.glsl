@@ -11,8 +11,10 @@
 //                clouds from their dome; the sky alone with the
 //                reflections off
 //   highlight    sharp sun glint
-//   ripples      two scrolling noise layers bend the normal a little; on
-//                flowing water they drift with the current (a flow map)
+//   ripples      three layers of one tile of steep crested ripples (made at
+//                the start, water_renderer.c), each its own size, drifting
+//                its own way, bend the normal; on flowing water they drift
+//                with the current (a flow map), choppier
 //   foam         where the flow is fast
 //   mud          water carrying sediment turns brown and opaque
 //   shadows      terrain shadows dim the sunlit part and the glint
@@ -38,7 +40,8 @@ layout(set = TEXTURE_SET, binding = 9) uniform sampler2D sky_occlusion_texture; 
 layout(set = TEXTURE_SET, binding = 10) uniform sampler2D sky_layers_texture;     // RGBA8: the four layers in the air (sky_occlusion.glsl)
 #define SKY_OCCLUSION_NO_GROUND
 #include "sky_occlusion.glsl"
-#define LIGHT_BINDING 11
+layout(set = TEXTURE_SET, binding = 11) uniform sampler2D ripple_texture;        // RG16 SNORM: the small ripples' slopes (water_renderer.c)
+#define LIGHT_BINDING 12
 #include "lights.glsl"
 
 layout(std140, set = UNIFORM_SET, binding = 1) uniform water_block
@@ -58,7 +61,7 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform water_block
 	int reflections;                // 1: the scene's copy is bound (screen space reflections)
 	int dome;                       // 0: no volumetric clouds, 1: their dome holds the whole sky, 2: its upper half
 	vec4 depth_to_distance;         // x, y: the scene's depth to the distance along the view, y / (depth - x); zw: 1 / its size
-	vec4 ice_parameters;            // x 1: the ice is bound
+	vec4 ice_parameters;            // x 1: the ice is bound; y: the small ripples' choppiness
 	vec4 reflection_range;          // x: the land mirrored out to this far from the eye (m), y: fading out over the last this much; beyond, the sky alone; z: the refraction (0: none)
 };
 
@@ -109,10 +112,18 @@ float value_noise(vec2 position)
 		blend.y);
 }
 
-float ripple_height(vec2 position)
+// The small ripples' slope here (height over meters, each layer's
+// steepness times the tile's: spread 1): three sizes of the tile, a few
+// centimeters to a meter across, each drifting its own way and slowly
+const float RIPPLE_SLOPE_RANGE = 4.0;   // (water_renderer.c's)
+
+vec2 ripple_slope(vec2 position)
 {
-	return value_noise(position * 0.6 + time_seconds * vec2(0.21, 0.13))
-		+ 0.5 * value_noise(position * 1.7 - time_seconds * vec2(0.17, 0.29));
+	vec2 slope = texture(ripple_texture, (position + time_seconds * vec2(0.11, 0.05)) / 4.0).rg * 0.5;
+
+	slope += texture(ripple_texture, (position + time_seconds * vec2(-0.06, 0.09)) / 1.7 + vec2(0.37, 0.71)).rg * 0.35;
+	slope += texture(ripple_texture, (position + time_seconds * vec2(0.04, -0.07)) / 0.7 + vec2(0.83, 0.19)).rg * 0.25;
+	return slope * RIPPLE_SLOPE_RANGE;
 }
 
 // Flow map: a pattern carried downstream by the current would stretch
@@ -143,9 +154,9 @@ flow_phases flow_phases_at(vec2 velocity)
 	return phases;
 }
 
-float flowing_ripple_height(vec2 position, flow_phases phases)
+vec2 flowing_ripple_slope(vec2 position, flow_phases phases)
 {
-	return mix(ripple_height(position - phases.offset_b), ripple_height(position - phases.offset_a), phases.weight_a);
+	return mix(ripple_slope(position - phases.offset_b), ripple_slope(position - phases.offset_a), phases.weight_a);
 }
 
 // See terrain.frag
@@ -304,19 +315,15 @@ void main()
 	float view_distance = length(view_vector);
 	vec3 view_direction = view_vector / view_distance;
 
-	// Ripples: finite differences of the ripple height bend the normal;
-	// weaker in very shallow water and far away, where they would alias
+	// Ripples: their slope bends the normal; weaker in very shallow water
+	// and far away (the tile's levels of detail already calm it there).
 	// Running water is choppier than a lake
-	float epsilon = 0.15;
 	flow_phases phases = flow_phases_at(flow_velocity);
 	float current = length(flow_velocity);
-	float ripple_strength = 0.12 * (1.0 + min(current, 2.0) * 0.6) * min(water_depth * 4.0, 1.0)
-		* (1.0 - smoothstep(150.0, 600.0, view_distance));
-	float ripple_x = flowing_ripple_height(world_position.xz + vec2(epsilon, 0.0), phases)
-		- flowing_ripple_height(world_position.xz - vec2(epsilon, 0.0), phases);
-	float ripple_z = flowing_ripple_height(world_position.xz + vec2(0.0, epsilon), phases)
-		- flowing_ripple_height(world_position.xz - vec2(0.0, epsilon), phases);
-	vec3 normal = normalize(normalize(surface_normal) + vec3(-ripple_x, 0.0, -ripple_z) * ripple_strength / epsilon);
+	float ripple_strength = 0.18 * ice_parameters.y * (1.0 + min(current, 2.0) * 0.8) * min(water_depth * 4.0, 1.0)
+		* (1.0 - smoothstep(300.0, 1200.0, view_distance));
+	vec2 ripple = flowing_ripple_slope(world_position.xz, phases) * ripple_strength;
+	vec3 normal = normalize(normalize(surface_normal) + vec3(-ripple.x, 0.0, -ripple.y));
 
 	// The ice: its thickness and the snow on it here (between the cells),
 	// its edge ragged; under it no ripples, only its own small bumps

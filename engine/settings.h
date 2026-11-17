@@ -153,6 +153,7 @@ typedef struct
 	float water_opacity_per_meter;
 	bool water_reflections;       // the water mirrors the land and the trees (on screen) and the volumetric clouds; off: the sky alone
 	bool water_reflections_half_size; // the reflections marched for a quarter of the pixels, apart (faster, a little softer)
+	float water_choppiness;       // how steep the small ripples over the waves are (0: a mirror between the waves)
 	float water_refraction;       // how far the ripples bend what is seen under the water (with the reflections: the scene's copy); 0: not at all
 	float water_reflection_meters; // the land mirrored out to this far from the eye (times the scope's zoom); beyond, the sky alone (0: everywhere)
 	bool shadow_depth_16_bit;     // the shadow maps' depth in 16 bits (half the memory and bandwidth; from the next start)
