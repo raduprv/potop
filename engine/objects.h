@@ -344,6 +344,11 @@ typedef struct
 	uint32_t cell_visible_capacity_bytes[3];   // the visible cells' buffers hold the pass's ranges too, after the bits
 	uint32_t *range_staging;           // two each: where in the order it starts, where in the work
 	uint32_t range_staging_capacity;   // ranges
+	// The camera's visible cells, their ranges kept to go up nearest first
+	// (find_cells: the instances come out of each model roughly front to
+	// back, less overdraw in a forest)
+	struct objects_near_cell_s *near_cells;
+	int near_cell_capacity;
 	// What changed since the shadow maps were drawn: objects in the far map
 	// (big ones) or only in the near one (grass)
 	bool far_shadow_dirty;

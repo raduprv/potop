@@ -924,6 +924,9 @@ void objects_destroy(objects_t *objects)
 	SDL_free(objects->order_staging);
 	objects->order_staging = NULL;
 	SDL_free(objects->range_staging);
+	SDL_free(objects->near_cells);
+	objects->near_cells = NULL;
+	objects->near_cell_capacity = 0;
 	objects->range_staging = NULL;
 	SDL_free(objects->changes);
 	objects->changes = NULL;
@@ -3643,6 +3646,23 @@ static bool cell_dry(const objects_t *objects, int i, int j)
 // The pass's visible cells (a bit each, for the GPU) and the ranges of the
 // order it looks at (work_out: their total, range_count_out: how many);
 // returns how many objects it may draw at most
+// A visible cell's range of the order, by how far it is (find_cells, the
+// camera's pass)
+typedef struct objects_near_cell_s
+{
+	float distance;
+	uint32_t first;
+	uint32_t last;
+} objects_near_cell_t;
+
+static int compare_near_cells(const void *a, const void *b)
+{
+	float distance_a = ((const objects_near_cell_t *)a)->distance;
+	float distance_b = ((const objects_near_cell_t *)b)->distance;
+
+	return distance_a < distance_b ? -1 : (distance_a > distance_b ? 1 : 0);
+}
+
 static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *frustum, vec3_t eye, uint32_t *work_out, uint32_t *range_count_out)
 {
 	uint32_t work_total = 0;
@@ -3698,6 +3718,11 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 	}
 	objects->cell_words_used = words;
 	SDL_memset(objects->cell_visible_staging, 0, sizeof(uint32_t) * 2u * words);
+	// (the camera's cells' ranges nearest first: each model's instances come
+	// out of the cull roughly front to back, the early depth test spares
+	// what is behind; the shadows' as they come)
+	bool sorting_cells = pass == PASS_CAMERA;
+	int near_count = 0;
 	for (int j = 0; j < objects->grid_size; j++)
 	{
 		for (int i = 0; i < objects->grid_size; i++)
@@ -3754,8 +3779,37 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 			{
 				objects->cell_visible_staging[words + (uint32_t)(cell >> 5)] |= 1u << (cell & 31);
 			}
-			// (the cells hold what was sorted: those added since are in the tail)
-			add_order_range(objects, (uint32_t)first, (uint32_t)SDL_min(last, objects->sorted_count), &range_count, &work_total);
+			// (the cells hold what was sorted: those added since are in the
+			// tail; the camera's kept to go up nearest first, below)
+			if (sorting_cells)
+			{
+				if (near_count >= objects->near_cell_capacity)
+				{
+					int capacity = SDL_max(objects->near_cell_capacity * 2, 1024);
+					objects_near_cell_t *grown = SDL_realloc(objects->near_cells, sizeof(objects_near_cell_t) * (size_t)capacity);
+
+					if (grown != NULL)
+					{
+						objects->near_cells = grown;
+						objects->near_cell_capacity = capacity;
+					}
+				}
+				if (near_count < objects->near_cell_capacity)
+				{
+					objects->near_cells[near_count].distance = cell_distance;
+					objects->near_cells[near_count].first = (uint32_t)first;
+					objects->near_cells[near_count].last = (uint32_t)SDL_min(last, objects->sorted_count);
+					near_count++;
+				}
+				else
+				{
+					add_order_range(objects, (uint32_t)first, (uint32_t)SDL_min(last, objects->sorted_count), &range_count, &work_total);
+				}
+			}
+			else
+			{
+				add_order_range(objects, (uint32_t)first, (uint32_t)SDL_min(last, objects->sorted_count), &range_count, &work_total);
+			}
 			// (the cell's objects the GPU may draw: what is past its draw
 			// distance is not among them)
 			// By its runs of one type (a type turned into another since
@@ -3782,6 +3836,14 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 					}
 				}
 			}
+		}
+	}
+	if (near_count > 0)
+	{
+		SDL_qsort(objects->near_cells, (size_t)near_count, sizeof(objects_near_cell_t), compare_near_cells);
+		for (int n = 0; n < near_count; n++)
+		{
+			add_order_range(objects, objects->near_cells[n].first, objects->near_cells[n].last, &range_count, &work_total);
 		}
 	}
 	bound += (uint32_t)(objects->grid_first[cell_count + 1] - objects->grid_first[cell_count]);
