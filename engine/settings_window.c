@@ -215,6 +215,8 @@ static const ui_setting_t ui_settings[] = {
 	{ TAB_WATER, "render", "water_opacity_per_meter", "Opacity", 0, 5, 0.05f, EFFECT_LIVE, NULL, NULL, NULL, false },
 	{ TAB_WATER, "render", "water_reflections", "Reflections", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
 		"The water mirrors what is on screen (the land, the trees) and the volumetric clouds (off: the sky alone)", false },
+	{ TAB_WATER, "render", "water_refraction", "Refraction", 0, 3, 0.05f, EFFECT_LIVE, "%.2f", NULL,
+		"How far the ripples bend the bottom seen through the water (needs the reflections: their copy of the scene); 0: none", false },
 	{ TAB_WATER, "render", "water_reflections_half_size", "Reflections at half size", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
 		"The reflections found for a quarter of the pixels and spread over the rest (faster, a little softer; off: every pixel)", false },
 	{ TAB_WATER, "render", "terrain_from_gpu", "Terrain from the GPU", 0, 0, 0, EFFECT_LIVE, NULL, NULL,

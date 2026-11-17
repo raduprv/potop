@@ -105,6 +105,7 @@ static const setting_field_t setting_fields[] =
 	FIELD("render", "water_clarity_meters", SETTING_FLOAT, render.water_clarity_meters),
 	FIELD("render", "water_reflections", SETTING_BOOL, render.water_reflections),
 	FIELD("render", "water_reflections_half_size", SETTING_BOOL, render.water_reflections_half_size),
+	FIELD("render", "water_refraction", SETTING_FLOAT, render.water_refraction),
 	FIELD("render", "water_reflection_meters", SETTING_FLOAT, render.water_reflection_meters),
 	FIELD("render", "terrain_from_gpu", SETTING_BOOL, render.terrain_from_gpu),
 	FIELD("render", "material_map", SETTING_BOOL, render.material_map),
@@ -503,6 +504,7 @@ void settings_set_defaults(settings_t *settings)
 	settings->render.water_deep_color[2] = 0.25f;
 	settings->render.water_clarity_meters = 3.0f;
 	settings->render.water_reflections = true;
+	settings->render.water_refraction = 1.0f;
 	settings->render.water_reflections_half_size = false;
 	settings->render.water_reflection_meters = 250.0f;
 	settings->render.terrain_from_gpu = true;

@@ -408,6 +408,7 @@ void water_renderer_draw(water_renderer_t *renderer, SDL_GPURenderPass *pass, co
 		uniforms.reflection_range[0] = reach;
 		uniforms.reflection_range[1] = 0.2f * reach;
 	}
+	uniforms.reflection_range[2] = reflections ? SDL_clamp(settings->water_refraction, 0.0f, 3.0f) : 0.0f;
 	uniforms.dome = settings->water_reflections && clouds != NULL && clouds->dome_texture != NULL ? (clouds->dome_half ? 2 : 1) : 0;
 	// OpenGL's perspective (math3d.h), its depth taken to 0..1
 	// (gpu_clip_matrix): depth = x + y / distance

@@ -59,7 +59,7 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform water_block
 	int dome;                       // 0: no volumetric clouds, 1: their dome holds the whole sky, 2: its upper half
 	vec4 depth_to_distance;         // x, y: the scene's depth to the distance along the view, y / (depth - x); zw: 1 / its size
 	vec4 ice_parameters;            // x 1: the ice is bound
-	vec4 reflection_range;          // x: the land mirrored out to this far from the eye (m), y: fading out over the last this much; beyond, the sky alone
+	vec4 reflection_range;          // x: the land mirrored out to this far from the eye (m), y: fading out over the last this much; beyond, the sky alone; z: the refraction (0: none)
 };
 
 #ifdef WATER_SPLIT_REFLECTIONS
@@ -483,7 +483,36 @@ void main()
 
 	color = mix(color, sky_color, clamp(fog_amount, 0.0, 1.0));
 	color = apply_underwater(color, world_position, view_distance, vec3(0.0));
-	fragment_color = vec4(color, clamp(alpha, 0.0, 1.0));
+	// What lies under it seen through it, bent by the ripples (the scene's
+	// copy before the water, with the reflections): drawn here, the water
+	// opaque over it, instead of blended. The bend: the ripples' slant
+	// against the calm surface's, the more the deeper the water under it
+	// (a meter at most), taken to the screen; not from in front of the water
+	// (a stone sticking out, the shore nearer the eye: the copy's depth
+	// says), from straight under it there
+	float blend = clamp(alpha, 0.0, 1.0);
+
+	if (reflection_range.z > 0.0 && blend < 0.999)
+	{
+		vec2 screen_uv = gl_FragCoord.xy * depth_to_distance.zw;
+		vec3 calm = normalize(surface_normal);
+		vec3 bend = vec3(normal.x - calm.x, 0.0, normal.z - calm.z) * min(water_depth, 1.0) * 0.35 * reflection_range.z;
+		vec4 bent_clip = world_to_clip(world_position + bend);
+		vec2 bent_uv = vec2(bent_clip.x / bent_clip.w * 0.5 + 0.5, 0.5 - bent_clip.y / bent_clip.w * 0.5);
+		float bent_depth = textureLod(scene_depth_texture, bent_uv, 0.0).r;
+		float bent_distance = depth_to_distance.y / max(bent_depth - depth_to_distance.x, 1e-6);
+
+		if (bent_clip.w <= 0.0 || bent_distance < view_distance || any(lessThan(bent_uv, vec2(0.0))) || any(greaterThan(bent_uv, vec2(1.0))))
+		{
+			bent_uv = screen_uv;
+		}
+		color = mix(textureLod(scene_color_texture, bent_uv, 0.0).rgb, color, blend);
+		fragment_color = vec4(color, 1.0);
+	}
+	else
+	{
+		fragment_color = vec4(color, blend);
+	}
 #ifdef WATER_SPLIT_REFLECTIONS
 	// How much of the final pixel the reflection is: through the Fresnel
 	// mix, past the foam and the haze, by the water's own opacity (the
@@ -491,7 +520,7 @@ void main()
 	// much
 	if (split_strength > 0.0)
 	{
-		float weight = clamp(alpha, 0.0, 1.0) * fresnel * (1.0 - foam) * (1.0 - clamp(fog_amount, 0.0, 1.0)) * split_strength;
+		float weight = blend * fresnel * (1.0 - foam) * (1.0 - clamp(fog_amount, 0.0, 1.0)) * split_strength;
 
 		ray_out = vec4(split_direction, weight);
 		sky_out = vec4(split_sky, view_distance);
