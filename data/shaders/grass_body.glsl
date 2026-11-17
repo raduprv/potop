@@ -600,6 +600,51 @@ void main()
 
 	// (the two lists share the buffer: a blade taken only while both
 	// together fit)
+#ifdef SUBGROUPS
+	// The subgroup's blades counted together: one atomic for the subgroup
+	// on each counter (one lane's, the first; its answer broadcast), each
+	// blade's place its count of the lanes before it. Twice: the ones that
+	// fit first, then of those, near and far
+	{
+		uvec4 everyone = subgroupBallot(true);
+		uint taken_base = 0u;
+
+		if (subgroupElect())
+		{
+			taken_base = atomicAdd(counts[0], subgroupBallotBitCount(everyone));
+		}
+		taken_base = subgroupBroadcastFirst(taken_base);
+		bool taken = taken_base + subgroupBallotExclusiveBitCount(everyone) < capacity;
+		uvec4 far_lanes = subgroupBallot(taken && far_blade);
+		uvec4 near_lanes = subgroupBallot(taken && !far_blade);
+		uint far_base = 0u;
+		uint near_base = 0u;
+
+		if (subgroupElect())
+		{
+			uint far_count = subgroupBallotBitCount(far_lanes);
+			uint near_count = subgroupBallotBitCount(near_lanes);
+
+			far_base = far_count > 0u ? atomicAdd(counts[6], far_count) : 0u;
+			near_base = near_count > 0u ? atomicAdd(counts[5], near_count) : 0u;
+		}
+		far_base = subgroupBroadcastFirst(far_base);
+		near_base = subgroupBroadcastFirst(near_base);
+		if (!taken)
+		{
+			return;
+		}
+		if (far_blade)
+		{
+			width *= coarse.y;
+			place = capacity - 1u - (far_base + subgroupBallotExclusiveBitCount(far_lanes));
+		}
+		else
+		{
+			place = near_base + subgroupBallotExclusiveBitCount(near_lanes);
+		}
+	}
+#else
 	if (atomicAdd(counts[0], 1u) >= capacity)
 	{
 		return;
@@ -613,6 +658,7 @@ void main()
 	{
 		place = atomicAdd(counts[5], 1u);
 	}
+#endif
 	// Which way its face looks (a share of a turn), its width, laid down
 	// towards (and how far)
 	write_blade(place * BLADE_FLOATS, root, height, width, more.w, flatten);

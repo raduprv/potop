@@ -80,6 +80,11 @@ bool grass_create(grass_t *grass)
 	layout.threads_x = GRASS_THREADS;
 	grass->scatter_pipeline = gpu_load_compute("grass.comp", &layout);
 	grass->map_scatter_pipeline = gpu_load_compute("grass_map.comp", &layout);
+	if (gpu.vulkan_11)
+	{
+		grass->scatter_subgroups_pipeline = gpu_load_compute("grass.comp.subgroups", &layout);
+		grass->map_scatter_subgroups_pipeline = gpu_load_compute("grass_map.comp.subgroups", &layout);
+	}
 	SDL_zero(info);
 	info.vertex_shader = gpu_load_shader("grass.vert", 0, 0, 2);
 	info.fragment_shader = gpu_load_shader("grass.frag", 1, LIGHTS_STORAGE_BUFFERS, 1);
@@ -128,6 +133,14 @@ void grass_destroy(grass_t *grass)
 		{
 			SDL_ReleaseGPUBuffer(gpu.device, buffers[i]);
 		}
+	}
+	if (grass->scatter_subgroups_pipeline != NULL)
+	{
+		SDL_ReleaseGPUComputePipeline(gpu.device, grass->scatter_subgroups_pipeline);
+	}
+	if (grass->map_scatter_subgroups_pipeline != NULL)
+	{
+		SDL_ReleaseGPUComputePipeline(gpu.device, grass->map_scatter_subgroups_pipeline);
 	}
 	if (grass->map_scatter_pipeline != NULL)
 	{
@@ -187,8 +200,14 @@ static void dispatch(grass_t *grass, SDL_GPUCommandBuffer *command_buffer, const
 	{
 		return;
 	}
-	SDL_BindGPUComputePipeline(compute, world->material_map && grass->map_scatter_pipeline != NULL ? grass->map_scatter_pipeline
-		: grass->scatter_pipeline);
+	{
+		bool subgroups = grass->use_subgroups && grass->scatter_subgroups_pipeline != NULL && grass->map_scatter_subgroups_pipeline != NULL;
+		SDL_GPUComputePipeline *plain = world->material_map && grass->map_scatter_pipeline != NULL ? grass->map_scatter_pipeline
+			: grass->scatter_pipeline;
+		SDL_GPUComputePipeline *grouped = world->material_map ? grass->map_scatter_subgroups_pipeline : grass->scatter_subgroups_pipeline;
+
+		SDL_BindGPUComputePipeline(compute, subgroups ? grouped : plain);
+	}
 	SDL_BindGPUComputeSamplers(compute, 0, samplers, 16);
 	{
 		SDL_GPUBuffer *pyramid = world->occlusion != NULL && uniforms->hiz_size[3] > 0.5f ? hiz_buffer(world->occlusion) : grass->no_occlusion_buffer;
@@ -222,6 +241,7 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 
 	// (debugging, what the scatter costs: the blades of the last frame it
 	// ran kept as they are, drawn again; only the wind still moves them)
+	grass->use_subgroups = render->gpu_subgroups;
 	if (render->debug_grass_freeze && grass->prepared && settings->grass)
 	{
 		return;

@@ -237,6 +237,7 @@ static const setting_field_t setting_fields[] =
 	FIELD("render", "debug_near_shadow_off", SETTING_BOOL, render.debug_near_shadow_off),
 	FIELD("render", "debug_far_shadow_no_plants", SETTING_BOOL, render.debug_far_shadow_no_plants),
 	FIELD("render", "debug_grass_freeze", SETTING_BOOL, render.debug_grass_freeze),
+	FIELD("render", "gpu_subgroups", SETTING_BOOL, render.gpu_subgroups),
 	FIELD("render", "debug_water_ripples", SETTING_INT, render.debug_water_ripples),
 	FIELD("render", "water_depth_write", SETTING_BOOL, render.water_depth_write),
 	FIELD("render", "water_cull_back_faces", SETTING_BOOL, render.water_cull_back_faces),
@@ -513,6 +514,7 @@ void settings_set_defaults(settings_t *settings)
 	settings->render.water_choppiness = 1.0f;
 	settings->render.water_reflections_half_size = false;
 	settings->render.puddles = true;
+	settings->render.gpu_subgroups = true;
 	settings->render.water_reflection_meters = 250.0f;
 	settings->render.terrain_from_gpu = true;
 	settings->render.material_map = true;

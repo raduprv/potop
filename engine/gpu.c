@@ -99,7 +99,34 @@ bool gpu_create(SDL_Window *window, bool vsync, float anisotropy)
 	bool debug = SDL_getenv("POTOP_GPU_DEBUG") != NULL;
 
 	SDL_zero(gpu);
-	gpu.device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, debug, NULL);
+#if SDL_VERSION_ATLEAST(3, 4, 0)
+	// Vulkan 1.1 (the subgroup operations, core there: no feature to
+	// enable); the environment's POTOP_NO_VULKAN_11 leaves it at 1.0. If
+	// the device will not, as before
+	if (SDL_getenv("POTOP_NO_VULKAN_11") == NULL)
+	{
+		SDL_GPUVulkanOptions options;
+		SDL_PropertiesID properties = SDL_CreateProperties();
+
+		SDL_zero(options);
+		options.vulkan_api_version = (1u << 22) | (1u << 12);   // VK_MAKE_API_VERSION(0, 1, 1, 0)
+		SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
+		SDL_SetBooleanProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, debug);
+		SDL_SetStringProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_NAME_STRING, "vulkan");
+		SDL_SetPointerProperty(properties, SDL_PROP_GPU_DEVICE_CREATE_VULKAN_OPTIONS_POINTER, &options);
+		gpu.device = SDL_CreateGPUDeviceWithProperties(properties);
+		SDL_DestroyProperties(properties);
+		gpu.vulkan_11 = gpu.device != NULL;
+		if (gpu.device == NULL)
+		{
+			SDL_LogWarn(SDL_LOG_CATEGORY_RENDER, "GPU: no Vulkan 1.1 device (%s); asking for the plain one", SDL_GetError());
+		}
+	}
+	if (gpu.device == NULL)
+#endif
+	{
+		gpu.device = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, debug, NULL);
+	}
 	if (gpu.device == NULL)
 	{
 		SDL_LogError(SDL_LOG_CATEGORY_RENDER, "GPU: no device (Vulkan needed): %s", SDL_GetError());

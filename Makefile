@@ -90,7 +90,12 @@ all: shaders
 endif
 all: $(TARGET) $(EDITOR)
 
-shaders: $(SHADER_BINARIES)
+# The compute shaders with subgroup variants (Vulkan 1.1: SPIR-V 1.3;
+# loaded only where the device has it, gpu.h)
+SUBGROUP_SHADERS = grass.comp grass_map.comp
+SUBGROUP_BINARIES = $(SUBGROUP_SHADERS:%=data/shaders/spirv/%.subgroups.spv)
+
+shaders: $(SHADER_BINARIES) $(SUBGROUP_BINARIES)
 
 data/shaders/spirv/%.vert.spv: data/shaders/%.vert $(SHADER_INCLUDES) | data/shaders/spirv
 	$(GLSLANG) -V --quiet -DVERTEX_SHADER -Idata/shaders -o $@ $<
@@ -100,6 +105,9 @@ data/shaders/spirv/%.frag.spv: data/shaders/%.frag $(SHADER_INCLUDES) | data/sha
 
 data/shaders/spirv/%.comp.spv: data/shaders/%.comp $(SHADER_INCLUDES) | data/shaders/spirv
 	$(GLSLANG) -V --quiet -DCOMPUTE_SHADER -Idata/shaders -o $@ $<
+
+data/shaders/spirv/%.comp.subgroups.spv: data/shaders/%.comp $(SHADER_INCLUDES) | data/shaders/spirv
+	$(GLSLANG) -V --quiet --target-env vulkan1.1 -DCOMPUTE_SHADER -DSUBGROUPS -Idata/shaders -o $@ $<
 
 data/shaders/spirv:
 	mkdir -p data/shaders/spirv

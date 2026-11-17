@@ -1,4 +1,8 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
+#ifdef SUBGROUPS
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#endif
 // The materials worked out per blade (render.material_map off)
 #include "grass_body.glsl"

@@ -59,6 +59,11 @@ typedef struct
 	SDL_GPUSampleCount scene_sample_count;
 	uint32_t scene_samples;
 	bool vsync;
+	// Vulkan 1.1 asked for (SDL 3.4's Vulkan options; not with older SDL,
+	// or if the device refused): the compute shaders' subgroup variants
+	// (*.comp.subgroups.spv: one atomic a subgroup, not one a thread) may
+	// be loaded
+	bool vulkan_11;
 
 	// The frame being recorded (NULL between frames)
 	SDL_GPUCommandBuffer *command_buffer;

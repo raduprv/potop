@@ -1,6 +1,10 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 #extension GL_EXT_control_flow_attributes : require
+#ifdef SUBGROUPS
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#endif
 // The materials from the material map (render.material_map on)
 #define MATERIAL_MAP
 #include "grass_body.glsl"

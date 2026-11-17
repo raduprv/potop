@@ -34,6 +34,10 @@ typedef struct
 {
 	SDL_GPUComputePipeline *scatter_pipeline;
 	SDL_GPUComputePipeline *map_scatter_pipeline; // the same from the material map (grass_map.comp)
+	// Their subgroup variants (gpu.vulkan_11; NULL: none)
+	SDL_GPUComputePipeline *scatter_subgroups_pipeline;
+	SDL_GPUComputePipeline *map_scatter_subgroups_pipeline;
+	bool use_subgroups;            // this frame's say (render.gpu_subgroups)
 	SDL_GPUGraphicsPipeline *pipeline;
 	SDL_GPUBuffer *blade_buffer;           // grass.vert's instances: 8 floats a blade
 	uint32_t blade_capacity;               // blades it holds
