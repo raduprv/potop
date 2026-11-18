@@ -5,12 +5,12 @@
 # each kind of agent (a hen, a man, a bear, a cow) to every station of it,
 # against what each should do.
 #
-#   tools/nav_stress.py build             the course's model (glTF, then
+#   tests/navigation/nav_stress.py build             the course's model (glTF, then
 #                                         tools/potop_convert)
-#   tools/nav_stress.py run [TYPE...]     the walks (all by default; bear+run:
+#   tests/navigation/nav_stress.py run [TYPE...]     the walks (all by default; bear+run:
 #                                         the bear running),
 #                                         a table of what went right
-#   tools/nav_stress.py list              the stations and the expectations
+#   tests/navigation/nav_stress.py list              the stations and the expectations
 #
 # The game runs headless (xvfb-run, lavapipe when VK_ICD_FILENAMES is not
 # set), --houses nav_stress: the course alone on flat ground. The model
@@ -31,7 +31,10 @@ import struct
 import subprocess
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import trace_analysis
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MODEL = os.path.join(ROOT, "data", "objects", "nav_stress.pobj")
 
 # The agents, as data/actors.ini has them (width 2 x radius, height, step)
@@ -238,7 +241,7 @@ def build():
 	low = [min(p[i] for p in positions) for i in range(3)]
 	high = [max(p[i] for p in positions) for i in range(3)]
 	gltf = {
-		"asset": {"version": "2.0", "generator": "tools/nav_stress.py"},
+		"asset": {"version": "2.0", "generator": "tests/navigation/nav_stress.py"},
 		"scene": 0,
 		"scenes": [{"nodes": [0]}],
 		"nodes": [{"mesh": 0, "name": "nav_stress"}],
@@ -273,7 +276,7 @@ def course_origin():
 	log = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, text=True).stdout
 	found = re.search(r"Houses: 'nav_stress' at \(([-0-9.]+), ([-0-9.]+)\)", log)
 	if found is None:
-		sys.exit("nav_stress: the course is not in the game's log (tools/nav_stress.py build, and objects.ini's [nav_stress])")
+		sys.exit("nav_stress: the course is not in the game's log (tests/navigation/nav_stress.py build, and objects.ini's [nav_stress])")
 	return float(found.group(1)), float(found.group(2))
 
 
@@ -367,13 +370,18 @@ def run(types):
 			print("%s%s inside the solid %d times (a quarter of a second each), the deepest %.2f m in at %.1f s at (%.2f, %.2f), %.2f m up" % (
 				"WRONG: " if deepest[0] > 0.25 else "", agent,
 				len(inside[agent]), deepest[0], deepest[1], deepest[2], deepest[3], deepest[4]))
+	# (how they turned: on the spot, spins; told, not wrong yet)
+	for agent in types:
+		analysis = trace_analysis.summary(os.path.join(ROOT, "build", "nav_stress_%s.trace" % agent))
+		print("%-10s on the spot %4.0f s, the most %4.0f degrees, spins %d, off the mesh %d" % (agent, analysis["turn_seconds"],
+			analysis["most_degrees"], analysis["spins"], analysis["off"]))
 	print("%d wrong" % failures)
 	return failures
 
 
 def main():
 	if len(sys.argv) < 2 or sys.argv[1] not in ("build", "run", "list"):
-		sys.exit("tools/nav_stress.py build | run [TYPE...] | list")
+		sys.exit("tests/navigation/nav_stress.py build | run [TYPE...] | list")
 	if sys.argv[1] == "build":
 		build()
 	elif sys.argv[1] == "list":

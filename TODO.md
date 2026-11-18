@@ -90,11 +90,13 @@ from an older version get their terrain difference baked in once).
 - Phase 5, any number of levels: the build reads the objects' collision
   straight into columns of surfaces (now 3 above the terrain at most).
 - Then the cells' A* and the path pulling can go.
+- The open problem (spins at stairs, turning on the spot, the two grids):
+  tests/navigation/README.md, with the tests and the baseline.
 - A running cow (3.3 m/s, 30 degrees a second: a turn 6 m wide) on a
   terrace 2 m deep goes round in circles at the rail (the step guard
   keeps it in): it should slow to a walk where its turn does not fit.
 - Church porch: the farmer (1.85) under its 1.65 m beam (see below).
-- Stress test (tools/nav_stress.py run) known limits: ground cells are still whole meters (a 1 m
+- Stress test (tests/navigation/nav_stress.py run) known limits: ground cells are still whole meters (a 1 m
   door on bare ground can come out shut); the portals to the next tile
   are not cut to their quarter meters. Each fix: a station for it.
 - Church porch: a beam 1.65 m over the top of its stair: the farmer (1.85,
