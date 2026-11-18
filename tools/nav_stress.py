@@ -7,7 +7,8 @@
 #
 #   tools/nav_stress.py build             the course's model (glTF, then
 #                                         tools/potop_convert)
-#   tools/nav_stress.py run [TYPE...]     the walks (all four by default),
+#   tools/nav_stress.py run [TYPE...]     the walks (all by default; bear+run:
+#                                         the bear running),
 #                                         a table of what went right
 #   tools/nav_stress.py list              the stations and the expectations
 #
@@ -34,7 +35,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL = os.path.join(ROOT, "data", "objects", "nav_stress.pobj")
 
 # The agents, as data/actors.ini has them (width 2 x radius, height, step)
-AGENTS = ["hen", "farmer", "bear", "cow"]
+# ("+run": running to the goals, turning wider than it can follow a
+# corner)
+AGENTS = ["hen", "farmer", "bear", "cow", "bear+run", "cow+run"]
 
 # Stations along local x, STATION_SPACING apart; their fronts (stairs,
 # doors) toward +z (the agents come from there, HOME_Z out)
@@ -148,7 +151,7 @@ STATIONS = [
 # tread within MERGE_METERS of the ground is ground, so the second looks a
 # step of two treads)
 def expected(station, agent):
-	size = AGENT_SIZES[agent]
+	size = AGENT_SIZES[agent.split("+")[0]]
 	step, opening, room = station[4], station[5], station[6]
 	if room < size["height"] or step > size["step"] + 1e-6:
 		return "no"
@@ -279,7 +282,9 @@ def run(types):
 			goals.append(world(origin, station_x(index) + offset[0], HOME_Z))
 		text = ";".join("%.2f,%.2f" % goal for goal in goals)
 		trace = os.path.join(ROOT, "build", "nav_stress_%s.trace" % agent)
-		command, environment = game_command(["--sim", "3000", "--trace", trace, "--walk_from", "%.2f,%.2f" % home, "--walk_test", agent, text])
+		running = ["--walk_run"] if agent.endswith("+run") else []
+		command, environment = game_command(["--sim", "3000", "--trace", trace, "--walk_from", "%.2f,%.2f" % home] + running
+			+ ["--walk_test", agent.split("+")[0], text])
 		log = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, text=True).stdout
 		with open(os.path.join(ROOT, "build", "nav_stress_%s.log" % agent), "w") as out:
 			out.write(log)
@@ -292,7 +297,7 @@ def run(types):
 		# terrace, a step) between its bottom and top (less a step: on
 		# its way up a stair its height lags the treads), how deep in
 		inside[agent] = []
-		step = AGENT_SIZES[agent]["step"]
+		step = AGENT_SIZES[agent.split("+")[0]]["step"]
 		with open(trace) as trail:
 			for line in trail:
 				parts = line.split()
@@ -302,7 +307,7 @@ def run(types):
 				lx, lz = origin[0] - x, origin[1] - z
 				for x0, x1, y0, y1, z0, z1 in boxes:
 					depth = min(lx - x0, x1 - lx, lz - z0, z1 - lz)
-					if depth > 0.05 and ground + y0 + 0.05 < y < ground + y1 - max(step, 0.05):
+					if depth > 0.05 and ground + y0 - 0.05 < y < ground + y1 - max(step, 0.05):
 						inside[agent].append((depth, float(parts[1]), x, z, y))
 						break
 	failures = 0

@@ -397,6 +397,7 @@ typedef struct
 	uint32_t walk_test_actor;      // 0: not put down yet
 	float walk_test_wait;          // seconds till it is put down / still since it stopped
 	bool walk_test_done;           // every goal tried
+	bool walk_test_running;        // it runs to them (--walk_run)
 	float walk_test_goal_seconds;  // since it was sent to this goal
 	float walk_test_trail[2][2];   // the trail's box (minimum, maximum), for the trace's map
 	// The workers (workers.c): a smith in each smithy near the eye

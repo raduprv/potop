@@ -58,6 +58,8 @@ static int mesh_line_passable(navigation_t *navigation, const terrain_t *terrain
 	float from_x, float from_z, float from_height, float to_x, float to_z, float *blocked_x, float *blocked_z, float *blocked_height);
 static int32_t mesh_rect_of_node(const navigation_t *navigation, int c, int32_t node, int32_t cell);
 static int mesh_class_of(const navigation_agent_t *agent);
+static bool node_sub_height(const navigation_t *navigation, int32_t node, int32_t cell, int32_t sub_x, int32_t sub_z, uint8_t room_needed,
+	float *height_out, bool *blocked_out);
 
 static const int32_t direction_x[8] = { 1, -1, 0, 0, 1, 1, -1, -1 };
 static const int32_t direction_z[8] = { 0, 0, 1, -1, 1, -1, 1, -1 };
@@ -2359,6 +2361,33 @@ static float surface_height_at(const navigation_t *navigation, const navigation_
 	int32_t sub = (int32_t)(inside_z * NAVIGATION_SUBCELLS) * NAVIGATION_SUBCELLS + (int32_t)(inside_x * NAVIGATION_SUBCELLS);
 	uint8_t below = surface->below[sub];
 
+	// (a quarter something stands in at its height, a wall's or a
+	// balustrade's: the floor beside it, as one brushing the wall stands on
+	// the floor, not on the ground under it)
+	if (below == NAVIGATION_SUBCELL_BLOCKED)
+	{
+		int32_t sub_x = sub % NAVIGATION_SUBCELLS;
+		int32_t sub_z = sub / NAVIGATION_SUBCELLS;
+		float best = -1e30f;
+
+		for (int d = 0; d < 4; d++)
+		{
+			int32_t next_x = sub_x + direction_x[d];
+			int32_t next_z = sub_z + direction_z[d];
+			uint8_t next_below;
+
+			if (next_x < 0 || next_z < 0 || next_x >= NAVIGATION_SUBCELLS || next_z >= NAVIGATION_SUBCELLS)
+			{
+				continue;
+			}
+			next_below = surface->below[next_z * NAVIGATION_SUBCELLS + next_x];
+			if (next_below < NAVIGATION_SUBCELL_BLOCKED)
+			{
+				best = SDL_max(best, surface->height - (float)next_below * NAVIGATION_SUBCELL_UNIT_METERS);
+			}
+		}
+		return best;
+	}
 	if (below >= NAVIGATION_SUBCELL_BLOCKED)
 	{
 		return -1e30f;
@@ -2517,6 +2546,73 @@ bool navigation_passable(const navigation_t *navigation, const terrain_t *terrai
 		}
 	}
 	return false;
+}
+
+bool navigation_quarter_free(const navigation_t *navigation, const terrain_t *terrain, const water_t *water,
+	const navigation_agent_t *agent, float x, float z, float near_height)
+{
+	int32_t cell;
+	int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
+	int count;
+	float reach = SDL_max(agent->step_meters, agent->maximum_slope * NAVIGATION_CELL_METERS);
+	int32_t sub_x;
+	int32_t sub_z;
+	uint8_t room_needed = (uint8_t)SDL_clamp(SDL_ceilf(agent->height_meters / NAVIGATION_CLEARANCE_UNIT_METERS), 0.0f,
+		(float)(NAVIGATION_CLEARANCE_OPEN - 1));
+	bool in_the_way = false;
+
+	if (!cell_of_point(navigation, x, z, &cell))
+	{
+		return false;
+	}
+	sub_x = SDL_clamp((int32_t)((x / NAVIGATION_CELL_METERS - SDL_floorf(x / NAVIGATION_CELL_METERS)) * NAVIGATION_SUBCELLS), 0, NAVIGATION_SUBCELLS - 1);
+	sub_z = SDL_clamp((int32_t)((z / NAVIGATION_CELL_METERS - SDL_floorf(z / NAVIGATION_CELL_METERS)) * NAVIGATION_SUBCELLS), 0, NAVIGATION_SUBCELLS - 1);
+	count = cell_nodes(navigation, cell, nodes);
+	for (int k = 0; k < count; k++)
+	{
+		const navigation_surface_t *surface;
+		uint8_t below;
+		float height;
+		bool blocked;
+
+		if (nodes[k] < cell_count(navigation))
+		{
+			node_info_t info;
+
+			node_info(navigation, terrain, water, agent, nodes[k], &info);
+			if (info.passable && (info.water_class == CLASS_SWIM || SDL_fabsf(info.height - near_height) <= reach))
+			{
+				return true;
+			}
+			continue;
+		}
+		if (node_sub_height(navigation, nodes[k], cell, sub_x, sub_z, room_needed, &height, &blocked))
+		{
+			// (an object's top: a step up onto it, no slope; higher than a
+			// step over it: its side, in the way, a terrace's face)
+			if (SDL_fabsf(height - near_height) <= agent->step_meters + 0.05f)
+			{
+				return true;
+			}
+			if (height > near_height && height - near_height < reach + NAVIGATION_OBJECT_HEIGHT_METERS)
+			{
+				in_the_way = true;
+			}
+			continue;
+		}
+		// (its, or something standing at its height there, within reach:
+		// in the way)
+		surface = extra_surface(navigation, nodes[k]);
+		below = surface->below[sub_z * NAVIGATION_SUBCELLS + sub_x];
+		if (blocked && SDL_fabsf(surface->height - (below < NAVIGATION_SUBCELL_BLOCKED ? (float)below * NAVIGATION_SUBCELL_UNIT_METERS : 0.0f)
+			- near_height) <= reach)
+		{
+			in_the_way = true;
+		}
+	}
+	// (no surface's there, nor the ground's room: what the cells say, the
+	// first tread of a stair taken for the ground)
+	return !in_the_way;
 }
 
 // The node of the cell an agent on from can step onto (passable, no worse
@@ -3490,6 +3586,11 @@ static void mesh_note_agent(navigation_t *navigation, const navigation_agent_t *
 		class->height = agent->height_meters;
 		changed = true;
 	}
+	if (agent->step_meters < class->step)
+	{
+		class->step = agent->step_meters;
+		changed = true;
+	}
 	if (erosion > class->erosion_cells)
 	{
 		class->erosion_cells = erosion;
@@ -3547,6 +3648,7 @@ static bool mesh_allocate(navigation_t *navigation)
 		// (no agent seen yet: the first one sets it)
 		class->reach = 1e9f;
 		class->height = 1e9f;
+		class->step = 1e9f;
 		class->erosion_cells = 0;
 		class->width_quarters = c + 1;
 		class->epoch++;
@@ -3990,6 +4092,9 @@ static bool mesh_side_portals(navigation_t *navigation, int c, int32_t id, int s
 	float run_rise = 0.0f;
 	int32_t run_start = 0;
 	float reach = SDL_min(navigation->mesh.classes[c].reach, 50.0f);
+	// (onto an object's top a step only: a stair's treads, not the
+	// terrace's face beside them, a slope's reach up)
+	float step = SDL_min(navigation->mesh.classes[c].step, 50.0f);
 	uint8_t room_needed = mesh_room_needed(&navigation->mesh.classes[c]);
 	int32_t width_quarters = navigation->mesh.classes[c].width_quarters;
 	// (each cell's two nodes across the side, and their cells, for where
@@ -3998,7 +4103,6 @@ static bool mesh_side_portals(navigation_t *navigation, int c, int32_t id, int s
 	int32_t beyond_nodes[NAVIGATION_MESH_RECT_MOST + 1];
 	int32_t inside_cells[NAVIGATION_MESH_RECT_MOST + 1];
 	int32_t beyond_cells[NAVIGATION_MESH_RECT_MOST + 1];
-	float rises[NAVIGATION_MESH_RECT_MOST + 1];
 
 	for (int32_t k = 0; k <= along; k++)
 	{
@@ -4044,7 +4148,6 @@ static bool mesh_side_portals(navigation_t *navigation, int c, int32_t id, int s
 							beyond_nodes[k] = nodes[n];
 							inside_cells[k] = inside_cell;
 							beyond_cells[k] = beyond_cell;
-							rises[k] = difference;
 						}
 					}
 					level = mesh_rise_level(rise);
@@ -4064,10 +4167,10 @@ static bool mesh_side_portals(navigation_t *navigation, int c, int32_t id, int s
 			// (its ends where the quarter meters meet, at the first and last
 			// cells: a balustrade's opening narrower than its cells)
 			node_edge_span(navigation, inside_nodes[run_start], inside_cells[run_start], beyond_nodes[run_start], beyond_cells[run_start], side,
-				SDL_max(reach, rises[run_start]), room_needed, &first_line, &last_line);
+				inside_nodes[run_start] >= cell_count(navigation) || beyond_nodes[run_start] >= cell_count(navigation) ? step : reach, room_needed, &first_line, &last_line);
 			start += (float)first_line * (NAVIGATION_CELL_METERS / (float)NAVIGATION_SUBCELLS);
 			node_edge_span(navigation, inside_nodes[k - 1], inside_cells[k - 1], beyond_nodes[k - 1], beyond_cells[k - 1], side,
-				SDL_max(reach, rises[k - 1]), room_needed, &first_line, &last_line);
+				inside_nodes[k - 1] >= cell_count(navigation) || beyond_nodes[k - 1] >= cell_count(navigation) ? step : reach, room_needed, &first_line, &last_line);
 			end -= (float)(NAVIGATION_SUBCELLS - 1 - last_line) * (NAVIGATION_CELL_METERS / (float)NAVIGATION_SUBCELLS);
 			// (an opening narrower than the class: no way through)
 			if (end - start >= (float)width_quarters * (NAVIGATION_CELL_METERS / (float)NAVIGATION_SUBCELLS) - 0.01f)
@@ -5323,7 +5426,8 @@ static int mesh_line_passable(navigation_t *navigation, const terrain_t *terrain
 	// Its width: the lines a radius to either side (unless its class keeps
 	// whole cells away from things in its rectangles already)
 	navigation->mesh.lines++;
-	if (result == 1 && navigation->mesh.classes[mesh_class_of(agent)].erosion_cells == 0 && agent->radius_meters > 0.05f && length > 1e-4f)
+	if (result == 1 && !agent->line_center_only && navigation->mesh.classes[mesh_class_of(agent)].erosion_cells == 0 && agent->radius_meters > 0.05f
+		&& length > 1e-4f)
 	{
 		float side_x = -dz / length * agent->radius_meters;
 		float side_z = dx / length * agent->radius_meters;

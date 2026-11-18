@@ -872,8 +872,9 @@ static void place_on_ground(const actors_t *actors, actor_t *actor, const terrai
 		// (the navigation's alone: the physics' shapes only refine the
 		// samples round it, within a step of it, so a wall of logs, each a
 		// ledge, is not climbed log by log onto the roof)
-		center_height = navigation != NULL && actor->placed ? navigation_surface_height(navigation, terrain, &placing, actor->x, actor->z, actor->y)
-			: actor->y;
+		center_height = navigation != NULL && actor->placed ? navigation_surface_height(navigation, terrain, &placing, actor->x, actor->z,
+			actor->center_ground) : actor->y;
+		actor->center_ground = center_height;
 		agent = placing;
 	}
 	for (int k = 0; k < 4; k++)
@@ -1691,6 +1692,7 @@ static navigation_agent_t agent_of(const actor_type_t *type)
 	// (a shut door stops one that does not open doors: navigation.h)
 	agent.groups = (uint8_t)((type->path_groups & ~NAVIGATION_GROUP_SHUT_DOOR) | (type->opens_doors ? 0u : NAVIGATION_GROUP_SHUT_DOOR));
 	agent.opens_doors = type->opens_doors;
+	agent.line_center_only = false;
 	return agent;
 }
 
@@ -3075,6 +3077,39 @@ static bool gait_plan_stop(actors_t *actors, actor_t *actor)
 	return false;
 }
 
+// Whether a step of a walker on its path keeps to where the path finding
+// lets it be: its center's line to the step's end and a radius on is
+// passable and the quarter meter there free (inside a cell: a balustrade's
+// post on a stair's top); or, its cell one it cannot be in (pushed there),
+// the quarter ahead is free: out it goes
+static bool step_passable(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
+	const actor_t *actor, float step_x, float step_z)
+{
+	float length = SDL_sqrtf(step_x * step_x + step_z * step_z);
+	float reach = length + agent->radius_meters;
+	// (its center's line only, a radius on ahead: its sides brush along
+	// what its path keeps close to, a stair's edge)
+	navigation_agent_t center = *agent;
+	float ahead_x;
+	float ahead_z;
+	bool ahead_free;
+
+	center.line_center_only = true;
+	if (length < 1e-6f)
+	{
+		return true;
+	}
+	ahead_x = actor->x + step_x / length * reach;
+	ahead_z = actor->z + step_z / length * reach;
+	ahead_free = navigation_quarter_free(navigation, terrain, water, &center, ahead_x, ahead_z, actor->center_ground);
+	if (ahead_free && navigation_line_passable(navigation, terrain, water, &center, actor->x, actor->z, actor->center_ground, ahead_x, ahead_z, NULL,
+		NULL, NULL))
+	{
+		return true;
+	}
+	return ahead_free && !navigation_passable(navigation, terrain, water, &center, actor->x, actor->z, actor->center_ground);
+}
+
 // Whether, short of its waypoint, it can go straight on to the next one
 // from where it is (the corner cut)
 static bool corner_cut_passable(const actors_t *actors, const actor_t *actor, const navigation_t *navigation, const terrain_t *terrain,
@@ -3521,6 +3556,40 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 		else if (actor->straight && actor->moving && (step_x != 0.0f || step_z != 0.0f))
 		{
 			actor->straight_blocks = 0;
+		}
+		// On its path, not where the path finding says it cannot be: a turn
+		// wider than the way (running round a stair's top) is not made
+		// through the balustrade, it stops short (its radius off) and turns
+		// on the spot; unless it is somewhere it cannot be already (pushed
+		// there): out it goes
+		if (!actor->straight && !actor->swimming && actor->moving && actor->speed > 0.0f && (step_x != 0.0f || step_z != 0.0f)
+			&& !step_passable(navigation, terrain, water, &agent, actor, step_x, step_z))
+		{
+			// (along the edge instead, a little to either side: its path
+			// runs along it, its center a little over)
+			static const float SLIDE_RADIANS[4] = { 0.5f, -0.5f, 1.0f, -1.0f };
+			bool slid = false;
+
+			for (int k = 0; k < 4 && !slid; k++)
+			{
+				float slide_cos = SDL_cosf(SLIDE_RADIANS[k]);
+				float slide_sin = SDL_sinf(SLIDE_RADIANS[k]);
+				float slide_x = (step_x * slide_cos + step_z * slide_sin) * slide_cos;
+				float slide_z = (step_z * slide_cos - step_x * slide_sin) * slide_cos;
+
+				if (step_passable(navigation, terrain, water, &agent, actor, slide_x, slide_z))
+				{
+					step_x = slide_x;
+					step_z = slide_z;
+					slid = true;
+				}
+			}
+			if (!slid)
+			{
+				step_x = 0.0f;
+				step_z = 0.0f;
+				actor->speed = 0.0f;
+			}
 		}
 		actor->x += step_x + current_x * carried * seconds;
 		actor->z += step_z + current_z * carried * seconds;

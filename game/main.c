@@ -3,7 +3,7 @@
 //
 //     potop [--map NAME] [--seed N] [--width W --height H] [--houses [CATEGORY]]
 //           [--set SECTION.KEY=VALUE]... [--hour H] [--sim SECONDS [--sim-step S]] [--trace FILE]
-//           [--walk_test TYPE X,Z[;X,Z...] [--walk_from X,Z]]
+//           [--walk_test TYPE X,Z[;X,Z...] [--walk_from X,Z] [--walk_run]]
 //
 // --houses: no map, small flat ground with every house (objects.ini's
 // category "buildings", or "fable", or the one named) in rows
@@ -16,7 +16,8 @@
 // --walk_test: an actor of the type put down where the player stands (or
 // at --walk_from) and sent to each goal in turn (game/walk_test.c); with
 // --trace its trail, the goals and the navigation mesh round it; with
-// --sim over when the last goal is (or the seconds are)
+// --sim over when the last goal is (or the seconds are); --walk_run: it
+// runs
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -28,6 +29,7 @@ static const char *trace_path = NULL;
 static const char *walk_test_type = NULL;
 static const char *walk_test_goals = NULL;
 static const char *walk_test_from = NULL;
+static bool walk_test_running = false;
 
 static void read_command_line(potop_options_t *options, int argument_count, char **arguments)
 {
@@ -111,6 +113,10 @@ static void read_command_line(potop_options_t *options, int argument_count, char
 			walk_test_from = value;
 			i++;
 		}
+		else if (SDL_strcmp(argument, "--walk_run") == 0)
+		{
+			walk_test_running = true;
+		}
 	}
 }
 
@@ -143,6 +149,7 @@ int main(int argument_count, char **arguments)
 	if (walk_test_type != NULL)
 	{
 		game_walk_test_set(&game, walk_test_type, walk_test_goals, walk_test_from);
+		game.walk_test_running = walk_test_running;
 	}
 	while (potop_frame_begin(potop, &input, &seconds))
 	{

@@ -269,6 +269,11 @@ typedef struct
 	// last found (each point keeps to what it was on: a rock, a deck)
 	bool ground_samples_known;
 	float ground_samples[4];
+	// What it stood on under its middle as last found (not its height, which
+	// eases after it): the next looks within a step of that, so one running
+	// up a stair keeps up with the treads instead of falling through the
+	// terrace its eased height is too far below
+	float center_ground;
 	// The body's lean as last placed, and whether it was placed on the map
 	// before (then it eases to the new place instead of jumping)
 	float lean_pitch;

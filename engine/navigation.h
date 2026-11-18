@@ -132,6 +132,7 @@ typedef struct
 	float radius_meters;               // half its width: straight stretches of a path keep this far from what is in the way
 	uint8_t groups;                    // bits: a blocker for one of these stops it (navigation_set_blockers; 0: none does); NAVIGATION_GROUP_SHUT_DOOR its own
 	bool opens_doors;                  // goes through a shut door (navigation_set_links): it opens it (a person, not a cow)
+	bool line_center_only;             // navigation_line_passable: its center's line, not its sides' too
 } navigation_agent_t;
 
 // A door: a way from one cell to another through what is in the way (a
@@ -279,6 +280,7 @@ typedef struct
 {
 	float reach;                       // the least step (or slope over a cell) of its agents seen
 	float height;                      // the lowest of them
+	float step;                        // the least step of them (onto an object's top)
 	int32_t erosion_cells;             // cells kept off what takes all the room (its widest)
 	int32_t width_quarters;            // its agents' width in quarter meters (the class's own: its index + 1)
 	uint32_t epoch;                    // a change of the above: its tiles built again
@@ -457,6 +459,14 @@ bool navigation_standable(navigation_t *navigation, const terrain_t *terrain, co
 // Can the agent be at this point: is there a surface with room for it,
 // within its reach of near_height?
 bool navigation_passable(const navigation_t *navigation, const terrain_t *terrain, const water_t *water,
+	const navigation_agent_t *agent, float x, float z, float near_height);
+
+// The same at the quarter meter of (x, z): false only where an object's
+// top within reach has that quarter in the way (too little room for the
+// agent: under a balustrade's rail; something standing there: its post);
+// a quarter no surface knows is free (a stair's first tread, taken for the
+// ground)
+bool navigation_quarter_free(const navigation_t *navigation, const terrain_t *terrain, const water_t *water,
 	const navigation_agent_t *agent, float x, float z, float near_height);
 
 // A path from (from_x, from_z), on the surface nearest from_height, towards
