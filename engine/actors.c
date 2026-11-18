@@ -48,6 +48,9 @@ static void set_type_defaults(actor_type_t *type, const char *name)
 	type->turn_degrees_per_second = 180.0f;
 	type->spot_turn_degrees = -1.0f;
 	type->pivot_degrees_per_second = -1.0f;
+	type->jump_up_meters = 0.0f;
+	type->jump_down_meters = 0.0f;
+	type->jump_actions[0] = type->jump_actions[1] = type->jump_actions[2] = -1;
 	SDL_strlcpy(type->turn_left_action_name, "turn_left", sizeof(type->turn_left_action_name));
 	type->turn_left_action = -1;
 	SDL_strlcpy(type->turn_right_action_name, "turn_right", sizeof(type->turn_right_action_name));
@@ -163,6 +166,14 @@ static bool load_key(void *user_data, const char *section, const char *key, cons
 	if (SDL_strcmp(key, "pivot_degrees_per_second") == 0)
 	{
 		return ini_value_to_float(value, &type->pivot_degrees_per_second);
+	}
+	if (SDL_strcmp(key, "jump_up_meters") == 0)
+	{
+		return ini_value_to_float(value, &type->jump_up_meters);
+	}
+	if (SDL_strcmp(key, "jump_down_meters") == 0)
+	{
+		return ini_value_to_float(value, &type->jump_down_meters);
 	}
 	if (SDL_strcmp(key, "walk_left_action") == 0)
 	{
@@ -479,6 +490,15 @@ static void load_models(actors_t *actors)
 				for (int g = 0; g < ACTOR_GAIT_COUNT; g++)
 				{
 					type->gait_actions[g] = actor_model_find_action(&actors->models[type->model], gait_names[g]);
+				}
+			}
+			// Optional: its jump's clips
+			{
+				static const char *const jump_names[3] = { "jump_start", "jump_air", "jump_land" };
+
+				for (int j = 0; j < 3; j++)
+				{
+					type->jump_actions[j] = actor_model_find_action(&actors->models[type->model], jump_names[j]);
 				}
 			}
 			// Optional: without it, a flyer flaps on the way down too
@@ -1695,6 +1715,25 @@ void actors_clear(actors_t *actors)
 #define FINE_BY_WAYPOINT_METERS 0.55f // a fine way's end this near its waypoint: the waypoint's own, reached with it
 #define FINE_FAILURES_MOST 2         // no fine way found this often where it stands: none there is, the walk given up
 #define FINE_POINT_METERS 0.15f      // a fine way's point reached this near // past a straight walker's waypoint (its mind's spot)
+// Its jump (jump_move): the phases; faced this near before it goes; no
+// longer turning to it than this; without clips, gathered and landed this
+// long; its arc's top this far over the higher of its ends; how much of
+// the way it flies its body tilts by, and at the most; its body's middle
+// (the tilt's center) this much of its height up
+#define JUMP_NONE 0
+#define JUMP_TURN 1
+#define JUMP_OFF 2
+#define JUMP_AIR 3
+#define JUMP_LAND 4
+#define JUMP_FACE_RADIANS 0.12f
+#define JUMP_TURN_MOST_SECONDS 4.0f
+#define JUMP_OFF_SECONDS 0.25f
+#define JUMP_LAND_SECONDS 0.2f
+#define JUMP_OVER_METERS 0.25f
+#define JUMP_GRAVITY 9.81f
+#define JUMP_PITCH_SHARE 0.6f
+#define JUMP_PITCH_MOST_RADIANS 0.5f
+#define JUMP_MIDDLE_SHARE 0.5f
 #define LOOK_SECONDS 0.5f             // how often it looks at the path ahead
 #define STUCK_SECONDS 3.0f            // this long without getting half a meter: search again
 #define STUCK_METERS 0.5f
@@ -1718,6 +1757,8 @@ static navigation_agent_t agent_of(const actor_type_t *type)
 	agent.groups = (uint8_t)((type->path_groups & ~NAVIGATION_GROUP_SHUT_DOOR) | (type->opens_doors ? 0u : NAVIGATION_GROUP_SHUT_DOOR));
 	agent.opens_doors = type->opens_doors;
 	agent.line_center_only = false;
+	agent.jump_up_meters = type->jump_up_meters;
+	agent.jump_down_meters = type->jump_down_meters;
 	return agent;
 }
 
@@ -1857,6 +1898,22 @@ static bool plan_path_logged(const actors_t *actors, actor_t *actor, const actor
 	navigation_result_t result = navigation_find_path(navigation, terrain, water, &agent, actor->x, actor->z, actor->y, actor->goal_x,
 		actor->goal_z, actor->path, &actor->path_count, &actor->path_complete);
 
+	// (the waypoints it gets to by a jump)
+	for (int k = 0; k < NAVIGATION_MAX_WAYPOINTS; k++)
+	{
+		actor->path_jump[k] = k < actor->path_count && navigation_path_jump(navigation, k, &actor->path_jump_height[k]) ? 1 : 0;
+	}
+	// (about to jump: not now, the new path says whether; in the air: it
+	// lands first, and searches again from there)
+	if (actor->jump_phase == JUMP_TURN || actor->jump_phase == JUMP_OFF)
+	{
+		actor->jump_phase = JUMP_NONE;
+	}
+	else if (actor->jump_phase != JUMP_NONE)
+	{
+		actor->jump_replan = true;
+	}
+
 	{
 		float dx = actor->goal_x - actor->x;
 		float dz = actor->goal_z - actor->z;
@@ -1966,6 +2023,7 @@ bool actors_walk_straight(actors_t *actors, uint32_t id, const float (*points)[2
 		actor->path[k][0] = points[k][0];
 		actor->path[k][1] = points[k][1];
 	}
+	SDL_memset(actor->path_jump, 0, sizeof(actor->path_jump));
 	actor->path_count = count;
 	actor->path_index = 0;
 	actor->steer_seconds = 0.0f;
@@ -2201,8 +2259,11 @@ static void steer_point(actors_t *actors, actor_t *actor, const navigation_t *na
 		float dx = actor->path[actor->path_index][0] - actor->x;
 		float dz = actor->path[actor->path_index][1] - actor->z;
 
-		if (dx * dx + dz * dz > ahead * ahead * 0.25f || !body_way_clear(actor, navigation, terrain, water, &agent,
-			actor->path[actor->path_index + 1][0], actor->path[actor->path_index + 1][1]))
+		// (not past where it leaves the ground for a jump: that one it
+		// stands on)
+		if (dx * dx + dz * dz > ahead * ahead * 0.25f || actor->path_jump[actor->path_index + 1] != 0
+			|| !body_way_clear(actor, navigation, terrain, water, &agent, actor->path[actor->path_index + 1][0],
+				actor->path[actor->path_index + 1][1]))
 		{
 			break;
 		}
@@ -2228,6 +2289,11 @@ static void steer_point(actors_t *actors, actor_t *actor, const navigation_t *na
 			float length = SDL_sqrtf(dx * dx + dz * dz);
 			float amount = length > left ? left / length : 1.0f;
 
+			// (no further than where it leaves the ground for a jump)
+			if (k > actor->path_index && actor->path_jump[k] != 0)
+			{
+				break;
+			}
 			point_x = from_x + dx * amount;
 			point_z = from_z + dz * amount;
 			left -= length;
@@ -3356,6 +3422,165 @@ static bool next_corner(const actor_t *actor, float target_x, float target_z, fl
 	return true;
 }
 
+// Its jump to its waypoint (one its path gets to by a jump: an edge it
+// does not step, a terrace's): turned to face it on the spot, gathered
+// (its "jump_start" clip's length), through the air on an arc that tops
+// JUMP_OVER_METERS over the higher of its ends, falling as things fall,
+// its body tilted by how it rises and falls round its middle, its feet
+// let go of the ground (no IK); landed ("jump_land"), its feet taken up
+// again as that plays, then on along its path. Without the clips it goes
+// over as it walks. A path asked for while it is in the air is searched
+// again from where it lands
+static void jump_move(actors_t *actors, actor_t *actor, navigation_t *navigation, const terrain_t *terrain, const water_t *water,
+	float seconds)
+{
+	const actor_type_t *type = &actors->types[actor->type];
+	const actor_model_t *model = model_of(actors, actor);
+
+	actor->turn_rate = 0.0f;
+	actor->jump_seconds += seconds;
+	if (actor->jump_phase == JUMP_TURN)
+	{
+		float turn = wrap_angle(SDL_atan2f(actor->jump_to[0] - actor->x, actor->jump_to[2] - actor->z) - actor->yaw_radians);
+
+		actor->speed = 0.0f;
+		actor->yaw_radians = wrap_angle(actor->yaw_radians + inertial_turn(actor, turn, degrees_to_radians(type->pivot_degrees_per_second),
+			seconds));
+		place_on_ground(actors, actor, terrain, water, navigation, seconds);
+		choose_animation(actors, actor);
+		if (SDL_fabsf(turn) < JUMP_FACE_RADIANS || actor->jump_seconds > JUMP_TURN_MOST_SECONDS)
+		{
+			actor->jump_phase = JUMP_OFF;
+			actor->jump_seconds = 0.0f;
+			actor->angular_speed = 0.0f;
+			actor->jump_phase_seconds = type->jump_actions[0] >= 0 ? SDL_max(action_length(model, type->jump_actions[0]), 0.05f) : JUMP_OFF_SECONDS;
+			if (type->jump_actions[0] >= 0)
+			{
+				start_action(actors, actor, type->jump_actions[0]);
+			}
+		}
+		return;
+	}
+	if (actor->jump_phase == JUMP_OFF)
+	{
+		place_on_ground(actors, actor, terrain, water, navigation, seconds);
+		if (type->jump_actions[0] >= 0)
+		{
+			actor->animation_held = true;
+		}
+		else
+		{
+			choose_animation(actors, actor);
+		}
+		if (actor->jump_seconds >= actor->jump_phase_seconds)
+		{
+			float top = SDL_max(actor->y, actor->jump_to[1]) + JUMP_OVER_METERS;
+			float up_seconds = SDL_sqrtf(2.0f * (top - actor->y) / JUMP_GRAVITY);
+			float down_seconds = SDL_sqrtf(2.0f * (top - actor->jump_to[1]) / JUMP_GRAVITY);
+
+			actor->jump_from[0] = actor->x;
+			actor->jump_from[1] = actor->y;
+			actor->jump_from[2] = actor->z;
+			actor->jump_rise_speed = JUMP_GRAVITY * up_seconds;
+			actor->jump_air_seconds = SDL_max(up_seconds + down_seconds, 0.1f);
+			actor->jump_phase = JUMP_AIR;
+			actor->jump_seconds = 0.0f;
+			if (type->jump_actions[1] >= 0)
+			{
+				start_action(actors, actor, type->jump_actions[1]);
+			}
+			if (actors->log_paths)
+			{
+				SDL_Log("Actor %u (%s): jumps from (%.2f, %.2f, height %.2f) to (%.2f, %.2f, height %.2f), %.2f s in the air", actor->id, type->name,
+					(double)actor->x, (double)actor->z, (double)actor->y, (double)actor->jump_to[0], (double)actor->jump_to[2], (double)actor->jump_to[1],
+					(double)actor->jump_air_seconds);
+			}
+		}
+		return;
+	}
+	if (actor->jump_phase == JUMP_AIR)
+	{
+		float t = SDL_min(actor->jump_seconds, actor->jump_air_seconds);
+		float share = t / actor->jump_air_seconds;
+		float across_x = actor->jump_to[0] - actor->jump_from[0];
+		float across_z = actor->jump_to[2] - actor->jump_from[2];
+		float across_speed = SDL_sqrtf(across_x * across_x + across_z * across_z) / actor->jump_air_seconds;
+		float rising = actor->jump_rise_speed - JUMP_GRAVITY * t;
+		// (level as it leaves the ground and as it lands: its clips' ends)
+		float ends = SDL_min(SDL_min(share / 0.15f, (1.0f - share) / 0.2f), 1.0f);
+		float pitch = SDL_clamp(SDL_atan2f(rising, SDL_max(across_speed, 0.5f)) * JUMP_PITCH_SHARE, -JUMP_PITCH_MOST_RADIANS,
+			JUMP_PITCH_MOST_RADIANS) * ends;
+		float middle = JUMP_MIDDLE_SHARE * type->height_meters;
+
+		actor->pitch_radians += (pitch - actor->pitch_radians) * SDL_min(12.0f * seconds, 1.0f);
+		// (tilted round its middle, not its feet: the model's turn is
+		// round its origin, its middle goes back by so much nose up)
+		actor->x = actor->jump_from[0] + across_x * share + SDL_sinf(actor->yaw_radians) * middle * SDL_sinf(actor->pitch_radians);
+		actor->z = actor->jump_from[2] + across_z * share + SDL_cosf(actor->yaw_radians) * middle * SDL_sinf(actor->pitch_radians);
+		actor->y = actor->jump_from[1] + actor->jump_rise_speed * t - 0.5f * JUMP_GRAVITY * t * t
+			+ middle * (1.0f - SDL_cosf(actor->pitch_radians));
+		actor->speed = across_speed;
+		actor->ik_weight = 0.0f;
+		compose_rotation(actor->yaw_radians - degrees_to_radians(type->front_degrees), actor->pitch_radians, 0.0f, actor->rotation);
+		if (type->jump_actions[1] >= 0)
+		{
+			actor->animation_held = true;
+		}
+		else
+		{
+			choose_animation(actors, actor);
+		}
+		if (actor->jump_seconds >= actor->jump_air_seconds)
+		{
+			actor->x = actor->jump_to[0];
+			actor->y = actor->jump_to[1];
+			actor->z = actor->jump_to[2];
+			actor->center_ground = actor->jump_to[1];
+			actor->pitch_radians = 0.0f;
+			actor->speed = 0.0f;
+			actor->progress_x = actor->x;
+			actor->progress_z = actor->z;
+			actor->stuck_seconds = 0.0f;
+			actor->jump_phase = JUMP_LAND;
+			actor->jump_seconds = 0.0f;
+			actor->jump_phase_seconds = type->jump_actions[2] >= 0 ? SDL_max(action_length(model, type->jump_actions[2]), 0.05f) : JUMP_LAND_SECONDS;
+			if (type->jump_actions[2] >= 0)
+			{
+				start_action(actors, actor, type->jump_actions[2]);
+			}
+		}
+		return;
+	}
+	// Landed: its feet onto the ground again as it settles
+	place_on_ground(actors, actor, terrain, water, navigation, seconds);
+	actor->ik_weight *= SDL_clamp(actor->jump_seconds / actor->jump_phase_seconds, 0.0f, 1.0f);
+	if (type->jump_actions[2] >= 0)
+	{
+		actor->animation_held = true;
+	}
+	else
+	{
+		choose_animation(actors, actor);
+	}
+	if (actor->jump_seconds >= actor->jump_phase_seconds)
+	{
+		actor->jump_phase = JUMP_NONE;
+		if (actor->jump_replan)
+		{
+			actor->jump_replan = false;
+			if (actor->moving && !plan_path(actors, actor, type, navigation, terrain, water, "landed, searching from here"))
+			{
+				path_failed(actors, actor, water);
+			}
+		}
+		else if (actor->path_index < actor->path_count)
+		{
+			// (there: a waypoint as any other now, reached)
+			actor->path_jump[actor->path_index] = 0;
+		}
+	}
+}
+
 static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigation, const terrain_t *terrain, const water_t *water,
 	float seconds)
 {
@@ -3379,6 +3604,28 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 		gait_move(actors, actor, seconds);
 		actor->turn_rate = 0.0f;
 		place_on_ground(actors, actor, terrain, water, navigation, seconds);
+		return;
+	}
+	// Its jump: begun where its path's next waypoint is one it gets to by
+	// a jump (it stands where it leaves the ground: the waypoint before);
+	// under way, nothing else; not yet off the ground and stopped: let be
+	if (seconds > 0.0f && (actor->jump_phase == JUMP_TURN || actor->jump_phase == JUMP_OFF) && !actor->moving)
+	{
+		actor->jump_phase = JUMP_NONE;
+	}
+	if (seconds > 0.0f && actor->jump_phase == JUMP_NONE && actor->moving && !actor->straight && !actor->wandering && !actor->swimming
+		&& actor->path_index < actor->path_count && actor->path_jump[actor->path_index] != 0)
+	{
+		actor->jump_phase = JUMP_TURN;
+		actor->jump_seconds = 0.0f;
+		actor->jump_replan = false;
+		actor->jump_to[0] = actor->path[actor->path_index][0];
+		actor->jump_to[1] = actor->path_jump_height[actor->path_index];
+		actor->jump_to[2] = actor->path[actor->path_index][1];
+	}
+	if (seconds > 0.0f && actor->jump_phase != JUMP_NONE)
+	{
+		jump_move(actors, actor, navigation, terrain, water, seconds);
 		return;
 	}
 	if (water != NULL && !water_sample(water, actor->x, actor->z, &depth, &current_x, &current_z))
@@ -3489,8 +3736,9 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 		// before it: reached close, or it cuts the corner into the jamb)
 		// (a corner left short of it only where the way on is straight from
 		// here: not over the edge of what it goes round)
+		// (where it leaves the ground for a jump: stood on, as close)
 		if (distance < (last ? (actor->arrive_meters > 0.0f ? actor->arrive_meters : ARRIVE_METERS)
-			: (actor->straight ? STRAIGHT_WAYPOINT_METERS : WAYPOINT_METERS))
+			: (actor->straight || actor->path_jump[actor->path_index + 1] != 0 ? STRAIGHT_WAYPOINT_METERS : WAYPOINT_METERS))
 			&& (last || actor->straight || distance < STRAIGHT_WAYPOINT_METERS || corner_cut_passable(actors, actor, navigation, terrain, water)))
 		{
 			if (!last)
@@ -3543,7 +3791,8 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 			actor->fine_index++;
 			// (its end, by its waypoint: the waypoint reached, on to the
 			// next; not the path's last: its arrival is its own)
-			if (actor->fine_index >= actor->fine_count && actor->fine_to_waypoint && actor->path_index < actor->path_count - 1)
+			if (actor->fine_index >= actor->fine_count && actor->fine_to_waypoint && actor->path_index < actor->path_count - 1
+				&& actor->path_jump[actor->path_index + 1] == 0)
 			{
 				actor->path_index++;
 				actor->steer_seconds = 0.0f;
@@ -3770,6 +4019,13 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 				if (off > ARC_FREE_RADIANS && !actor->arc_clear)
 				{
 					wanted_speed = 0.0f;
+				}
+				// (to where it leaves the ground for a jump: all but still
+				// there, it gathers itself)
+				if (actor->path_index + 1 < actor->path_count && actor->path_jump[actor->path_index + 1] != 0
+					&& target_x == actor->path[actor->path_index][0] && target_z == actor->path[actor->path_index][1])
+				{
+					wanted_speed = SDL_min(wanted_speed, SDL_sqrtf(2.0f * ACCELERATION * SDL_sqrtf(to_x * to_x + to_z * to_z)) + 0.15f);
 				}
 				// (to a corner of its way, not a point ahead past it: no
 				// faster there than the corner's turn is made at, slowing
@@ -4304,6 +4560,7 @@ static void begin_arrival(actors_t *actors, actor_t *actor, const navigation_t *
 		actor->moving = true;
 		actor->path[0][0] = actor->land_x;
 		actor->path[0][1] = actor->land_z;
+		actor->path_jump[0] = 0;
 		actor->path_count = 1;
 		actor->path_complete = true;
 	}

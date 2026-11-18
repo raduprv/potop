@@ -126,6 +126,13 @@ typedef struct
 	uint8_t groups;                    // bits: a blocker for one of these stops it (navigation_set_blockers; 0: none does); NAVIGATION_GROUP_SHUT_DOOR its own
 	bool opens_doors;                  // goes through a shut door (navigation_set_links): it opens it (a person, not a cow)
 	bool line_center_only;             // navigation_line_passable: its center's line, not its sides' too
+	// Up onto and down off what it cannot step: a terrace's edge. A search
+	// takes such an edge where the way round is longer (a stair a few
+	// meters off: the stair), where it can stand on both sides of it and
+	// nothing stands on it (a balustrade); the path's waypoint beyond it is
+	// marked (navigation_path_jump). 0: it does not
+	float jump_up_meters;
+	float jump_down_meters;
 } navigation_agent_t;
 
 // A door: a way from one cell to another through what is in the way (a
@@ -246,6 +253,8 @@ typedef struct
 	float came_a[2];                   // the portal it came through (or a door's two ends)
 	float came_b[2];
 	bool came_by_door;
+	bool came_by_jump;                 // or over an edge it jumps: came_a where it leaves the ground, came_b where it lands
+	float came_height;                 // (and at what height)
 } navigation_rect_t;
 
 typedef struct
@@ -436,6 +445,10 @@ typedef struct
 	uint64_t last_search_ticks;        // its A* (performance counter ticks)
 	// The navigation mesh (see the top): the walkers' searches and lines
 	navigation_mesh_t mesh;
+	// The last path found (navigation_find_path): the waypoints it gets to
+	// by a jump, and their heights (navigation_path_jump)
+	uint8_t path_jumps[NAVIGATION_MAX_WAYPOINTS];
+	float path_jump_heights[NAVIGATION_MAX_WAYPOINTS];
 } navigation_t;
 
 bool navigation_create(navigation_t *navigation, const terrain_t *terrain);
@@ -513,6 +526,13 @@ int navigation_fine_path(const navigation_t *navigation, const terrain_t *terrai
 navigation_result_t navigation_find_path(navigation_t *navigation, const terrain_t *terrain, const water_t *water,
 	const navigation_agent_t *agent, float from_x, float from_z, float from_height, float to_x, float to_z,
 	float waypoints_out[NAVIGATION_MAX_WAYPOINTS][2], int *waypoint_count_out, bool *complete_out);
+
+// Whether the last path found (navigation_find_path, just now) gets to
+// its waypoint of that index by a jump from the one before (the start,
+// for the first): up onto or down off an edge the agent does not step
+// (navigation_agent_t.jump_up_meters, jump_down_meters), straight across
+// it; and the height it lands at
+bool navigation_path_jump(const navigation_t *navigation, int waypoint, float *height_out);
 
 // Flying. The highest thing at (x, z): the terrain, or the top of any
 // object standing there (loose ones aside), crowns and roofs included, as

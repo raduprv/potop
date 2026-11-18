@@ -105,6 +105,25 @@ out by a refused step:
   was the other way to do it: rectangles over quarter meters near
   objects, every tile's build that much heavier).
 
+- **Jumps** (mesh_jump, actors.c jump_move): an agent with
+  `jump_up_meters` / `jump_down_meters` (actors.ini; the bear 0.9 and
+  2.0) takes an edge it cannot step (the mesh keeps portals up to 2 m
+  of rise; a search refused them by the agent's step) where the way
+  round costs more than the jump (2 m and 2 m per meter of height). It
+  leaves the ground its radius and 0.2 m before the edge and lands as
+  far beyond it (a drop: further out), straight across; both spots its
+  body's by the quarter meters, nothing standing between them and the
+  edge on either level (a balustrade: no jump). The corridor is pulled
+  tight up to the takeoff and again from the landing; the landing
+  waypoint is marked (navigation_path_jump), the check of the way
+  skips that leg. The follower stops on the takeoff, turns to the
+  landing, gathers, goes over on an arc (0.25 m over the higher end,
+  falling as things fall, tilted by how it rises and falls, no IK),
+  lands, goes on. Clips if the model has them: jump_start, jump_air,
+  jump_land (none yet: it goes over as it walks). On the 14 real houses
+  the bear finds no edge to jump: their terraces are railed all round,
+  and the ledges along their walls are too narrow to land on.
+
 The step guard is still there (a net: steps are no longer planned to be
 refused), and the slide along an edge with it.
 
@@ -229,10 +248,12 @@ make -j8 && make tools
 Headless runs use lavapipe and Xvfb (the scripts set VK_ICD_FILENAMES if
 it is not set). Everything writes into build/.
 
-- **nav_stress.py** — a course of 14 stations built from boxes (terraces
+- **nav_stress.py** — a course of 17 stations built from boxes (terraces
   with treads 0.15 to 0.45 m, balustrade openings 0.5 to 1.2 m, bar rails
   at 0.9 and 1.3 m, huts with doors 0.5 and 1.0 m wide and 1.4 and 2.0 m
-  high, yards under beams at 1.3 and 2.1 m, a porch with posts). Each
+  high, yards under beams at 1.3 and 2.1 m, a porch with posts, and
+  ledges with no stairs: 0.7 m open (the bear jumps it, no one else gets
+  up), 1.2 m open and 0.7 m behind a balustrade (no one)). Each
   station's expectation per agent is computed from the agent's width,
   height and step, not written by hand ("?" where the size is on the
   edge of the quarter grid). Its trails are checked for going into the

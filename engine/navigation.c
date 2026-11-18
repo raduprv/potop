@@ -3360,6 +3360,16 @@ navigation_result_t navigation_find_path(navigation_t *navigation, const terrain
 	return (navigation_result_t)result;
 }
 
+bool navigation_path_jump(const navigation_t *navigation, int waypoint, float *height_out)
+{
+	if (waypoint < 0 || waypoint >= NAVIGATION_MAX_WAYPOINTS || navigation->path_jumps[waypoint] == 0)
+	{
+		return false;
+	}
+	*height_out = navigation->path_jump_heights[waypoint];
+	return true;
+}
+
 // ---------------------------------------------------------------------------
 // The navigation mesh (see navigation.h)
 
@@ -4715,8 +4725,6 @@ static int mesh_funnel(const float (*lefts)[2], const float (*rights)[2], int po
 	return count;
 }
 
-// The search over the rectangles: as navigation_find_path; -1 (not a
-// result) when the mesh has nothing at the start (the cells' way then)
 // A way found holds over the quarter meters as the walker will take it
 // (mesh_way_holds): its body's straight way this far at a time (the
 // follower's BODY_WAY_METERS), a fine way this far where it has none
@@ -4808,6 +4816,15 @@ static bool mesh_way_holds(const navigation_t *navigation, const terrain_t *terr
 		float reached_height;
 		float fine_height;
 
+		// (a jump: not walked; on from where it lands)
+		if (navigation->path_jumps[leg] != 0)
+		{
+			x = waypoints[leg][0];
+			z = waypoints[leg][1];
+			height = navigation->path_jump_heights[leg];
+			leg++;
+			continue;
+		}
 		if (distance < 1e-3f)
 		{
 			leg++;
@@ -4849,6 +4866,159 @@ static bool mesh_way_holds(const navigation_t *navigation, const terrain_t *terr
 		*failed_leg_out = leg;
 		return false;
 	}
+	return true;
+}
+
+// An edge jumped (mesh_jump): this far from it on either side (and its
+// radius), a drop further out by this much of its height; what it costs
+// a search over the same way walked (meters, and per meter of height: a
+// stair a few meters off is the way)
+#define MESH_JUMP_EDGE_METERS 0.2f
+#define MESH_JUMP_DROP_OUT_SHARE 0.25f
+#define MESH_JUMP_COST_METERS 2.0f
+#define MESH_JUMP_COST_PER_METER 2.0f
+#define MESH_JUMPS_MOST 16             // in one way
+
+// The height of a rectangle's own surface at a point (false: it has none
+// there with room for the agent)
+static bool mesh_height_at(const navigation_t *navigation, int c, int32_t id, const navigation_agent_t *agent, float x, float z,
+	float *height_out)
+{
+	uint8_t room_needed = (uint8_t)SDL_clamp(SDL_ceilf(agent->height_meters / NAVIGATION_CLEARANCE_UNIT_METERS), 0.0f,
+		(float)(NAVIGATION_CLEARANCE_OPEN - 1));
+	int32_t cell;
+	int32_t sub_x;
+	int32_t sub_z;
+	int32_t node;
+	bool blocked;
+
+	if (!quarter_of_point(navigation, x, z, &cell, &sub_x, &sub_z))
+	{
+		return false;
+	}
+	node = mesh_node_in(navigation, c, id, cell);
+	return node >= 0 && node_sub_height(navigation, node, cell, sub_x, sub_z, room_needed, height_out, &blocked);
+}
+
+// Whether the agent's center can go from a point straight to another at
+// about a height (the quarter meters: stood on all the way)
+static bool center_line_free(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
+	const float from[2], const float to[2], float height)
+{
+	float dx = to[0] - from[0];
+	float dz = to[1] - from[1];
+	int samples = (int)SDL_ceilf(SDL_sqrtf(dx * dx + dz * dz) / BODY_LINE_STEP_METERS);
+
+	for (int k = 0; k <= samples; k++)
+	{
+		float t = samples > 0 ? (float)k / (float)samples : 0.0f;
+
+		if (!navigation_quarter_free(navigation, terrain, water, agent, from[0] + dx * t, from[1] + dz * t, height))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+// Whether the agent jumps a portal it does not step (a terrace's edge,
+// up or down), crossing it by a point of it: where it leaves the ground
+// and where it lands (straight across the edge, its radius and a little
+// off it either side; a drop further out), the height there and how much
+// more than a walk it costs. It stands at both with room for its body
+// (as where it walks: a brush or two), and nothing stands between them
+// and the edge on either level (a balustrade, a bench against the
+// terrace's face)
+static bool mesh_jump(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
+	int c, int32_t from, int32_t to, const navigation_portal_t *portal, const float crossing[2], float takeoff_out[2], float landing_out[2],
+	float *landing_height_out, float *cost_out)
+{
+	const navigation_rect_t *from_rect = mesh_rect(navigation, c, from);
+	float along[2] = { portal->b[0] - portal->a[0], portal->b[1] - portal->a[1] };
+	float length = SDL_sqrtf(along[0] * along[0] + along[1] * along[1]);
+	float inset = agent->radius_meters + 0.1f;
+	float across[2];
+	float middle[2] = { ((float)from_rect->x + 0.5f * (float)from_rect->width) * NAVIGATION_CELL_METERS,
+		((float)from_rect->z + 0.5f * (float)from_rect->depth) * NAVIGATION_CELL_METERS };
+	float at;
+	float edge[2];
+	float near_edge[2];
+	float takeoff_height;
+	float landing_height;
+	float rise;
+	float off = agent->radius_meters + MESH_JUMP_EDGE_METERS;
+	float most = SDL_max(agent->jump_up_meters, agent->jump_down_meters);
+	int takeoff_tight;
+	int landing_tight;
+
+	if (most <= 0.0f || portal->rise > most || length < 1e-3f)
+	{
+		return false;
+	}
+	along[0] /= length;
+	along[1] /= length;
+	// (across the edge, out of the rectangle it leaves)
+	across[0] = -along[1];
+	across[1] = along[0];
+	if ((portal->a[0] - middle[0]) * across[0] + (portal->a[1] - middle[1]) * across[1] < 0.0f)
+	{
+		across[0] = -across[0];
+		across[1] = -across[1];
+	}
+	// (its radius off the portal's ends)
+	at = (crossing[0] - portal->a[0]) * along[0] + (crossing[1] - portal->a[1]) * along[1];
+	at = length > 2.0f * inset ? SDL_clamp(at, inset, length - inset) : 0.5f * length;
+	edge[0] = portal->a[0] + along[0] * at;
+	edge[1] = portal->a[1] + along[1] * at;
+	takeoff_out[0] = edge[0] - across[0] * off;
+	takeoff_out[1] = edge[1] - across[1] * off;
+	landing_out[0] = edge[0] + across[0] * off;
+	landing_out[1] = edge[1] + across[1] * off;
+	if (!mesh_height_at(navigation, c, from, agent, takeoff_out[0], takeoff_out[1], &takeoff_height)
+		|| !mesh_height_at(navigation, c, to, agent, landing_out[0], landing_out[1], &landing_height))
+	{
+		return false;
+	}
+	rise = landing_height - takeoff_height;
+	if (rise > agent->jump_up_meters || -rise > agent->jump_down_meters)
+	{
+		return false;
+	}
+	// (down: further out, the way it falls; if it stands there too)
+	if (rise < 0.0f)
+	{
+		float out = off - rise * MESH_JUMP_DROP_OUT_SHARE;
+		float further[2] = { edge[0] + across[0] * out, edge[1] + across[1] * out };
+		float further_height;
+
+		if (mesh_height_at(navigation, c, to, agent, further[0], further[1], &further_height) && SDL_fabsf(further_height - landing_height) < 0.1f
+			&& center_line_free(navigation, terrain, water, agent, landing_out, further, landing_height))
+		{
+			landing_out[0] = further[0];
+			landing_out[1] = further[1];
+		}
+	}
+	takeoff_tight = navigation_quarter_tightness(navigation, terrain, water, agent, takeoff_out[0], takeoff_out[1], takeoff_height);
+	landing_tight = navigation_quarter_tightness(navigation, terrain, water, agent, landing_out[0], landing_out[1], landing_height);
+	if (takeoff_tight < 0 || takeoff_tight > MESH_VERIFY_BRUSHES || landing_tight < 0 || landing_tight > MESH_VERIFY_BRUSHES)
+	{
+		return false;
+	}
+	// (to the edge on its own level, each side: half a quarter short of it)
+	near_edge[0] = edge[0] - across[0] * 0.5f * BODY_LINE_STEP_METERS;
+	near_edge[1] = edge[1] - across[1] * 0.5f * BODY_LINE_STEP_METERS;
+	if (!center_line_free(navigation, terrain, water, agent, takeoff_out, near_edge, takeoff_height))
+	{
+		return false;
+	}
+	near_edge[0] = edge[0] + across[0] * 0.5f * BODY_LINE_STEP_METERS;
+	near_edge[1] = edge[1] + across[1] * 0.5f * BODY_LINE_STEP_METERS;
+	if (!center_line_free(navigation, terrain, water, agent, landing_out, near_edge, landing_height))
+	{
+		return false;
+	}
+	*landing_height_out = landing_height;
+	*cost_out = MESH_JUMP_COST_METERS + MESH_JUMP_COST_PER_METER * SDL_fabsf(rise);
 	return true;
 }
 
@@ -4929,6 +5099,7 @@ static int mesh_find_path(navigation_t *navigation, const terrain_t *terrain, co
 				return result;
 			}
 			*waypoint_count_out = failed_leg;
+			navigation->path_jumps[failed_leg] = 0;
 			if (before == NULL || (failed[0] - before[0]) * (failed[0] - before[0]) + (failed[1] - before[1]) * (failed[1] - before[1]) > 0.3f * 0.3f)
 			{
 				waypoints_out[failed_leg][0] = failed[0];
@@ -4963,6 +5134,7 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 	float goal[2] = { to_x, to_z };
 
 	mesh_chain_length = 0;
+	SDL_memset(navigation->path_jumps, 0, sizeof(navigation->path_jumps));
 	float goal_distance = SDL_sqrtf((to_x - from_x) * (to_x - from_x) + (to_z - from_z) * (to_z - from_z));
 	int32_t budget = SDL_max(MESH_MINIMUM_EXPANSIONS, (int32_t)SDL_min((float)navigation->maximum_expansions,
 		(float)SEARCH_BASE_EXPANSIONS + (float)SEARCH_EXPANSIONS_PER_METER * goal_distance) / MESH_EXPANSIONS_DIVISOR);
@@ -5002,6 +5174,7 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 		rect->entry[0] = from_x;
 		rect->entry[1] = from_z;
 		rect->came_by_door = false;
+		rect->came_by_jump = false;
 	}
 	navigation->heap_count = 0;
 	if (!heap_push(navigation, start, goal_distance))
@@ -5086,6 +5259,11 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 				float toward_entry[2];
 				float toward_goal[2];
 				float cost;
+				float takeoff[2];
+				float landing[2];
+				float landing_height = 0.0f;
+				float jump_cost = 0.0f;
+				bool jump = false;
 
 				if (list > 0 && portal->from != (id & 0xFFFF))
 				{
@@ -5097,8 +5275,7 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 					continue;
 				}
 				mesh_rect_info(navigation, terrain, water, agent, next, &there);
-				if (!mesh_portal_allowed(agent, portal, &here, &there)
-					|| (navigation->mesh.shut_count > 0 && mesh_is_shut(navigation, c, agent, id, portal->to)))
+				if (navigation->mesh.shut_count > 0 && mesh_is_shut(navigation, c, agent, id, portal->to))
 				{
 					continue;
 				}
@@ -5108,19 +5285,32 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 				segment_nearest(portal->a, portal->b, goal, toward_goal);
 				crossing[0] = 0.5f * (toward_entry[0] + toward_goal[0]);
 				crossing[1] = 0.5f * (toward_entry[1] + toward_goal[1]);
-				cost = rect->search_cost + distance_2d(rect->entry, crossing) * here.cost_factor + there.extra_cost;
+				// (an edge it does not step: one it jumps, if it does)
+				if (!mesh_portal_allowed(agent, portal, &here, &there))
+				{
+					if (!there.passable || here.water_class == CLASS_SWIM || there.water_class == CLASS_SWIM
+						|| !mesh_jump(navigation, terrain, water, agent, c, id, portal->to, portal, crossing, takeoff, landing, &landing_height, &jump_cost))
+					{
+						continue;
+					}
+					jump = true;
+				}
+				cost = rect->search_cost + distance_2d(rect->entry, jump ? takeoff : crossing) * here.cost_factor + there.extra_cost
+					+ (jump ? jump_cost : 0.0f);
 				if (next->tag != reached_tag || cost < next->search_cost)
 				{
 					next->tag = reached_tag;
 					next->search_cost = cost;
 					next->came_from = id;
-					next->entry[0] = crossing[0];
-					next->entry[1] = crossing[1];
-					next->came_a[0] = portal->a[0];
-					next->came_a[1] = portal->a[1];
-					next->came_b[0] = portal->b[0];
-					next->came_b[1] = portal->b[1];
+					next->entry[0] = jump ? landing[0] : crossing[0];
+					next->entry[1] = jump ? landing[1] : crossing[1];
+					next->came_a[0] = jump ? takeoff[0] : portal->a[0];
+					next->came_a[1] = jump ? takeoff[1] : portal->a[1];
+					next->came_b[0] = jump ? landing[0] : portal->b[0];
+					next->came_b[1] = jump ? landing[1] : portal->b[1];
 					next->came_by_door = false;
+					next->came_by_jump = jump;
+					next->came_height = jump ? landing_height : 0.0f;
 					if (!heap_push(navigation, portal->to, cost + HEURISTIC_WEIGHT * distance_2d(crossing, goal)))
 					{
 						navigation->heap_count = 0;
@@ -5194,6 +5384,7 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 					next->came_b[0] = door_b[0];
 					next->came_b[1] = door_b[1];
 					next->came_by_door = true;
+					next->came_by_jump = false;
 					if (!heap_push(navigation, other, cost + HEURISTIC_WEIGHT * distance_2d(door_b, goal)))
 					{
 						navigation->heap_count = 0;
@@ -5233,20 +5424,67 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 	// (looking from the rectangle it leaves into the next), the agent's
 	// radius off both ends; a door its two ends, one after the other
 	{
+		// (a jump's two ends are corners whatever the funnel makes of them:
+		// the way is pulled tight up to where it leaves the ground, and
+		// again on from where it lands; they are not merged with corners
+		// beside them either)
+		static uint8_t corner_jump[NAVIGATION_MAX_WAYPOINTS + 1];
+		static uint8_t corner_fixed[NAVIGATION_MAX_WAYPOINTS + 1];
+		static float corner_height[NAVIGATION_MAX_WAYPOINTS + 1];
 		int portal_count = 0;
 		float end[2];
-		int corner_count;
+		int corner_count = 0;
+		bool more = false;
 
+		SDL_memset(corner_jump, 0, sizeof(corner_jump));
+		SDL_memset(corner_fixed, 0, sizeof(corner_fixed));
 		lefts[portal_count][0] = from_x;
 		lefts[portal_count][1] = from_z;
 		rights[portal_count][0] = from_x;
 		rights[portal_count][1] = from_z;
 		portal_count++;
-		for (int32_t k = chain_length - 2; k >= 0 && portal_count < (int)SDL_arraysize(lefts) - 3; k--)
+		for (int32_t k = chain_length - 2; k >= 0 && portal_count < (int)SDL_arraysize(lefts) - 3 && !more; k--)
 		{
 			const navigation_rect_t *from_rect = mesh_rect(navigation, c, chain[k + 1]);
 			const navigation_rect_t *to_rect = mesh_rect(navigation, c, chain[k]);
 
+			if (to_rect->came_by_jump)
+			{
+				int count;
+
+				lefts[portal_count][0] = to_rect->came_a[0];
+				lefts[portal_count][1] = to_rect->came_a[1];
+				rights[portal_count][0] = to_rect->came_a[0];
+				rights[portal_count][1] = to_rect->came_a[1];
+				portal_count++;
+				count = mesh_funnel(lefts, rights, portal_count, corners + corner_count, NAVIGATION_MAX_WAYPOINTS - corner_count);
+				if (count < 0 || corner_count + count >= NAVIGATION_MAX_WAYPOINTS)
+				{
+					// (no room for the landing: the path ends before the jump,
+					// searched on from there)
+					corner_count = count < 0 ? NAVIGATION_MAX_WAYPOINTS : corner_count + count;
+					more = true;
+					break;
+				}
+				corner_count += count;
+				if (count > 0)
+				{
+					corner_fixed[corner_count - 1] = 1;
+				}
+				corners[corner_count][0] = to_rect->came_b[0];
+				corners[corner_count][1] = to_rect->came_b[1];
+				corner_jump[corner_count] = 1;
+				corner_fixed[corner_count] = 1;
+				corner_height[corner_count] = to_rect->came_height;
+				corner_count++;
+				portal_count = 0;
+				lefts[portal_count][0] = to_rect->came_b[0];
+				lefts[portal_count][1] = to_rect->came_b[1];
+				rights[portal_count][0] = to_rect->came_b[0];
+				rights[portal_count][1] = to_rect->came_b[1];
+				portal_count++;
+				continue;
+			}
 			if (to_rect->came_by_door)
 			{
 				for (int e = 0; e < 2; e++)
@@ -5303,33 +5541,55 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 		{
 			rect_nearest(mesh_rect(navigation, c, best), to_x, to_z, end);
 		}
-		lefts[portal_count][0] = end[0];
-		lefts[portal_count][1] = end[1];
-		rights[portal_count][0] = end[0];
-		rights[portal_count][1] = end[1];
-		portal_count++;
-		corner_count = mesh_funnel(lefts, rights, portal_count, corners, NAVIGATION_MAX_WAYPOINTS);
-		if (corner_count < 0)
+		if (!more)
+		{
+			int count;
+
+			lefts[portal_count][0] = end[0];
+			lefts[portal_count][1] = end[1];
+			rights[portal_count][0] = end[0];
+			rights[portal_count][1] = end[1];
+			portal_count++;
+			count = mesh_funnel(lefts, rights, portal_count, corners + corner_count, NAVIGATION_MAX_WAYPOINTS - corner_count);
+			more = count < 0;
+			corner_count = count < 0 ? NAVIGATION_MAX_WAYPOINTS : corner_count + count;
+		}
+		if (more)
 		{
 			// More corners than a path holds: the first ones (written), searched
 			// on from the last
-			corner_count = NAVIGATION_MAX_WAYPOINTS;
 			*complete_out = false;
 		}
 		// (corners a hair apart, where a corridor's portals meet at a
-		// tile's edge: the later kept)
+		// tile's edge: the later kept; a jump's ends always, the other one
+		// left out)
 		{
+			static uint8_t kept_fixed[NAVIGATION_MAX_WAYPOINTS + 1];
 			int kept = 0;
 
 			for (int k = 0; k < corner_count; k++)
 			{
 				if (kept > 0 && distance_2d(waypoints_out[kept - 1], corners[k]) < 0.3f)
 				{
-					kept--;
+					if (kept_fixed[kept - 1] == 0)
+					{
+						kept--;
+					}
+					else if (corner_fixed[k] == 0)
+					{
+						continue;
+					}
 				}
 				waypoints_out[kept][0] = corners[k][0];
 				waypoints_out[kept][1] = corners[k][1];
+				kept_fixed[kept] = corner_fixed[k];
+				navigation->path_jumps[kept] = corner_jump[k];
+				navigation->path_jump_heights[kept] = corner_height[k];
 				kept++;
+			}
+			for (int k = kept; k < NAVIGATION_MAX_WAYPOINTS; k++)
+			{
+				navigation->path_jumps[k] = 0;
 			}
 			*waypoint_count_out = kept;
 		}

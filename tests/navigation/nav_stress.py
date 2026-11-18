@@ -130,11 +130,12 @@ def yard(cx, beam_height):
 
 
 # The agents as data/actors.ini and their models have them: width in
-# quarter meters (2 x radius, the nearest), height, step
+# quarter meters (2 x radius, the nearest), height, step, and how high it
+# jumps (jump_up_meters; none: it does not)
 AGENT_SIZES = {
 	"hen": {"quarters": 1, "height": 0.5, "step": 0.2},
 	"farmer": {"quarters": 2, "height": 1.85, "step": 0.4},
-	"bear": {"quarters": 3, "height": 1.0, "step": 0.4},
+	"bear": {"quarters": 3, "height": 1.0, "step": 0.4, "jump": 0.9},
 	"cow": {"quarters": 3, "height": 1.59, "step": 0.3},
 }
 
@@ -162,6 +163,11 @@ STATIONS = [
 	("porch with posts", porch, (2.6, -1.2), 0.5, 0.25, 1.2, OPEN),
 	("yard, beam at 1.3", lambda cx: yard(cx, 1.3), (0.0, -2.5), 0.0, 0.0, 2.5, 1.3),
 	("yard, beam at 2.1", lambda cx: yard(cx, 2.1), (0.0, -2.5), 0.0, 0.0, 2.5, 2.1),
+	# (ledges: no stairs; up only by a jump (the last: whether its edge is
+	# open, no balustrade on it))
+	("ledge 0.7, open", lambda cx: terrace(cx, 0.7, 0, 0.0, 0.0, "none"), (0.0, -1.5), 0.7, 0.7, OPEN, OPEN, True),
+	("ledge 1.2, open", lambda cx: terrace(cx, 1.2, 0, 0.0, 0.0, "none"), (0.0, -1.5), 1.2, 1.2, OPEN, OPEN, True),
+	("ledge 0.7, balustrade", lambda cx: terrace(cx, 0.7, 0, 0.0, 0.9, "solid"), (0.0, -1.5), 0.7, 0.7, OPEN, OPEN, False),
 ]
 
 
@@ -173,6 +179,9 @@ STATIONS = [
 def expected(station, agent):
 	size = AGENT_SIZES[agent.split("+")[0]]
 	step, opening, room = station[4], station[5], station[6]
+	# (a ledge: jumped, by one that jumps so high, where its edge is open)
+	if len(station) > 7 and step > size["step"] + 0.05:
+		return "yes" if station[7] and size.get("jump", 0.0) >= step else "no"
 	# (a step within the heights' 2 cm units and the walkers' 5 cm of
 	# slack of the agent's: either)
 	if abs(step - size["step"]) <= 0.05 and room >= size["height"]:

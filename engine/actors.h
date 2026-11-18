@@ -147,6 +147,16 @@ typedef struct
 	// foot lands: at those phases of the walk), steps aside and back, a
 	// shuffle on the spot; how far each takes it (as made)
 	int gait_actions[ACTOR_GAIT_COUNT];
+	// Its jumps, up onto and down off what it cannot step (a terrace's
+	// edge; 0: it does not; navigation.h's agent): its paths take them
+	// where the way round is longer. Optional clips "jump_start" (from
+	// its idle pose: gathering, off), "jump_air" (held in the air, about
+	// level: the engine tilts it by how it rises and falls) and
+	// "jump_land" (from the first touch to its idle pose), all on the
+	// spot; without them it goes over as it walks
+	float jump_up_meters;
+	float jump_down_meters;
+	int jump_actions[3];
 	float walk_start_meters;
 	float walk_start_180_meters;
 	float walk_start_180_delay;        // of its length, before it moves
@@ -302,6 +312,22 @@ typedef struct
 	int path_index;                    // the waypoint it heads for
 	bool path_complete;                // the last waypoint is the goal (else: search on from there)
 	bool path_partial;                 // the goal cannot be reached; the path ends as near as it gets
+	// The waypoints it gets to by a jump from the one before, and their
+	// heights (navigation_path_jump); its jump under way (jump_move: 0
+	// none, turning to it, off the ground, in the air, landing), how long
+	// in that, the arc's ends (x, height, z), its seconds in all and
+	// rising, and whether a path was asked for meanwhile (searched again
+	// where it lands)
+	uint8_t path_jump[NAVIGATION_MAX_WAYPOINTS];
+	float path_jump_height[NAVIGATION_MAX_WAYPOINTS];
+	int jump_phase;
+	float jump_seconds;
+	float jump_phase_seconds;
+	float jump_from[3];
+	float jump_to[3];
+	float jump_air_seconds;
+	float jump_rise_speed;
+	bool jump_replan;
 	// Its fine way round what its path's whole cells pass over (a post, a
 	// cell's corner): points over the quarter meters to the waypoint
 	// fine_for, made when its body has no straight way there or its steps

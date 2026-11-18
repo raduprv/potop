@@ -64,7 +64,23 @@ higher than its `step_meters`, a beam lower than it is tall are left
 out and another way looked for, or the actor goes as near as it can get
 and stops there (should it meet such a place on its way all the same,
 it gives the walk up within a second or so). It slows for a sharp
-corner as it comes to it. It walks slower uphill and through water deeper than `wade_depth_meters`,
+corner as it comes to it.
+
+An actor with `jump_up_meters` or `jump_down_meters` (actors.ini; 0: it
+does not jump) gets up onto and down off what it cannot step: a
+terrace's edge. Its search takes such an edge where the way round (the
+stairs) is longer by more than about 2 m and 2 m per meter of height,
+where it can stand before and beyond the edge with room for its body and
+nothing stands on the edge (no jumping a balustrade). It walks to the
+spot before the edge (its radius and 0.2 m off it), stops, turns to face
+straight across, gathers, goes over on an arc and lands as far beyond
+the edge (further out when it drops), then goes on. Its clips, if its
+model has them: `jump_start` (from the idle pose), `jump_air` (a pose
+held, about level: the engine tilts the body by how it rises and falls,
+round its middle) and `jump_land` (from the first touch to the idle
+pose), all on the spot; its feet are let go of the ground in the air and
+taken up again as `jump_land` plays. Without the clips it goes over as
+it walks. It walks slower uphill and through water deeper than `wade_depth_meters`,
 and swims where the water is deeper than `swim_depth_meters`: afloat, its
 body that deep under the surface, level, at `swim_meters_per_second`, with
 the walk animation (there is no swimming one). The walk plays at the pace
