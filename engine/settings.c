@@ -293,7 +293,6 @@ static const setting_field_t setting_fields[] =
 	FIELD("simulation", "pause_in_background", SETTING_BOOL, simulation.pause_in_background),
 	FIELD("simulation", "threads", SETTING_INT, simulation.threads),
 	FIELD("simulation", "path_search_cells", SETTING_INT, simulation.path_search_cells),
-	FIELD("simulation", "navmesh", SETTING_BOOL, simulation.navmesh),
 	FIELD("simulation", "navigation_object_meters", SETTING_FLOAT, simulation.navigation_object_meters),
 	FIELD("simulation", "navigation_small_object_meters", SETTING_FLOAT, simulation.navigation_small_object_meters),
 	FIELD("simulation", "small_object_detour_meters", SETTING_FLOAT, simulation.small_object_detour_meters),
@@ -709,7 +708,6 @@ void settings_set_defaults(settings_t *settings)
 	settings->simulation.background_frames_per_second = 10.0f;
 	settings->simulation.diagnostics_interval_seconds = 30.0f;
 	settings->simulation.path_search_cells = 100000;
-	settings->simulation.navmesh = true;
 	settings->simulation.navigation_object_meters = 0.3f;
 	settings->simulation.navigation_small_object_meters = 0.8f;
 	settings->simulation.small_object_detour_meters = 10.0f;

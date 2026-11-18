@@ -53,9 +53,9 @@
 // blocks of 4 x 4 cells around what does (a mountain), climbing costing a
 // little. How high they fly along the way is theirs (see actors.h).
 //
-// The navigation mesh (navigation.use_navmesh, simulation.navmesh): the
-// same surfaces gathered into rectangles a search goes over instead of the
-// cells. Per region (a tile) and per class of agent (by its width in quarter
+// The navigation mesh: the same surfaces gathered into rectangles the
+// walkers' searches go over (the cells themselves were searched once: a
+// node each, tens of megabytes of search state on a big map). Per region (a tile) and per class of agent (by its width in quarter
 // meters: a hen 1, a man 2, a cow or a bear 3), the usable surfaces are merged greedily into rectangles (up to
 // NAVIGATION_MESH_RECT_MOST cells a side) where every cell is alike (the
 // room above, the blockers' groups, a small object, the slope's cost, the
@@ -105,13 +105,6 @@
 #define NAVIGATION_REGION_METERS 64.0f
 #define NAVIGATION_MAX_WAYPOINTS 32
 #define NAVIGATION_SLOPE_UNIT_DEGREES (90.0f / 255.0f)
-// The walks' open list (see navigation_t): its buckets, how much priority
-// each spans (meters; within one the order is the last pushed first: no
-// path comes out more than about this much worse than the best), how many
-// (the ring spans NAVIGATION_BUCKETS times that: farther ones wait in the
-// last)
-#define NAVIGATION_BUCKET_METERS 0.125f
-#define NAVIGATION_BUCKETS 8192
 #define NAVIGATION_MAX_EXTRA_SURFACES 3       // per cell, above the terrain's
 #define NAVIGATION_REGION_EXTRA_SLOTS 4096    // extra surfaces per region
 #define NAVIGATION_OBJECT_HEIGHT_METERS 4.0f  // the part of an object that can be in the way
@@ -321,7 +314,7 @@ typedef struct
 	int64_t tiles_built;
 	uint64_t last_search_ticks;
 	int64_t searches;                  // statistics: over the rectangles
-	int64_t search_fallbacks;          // of which the cells' way (nothing at the start)
+	int64_t search_fallbacks;          // of which none: no rectangle anywhere near the start
 	int64_t lines;
 	int64_t line_fallbacks;
 } navigation_mesh_t;
@@ -424,22 +417,13 @@ typedef struct
 	int64_t rebuilt_region_total;
 	int64_t partial_region_total;      // of those, built in part only (the cells round a few objects that changed)
 
-	// Search working memory, grown on first use. Nodes are the cells'
-	// terrain surfaces (node = cell) and then the regions' extra surfaces
-	// (node = cells + region * NAVIGATION_REGION_EXTRA_SLOTS + slot)
+	// The flyers' search's working memory, grown on first use: a node a
+	// block of cells (navigation_find_flight_path). The walkers' is over
+	// the mesh's rectangles, its state in them; its open list the heap too
 	uint32_t search_number;
-	navigation_search_node_t *search;  // per node, what the searches know of it
-	navigation_heap_entry_t *heap;     // the flights' open list: a 4-ary heap, cheapest first
+	navigation_search_node_t *search;  // per node, what the search knows of it
+	navigation_heap_entry_t *heap;     // the open list: a 4-ary heap, cheapest first
 	int32_t heap_count;
-	// The walks' open list: buckets of NAVIGATION_BUCKET_METERS of priority,
-	// in a ring (each a list of entries, the last pushed first)
-	int32_t *bucket_heads;             // NAVIGATION_BUCKETS, -1: empty
-	int32_t *bucket_entry_nodes;
-	int32_t *bucket_entry_next;
-	int32_t bucket_entry_count;
-	int32_t bucket_entry_capacity;
-	int32_t bucket_open_count;         // entries in the buckets
-	int64_t bucket_current;            // the cheapest bucket that may hold any (not wrapped)
 	int32_t heap_capacity;
 	int32_t *node_path;                // the nodes of the found path, end first
 	int32_t node_path_capacity;
@@ -450,11 +434,8 @@ typedef struct
 	int32_t water_cells_per_cell;
 	float water_cells_for_size;
 	uint64_t last_search_ticks;        // its A* (performance counter ticks)
-	// The navigation mesh (see the top): used for the walkers' searches and
-	// lines when on (simulation.navmesh, each frame)
-	bool use_navmesh;
+	// The navigation mesh (see the top): the walkers' searches and lines
 	navigation_mesh_t mesh;
-	uint64_t last_pull_ticks;          // and pulling its path tight
 } navigation_t;
 
 bool navigation_create(navigation_t *navigation, const terrain_t *terrain);

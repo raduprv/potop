@@ -138,10 +138,6 @@ Still open:
 - **Lines** (navigation_line_passable) do not know the shut portals;
   the follower asks its body's line besides, so it does not matter to
   it, but a game that asks a line alone gets the mesh's word.
-- **The old cell search** is still the fallback where a walker stands
-  on no rectangle of its class (navigation_find_path). To go: first a
-  way back onto the mesh for such a walker, then the cells' search,
-  their line and `simulation.navmesh` out.
 - **Turning on the spot** is the walk's clip at the pivot's pace; a
   proper turn-in-place clip is Radu's call.
 
@@ -177,7 +173,11 @@ engine/actors.c (following a path: move_actor and the helpers above it).
    gone over the quarter meters (mesh_way_holds; a portal shut and
    searched again where it does not hold: mesh_find_path). Lines
    (navigation_line_passable) walk the rectangles and their portals.
-   The old cell grid is the fallback when the mesh cannot answer.
+   The cells themselves are not searched any more (their A*, its
+   per-cell state and `simulation.navmesh` are gone): a walker on no
+   rectangle is sent straight to the nearest within 8 cells; a line
+   from where the rectangles have nothing is still sampled over the
+   cells (line_clear).
 4. **Following** (actors.c move_actor):
    - inertial_turn: turn speed ramps up and down (0.2 s); on a path at
      most pivot_degrees_per_second standing (90), down to the type's

@@ -489,12 +489,10 @@ typedef struct
 	// Every this many simulated seconds, a line about what keeps the water
 	// awake and what the simulation costs is logged (0 = never)
 	float diagnostics_interval_seconds;
-	// A path search (actors) gives up after this many grid cells (1 m) and
-	// takes the reached cell nearest the goal
+	// A path search (actors) gives up after an eighth of this many of the
+	// navigation mesh's rectangles (it was so many grid cells of 1 m once)
+	// and takes the reached one nearest the goal
 	int32_t path_search_cells;
-	// The walkers' searches over the navigation mesh's rectangles (off: over
-	// the cells, as before; navigation.h)
-	bool navmesh;
 	// Objects smaller than this across are left out of the navigation:
 	// actors walk through them (pebbles). Bigger ones are in the way or
 	// stepped on, as each actor can (a bear steps on a stone a rabbit goes

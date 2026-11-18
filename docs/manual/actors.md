@@ -26,26 +26,26 @@ trunk is in the way and its crown is not; objects smaller than
 actors walk through pebbles. A wall takes exactly the room it
 has, a bridge can be crossed on top and, if there is room, under.
 
-A* runs over the surfaces in 8 directions, never cutting the corner of a
-blocked cell. An actor can be on a surface with at least its
+The surfaces are gathered into rectangles (the navigation mesh: per 64 m
+of map and per width of actor, cells merged where they are alike and a
+step apart at most), and a search is A* over those, through the openings
+between them. An actor can be on a surface with at least its
 `height_meters` of room (by default its model's height), not in water too
-deep or too fast for it; it gets from one cell to the next if the height
-between their surfaces is within its `step_meters` or its
-`maximum_slope_degrees`. Steep steps and water cost more, so it takes a
+deep or too fast for it; it gets from one rectangle to the next if the
+height between them is within its `step_meters` or its
+`maximum_slope_degrees`. Steep ground and water cost more, so it takes a
 detour rather than the hill or the lake when the detour is not too long.
 The estimate of the way left is weighed a little over the truth (by 1.3),
-which keeps the search heading for the goal instead of flooding every
-cheaper corner around a hill, for paths at most that much longer than the
-best. The search gives up after `path_search_cells` surfaces ([simulation],
-100000) and then heads for the reached cell nearest the goal. On rough
-ground a search costs about half a microsecond per surface looked at (a
-70 m trip through mountains: 30 ms; across a meadow: well under one). The path is pulled tight into at most 32
-waypoints (straight lines wherever the ground along them is no worse); a
-longer path is searched on from its last waypoint. A straight stretch
-also keeps half the actor's `width_meters` (actors.ini; by default its
-model's width, 0.74 m for the bear) from anything in the way on either
-side, so it does not scrape its flank along a stone or a trunk; the search
-itself goes through cell centers, half a meter from their neighbors.
+which keeps the search heading for the goal, for paths at most that much
+longer than the best. The search gives up after an eighth of
+`path_search_cells` rectangles ([simulation], 100000) and then heads for
+the reached one nearest the goal. A search across a meadow is a few
+rectangles, a few hundredths of a millisecond; round a village a few
+tenths. The way through the rectangles is pulled tight into at most 32
+waypoints, the actor's radius off the openings' ends; a longer path is
+searched on from its last waypoint. An actor that stands on no rectangle
+(pushed onto a rock, into a corner too tight for it) is sent straight to
+the nearest one within 8 m; with none that near it has no way.
 
 On the way it steers for a point a little ahead on its path, turning
 as fast as its pace lets it: `pivot_degrees_per_second` standing (90 by

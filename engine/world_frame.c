@@ -98,8 +98,6 @@ void world_update_door_links(world_t *world)
 
 void world_update_actors(world_t *world, float seconds)
 {
-	// (the mesh or the cells, as the settings say now)
-	world->navigation.use_navmesh = world->settings->simulation.navmesh;
 	// (the doors as they are now, for the ways the actors find)
 	world_update_door_links(world);
 	actors_move(&world->actors, &world->navigation, &world->terrain, &world->water, seconds);

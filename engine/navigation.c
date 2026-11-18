@@ -93,27 +93,6 @@ static int32_t node_cell(const navigation_t *navigation, int32_t node)
 	return navigation->regions[node / NAVIGATION_REGION_EXTRA_SLOTS].surfaces[node % NAVIGATION_REGION_EXTRA_SLOTS].cell;
 }
 
-// The nodes of a cell whose coordinates are known (its terrain first; no
-// divisions: the search's inner loop); returns how many
-static int cell_nodes_at(const navigation_t *navigation, int32_t cell, int32_t cell_x, int32_t cell_z,
-	int32_t nodes_out[1 + NAVIGATION_MAX_EXTRA_SURFACES])
-{
-	int count = 1;
-
-	nodes_out[0] = cell;
-	if (navigation->extra_count[cell] > 0)
-	{
-		int32_t region = (cell_z / REGION_CELLS) * navigation->regions_per_side + cell_x / REGION_CELLS;
-		int32_t base = navigation->size * navigation->size + region * NAVIGATION_REGION_EXTRA_SLOTS + navigation->extra_first[cell];
-
-		for (int k = 0; k < navigation->extra_count[cell]; k++)
-		{
-			nodes_out[count++] = base + k;
-		}
-	}
-	return count;
-}
-
 // The nodes of a cell (its terrain first); returns how many
 static int cell_nodes(const navigation_t *navigation, int32_t cell, int32_t nodes_out[1 + NAVIGATION_MAX_EXTRA_SURFACES])
 {
@@ -276,48 +255,6 @@ static void node_info_at(const navigation_t *navigation, const terrain_t *terrai
 	}
 }
 
-// node_info_at for a cell's terrain (not an extra surface), lean enough to
-// go into the search's inner loop whole: the same answers, the water's
-// part left to node_info_at where there is any
-static void terrain_node_info(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
-	int32_t cell, int32_t cell_x, int32_t cell_z, node_info_t *info)
-{
-	uint8_t clearance = navigation->terrain_clearance[cell];
-	uint8_t small_units = navigation->small_height[cell];
-
-	info->height = navigation->ground_height[cell];
-	info->passable = (clearance == NAVIGATION_CLEARANCE_OPEN || (float)clearance * NAVIGATION_CLEARANCE_UNIT_METERS >= agent->height_meters)
-		&& (navigation->blocked == NULL || (navigation->blocked[cell] & agent->groups) == 0);
-	info->water_class = CLASS_DRY;
-	info->surface = false;
-	info->cost_factor = navigation->walk_factors[navigation->ground_slope[cell]];
-	info->small = false;
-	info->extra_cost = 0.0f;
-	if (small_units > 0)
-	{
-		float small = (float)small_units * SMALL_UNIT_METERS;
-
-		if (small >= agent->height_meters)
-		{
-			info->passable = false;
-		}
-		else if (small > agent->step_meters)
-		{
-			info->small = true;
-			info->extra_cost = navigation->small_detour_meters;
-		}
-	}
-	if (!info->passable || water == NULL)
-	{
-		return;
-	}
-	if (water->iced || !water_dry_at(navigation, water, cell_x, cell_z, ((float)cell_x + 0.5f) * NAVIGATION_CELL_METERS,
-			((float)cell_z + 0.5f) * NAVIGATION_CELL_METERS))
-	{
-		node_info_at(navigation, terrain, water, agent, cell, cell, cell_x, cell_z, info);
-	}
-}
-
 static void node_info(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
 	int32_t node, node_info_t *info)
 {
@@ -345,22 +282,6 @@ static bool step_allowed(const navigation_agent_t *agent, const node_info_t *fro
 		return fabsf(to->height - from->height) <= agent->step_meters;
 	}
 	return fabsf(to->height - from->height) <= SDL_max(agent->step_meters, agent->maximum_slope * distance);
-}
-
-// What a step costs: its length times what the ground it goes onto costs
-// (its slope, baked with the region: walk_factors; wading, swimming), and a
-// small object's detour. Onto or off an object's top (a rock, a deck) the
-// climb between the two counts instead, against the steepest the agent goes
-static float step_cost(const navigation_agent_t *agent, const node_info_t *from, const node_info_t *to, float distance)
-{
-	if (from->surface || to->surface)
-	{
-		float steepness = to->water_class == CLASS_SWIM ? 0.0f
-			: SDL_min(fabsf(to->height - from->height) / (distance * SDL_max(agent->maximum_slope, 0.01f)), 1.0f);
-
-		return distance * to->cost_factor * (1.0f + 1.5f * steepness) + to->extra_cost;
-	}
-	return distance * to->cost_factor + to->extra_cost;
 }
 
 // The cell's node whose surface is nearest the height
@@ -2021,13 +1942,6 @@ static void free_search_memory(navigation_t *navigation)
 {
 	SDL_free(navigation->search);
 	SDL_free(navigation->heap);
-	SDL_free(navigation->bucket_heads);
-	SDL_free(navigation->bucket_entry_nodes);
-	SDL_free(navigation->bucket_entry_next);
-	navigation->bucket_heads = NULL;
-	navigation->bucket_entry_nodes = NULL;
-	navigation->bucket_entry_next = NULL;
-	navigation->bucket_entry_capacity = 0;
 	SDL_free(navigation->node_path);
 	navigation->search = NULL;
 	navigation->heap = NULL;
@@ -3288,16 +3202,14 @@ bool navigation_line_passable(const navigation_t *navigation, const terrain_t *t
 	float *blocked_z, float *blocked_height)
 {
 	// Over the rectangles: they are built as needed (the navigation is only
-	// read, but its mesh kept up)
-	if (navigation->use_navmesh)
-	{
-		int result = mesh_line_passable((navigation_t *)navigation, terrain, water, agent, from_x, from_z, from_height, to_x, to_z, blocked_x,
-			blocked_z, blocked_height);
+	// read, but its mesh kept up); from where they have nothing (a walker
+	// pushed off them), the cells sampled along the line
+	int result = mesh_line_passable((navigation_t *)navigation, terrain, water, agent, from_x, from_z, from_height, to_x, to_z, blocked_x,
+		blocked_z, blocked_height);
 
-		if (result >= 0)
-		{
-			return result == 1;
-		}
+	if (result >= 0)
+	{
+		return result == 1;
 	}
 	return line_clear(navigation, terrain, water, agent, from_x, from_z, from_height, to_x, to_z, CLASS_SWIM | ALLOW_SMALL, blocked_x, blocked_z,
 		blocked_height);
@@ -3306,9 +3218,13 @@ bool navigation_line_passable(const navigation_t *navigation, const terrain_t *t
 // ---------------------------------------------------------------------------
 // A*
 
+// The flyers' search's nodes: blocks of FLIGHT_BLOCK_CELLS cells a side
+// (the walkers' is over the mesh's rectangles, its state in them)
 static int32_t node_count(const navigation_t *navigation)
 {
-	return cell_count(navigation) + navigation->regions_per_side * navigation->regions_per_side * NAVIGATION_REGION_EXTRA_SLOTS;
+	int32_t blocks = (navigation->size + FLIGHT_BLOCK_CELLS - 1) / FLIGHT_BLOCK_CELLS;
+
+	return blocks * blocks;
 }
 
 static bool ensure_search_memory(navigation_t *navigation)
@@ -3401,89 +3317,6 @@ static int32_t heap_pop(navigation_t *navigation)
 	return top;
 }
 
-// The walks' open list: a bucket queue. A priority (meters) goes into its
-// bucket of NAVIGATION_BUCKET_METERS, the cheapest bucket is taken first:
-// a push and a pop cost the same however many are waiting (a heap's pop
-// went down its levels, a cache miss each, a quarter of a search's time)
-static void buckets_clear(navigation_t *navigation)
-{
-	navigation->bucket_entry_count = 0;
-	navigation->bucket_open_count = 0;
-	navigation->bucket_current = -1;
-	if (navigation->bucket_heads != NULL)
-	{
-		SDL_memset(navigation->bucket_heads, 0xff, sizeof(int32_t) * NAVIGATION_BUCKETS);
-	}
-}
-
-static bool buckets_push(navigation_t *navigation, int32_t node, float priority)
-{
-	int64_t bucket = (int64_t)(priority * (1.0f / NAVIGATION_BUCKET_METERS));
-	int32_t slot;
-	int32_t entry;
-
-	if (navigation->bucket_heads == NULL)
-	{
-		navigation->bucket_heads = SDL_malloc(sizeof(int32_t) * NAVIGATION_BUCKETS);
-		if (navigation->bucket_heads == NULL)
-		{
-			return false;
-		}
-		SDL_memset(navigation->bucket_heads, 0xff, sizeof(int32_t) * NAVIGATION_BUCKETS);
-	}
-	if (navigation->bucket_entry_count == navigation->bucket_entry_capacity)
-	{
-		int32_t capacity = SDL_max(4096, navigation->bucket_entry_capacity * 2);
-		int32_t *nodes = SDL_realloc(navigation->bucket_entry_nodes, sizeof(int32_t) * (size_t)capacity);
-		int32_t *next;
-
-		if (nodes == NULL)
-		{
-			return false;
-		}
-		navigation->bucket_entry_nodes = nodes;
-		next = SDL_realloc(navigation->bucket_entry_next, sizeof(int32_t) * (size_t)capacity);
-		if (next == NULL)
-		{
-			return false;
-		}
-		navigation->bucket_entry_next = next;
-		navigation->bucket_entry_capacity = capacity;
-	}
-	// (the first sets where the ring starts; cheaper than the cheapest
-	// waiting, which the weighed estimate allows now and then: the cheapest;
-	// beyond the ring: its last)
-	if (navigation->bucket_current < 0)
-	{
-		navigation->bucket_current = bucket;
-	}
-	bucket = SDL_clamp(bucket, navigation->bucket_current, navigation->bucket_current + NAVIGATION_BUCKETS - 1);
-	slot = (int32_t)(bucket % NAVIGATION_BUCKETS);
-	entry = navigation->bucket_entry_count++;
-	navigation->bucket_entry_nodes[entry] = node;
-	navigation->bucket_entry_next[entry] = navigation->bucket_heads[slot];
-	navigation->bucket_heads[slot] = entry;
-	navigation->bucket_open_count++;
-	return true;
-}
-
-// The cheapest waiting (there must be one: bucket_open_count > 0)
-static int32_t buckets_pop(navigation_t *navigation)
-{
-	int32_t slot = (int32_t)(navigation->bucket_current % NAVIGATION_BUCKETS);
-	int32_t entry;
-
-	while (navigation->bucket_heads[slot] < 0)
-	{
-		navigation->bucket_current++;
-		slot = slot + 1 == NAVIGATION_BUCKETS ? 0 : slot + 1;
-	}
-	entry = navigation->bucket_heads[slot];
-	navigation->bucket_heads[slot] = navigation->bucket_entry_next[entry];
-	navigation->bucket_open_count--;
-	return navigation->bucket_entry_nodes[entry];
-}
-
 // Octile distance: what the trip costs at best (dry, flat)
 static float estimate(int32_t from_x, int32_t from_z, int32_t to_x, int32_t to_z)
 {
@@ -3493,197 +3326,14 @@ static float estimate(int32_t from_x, int32_t from_z, int32_t to_x, int32_t to_z
 	return ((float)SDL_max(dx, dz) + 0.41421356f * (float)SDL_min(dx, dz)) * NAVIGATION_CELL_METERS;
 }
 
-// Is any surface of the cell roomy enough and within reach (for corners)?
-// Only the room and the heights: cheaper than a full look, and a corner is
-// only brushed past
-static bool cell_open(const navigation_t *navigation, const navigation_agent_t *agent, const node_info_t *from, int32_t cell, int32_t cell_x,
-	int32_t cell_z)
-{
-	int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
-	int count = cell_nodes_at(navigation, cell, cell_x, cell_z, nodes);
-	float reach = SDL_max(agent->step_meters, agent->maximum_slope * NAVIGATION_CELL_METERS);
-
-	if (navigation->blocked != NULL && (navigation->blocked[cell] & agent->groups) != 0)
-	{
-		return false;
-	}
-	for (int k = 0; k < count; k++)
-	{
-		float height;
-		uint8_t clearance;
-
-		if (k == 0)
-		{
-			height = navigation->ground_height[cell];
-			clearance = navigation->terrain_clearance[cell];
-			if ((float)navigation->small_height[cell] * SMALL_UNIT_METERS >= agent->height_meters)
-			{
-				continue;                  // a stone taller than it
-			}
-		}
-		else
-		{
-			int32_t index = nodes[k] - cell_count(navigation);
-			const navigation_surface_t *surface =
-				&navigation->regions[index / NAVIGATION_REGION_EXTRA_SLOTS].surfaces[index % NAVIGATION_REGION_EXTRA_SLOTS];
-
-			height = surface->height;
-			clearance = surface->clearance;
-		}
-		if ((clearance == NAVIGATION_CLEARANCE_OPEN || (float)clearance * NAVIGATION_CLEARANCE_UNIT_METERS >= agent->height_meters)
-			&& (from->water_class == CLASS_SWIM || fabsf(height - from->height) <= reach))
-		{
-			return true;
-		}
-	}
-	return false;
-}
-
-// The search's common step, done for all eight neighbors at once: from dry
-// ground, among cells with no surfaces above their terrain, away from the
-// map's edge, with no water anywhere round (its tiles dry). The same
-// answers as the general way (node_info_at, cell_open, step_allowed,
-// step_cost), worked out lane by lane in arrays of eight the compiler
-// turns into vector instructions; only what can be stepped to comes out
-// (valid_out), and at what cost from here. False: not such a place, the
-// general way it is
-static bool dry_block_steps(const navigation_t *navigation, const water_t *water, const navigation_agent_t *agent, const node_info_t *here,
-	int32_t node, int32_t cell, int32_t cell_x, int32_t cell_z, bool valid_out[8], float costs_out[8])
-{
-	int32_t size = navigation->size;
-	float height[8];
-	float clearance[8];
-	float small[8];
-	float blocked[8];
-	float distance[8];
-	float walk[8];
-	int32_t open[8];
-	int32_t valid[8];
-	float reach = SDL_max(agent->step_meters, agent->maximum_slope * NAVIGATION_CELL_METERS);
-	const uint8_t *above = &navigation->extra_count[cell - size - 1];
-	const uint8_t *middle = &navigation->extra_count[cell - 1];
-	const uint8_t *below = &navigation->extra_count[cell + size - 1];
-
-	if (node != cell || here->water_class != CLASS_DRY || cell_x < 1 || cell_z < 1 || cell_x > size - 2 || cell_z > size - 2
-		|| (above[0] | above[1] | above[2] | middle[0] | middle[2] | below[0] | below[1] | below[2]) != 0)
-	{
-		return false;
-	}
-	if (water != NULL)
-	{
-		// The water's tiles under the block's corners: all dry, none of its
-		// cells has any (what water_dry_at would find for each)
-		int32_t k = navigation->water_cells_per_cell;
-
-		if (water->iced || k <= 0 || navigation->water_cells_for_size != water->cell_size_meters)
-		{
-			return false;
-		}
-		for (int corner = 0; corner < 4; corner++)
-		{
-			int32_t water_x = k * (cell_x + ((corner & 1) ? 1 : -1)) + (k + 1) / 2;
-			int32_t water_z = k * (cell_z + ((corner & 2) ? 1 : -1)) + (k + 1) / 2;
-			int32_t tile;
-
-			if (water_x >= water->size || water_z >= water->size)
-			{
-				continue;
-			}
-			tile = (water_z / WATER_TILE_SIZE) * water->tiles_per_side + water_x / WATER_TILE_SIZE;
-			if (water->tile_state[tile] != WATER_TILE_DRY || water->tile_max_depth[tile] > 0)
-			{
-				return false;
-			}
-		}
-	}
-	// The neighbors, in the directions' order
-	for (int d = 0; d < 8; d++)
-	{
-		int32_t next = cell + direction_z[d] * size + direction_x[d];
-
-		height[d] = navigation->ground_height[next];
-		clearance[d] = (float)navigation->terrain_clearance[next];
-		small[d] = (float)navigation->small_height[next] * SMALL_UNIT_METERS;
-		blocked[d] = navigation->blocked != NULL && (navigation->blocked[next] & agent->groups) != 0 ? 1.0f : 0.0f;
-		distance[d] = direction_length[d] * NAVIGATION_CELL_METERS;
-		walk[d] = navigation->walk_factors[navigation->ground_slope[next]];
-	}
-#if defined(__SSE2__)
-	// Four lanes at a time (SSE: every x86-64 has it), the same operations
-	// in the same order as the general way, so the same answers to the bit
-	{
-		__m128 here_height = _mm_set1_ps(here->height);
-		__m128 magnitude = _mm_castsi128_ps(_mm_set1_epi32(0x7fffffff));
-		__m128 agent_height = _mm_set1_ps(agent->height_meters);
-		__m128 step = _mm_set1_ps(agent->step_meters);
-
-		for (int half = 0; half < 2; half++)
-		{
-			__m128 lane_height = _mm_loadu_ps(&height[4 * half]);
-			__m128 lane_clearance = _mm_loadu_ps(&clearance[4 * half]);
-			__m128 lane_small = _mm_loadu_ps(&small[4 * half]);
-			__m128 lane_distance = _mm_loadu_ps(&distance[4 * half]);
-			__m128 rise = _mm_and_ps(_mm_sub_ps(lane_height, here_height), magnitude);
-			__m128 climb = _mm_max_ps(_mm_mul_ps(_mm_set1_ps(agent->maximum_slope), lane_distance), step);
-			__m128 room = _mm_or_ps(_mm_cmpeq_ps(lane_clearance, _mm_set1_ps((float)NAVIGATION_CLEARANCE_OPEN)),
-				_mm_cmpge_ps(_mm_mul_ps(lane_clearance, _mm_set1_ps(NAVIGATION_CLEARANCE_UNIT_METERS)), agent_height));
-			__m128 free = _mm_and_ps(_mm_and_ps(room, _mm_cmplt_ps(lane_small, agent_height)),
-				_mm_cmpeq_ps(_mm_loadu_ps(&blocked[4 * half]), _mm_setzero_ps()));
-			__m128 cost = _mm_add_ps(_mm_mul_ps(lane_distance, _mm_loadu_ps(&walk[4 * half])),
-				_mm_and_ps(_mm_cmpgt_ps(lane_small, step), _mm_set1_ps(navigation->small_detour_meters)));
-			int open_bits = _mm_movemask_ps(_mm_and_ps(free, _mm_cmple_ps(rise, _mm_set1_ps(reach))));
-			int valid_bits = _mm_movemask_ps(_mm_and_ps(free, _mm_cmple_ps(rise, climb)));
-
-			_mm_storeu_ps(&costs_out[4 * half], cost);
-			for (int lane = 0; lane < 4; lane++)
-			{
-				open[4 * half + lane] = (open_bits >> lane) & 1;
-				valid[4 * half + lane] = (valid_bits >> lane) & 1;
-			}
-		}
-	}
-#else
-	// Lane by lane, no branches: what each is, whether it can be gone to
-	for (int d = 0; d < 8; d++)
-	{
-		float rise = fabsf(height[d] - here->height);
-		float climb = agent->maximum_slope * distance[d];
-		int32_t room = (clearance[d] == (float)NAVIGATION_CLEARANCE_OPEN) | (clearance[d] * NAVIGATION_CLEARANCE_UNIT_METERS >= agent->height_meters);
-		int32_t free = room & (small[d] < agent->height_meters) & (blocked[d] == 0.0f);
-
-		climb = climb > agent->step_meters ? climb : agent->step_meters;
-		open[d] = free & (rise <= reach);
-		valid[d] = free & (rise <= climb);
-		costs_out[d] = distance[d] * walk[d] + (small[d] > agent->step_meters ? navigation->small_detour_meters : 0.0f);
-	}
-#endif
-	// No cutting the corner of a cell that is not open (d 4..7: x then z)
-	for (int d = 0; d < 8; d++)
-	{
-		valid_out[d] = d < 4 ? valid[d] != 0 : (valid[d] & open[direction_x[d] > 0 ? 0 : 1] & open[direction_z[d] > 0 ? 2 : 3]) != 0;
-	}
-	return true;
-}
-
 navigation_result_t navigation_find_path(navigation_t *navigation, const terrain_t *terrain, const water_t *water,
 	const navigation_agent_t *agent, float from_x, float from_z, float from_height, float to_x, float to_z,
 	float waypoints_out[NAVIGATION_MAX_WAYPOINTS][2], int *waypoint_count_out, bool *complete_out)
 {
-	int32_t size = navigation->size;
-	int32_t start_cell;
-	int32_t goal_cell;
-	int32_t goal_x;
-	int32_t goal_z;
-	int32_t start;
-	int32_t best;
-	float best_distance;
-	uint32_t reached_tag;
-	int32_t path_length = 0;
-	bool found = false;
-	uint64_t search_start;
 	float goal_distance = SDL_sqrtf((to_x - from_x) * (to_x - from_x) + (to_z - from_z) * (to_z - from_z));
 	int32_t budget = (int32_t)SDL_min((float)navigation->maximum_expansions,
 		(float)SEARCH_BASE_EXPANSIONS + (float)SEARCH_EXPANSIONS_PER_METER * goal_distance);
+	int result;
 
 	*waypoint_count_out = 0;
 	*complete_out = true;
@@ -3697,387 +3347,17 @@ navigation_result_t navigation_find_path(navigation_t *navigation, const terrain
 	}
 	// The regions it will likely go through, as far as it searches
 	prepare_way(navigation, from_x, from_z, to_x, to_z, SEARCH_REACH_FACTOR * SDL_sqrtf((float)budget) * NAVIGATION_CELL_METERS);
-	// Over the rectangles (the cells' way where they have nothing at the start)
-	if (navigation->use_navmesh)
+	// Over the rectangles. Nothing of them anywhere near the start (in the
+	// middle of a rock, of deep water it does not swim): no way
+	result = mesh_find_path(navigation, terrain, water, agent, from_x, from_z, from_height, to_x, to_z, waypoints_out, waypoint_count_out,
+		complete_out);
+	if (result < 0)
 	{
-		int result = mesh_find_path(navigation, terrain, water, agent, from_x, from_z, from_height, to_x, to_z, waypoints_out, waypoint_count_out,
-			complete_out);
-
-		if (result >= 0)
-		{
-			return (navigation_result_t)result;
-		}
 		*waypoint_count_out = 0;
 		*complete_out = true;
-	}
-	cell_of_point(navigation, from_x, from_z, &start_cell);
-	cell_of_point(navigation, to_x, to_z, &goal_cell);
-	goal_x = goal_cell % size;
-	goal_z = goal_cell / size;
-	if (!ensure_search_memory(navigation))
-	{
 		return NAVIGATION_PATH_NONE;
 	}
-	navigation->search_number++;
-	if (navigation->search_number >= 0x7FFFFFFFu)
-	{
-		// Wrapped: the old tags could look new
-		SDL_memset(navigation->search, 0, sizeof(navigation_search_node_t) * (size_t)node_count(navigation));
-		navigation->search_number = 1;
-	}
-	reached_tag = navigation->search_number * 2;
-	buckets_clear(navigation);
-	start = nearest_node(navigation, terrain, start_cell, from_height);
-	navigation->search[start].tag = reached_tag;
-	navigation->search[start].cost = 0.0f;
-	navigation->search[start].came_from = -1;
-	buckets_push(navigation, start, estimate(start_cell % size, start_cell / size, goal_x, goal_z));
-	best = start;
-	best_distance = estimate(start_cell % size, start_cell / size, goal_x, goal_z);
-	navigation->last_expansions = 0;
-	search_start = SDL_GetPerformanceCounter();
-	navigation->last_pull_ticks = 0;
-
-	while (navigation->bucket_open_count > 0)
-	{
-		int32_t node = buckets_pop(navigation);
-		int32_t cell = node_cell(navigation, node);
-		int32_t cell_x = cell % size;
-		int32_t cell_z = cell / size;
-		node_info_t here;
-		bool side_open[4];
-		bool block_valid[8];
-		float block_costs[8];
-
-		if (navigation->search[node].tag == reached_tag + 1)
-		{
-			continue;                  // a stale entry: already closed
-		}
-		navigation->search[node].tag = reached_tag + 1;
-		if (cell == goal_cell)
-		{
-			found = true;
-			best = node;
-			break;
-		}
-		{
-			float distance = estimate(cell_x, cell_z, goal_x, goal_z);
-
-			if (distance < best_distance)
-			{
-				best_distance = distance;
-				best = node;
-			}
-		}
-		if (++navigation->last_expansions >= budget)
-		{
-			break;
-		}
-		// (its terrain the lean way: the same answers)
-		if (node == cell)
-		{
-			terrain_node_info(navigation, terrain, water, agent, cell, cell_x, cell_z, &here);
-		}
-		else
-		{
-			node_info_at(navigation, terrain, water, agent, node, cell, cell_x, cell_z, &here);
-		}
-		// Through a door from here (its terrain: the doors' ends are on
-		// the ground), to the other end's terrain, open or one it opens
-		if (navigation->link_count > 0 && node == cell && here.passable)
-		{
-			for (int k = 0; k < navigation->link_count; k++)
-			{
-				int32_t next;
-				int32_t next_x;
-				int32_t next_z;
-				node_info_t there;
-				float cost;
-
-				if (navigation->link_cells[k][0] == cell)
-				{
-					next = navigation->link_cells[k][1];
-				}
-				else if (navigation->link_cells[k][1] == cell)
-				{
-					next = navigation->link_cells[k][0];
-				}
-				else
-				{
-					continue;
-				}
-				if ((!navigation->links[k].open && !agent->opens_doors) || navigation->search[next].tag == reached_tag + 1)
-				{
-					continue;
-				}
-				next_x = next % size;
-				next_z = next / size;
-				terrain_node_info(navigation, terrain, water, agent, next, next_x, next_z, &there);
-				if (!there.passable || SDL_fabsf(there.height - here.height) > SDL_max(agent->step_meters, 0.6f))
-				{
-					continue;
-				}
-				// (a shut one a little dearer: opening it takes a moment)
-				cost = navigation->search[node].cost + navigation->link_meters[k] + (navigation->links[k].open ? 0.0f : LINK_SHUT_METERS);
-				if (navigation->search[next].tag != reached_tag || cost < navigation->search[next].cost)
-				{
-					navigation->search[next].tag = reached_tag;
-					navigation->search[next].cost = cost;
-					navigation->search[next].came_from = node;
-					if (!buckets_push(navigation, next, cost + HEURISTIC_WEIGHT * estimate(next_x, next_z, goal_x, goal_z)))
-					{
-						navigation->bucket_open_count = 0;
-						break;
-					}
-				}
-			}
-		}
-		if (dry_block_steps(navigation, water, agent, &here, node, cell, cell_x, cell_z, block_valid, block_costs))
-		{
-			for (int d = 0; d < 8; d++)
-			{
-				int32_t next = cell + direction_z[d] * size + direction_x[d];
-				float cost;
-
-				if (!block_valid[d] || navigation->search[next].tag == reached_tag + 1)
-				{
-					continue;
-				}
-				cost = navigation->search[node].cost + block_costs[d];
-				if (navigation->search[next].tag != reached_tag || cost < navigation->search[next].cost)
-				{
-					navigation->search[next].tag = reached_tag;
-					navigation->search[next].cost = cost;
-					navigation->search[next].came_from = node;
-					if (!buckets_push(navigation, next, cost + HEURISTIC_WEIGHT * estimate(cell_x + direction_x[d], cell_z + direction_z[d], goal_x,
-						goal_z)))
-					{
-						navigation->bucket_open_count = 0;
-						break;
-					}
-				}
-			}
-			continue;
-		}
-		// Whether the four cells beside it are open, for the diagonal steps
-		// past their corners (each asked once, not by both diagonals)
-		{
-			bool inside = cell_x > 0 && cell_z > 0 && cell_x < size - 1 && cell_z < size - 1;
-
-			for (int d = 0; d < 4; d++)
-			{
-				int32_t next_x = cell_x + direction_x[d];
-				int32_t next_z = cell_z + direction_z[d];
-
-				side_open[d] = (inside || (next_x >= 0 && next_z >= 0 && next_x < size && next_z < size))
-					&& cell_open(navigation, agent, &here, next_z * size + next_x, next_x, next_z);
-			}
-		}
-		for (int d = 0; d < 8; d++)
-		{
-			int32_t next_x = cell_x + direction_x[d];
-			int32_t next_z = cell_z + direction_z[d];
-			int32_t next_cell;
-			int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
-			int count;
-			float distance = direction_length[d] * NAVIGATION_CELL_METERS;
-
-			if (next_x < 0 || next_z < 0 || next_x >= size || next_z >= size)
-			{
-				continue;
-			}
-			next_cell = next_z * size + next_x;
-			// No cutting the corner of a blocked cell (the one beside it
-			// along x, and along z)
-			if (d >= 4 && (!side_open[direction_x[d] > 0 ? 0 : 1] || !side_open[direction_z[d] > 0 ? 2 : 3]))
-			{
-				continue;
-			}
-			count = cell_nodes_at(navigation, next_cell, next_x, next_z, nodes);
-			for (int k = 0; k < count; k++)
-			{
-				int32_t next = nodes[k];
-				node_info_t there;
-				float cost;
-
-				if (navigation->search[next].tag == reached_tag + 1)
-				{
-					continue;
-				}
-				// Already open no dearer than this step could ever make it (a
-				// step costs at least its length): nothing to look at
-				if (navigation->search[next].tag == reached_tag
-					&& navigation->search[next].cost <= navigation->search[node].cost + distance)
-				{
-					continue;
-				}
-				if (k == 0)
-				{
-					terrain_node_info(navigation, terrain, water, agent, next_cell, next_x, next_z, &there);
-				}
-				else
-				{
-					node_info_at(navigation, terrain, water, agent, next, next_cell, next_x, next_z, &there);
-				}
-				if (!there.passable || !step_allowed(agent, &here, &there, distance))
-				{
-					continue;
-				}
-				cost = navigation->search[node].cost + step_cost(agent, &here, &there, distance);
-				if (navigation->search[next].tag != reached_tag || cost < navigation->search[next].cost)
-				{
-					navigation->search[next].tag = reached_tag;
-					navigation->search[next].cost = cost;
-					navigation->search[next].came_from = node;
-					// The estimate weighed a little over the truth: the search heads
-				// for the goal instead of flooding every cheaper corner around
-				// a hill, for paths at most that much longer than the best
-				if (!buckets_push(navigation, next, cost + HEURISTIC_WEIGHT * estimate(next_x, next_z, goal_x, goal_z)))
-					{
-						navigation->bucket_open_count = 0;
-						break;
-					}
-				}
-			}
-		}
-	}
-
-	navigation->last_search_ticks = SDL_GetPerformanceCounter() - search_start;
-	// The nodes from the end back to the start
-	for (int32_t node = best; node != start; node = navigation->search[node].came_from)
-	{
-		if (path_length == navigation->node_path_capacity)
-		{
-			int32_t capacity = SDL_max(1024, navigation->node_path_capacity * 2);
-			int32_t *grown = SDL_realloc(navigation->node_path, sizeof(int32_t) * (size_t)capacity);
-
-			if (grown == NULL)
-			{
-				return NAVIGATION_PATH_NONE;
-			}
-			navigation->node_path = grown;
-			navigation->node_path_capacity = capacity;
-		}
-		navigation->node_path[path_length++] = node;
-	}
-	if (path_length == 0)
-	{
-		if (found)
-		{
-			// Already in the goal's cell
-			waypoints_out[0][0] = to_x;
-			waypoints_out[0][1] = to_z;
-			*waypoint_count_out = 1;
-			return NAVIGATION_PATH_FOUND;
-		}
-		return NAVIGATION_PATH_NONE;
-	}
-
-	// Pull it tight: from each waypoint, straight on to the farthest path
-	// node that can be reached along a line through ground no worse than
-	// the path's own
-	{
-		float anchor_x = from_x;
-		float anchor_z = from_z;
-		float anchor_height = from_height;
-		int32_t anchor = path_length;  // node_path runs end first: index path_length - 1 is the first step
-		int count = 0;
-		uint64_t pull_start = SDL_GetPerformanceCounter();
-
-		while (anchor > 0)
-		{
-			int32_t visible = anchor - 1;
-			int allowed_class = CLASS_DRY;
-			int allow_small = 0;
-			float visible_height = anchor_height;
-			float point_x;
-			float point_z;
-
-			for (int32_t candidate = anchor - 1; candidate >= 0 && anchor - candidate <= PULL_MAXIMUM_CELLS; candidate--)
-			{
-				int32_t node = navigation->node_path[candidate];
-				int32_t cell = node_cell(navigation, node);
-				node_info_t info;
-				float candidate_x = ((float)(cell % size) + 0.5f) * NAVIGATION_CELL_METERS;
-				float candidate_z = ((float)(cell / size) + 0.5f) * NAVIGATION_CELL_METERS;
-
-				node_info(navigation, terrain, water, agent, node, &info);
-				allowed_class = SDL_max(allowed_class, info.water_class);
-				allow_small |= info.small ? ALLOW_SMALL : 0;
-				if (candidate == 0 && found)
-				{
-					candidate_x = to_x;
-					candidate_z = to_z;
-				}
-				if (candidate == anchor - 1
-					|| line_clear(navigation, terrain, water, agent, anchor_x, anchor_z, anchor_height, candidate_x, candidate_z,
-						allowed_class | allow_small, NULL, NULL, NULL))
-				{
-					visible = candidate;
-					visible_height = info.height;
-				}
-				else
-				{
-					break;
-				}
-			}
-			{
-				int32_t cell = node_cell(navigation, navigation->node_path[visible]);
-
-				point_x = ((float)(cell % size) + 0.5f) * NAVIGATION_CELL_METERS;
-				point_z = ((float)(cell / size) + 0.5f) * NAVIGATION_CELL_METERS;
-			}
-			if (visible == 0 && found)
-			{
-				point_x = to_x;
-				point_z = to_z;
-			}
-			waypoints_out[count][0] = point_x;
-			waypoints_out[count][1] = point_z;
-			count++;
-			anchor_x = point_x;
-			anchor_z = point_z;
-			anchor_height = visible_height;
-			anchor = visible;
-			if (count == NAVIGATION_MAX_WAYPOINTS && anchor > 0)
-			{
-				*complete_out = false;
-				break;
-			}
-		}
-		*waypoint_count_out = count;
-		navigation->last_pull_ticks = SDL_GetPerformanceCounter() - pull_start;
-	}
-	// Through a door: its two ends where they are, not their cells' middles
-	// (the way between them lined up with the gap, not across its posts)
-	for (int w = 0; w + 1 < *waypoint_count_out && navigation->link_count > 0; w++)
-	{
-		int32_t here_cell;
-		int32_t next_cell;
-
-		cell_of_point(navigation, waypoints_out[w][0], waypoints_out[w][1], &here_cell);
-		cell_of_point(navigation, waypoints_out[w + 1][0], waypoints_out[w + 1][1], &next_cell);
-		for (int k = 0; k < navigation->link_count; k++)
-		{
-			int forward = navigation->link_cells[k][0] == here_cell && navigation->link_cells[k][1] == next_cell;
-			int backward = navigation->link_cells[k][1] == here_cell && navigation->link_cells[k][0] == next_cell;
-
-			if (!forward && !backward)
-			{
-				continue;
-			}
-			// (the goal itself kept where it is)
-			if (!(w + 1 == *waypoint_count_out - 1 && found))
-			{
-				waypoints_out[w + 1][0] = forward ? navigation->links[k].b[0] : navigation->links[k].a[0];
-				waypoints_out[w + 1][1] = forward ? navigation->links[k].b[1] : navigation->links[k].a[1];
-			}
-			waypoints_out[w][0] = forward ? navigation->links[k].a[0] : navigation->links[k].b[0];
-			waypoints_out[w][1] = forward ? navigation->links[k].a[1] : navigation->links[k].b[1];
-			break;
-		}
-	}
-	return found ? NAVIGATION_PATH_FOUND : NAVIGATION_PATH_PARTIAL;
+	return (navigation_result_t)result;
 }
 
 // ---------------------------------------------------------------------------
@@ -4089,6 +3369,7 @@ navigation_result_t navigation_find_path(navigation_t *navigation, const terrain
 #define MESH_MINIMUM_EXPANSIONS 2048
 #define MESH_RAY_MOST_STEPS 512
 #define MESH_START_NEAR_CELLS 2        // a start on no rectangle: the nearest one this far round
+#define MESH_START_FAR_CELLS 8         // none: this far round (the way back onto them; the cells were searched for it once)
 #define MESH_TILE_CELLS_MOST 4096      // a region's cells at most (64 x 64)
 
 // Thresholds a portal's steps are told apart by: a run of steps between the
@@ -5230,13 +4511,12 @@ static bool mesh_portal_allowed(const navigation_agent_t *agent, const navigatio
 // height that it can be on (tiles readied); -1 if none. near: if none
 // there, the nearest within MESH_START_NEAR_CELLS
 static int32_t mesh_locate(navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
-	float x, float z, float height, bool near)
+	float x, float z, float height, int32_t reach_cells)
 {
 	int c = mesh_class_of(agent);
 	int32_t cell;
 	int32_t best = -1;
 	float best_score = 1e30f;
-	int32_t reach_cells = near ? MESH_START_NEAR_CELLS : 0;
 
 	cell_of_point(navigation, x, z, &cell);
 	for (int32_t dz = -reach_cells; dz <= reach_cells; dz++)
@@ -5696,7 +4976,14 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 		navigation->mesh.search_number = 1;
 	}
 	reached_tag = navigation->mesh.search_number * 2;
-	start = mesh_locate(navigation, terrain, water, agent, from_x, from_z, from_height, true);
+	start = mesh_locate(navigation, terrain, water, agent, from_x, from_z, from_height, MESH_START_NEAR_CELLS);
+	// (on no rectangle, none beside it: pushed off them, onto a rock, into
+	// a corner the class is kept out of; the nearest farther round, straight
+	// to it: its way back onto them)
+	if (start < 0)
+	{
+		start = mesh_locate(navigation, terrain, water, agent, from_x, from_z, from_height, MESH_START_FAR_CELLS);
+	}
 	navigation->mesh.searches++;
 	if (start < 0)
 	{
@@ -6066,7 +5353,7 @@ static int mesh_line(navigation_t *navigation, const terrain_t *terrain, const w
 
 	mesh_note_agent(navigation, agent);
 	navigation->mesh.search_number++;
-	id = mesh_locate(navigation, terrain, water, agent, from_x, from_z, from_height, false);
+	id = mesh_locate(navigation, terrain, water, agent, from_x, from_z, from_height, 0);
 	if (id < 0)
 	{
 		navigation->mesh.line_fallbacks++;
@@ -6308,7 +5595,7 @@ void navigation_mesh_describe(const navigation_t *navigation, char *text_out, si
 		}
 	}
 	{
-		size_t used = (size_t)SDL_snprintf(text_out, text_size, "Navmesh %s:", navigation->use_navmesh ? "on" : "off");
+		size_t used = (size_t)SDL_snprintf(text_out, text_size, "Navmesh:");
 
 		for (int c = 0; c < NAVIGATION_MESH_CLASSES && used < text_size; c++)
 		{
@@ -6321,11 +5608,10 @@ void navigation_mesh_describe(const navigation_t *navigation, char *text_out, si
 		if (used < text_size)
 		{
 			SDL_snprintf(text_out + used, text_size - used,
-				" %.1f MB; %lld tiles built, the last in %.2f ms; the last search %.2f ms (either way %.2f ms, %d expanded); searches %lld (%lld by the cells, "
+				" %.1f MB; %lld tiles built, the last in %.2f ms; the last search %.2f ms (%d expanded); searches %lld (%lld with no rectangle near, "
 				"%lld ways that did not hold, %lld cut short), lines %lld (%lld by the cells)",
 				(double)bytes / (1024.0 * 1024.0), (long long)navigation->mesh.tiles_built, (double)navigation->mesh.last_build_milliseconds,
-				(double)navigation->mesh.last_search_ticks * 1000.0 / (double)SDL_GetPerformanceFrequency(),
-				(double)navigation->last_search_ticks * 1000.0 / (double)SDL_GetPerformanceFrequency(), navigation->last_expansions,
+				(double)navigation->mesh.last_search_ticks * 1000.0 / (double)SDL_GetPerformanceFrequency(), navigation->last_expansions,
 				(long long)navigation->mesh.searches, (long long)navigation->mesh.search_fallbacks, (long long)navigation->mesh.ways_refused,
 				(long long)navigation->mesh.ways_cut,
 				(long long)navigation->mesh.lines,
@@ -6772,7 +6058,6 @@ void navigation_fill_overlay(navigation_t *navigation, const terrain_t *terrain,
 		overlay_out[cell] = value;
 	}
 	// The mesh's rectangles of the agent's class: their edges' cells marked
-	if (navigation->use_navmesh)
 	{
 		int c = mesh_class_of(agent);
 

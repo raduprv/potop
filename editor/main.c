@@ -5361,7 +5361,6 @@ static void run_path_benchmark(testbed_t *game)
 		float middle = 0.5f * (float)world->terrain.size * world->terrain.cell_size_meters;
 		uint32_t random = 12345u;
 		uint64_t search_ticks = 0;
-		uint64_t pull_ticks = 0;
 		int64_t expansions = 0;
 		int counts[3] = { 0, 0, 0 };
 		double frequency = (double)SDL_GetPerformanceFrequency();
@@ -5380,7 +5379,6 @@ static void run_path_benchmark(testbed_t *game)
 			}
 			random = 12345u;
 			search_ticks = 0;
-			pull_ticks = 0;
 			expansions = 0;
 			worst = 0;
 			SDL_zeroa(counts);
@@ -5406,18 +5404,17 @@ static void run_path_benchmark(testbed_t *game)
 				result = navigation_find_path(navigation, &world->terrain, &world->water, &agent, from_x, from_z,
 					terrain_sample_height_meters(&world->terrain, from_x, from_z), to_x, to_z, waypoints, &waypoint_count, &complete);
 				search_ticks += navigation->last_search_ticks;
-				pull_ticks += navigation->last_pull_ticks;
 				expansions += navigation->last_expansions;
-				worst = SDL_max(worst, navigation->last_search_ticks + navigation->last_pull_ticks);
+				worst = SDL_max(worst, navigation->last_search_ticks);
 				counts[result == NAVIGATION_PATH_FOUND ? 0 : (result == NAVIGATION_PATH_PARTIAL ? 1 : 2)]++;
 			}
 		}
 		best_search_ticks = SDL_min(best_search_ticks, search_ticks);
 		search_ticks = best_search_ticks;
-		SDL_Log("Path benchmark (the best of 5 passes): %d searches (%d found, %d partial, %d none), %lld surfaces: search %.1f ms (%.3f us a surface), "
-			"pulling tight %.1f ms, the worst %.2f ms", searches, counts[0], counts[1], counts[2], (long long)expansions,
+		SDL_Log("Path benchmark (the best of 5 passes): %d searches (%d found, %d partial, %d none), %lld rectangles: search %.1f ms (%.3f us a rectangle), "
+			"the worst %.2f ms", searches, counts[0], counts[1], counts[2], (long long)expansions,
 			1000.0 * (double)search_ticks / frequency, 1e6 * (double)search_ticks / frequency / (double)SDL_max(expansions, 1),
-			1000.0 * (double)pull_ticks / frequency, 1000.0 * (double)worst / frequency);
+			1000.0 * (double)worst / frequency);
 	}
 }
 
