@@ -120,9 +120,15 @@ out by a refused step:
   landing, gathers, goes over on an arc (0.25 m over the higher end,
   falling as things fall, tilted by how it rises and falls, no IK),
   lands, goes on. Clips if the model has them: jump_start, jump_air,
-  jump_land (none yet: it goes over as it walks). On the 14 real houses
-  the bear finds no edge to jump: their terraces are railed all round,
-  and the ledges along their walls are too narrow to land on.
+  jump_land (none yet: it goes over as it walks). A terrace ends short
+  of its cell's side as often as not (the church's porch 0.75 m short):
+  each side's surface is looked for in from the portal's line
+  (mesh_surface_begins), and the quarters between are open if nothing
+  stands in them at the upper level and no other top is in the way
+  (mesh_gap_open; the ground's own room is its cell's, of no use
+  there). The bear jumps the inn's and the church's terraces at their
+  ends (no balustrade there) and the gallery house's; not over a
+  balustrade, not onto the ledges along walls (too narrow to land on).
 
 The step guard is still there (a net: steps are no longer planned to be
 refused), and the slide along an edge with it.

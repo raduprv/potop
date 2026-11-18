@@ -1931,7 +1931,7 @@ static bool plan_path_logged(const actors_t *actors, actor_t *actor, const actor
 			(double)(SDL_GetPerformanceCounter() - start) * 1000.0 / (double)SDL_GetPerformanceFrequency());
 		for (int k = 0; k < actor->path_count; k++)
 		{
-			SDL_Log("  waypoint %d: (%.1f, %.1f)", k, (double)actor->path[k][0], (double)actor->path[k][1]);
+			SDL_Log("  waypoint %d: (%.2f, %.2f)%s", k, (double)actor->path[k][0], (double)actor->path[k][1], actor->path_jump[k] != 0 ? ", by a jump" : "");
 		}
 		if (result != NAVIGATION_PATH_FOUND)
 		{
@@ -3422,6 +3422,25 @@ static bool next_corner(const actor_t *actor, float target_x, float target_z, fl
 	return true;
 }
 
+// Whether its path's waypoint is one it gets to by a jump, and it not
+// jumping yet: its jump begun (jump_move's from here)
+static bool jump_due(actor_t *actor)
+{
+	if (actor->jump_phase != JUMP_NONE || !actor->moving || actor->straight || actor->wandering || actor->swimming
+		|| actor->path_index >= actor->path_count || actor->path_jump[actor->path_index] == 0)
+	{
+		return false;
+	}
+	actor->jump_phase = JUMP_TURN;
+	actor->jump_seconds = 0.0f;
+	actor->jump_replan = false;
+	actor->fine_failures = 0;
+	actor->jump_to[0] = actor->path[actor->path_index][0];
+	actor->jump_to[1] = actor->path_jump_height[actor->path_index];
+	actor->jump_to[2] = actor->path[actor->path_index][1];
+	return true;
+}
+
 // Its jump to its waypoint (one its path gets to by a jump: an edge it
 // does not step, a terrace's): turned to face it on the spot, gathered
 // (its "jump_start" clip's length), through the air on an arc that tops
@@ -3541,6 +3560,7 @@ static void jump_move(actors_t *actors, actor_t *actor, navigation_t *navigation
 			actor->progress_x = actor->x;
 			actor->progress_z = actor->z;
 			actor->stuck_seconds = 0.0f;
+			actor->fine_failures = 0;
 			actor->jump_phase = JUMP_LAND;
 			actor->jump_seconds = 0.0f;
 			actor->jump_phase_seconds = type->jump_actions[2] >= 0 ? SDL_max(action_length(model, type->jump_actions[2]), 0.05f) : JUMP_LAND_SECONDS;
@@ -3613,17 +3633,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 	{
 		actor->jump_phase = JUMP_NONE;
 	}
-	if (seconds > 0.0f && actor->jump_phase == JUMP_NONE && actor->moving && !actor->straight && !actor->wandering && !actor->swimming
-		&& actor->path_index < actor->path_count && actor->path_jump[actor->path_index] != 0)
-	{
-		actor->jump_phase = JUMP_TURN;
-		actor->jump_seconds = 0.0f;
-		actor->jump_replan = false;
-		actor->jump_to[0] = actor->path[actor->path_index][0];
-		actor->jump_to[1] = actor->path_jump_height[actor->path_index];
-		actor->jump_to[2] = actor->path[actor->path_index][1];
-	}
-	if (seconds > 0.0f && actor->jump_phase != JUMP_NONE)
+	if (seconds > 0.0f && (actor->jump_phase != JUMP_NONE || jump_due(actor)))
 	{
 		jump_move(actors, actor, navigation, terrain, water, seconds);
 		return;
@@ -3762,6 +3772,12 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 			{
 				path_failed(actors, actor, water);
 			}
+		}
+		// (on where it leaves the ground: its jump, not a step more)
+		if (jump_due(actor))
+		{
+			jump_move(actors, actor, navigation, terrain, water, seconds);
+			return;
 		}
 	}
 	if (actor->moving && seconds > 0.0f)

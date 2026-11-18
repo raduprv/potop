@@ -4921,30 +4921,114 @@ static bool center_line_free(const navigation_t *navigation, const terrain_t *te
 	return true;
 }
 
+// Where a rectangle's own surface begins, going in from a point of its
+// edge's line (a portal's: its cell's side) along a direction: a terrace
+// ends short of its cell's side as often as not, the quarters between
+// are air. How far in (to that quarter's near side) and its height
+// there; false if not within its edge cell
+static bool mesh_surface_begins(const navigation_t *navigation, int c, int32_t id, const navigation_agent_t *agent, const float edge[2],
+	const float inward[2], float *begins_out, float *height_out)
+{
+	const float quarter = NAVIGATION_CELL_METERS / (float)NAVIGATION_SUBCELLS;
+
+	for (int k = 0; k < NAVIGATION_SUBCELLS; k++)
+	{
+		float in = ((float)k + 0.5f) * quarter;
+
+		if (mesh_height_at(navigation, c, id, agent, edge[0] + inward[0] * in, edge[1] + inward[1] * in, height_out))
+		{
+			*begins_out = (float)k * quarter;
+			return true;
+		}
+	}
+	return false;
+}
+
+// Whether a quarter meter of a rectangle's edge cell that is not the
+// rectangle's own (its surface ends short of the cell's side) is open
+// for a jump over it between two levels: nothing stands there at the
+// upper one (a post, a wall: the surface's quarter is marked so), no
+// other top there between the lower level and the agent's head on the
+// upper one (a box against the terrace's face, a beam), and the surface
+// has the agent's room over it beside there. A roof far over it is let
+// be: whether the ground under an eave is free the quarters do not say
+// (the ground's room is its cell's), the surface beside it does
+static bool mesh_gap_open(const navigation_t *navigation, int c, int32_t id, const navigation_agent_t *agent, float x, float z, float lower,
+	float upper)
+{
+	int32_t cell;
+	int32_t sub_x;
+	int32_t sub_z;
+	int32_t node;
+	int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
+	int count;
+	const navigation_surface_t *surface;
+
+	if (!quarter_of_point(navigation, x, z, &cell, &sub_x, &sub_z))
+	{
+		return false;
+	}
+	node = mesh_node_in(navigation, c, id, cell);
+	if (node < cell_count(navigation))
+	{
+		return false;
+	}
+	surface = extra_surface(navigation, node);
+	if (surface->below[sub_z * NAVIGATION_SUBCELLS + sub_x] != NAVIGATION_SUBCELL_NONE
+		|| (surface->clearance != NAVIGATION_CLEARANCE_OPEN && (float)surface->clearance * NAVIGATION_CLEARANCE_UNIT_METERS < agent->height_meters))
+	{
+		return false;
+	}
+	count = cell_nodes(navigation, cell, nodes);
+	for (int k = 1; k < count; k++)
+	{
+		const navigation_surface_t *other = extra_surface(navigation, nodes[k]);
+		uint8_t below = other->below[sub_z * NAVIGATION_SUBCELLS + sub_x];
+		float top;
+
+		if (nodes[k] == node || below >= NAVIGATION_SUBCELL_BLOCKED)
+		{
+			continue;
+		}
+		top = other->height - (float)below * NAVIGATION_SUBCELL_UNIT_METERS;
+		if (top > lower + 0.1f && top < upper + agent->height_meters)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 // Whether the agent jumps a portal it does not step (a terrace's edge,
 // up or down), crossing it by a point of it: where it leaves the ground
 // and where it lands (straight across the edge, its radius and a little
-// off it either side; a drop further out), the height there and how much
-// more than a walk it costs. It stands at both with room for its body
-// (as where it walks: a brush or two), and nothing stands between them
-// and the edge on either level (a balustrade, a bench against the
-// terrace's face)
+// off where each side's surface begins; a drop further out), the height
+// there and how much more than a walk it costs. It stands at both with
+// room for its body (as where it walks: a brush or two), nothing stands
+// between each and its surface's edge (a balustrade, a bench against the
+// terrace's face), and where the upper one ends short of the portal's
+// line there is air over the lower level, not a post
 static bool mesh_jump(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
 	int c, int32_t from, int32_t to, const navigation_portal_t *portal, const float crossing[2], float takeoff_out[2], float landing_out[2],
 	float *landing_height_out, float *cost_out)
 {
+	const float quarter = NAVIGATION_CELL_METERS / (float)NAVIGATION_SUBCELLS;
 	const navigation_rect_t *from_rect = mesh_rect(navigation, c, from);
 	float along[2] = { portal->b[0] - portal->a[0], portal->b[1] - portal->a[1] };
 	float length = SDL_sqrtf(along[0] * along[0] + along[1] * along[1]);
 	float inset = agent->radius_meters + 0.1f;
 	float across[2];
+	float back[2];
 	float middle[2] = { ((float)from_rect->x + 0.5f * (float)from_rect->width) * NAVIGATION_CELL_METERS,
 		((float)from_rect->z + 0.5f * (float)from_rect->depth) * NAVIGATION_CELL_METERS };
 	float at;
 	float edge[2];
-	float near_edge[2];
+	float surface_edge[2];
+	float takeoff_begins;
+	float landing_begins;
 	float takeoff_height;
 	float landing_height;
+	float height;
 	float rise;
 	float off = agent->radius_meters + MESH_JUMP_EDGE_METERS;
 	float most = SDL_max(agent->jump_up_meters, agent->jump_down_meters);
@@ -4965,17 +5049,15 @@ static bool mesh_jump(const navigation_t *navigation, const terrain_t *terrain, 
 		across[0] = -across[0];
 		across[1] = -across[1];
 	}
+	back[0] = -across[0];
+	back[1] = -across[1];
 	// (its radius off the portal's ends)
 	at = (crossing[0] - portal->a[0]) * along[0] + (crossing[1] - portal->a[1]) * along[1];
 	at = length > 2.0f * inset ? SDL_clamp(at, inset, length - inset) : 0.5f * length;
 	edge[0] = portal->a[0] + along[0] * at;
 	edge[1] = portal->a[1] + along[1] * at;
-	takeoff_out[0] = edge[0] - across[0] * off;
-	takeoff_out[1] = edge[1] - across[1] * off;
-	landing_out[0] = edge[0] + across[0] * off;
-	landing_out[1] = edge[1] + across[1] * off;
-	if (!mesh_height_at(navigation, c, from, agent, takeoff_out[0], takeoff_out[1], &takeoff_height)
-		|| !mesh_height_at(navigation, c, to, agent, landing_out[0], landing_out[1], &landing_height))
+	if (!mesh_surface_begins(navigation, c, from, agent, edge, back, &takeoff_begins, &takeoff_height)
+		|| !mesh_surface_begins(navigation, c, to, agent, edge, across, &landing_begins, &landing_height))
 	{
 		return false;
 	}
@@ -4984,14 +5066,28 @@ static bool mesh_jump(const navigation_t *navigation, const terrain_t *terrain, 
 	{
 		return false;
 	}
+	// (the lower one's is at the line itself: something on the ground
+	// against the terrace's face otherwise)
+	if ((rise > 0.0f ? takeoff_begins : landing_begins) > 0.0f)
+	{
+		return false;
+	}
+	takeoff_out[0] = edge[0] - across[0] * (takeoff_begins + off);
+	takeoff_out[1] = edge[1] - across[1] * (takeoff_begins + off);
+	landing_out[0] = edge[0] + across[0] * (landing_begins + off);
+	landing_out[1] = edge[1] + across[1] * (landing_begins + off);
+	if (!mesh_height_at(navigation, c, from, agent, takeoff_out[0], takeoff_out[1], &height) || SDL_fabsf(height - takeoff_height) > 0.1f
+		|| !mesh_height_at(navigation, c, to, agent, landing_out[0], landing_out[1], &height) || SDL_fabsf(height - landing_height) > 0.1f)
+	{
+		return false;
+	}
 	// (down: further out, the way it falls; if it stands there too)
 	if (rise < 0.0f)
 	{
 		float out = off - rise * MESH_JUMP_DROP_OUT_SHARE;
 		float further[2] = { edge[0] + across[0] * out, edge[1] + across[1] * out };
-		float further_height;
 
-		if (mesh_height_at(navigation, c, to, agent, further[0], further[1], &further_height) && SDL_fabsf(further_height - landing_height) < 0.1f
+		if (mesh_height_at(navigation, c, to, agent, further[0], further[1], &height) && SDL_fabsf(height - landing_height) < 0.1f
 			&& center_line_free(navigation, terrain, water, agent, landing_out, further, landing_height))
 		{
 			landing_out[0] = further[0];
@@ -5004,18 +5100,34 @@ static bool mesh_jump(const navigation_t *navigation, const terrain_t *terrain, 
 	{
 		return false;
 	}
-	// (to the edge on its own level, each side: half a quarter short of it)
-	near_edge[0] = edge[0] - across[0] * 0.5f * BODY_LINE_STEP_METERS;
-	near_edge[1] = edge[1] - across[1] * 0.5f * BODY_LINE_STEP_METERS;
-	if (!center_line_free(navigation, terrain, water, agent, takeoff_out, near_edge, takeoff_height))
+	// (to its surface's edge on its own level, each side: half a quarter
+	// short of it)
+	surface_edge[0] = edge[0] - across[0] * (takeoff_begins + 0.5f * quarter);
+	surface_edge[1] = edge[1] - across[1] * (takeoff_begins + 0.5f * quarter);
+	if (!center_line_free(navigation, terrain, water, agent, takeoff_out, surface_edge, takeoff_height))
 	{
 		return false;
 	}
-	near_edge[0] = edge[0] + across[0] * 0.5f * BODY_LINE_STEP_METERS;
-	near_edge[1] = edge[1] + across[1] * 0.5f * BODY_LINE_STEP_METERS;
-	if (!center_line_free(navigation, terrain, water, agent, landing_out, near_edge, landing_height))
+	surface_edge[0] = edge[0] + across[0] * (landing_begins + 0.5f * quarter);
+	surface_edge[1] = edge[1] + across[1] * (landing_begins + 0.5f * quarter);
+	if (!center_line_free(navigation, terrain, water, agent, landing_out, surface_edge, landing_height))
 	{
 		return false;
+	}
+	// (the upper one short of the line: air between, over the lower level)
+	{
+		float begins = rise > 0.0f ? landing_begins : takeoff_begins;
+		float sign = rise > 0.0f ? 1.0f : -1.0f;
+		float lower = SDL_min(takeoff_height, landing_height);
+
+		for (float in = 0.5f * quarter; in < begins; in += quarter)
+		{
+			if (!mesh_gap_open(navigation, c, rise > 0.0f ? to : from, agent, edge[0] + across[0] * sign * in, edge[1] + across[1] * sign * in, lower,
+				SDL_max(takeoff_height, landing_height)))
+			{
+				return false;
+			}
+		}
 	}
 	*landing_height_out = landing_height;
 	*cost_out = MESH_JUMP_COST_METERS + MESH_JUMP_COST_PER_METER * SDL_fabsf(rise);
