@@ -469,6 +469,21 @@ bool navigation_passable(const navigation_t *navigation, const terrain_t *terrai
 bool navigation_quarter_free(const navigation_t *navigation, const terrain_t *terrain, const water_t *water,
 	const navigation_agent_t *agent, float x, float z, float near_height);
 
+// How tight an agent standing at (x, z) is: of eight points round it a
+// little inside its radius, how many are on quarter meters it could not
+// stand on within a step (a post, a balustrade's rail beside it, the drop
+// off a ledge); -1 where it cannot stand at all
+int navigation_quarter_tightness(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
+	float x, float z, float near_height);
+
+// The fine way from (from_x, from_z) at from_height to (to_x, to_z), a few
+// meters apart, over the quarter meters: round a post inside a cell, past
+// a cell's corner, its body's radius off what it cannot stand on. Its
+// corners into points_out (at most most of them, the last near the goal);
+// the count, 0 if there is none in the window (or the two too far apart)
+int navigation_fine_path(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
+	float from_x, float from_z, float from_height, float to_x, float to_z, float (*points_out)[2], int most);
+
 // A path from (from_x, from_z), on the surface nearest from_height, towards
 // (to_x, to_z): at most NAVIGATION_MAX_WAYPOINTS points (x, z), the start
 // not included. If the path needs more, the first ones are given and

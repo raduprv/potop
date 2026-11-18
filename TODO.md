@@ -90,17 +90,13 @@ from an older version get their terrain difference baked in once).
 - Phase 5, any number of levels: the build reads the objects' collision
   straight into columns of surfaces (now 3 above the terrain at most).
 - Then the cells' A* and the path pulling can go.
-- Walkers' step guard (actors.c step_passable) against paths drawn over
-  whole cells: a post inside a cell the path crosses (the inn's porch by
-  its stair), a corner at a cell's corner (the hen at the yards) and it
-  stands there. Next: a short search over the quarter meters round it
-  (navigation_quarter_free) to the next waypoint when the guard says no.
+- A running cow (3.3 m/s, 30 degrees a second: a turn 6 m wide) on a
+  terrace 2 m deep goes round in circles at the rail (the step guard
+  keeps it in): it should slow to a walk where its turn does not fit.
+- Church porch: the farmer (1.85) under its 1.65 m beam (see below).
 - Stress test (tools/nav_stress.py run) known limits: ground cells are still whole meters (a 1 m
   door on bare ground can come out shut); the portals to the next tile
-  are not cut to their quarter meters; a hen rounding a corner at a cell's
-  corner (the yard with the 1.3 m beam) gets caught on it (corner cut at
-  STRAIGHT_WAYPOINT_METERS, then its step guard says no). Each fix: a
-  station for it.
+  are not cut to their quarter meters. Each fix: a station for it.
 - Church porch: a beam 1.65 m over the top of its stair: the farmer (1.85,
   his model's height) no longer goes up. A height_meters for people
   (stooping) or the model's beam higher: Radu's call.

@@ -62,6 +62,7 @@
 #define ACTOR_TYPES_MAX 64
 #define ACTOR_TYPE_NAME_LENGTH 48
 #define ACTOR_MAX_LEGS 8
+#define ACTOR_FINE_POINTS 12            // a fine way's points round a post (navigation_fine_path)
 #define ACTOR_IK_FEET_LENGTH 256
 
 // Steps between standing and walking (actor_type_t.gait_actions)
@@ -295,6 +296,18 @@ typedef struct
 	int path_index;                    // the waypoint it heads for
 	bool path_complete;                // the last waypoint is the goal (else: search on from there)
 	bool path_partial;                 // the goal cannot be reached; the path ends as near as it gets
+	// Its fine way round what its path's whole cells pass over (a post, a
+	// cell's corner): points over the quarter meters to the waypoint
+	// fine_for, made when its steps were refused (navigation_fine_path);
+	// dropped when the path moves on or changes
+	float fine_path[ACTOR_FINE_POINTS][2];
+	int fine_count;
+	int fine_index;
+	int fine_for;
+	float fine_for_x;
+	float fine_for_z;
+	float guard_seconds;               // its steps refused this long
+	float fine_wait;                   // till it looks for a fine way again
 	uint32_t path_generation;          // the navigation's generation when it last looked ahead
 	float look_seconds;                // until it looks ahead again
 	float speed;                       // meters per second, its own (the current comes on top)

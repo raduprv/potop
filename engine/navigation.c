@@ -2548,25 +2548,19 @@ bool navigation_passable(const navigation_t *navigation, const terrain_t *terrai
 	return false;
 }
 
-bool navigation_quarter_free(const navigation_t *navigation, const terrain_t *terrain, const water_t *water,
-	const navigation_agent_t *agent, float x, float z, float near_height)
+// Whether an agent at near_height can stand at the quarter meter (sub_x,
+// sub_z) of a cell, and at what height (height_out): see
+// navigation_quarter_free
+static bool quarter_stand(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
+	int32_t cell, int32_t sub_x, int32_t sub_z, float near_height, float *height_out)
 {
-	int32_t cell;
 	int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
 	int count;
 	float reach = SDL_max(agent->step_meters, agent->maximum_slope * NAVIGATION_CELL_METERS);
-	int32_t sub_x;
-	int32_t sub_z;
 	uint8_t room_needed = (uint8_t)SDL_clamp(SDL_ceilf(agent->height_meters / NAVIGATION_CLEARANCE_UNIT_METERS), 0.0f,
 		(float)(NAVIGATION_CLEARANCE_OPEN - 1));
 	bool in_the_way = false;
 
-	if (!cell_of_point(navigation, x, z, &cell))
-	{
-		return false;
-	}
-	sub_x = SDL_clamp((int32_t)((x / NAVIGATION_CELL_METERS - SDL_floorf(x / NAVIGATION_CELL_METERS)) * NAVIGATION_SUBCELLS), 0, NAVIGATION_SUBCELLS - 1);
-	sub_z = SDL_clamp((int32_t)((z / NAVIGATION_CELL_METERS - SDL_floorf(z / NAVIGATION_CELL_METERS)) * NAVIGATION_SUBCELLS), 0, NAVIGATION_SUBCELLS - 1);
 	count = cell_nodes(navigation, cell, nodes);
 	for (int k = 0; k < count; k++)
 	{
@@ -2582,6 +2576,7 @@ bool navigation_quarter_free(const navigation_t *navigation, const terrain_t *te
 			node_info(navigation, terrain, water, agent, nodes[k], &info);
 			if (info.passable && (info.water_class == CLASS_SWIM || SDL_fabsf(info.height - near_height) <= reach))
 			{
+				*height_out = info.height;
 				return true;
 			}
 			continue;
@@ -2589,9 +2584,11 @@ bool navigation_quarter_free(const navigation_t *navigation, const terrain_t *te
 		if (node_sub_height(navigation, nodes[k], cell, sub_x, sub_z, room_needed, &height, &blocked))
 		{
 			// (an object's top: a step up onto it, no slope; higher than a
-			// step over it: its side, in the way, a terrace's face)
+			// step over it: its side, in the way, a terrace's face; lower:
+			// a drop the path never takes)
 			if (SDL_fabsf(height - near_height) <= agent->step_meters + 0.05f)
 			{
+				*height_out = height;
 				return true;
 			}
 			if (height > near_height && height - near_height < reach + NAVIGATION_OBJECT_HEIGHT_METERS)
@@ -2614,7 +2611,333 @@ bool navigation_quarter_free(const navigation_t *navigation, const terrain_t *te
 	// step (the first tread of a stair taken for the ground); not a drop
 	// off the side of a stair, a step's strip in front of a porch beside
 	// it, where the path never went)
+	*height_out = navigation->ground_height[cell];
 	return !in_the_way && SDL_fabsf(navigation->ground_height[cell] - near_height) <= agent->step_meters + 0.05f;
+}
+
+// A point's cell and quarter meter in it
+static bool quarter_of_point(const navigation_t *navigation, float x, float z, int32_t *cell_out, int32_t *sub_x_out, int32_t *sub_z_out)
+{
+	if (!cell_of_point(navigation, x, z, cell_out))
+	{
+		return false;
+	}
+	*sub_x_out = SDL_clamp((int32_t)((x / NAVIGATION_CELL_METERS - SDL_floorf(x / NAVIGATION_CELL_METERS)) * NAVIGATION_SUBCELLS), 0,
+		NAVIGATION_SUBCELLS - 1);
+	*sub_z_out = SDL_clamp((int32_t)((z / NAVIGATION_CELL_METERS - SDL_floorf(z / NAVIGATION_CELL_METERS)) * NAVIGATION_SUBCELLS), 0,
+		NAVIGATION_SUBCELLS - 1);
+	return true;
+}
+
+bool navigation_quarter_free(const navigation_t *navigation, const terrain_t *terrain, const water_t *water,
+	const navigation_agent_t *agent, float x, float z, float near_height)
+{
+	int32_t cell;
+	int32_t sub_x;
+	int32_t sub_z;
+	float height;
+
+	return quarter_of_point(navigation, x, z, &cell, &sub_x, &sub_z)
+		&& quarter_stand(navigation, terrain, water, agent, cell, sub_x, sub_z, near_height, &height);
+}
+
+// Where an agent's body reaches round its center: eight points round, a
+// little inside its radius (its sides may brush)
+#define BODY_POINTS 8
+#define BODY_REACH 0.8f
+
+int navigation_quarter_tightness(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
+	float x, float z, float near_height)
+{
+	int32_t cell;
+	int32_t sub_x;
+	int32_t sub_z;
+	float height;
+	int tight = 0;
+
+	if (!quarter_of_point(navigation, x, z, &cell, &sub_x, &sub_z)
+		|| !quarter_stand(navigation, terrain, water, agent, cell, sub_x, sub_z, near_height, &height))
+	{
+		return -1;
+	}
+	for (int k = 0; k < BODY_POINTS; k++)
+	{
+		float angle = (float)k * (6.2831853f / (float)BODY_POINTS);
+		float point_x = x + SDL_sinf(angle) * agent->radius_meters * BODY_REACH;
+		float point_z = z + SDL_cosf(angle) * agent->radius_meters * BODY_REACH;
+		float point_height;
+
+		if (!quarter_of_point(navigation, point_x, point_z, &cell, &sub_x, &sub_z)
+			|| !quarter_stand(navigation, terrain, water, agent, cell, sub_x, sub_z, height, &point_height)
+			|| SDL_fabsf(point_height - height) > agent->step_meters + 0.05f)
+		{
+			tight++;
+		}
+	}
+	return tight;
+}
+
+// The fine way: a search over the quarter meters in a window round the
+// two points (FINE_MARGIN_QUARTERS beyond them, at most FINE_SPAN_QUARTERS
+// a side), each quarter one it stands on (quarter_stand) with room for
+// its body round it (navigation_quarter_tightness 0; or, dearer, without:
+// out from beside a post it brushed): round a post, through a gap a
+// cell's corner makes. One layer: each quarter's height as first found
+// (from the side it was come to from), enough in a few meters.
+#define FINE_SPAN_QUARTERS 48
+#define FINE_MARGIN_QUARTERS 6
+#define FINE_UNKNOWN 0
+#define FINE_CLEAR 1
+#define FINE_TIGHT 2                 // stood on, but its body not clear (beside a post): dearer, to get out from there
+#define FINE_NOT 3
+#define FINE_TIGHT_COST 4.0f
+
+typedef struct
+{
+	const navigation_t *navigation;
+	const terrain_t *terrain;
+	const water_t *water;
+	const navigation_agent_t *agent;
+	int32_t x0;                        // the window's first quarter, over the whole map
+	int32_t z0;
+	int32_t width;
+	int32_t depth;
+	uint8_t *state;
+	float *height;
+} fine_window_t;
+
+// A quarter over the whole map (x, z in quarters): standable at near, and
+// at what height
+static bool fine_stand(const fine_window_t *window, int32_t qx, int32_t qz, float near_height, float *height_out)
+{
+	int32_t cell_x = qx / NAVIGATION_SUBCELLS;
+	int32_t cell_z = qz / NAVIGATION_SUBCELLS;
+
+	if (qx < 0 || qz < 0 || cell_x >= window->navigation->size || cell_z >= window->navigation->size)
+	{
+		return false;
+	}
+	return quarter_stand(window->navigation, window->terrain, window->water, window->agent, cell_z * window->navigation->size + cell_x,
+		qx % NAVIGATION_SUBCELLS, qz % NAVIGATION_SUBCELLS, near_height, height_out);
+}
+
+// The window's quarter (local) for the body, found from near_height
+// (cached): FINE_CLEAR, FINE_TIGHT or FINE_NOT (a step off near_height
+// too)
+static int fine_state(fine_window_t *window, int32_t local_x, int32_t local_z, float near_height)
+{
+	size_t at;
+	float height = near_height;
+
+	if (local_x < 0 || local_z < 0 || local_x >= window->width || local_z >= window->depth)
+	{
+		return FINE_NOT;
+	}
+	at = (size_t)local_z * (size_t)window->width + (size_t)local_x;
+	if (window->state[at] == FINE_UNKNOWN)
+	{
+		const float quarters_per_meter = (float)NAVIGATION_SUBCELLS / NAVIGATION_CELL_METERS;
+		bool stands = fine_stand(window, window->x0 + local_x, window->z0 + local_z, near_height, &height);
+		bool clear = stands && navigation_quarter_tightness(window->navigation, window->terrain, window->water, window->agent,
+			((float)(window->x0 + local_x) + 0.5f) / quarters_per_meter, ((float)(window->z0 + local_z) + 0.5f) / quarters_per_meter, height) == 0;
+
+		window->state[at] = clear ? FINE_CLEAR : stands ? FINE_TIGHT : FINE_NOT;
+		window->height[at] = height;
+	}
+	if (SDL_fabsf(window->height[at] - near_height) > window->agent->step_meters + 0.05f)
+	{
+		return FINE_NOT;
+	}
+	return window->state[at];
+}
+
+// Whether the straight line between two window quarters' centers keeps to
+// clear quarters, a step at a time from from_height
+static bool fine_visible(fine_window_t *window, int32_t a_x, int32_t a_z, int32_t b_x, int32_t b_z, float from_height)
+{
+	float dx = (float)(b_x - a_x);
+	float dz = (float)(b_z - a_z);
+	int samples = (int)(SDL_sqrtf(dx * dx + dz * dz) * 3.0f) + 1;
+	float height = from_height;
+
+	for (int k = 1; k <= samples; k++)
+	{
+		float t = (float)k / (float)samples;
+		int32_t x = (int32_t)SDL_floorf((float)a_x + 0.5f + dx * t);
+		int32_t z = (int32_t)SDL_floorf((float)a_z + 0.5f + dz * t);
+
+		int state = fine_state(window, x, z, height);
+
+		// (tight only by its ends: out from beside a post)
+		if (state == FINE_NOT || (state == FINE_TIGHT && SDL_abs(x - a_x) > 1 && SDL_abs(z - a_z) > 1 && SDL_abs(x - b_x) > 1
+			&& SDL_abs(z - b_z) > 1))
+		{
+			return false;
+		}
+		height = window->height[(size_t)z * (size_t)window->width + (size_t)x];
+	}
+	return true;
+}
+
+int navigation_fine_path(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
+	float from_x, float from_z, float from_height, float to_x, float to_z, float (*points_out)[2], int most)
+{
+	const float quarters_per_meter = (float)NAVIGATION_SUBCELLS / NAVIGATION_CELL_METERS;
+	int32_t from_qx = (int32_t)SDL_floorf(from_x * quarters_per_meter);
+	int32_t from_qz = (int32_t)SDL_floorf(from_z * quarters_per_meter);
+	int32_t to_qx = (int32_t)SDL_floorf(to_x * quarters_per_meter);
+	int32_t to_qz = (int32_t)SDL_floorf(to_z * quarters_per_meter);
+	fine_window_t window;
+	size_t count;
+	float *cost;
+	int32_t *parent;
+	uint8_t *open;
+	int32_t start;
+	int32_t reached = -1;
+	int32_t chain[FINE_SPAN_QUARTERS * FINE_SPAN_QUARTERS];
+	int chain_count = 0;
+	int written = 0;
+
+	window.navigation = navigation;
+	window.terrain = terrain;
+	window.water = water;
+	window.agent = agent;
+	window.x0 = SDL_min(from_qx, to_qx) - FINE_MARGIN_QUARTERS;
+	window.z0 = SDL_min(from_qz, to_qz) - FINE_MARGIN_QUARTERS;
+	window.width = SDL_max(from_qx, to_qx) + FINE_MARGIN_QUARTERS + 1 - window.x0;
+	window.depth = SDL_max(from_qz, to_qz) + FINE_MARGIN_QUARTERS + 1 - window.z0;
+	if (window.width > FINE_SPAN_QUARTERS || window.depth > FINE_SPAN_QUARTERS || most < 1 || navigation->blocked == NULL)
+	{
+		return 0;
+	}
+	count = (size_t)window.width * (size_t)window.depth;
+	window.state = SDL_calloc(count, 1);
+	window.height = SDL_malloc(sizeof(float) * count);
+	cost = SDL_malloc(sizeof(float) * count);
+	parent = SDL_malloc(sizeof(int32_t) * count);
+	open = SDL_calloc(count, 1);
+	if (window.state == NULL || window.height == NULL || cost == NULL || parent == NULL || open == NULL)
+	{
+		SDL_free(window.state);
+		SDL_free(window.height);
+		SDL_free(cost);
+		SDL_free(parent);
+		SDL_free(open);
+		return 0;
+	}
+	for (size_t k = 0; k < count; k++)
+	{
+		cost[k] = 1e30f;
+		parent[k] = -1;
+	}
+	// (where it stands: its own, clear or not, a brush against a post)
+	start = (from_qz - window.z0) * window.width + (from_qx - window.x0);
+	window.state[start] = FINE_CLEAR;
+	window.height[start] = from_height;
+	cost[start] = 0.0f;
+	open[start] = 1;
+	// A*, the open set scanned (a few thousand quarters at most, rarely)
+	for (;;)
+	{
+		int32_t best = -1;
+		float best_score = 1e30f;
+		int32_t x;
+		int32_t z;
+
+		for (size_t k = 0; k < count; k++)
+		{
+			if (open[k] == 1)
+			{
+				int32_t ddx = SDL_abs((int32_t)(k % (size_t)window.width) + window.x0 - to_qx);
+				int32_t ddz = SDL_abs((int32_t)(k / (size_t)window.width) + window.z0 - to_qz);
+				float score = cost[k] + (float)SDL_max(ddx, ddz) + 0.414f * (float)SDL_min(ddx, ddz);
+
+				if (score < best_score)
+				{
+					best_score = score;
+					best = (int32_t)k;
+				}
+			}
+		}
+		if (best < 0)
+		{
+			break;
+		}
+		open[best] = 2;
+		x = best % window.width;
+		z = best / window.width;
+		// (there: in the goal's quarter or one beside it, the goal itself on
+		// a cell's corner beside a post)
+		if (SDL_abs(x + window.x0 - to_qx) <= 1 && SDL_abs(z + window.z0 - to_qz) <= 1)
+		{
+			reached = best;
+			break;
+		}
+		for (int32_t dz = -1; dz <= 1; dz++)
+		{
+			for (int32_t dx = -1; dx <= 1; dx++)
+			{
+				int32_t next_x = x + dx;
+				int32_t next_z = z + dz;
+				int32_t next;
+				float step_cost;
+				int state;
+
+				if (dx == 0 && dz == 0)
+				{
+					continue;
+				}
+				state = fine_state(&window, next_x, next_z, window.height[best]);
+				if (state == FINE_NOT)
+				{
+					continue;
+				}
+				// (corners not cut: a diagonal with both sides stood on)
+				if (dx != 0 && dz != 0 && (fine_state(&window, x + dx, z, window.height[best]) == FINE_NOT
+					|| fine_state(&window, x, z + dz, window.height[best]) == FINE_NOT))
+				{
+					continue;
+				}
+				next = next_z * window.width + next_x;
+				step_cost = (dx != 0 && dz != 0 ? 1.414f : 1.0f) * (state == FINE_TIGHT ? FINE_TIGHT_COST : 1.0f);
+				if (open[next] != 2 && cost[best] + step_cost < cost[next])
+				{
+					cost[next] = cost[best] + step_cost;
+					parent[next] = best;
+					open[next] = 1;
+				}
+			}
+		}
+	}
+	if (reached >= 0)
+	{
+		// The quarters back to the start, then pulled straight: from each,
+		// the farthest it sees
+		for (int32_t at = reached; at >= 0 && chain_count < (int)SDL_arraysize(chain); at = parent[at])
+		{
+			chain[chain_count++] = at;
+		}
+		for (int i = chain_count - 1; i > 0 && written < most;)
+		{
+			int j = 0;
+
+			while (j < i - 1 && !fine_visible(&window, chain[i] % window.width, chain[i] / window.width, chain[j] % window.width, chain[j] / window.width,
+				window.height[chain[i]]))
+			{
+				j++;
+			}
+			points_out[written][0] = ((float)(chain[j] % window.width + window.x0) + 0.5f) / quarters_per_meter;
+			points_out[written][1] = ((float)(chain[j] / window.width + window.z0) + 0.5f) / quarters_per_meter;
+			written++;
+			i = j;
+		}
+	}
+	SDL_free(window.state);
+	SDL_free(window.height);
+	SDL_free(cost);
+	SDL_free(parent);
+	SDL_free(open);
+	return written;
 }
 
 // The node of the cell an agent on from can step onto (passable, no worse
