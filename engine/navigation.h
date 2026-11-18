@@ -464,8 +464,8 @@ bool navigation_passable(const navigation_t *navigation, const terrain_t *terrai
 // The same at the quarter meter of (x, z): false only where an object's
 // top within reach has that quarter in the way (too little room for the
 // agent: under a balustrade's rail; something standing there: its post);
-// a quarter no surface knows is free (a stair's first tread, taken for the
-// ground)
+// a quarter no surface knows is free if its ground is within a step (a
+// stair's first tread, taken for the ground)
 bool navigation_quarter_free(const navigation_t *navigation, const terrain_t *terrain, const water_t *water,
 	const navigation_agent_t *agent, float x, float z, float near_height);
 

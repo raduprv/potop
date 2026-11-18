@@ -24,7 +24,7 @@
 #define TERRAIN_CHANGE_METERS 0.15f  // a cell's terrain moved more than this: its height follows (the objects are not built again)
 #define OBJECT_HEIGHT_STEP_METERS 0.15f // objects following the ground count in steps of this (as TERRAIN_CHANGE_METERS)
 #define SAMPLE_METERS 0.125f         // object triangles are sampled this finely (twice per quarter meter: no holes)
-#define MERGE_METERS 0.2f            // surfaces closer than this are one
+#define MERGE_METERS 0.1f            // an object's top this near the ground is the ground (what reaches higher blocks the ground: clearance_above)
 #define MINIMUM_SURFACE_SUBCELLS 4   // of 16: an object's top covering less of a cell is nothing to stand on
 #define WALKABLE_NORMAL_Y 0.64f      // triangles less steep than about 50 degrees are surfaces
 #define LINE_STEP_METERS 0.5f
@@ -803,7 +803,7 @@ static uint8_t clearance_above(const object_cell_t *items, int32_t count, float 
 	*type_out = -1;
 	for (int32_t k = 0; k < count; k++)
 	{
-		if (items[k].top > height + 0.1f && items[k].bottom < lowest)
+		if (items[k].top > height + MERGE_METERS && items[k].bottom < lowest)
 		{
 			lowest = items[k].bottom;
 			*type_out = items[k].type;
@@ -2610,9 +2610,11 @@ bool navigation_quarter_free(const navigation_t *navigation, const terrain_t *te
 			in_the_way = true;
 		}
 	}
-	// (no surface's there, nor the ground's room: what the cells say, the
-	// first tread of a stair taken for the ground)
-	return !in_the_way;
+	// (no surface's there, nor the ground's room: the ground, if within a
+	// step (the first tread of a stair taken for the ground); not a drop
+	// off the side of a stair, a step's strip in front of a porch beside
+	// it, where the path never went)
+	return !in_the_way && SDL_fabsf(navigation->ground_height[cell] - near_height) <= agent->step_meters + 0.05f;
 }
 
 // The node of the cell an agent on from can step onto (passable, no worse

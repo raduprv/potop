@@ -90,9 +90,12 @@ from an older version get their terrain difference baked in once).
 - Phase 5, any number of levels: the build reads the objects' collision
   straight into columns of surfaces (now 3 above the terrain at most).
 - Then the cells' A* and the path pulling can go.
-- Stress test (tools/nav_stress.py run) known limits: a first tread within
-  MERGE_METERS (0.2) of the ground is ground, so a hen (step 0.2) sees the
-  second as one step of two; ground cells are still whole meters (a 1 m
+- Walkers' step guard (actors.c step_passable) against paths drawn over
+  whole cells: a post inside a cell the path crosses (the inn's porch by
+  its stair), a corner at a cell's corner (the hen at the yards) and it
+  stands there. Next: a short search over the quarter meters round it
+  (navigation_quarter_free) to the next waypoint when the guard says no.
+- Stress test (tools/nav_stress.py run) known limits: ground cells are still whole meters (a 1 m
   door on bare ground can come out shut); the portals to the next tile
   are not cut to their quarter meters; a hen rounding a corner at a cell's
   corner (the yard with the 1.3 m beam) gets caught on it (corner cut at

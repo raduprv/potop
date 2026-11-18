@@ -98,6 +98,22 @@ def hut(cx, door_width, door_height):
 	box(cx - door_width * 0.5, cx + door_width * 0.5, floor + door_height, wall_top, -0.3, 0.0)
 
 
+# A porch: a terrace 0.5 high and 2 m deep, two treads of 0.25 up its
+# middle, no balustrade, posts (0.2 m square, 2.5 m high, a roof on them)
+# along its front 0.4 m in from the edge, every 1.25 m: the way along it
+# goes between them and the wall
+def porch(cx):
+	box(cx - 3.0, cx + 3.0, 0.0, 0.5, -2.0, 0.0)
+	box(cx - 0.7, cx + 0.7, 0.0, 0.25, 0.0, 0.3)
+	box(cx - 3.0, cx + 3.0, 0.5, 3.0, -2.3, -2.0)
+	box(cx - 3.0, cx + 3.0, 3.0, 3.2, -2.3, 0.0)
+	for k in range(5):
+		px = cx - 2.5 + 1.25 * k
+		if abs(px - cx) < 0.8:
+			continue
+		box(px - 0.1, px + 0.1, 0.5, 3.0, -0.6, -0.4)
+
+
 # A yard on the ground: 5 x 5 m walled round (2 m high), its way in from
 # the front a gap 2.5 m wide with a beam across it, its underside at
 # beam_height
@@ -121,7 +137,7 @@ AGENT_SIZES = {
 
 # Objects' tops this near the ground are the ground to the navigation
 # (engine/navigation.c's MERGE_METERS)
-MERGE_METERS = 0.2
+MERGE_METERS = 0.1
 
 OPEN = 1e9
 
@@ -140,6 +156,7 @@ STATIONS = [
 	("hut, door 1.0 x 2.0", lambda cx: hut(cx, 1.0, 2.0), (0.0, -2.0), 0.25, 0.25, 1.0, 2.0),
 	("hut, door 0.5 x 2.0", lambda cx: hut(cx, 0.5, 2.0), (0.0, -2.0), 0.25, 0.25, 0.5, 2.0),
 	("hut, door 1.0 x 1.4", lambda cx: hut(cx, 1.0, 1.4), (0.0, -2.0), 0.25, 0.25, 1.0, 1.4),
+	("porch with posts", porch, (2.6, -1.2), 0.5, 0.25, 1.2, OPEN),
 	("yard, beam at 1.3", lambda cx: yard(cx, 1.3), (0.0, -2.5), 0.0, 0.0, 2.5, 1.3),
 	("yard, beam at 2.1", lambda cx: yard(cx, 2.1), (0.0, -2.5), 0.0, 0.0, 2.5, 2.1),
 ]
@@ -153,6 +170,10 @@ STATIONS = [
 def expected(station, agent):
 	size = AGENT_SIZES[agent.split("+")[0]]
 	step, opening, room = station[4], station[5], station[6]
+	# (a step within the heights' 2 cm units and the walkers' 5 cm of
+	# slack of the agent's: either)
+	if abs(step - size["step"]) <= 0.05 and room >= size["height"]:
+		return "?"
 	if room < size["height"] or step > size["step"] + 1e-6:
 		return "no"
 	if step > 0.0 and step <= MERGE_METERS and 2.0 * step > size["step"] + 1e-6 and station[0].startswith("stairs"):
