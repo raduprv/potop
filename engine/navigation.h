@@ -15,10 +15,24 @@
 // tip) is no surface: the cell is in the way. Only the lowest NAVIGATION_OBJECT_HEIGHT_METERS of
 // an object count (a tree's crown is no obstacle, its trunk is). Small
 // objects (under [simulation] navigation_object_meters across, 0.3 m by
-// default) are left out: actors walk through pebbles. Small ones (up to
-// small_object_meters, a stone) are neither surfaces nor room taken, only a
-// height per cell: each actor steps over, goes around (at a price, through
-// when it must) or is stopped by them, by its own size.
+// default) are left out: actors walk through pebbles.
+//
+// What an object is to those that walk (object_kind): a wall, in the
+// surfaces and in the rectangles (a module's parts; an object on its own
+// whose footprint's longest reach is over navigation_wall_meters: a
+// fence's segment is thin but long); a small thing gone round (a trunk, a
+// boulder): in the surfaces still, for the walker's guard and its fine
+// way, and, with [simulation] navigation_small_out, not in the rectangles,
+// which lie through it (the cells only small things stand in are open
+// ground to them: a forest is a few rectangles, not one per tree; off
+// till the ways are led round the capsules: a wide body walks into the
+// trunks its way crosses); or a soft one (a body lighter than
+// navigation_soft_kilograms, a bucket): neither surface nor room taken,
+// only a height per cell: each actor steps over, goes around (at a price,
+// through when it must) or is stopped by it, by its own size. Small and
+// soft things are kept as capsules too (navigation_capsule_t, fitted once
+// per model from its collision triangles, placed in the world per
+// region): what a way is led round.
 //
 // Whether an actor can be on a surface, and what it costs, depends on the
 // actor (an agent: how tall it is, how high it steps, how steep it climbs,
@@ -281,7 +295,7 @@ typedef struct
 	uint8_t flags;                     // NAVIGATION_RECT_*
 	uint8_t cost;                      // what a meter on it costs over 1 (its slope), in 32nds
 	uint8_t blocked;                   // the blockers' groups over it
-	uint8_t small;                     // a small object's height on it (as navigation_t.small_height)
+	uint8_t small;                     // small or soft things stand in it: a way through it looks out for them
 	uint16_t neighbor_count;
 	uint32_t first_neighbor;           // in its tile's neighbors
 } navigation_rect_t;
@@ -417,9 +431,38 @@ typedef struct
 	float reach_meters;                // how far round x, z it reaches (not in the signature)
 } navigation_object_print_t;
 
+// A small thing's shape in a body's way: capsules (two ends and a
+// radius), in the world. A trunk is one, a crooked one a few end to end.
+// Whoever asks cuts it to the height it takes itself (from the ground to
+// its head) and lays that on the ground: a leaning trunk is over a hen's
+// head half a meter from its root, not over a man's
+typedef struct
+{
+	float a[3];
+	float b[3];
+	float radius;
+	int16_t type;                      // the object's type
+	uint8_t soft;                      // a soft thing's (a bucket: run through), not one gone round
+	uint8_t padding;
+} navigation_capsule_t;
+
+// A model's capsules (its own axes, at size 1) and how much room it takes
+#define NAVIGATION_MODEL_CAPSULES_MOST 4
+
+typedef struct
+{
+	bool fitted;
+	int capsule_count;                 // 0: nothing of it in a body's way
+	float capsules[NAVIGATION_MODEL_CAPSULES_MOST][7]; // two ends, the radius
+	float volume;                      // cubic meters (for the mass of those the ini gives none)
+} navigation_model_shape_t;
+
 typedef struct
 {
 	navigation_surface_t *surfaces;    // NAVIGATION_REGION_EXTRA_SLOTS of them
+	navigation_capsule_t *capsules;    // of the small and soft things that reach into it
+	int32_t capsule_count;
+	int32_t capsule_capacity;
 	navigation_object_print_t *prints; // its objects as its signature last saw them (by id)
 	int32_t print_count;
 	int32_t print_capacity;
@@ -456,13 +499,18 @@ typedef struct
 	// walk_factors (a road up a hill is hard whichever way it goes)
 	uint8_t *ground_slope;
 	float walk_factors[256];           // per ground_slope: what a meter on such ground costs (1: flat)
-	// Small objects (navigation_object_meters to small_object_meters across,
-	// a stone) are neither surfaces nor room taken: per cell, the height of
+	// Soft things (object_kind: a bucket) are neither surfaces nor room
+	// taken: per cell, the height of
 	// the highest one above the ground, 5 cm each. An actor steps over one
 	// lower than its step, goes around one lower than itself if that is
 	// less than small_detour_meters longer (else through it), and never
 	// through one taller than itself
 	uint8_t *small_height;
+	// Per cell: only small things gone round stand in it (a trunk): open
+	// ground to the rectangles
+	uint8_t *small_only;
+	navigation_model_shape_t *model_shapes; // per model of the objects, fitted when first asked for
+	int model_shape_count;
 	// Per cell: the groups the blockers there stop (navigation_set_blockers)
 	uint8_t *blocked;
 	navigation_blocker_t blockers[NAVIGATION_BLOCKERS_MAX];
@@ -474,7 +522,9 @@ typedef struct
 	int link_count;
 	navigation_link_t links_given[NAVIGATION_LINKS_MAX]; // as last given (a change: the doorways stamped again)
 	int links_given_count;             // -1: none yet
-	float small_object_meters;
+	float wall_reach_meters;           // [simulation] navigation_wall_meters
+	float soft_kilograms;              // and navigation_soft_kilograms
+	bool small_out;                    // navigation_small_out: small things gone round are not in the rectangles
 	float small_detour_meters;
 	uint8_t *extra_count;
 	uint16_t *extra_first;
@@ -707,6 +757,11 @@ bool navigation_mesh_class_used(const navigation_t *navigation, int class_index)
 void navigation_mesh_debug(navigation_t *navigation, const water_t *water, int class_index, float minimum_x, float minimum_z, float maximum_x,
 	float maximum_z, navigation_debug_rect_t *rects_out, int rects_most, int *rect_count_out, navigation_debug_portal_t *portals_out,
 	int portals_most, int *portal_count_out);
+
+// The capsules of the small and soft things in the box (of the regions
+// built), each once, at most most; how many
+int navigation_capsules(const navigation_t *navigation, float minimum_x, float minimum_z, float maximum_x, float maximum_z,
+	navigation_capsule_t *capsules_out, int most);
 
 // The navigation mesh's rectangles of the agent's class (built ones) that
 // reach into the box: x, z (their first corner, meters), width, depth

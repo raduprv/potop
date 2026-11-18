@@ -498,9 +498,20 @@ typedef struct
 	// stepped on, as each actor can (a bear steps on a stone a rabbit goes
 	// around)
 	float navigation_object_meters;
-	// Objects up to this across are small: not stepped on, gone around if
-	// that is at most small_object_detour_meters longer, else walked through
-	float navigation_small_object_meters;
+	// An object on its own whose footprint's longest reach (in the height
+	// those that walk take) is at most this is a small thing: not in the
+	// map of where they can go, gone round on the way (a trunk, a boulder);
+	// a longer one is a wall, as a module's parts always are. A small body
+	// lighter than navigation_soft_kilograms is soft (a bucket): no surface
+	// to step on, gone round if that is at most small_object_detour_meters
+	// longer, else walked through. objects.ini: navigation = wall|round|soft
+	float navigation_wall_meters;
+	float navigation_soft_kilograms;
+	// Small things gone round are left out of the navigation's rectangles
+	// (a forest: a few rectangles, not one per tree). Off till the ways
+	// are led round them when planned (docs/claude/04_navigation_plan.md,
+	// step 3): with it on, wide animals walk into the trunks on their way
+	bool navigation_small_out;
 	float small_object_detour_meters;
 	// What walking on a slope costs (paths go round hills): a meter of
 	// ground path_slope_degrees steep or steeper costs 1 + path_slope_cost

@@ -317,6 +317,16 @@ make -j8 && make tools
 Headless runs use lavapipe and Xvfb (the scripts set VK_ICD_FILENAMES if
 it is not set). Everything writes into build/.
 
+- **small.py** — a grove (60 trunks, 12 leaning ones, 12 boulders, 12
+  buckets in 20 x 20 m, none nearer than 1.3 m) and a row of trunks
+  0.75 m apart, built from boxes like the course, put down with the
+  game's `--put TYPE X,Z;...`; each agent walked through and round
+  them with `navigation_small_out` on (the small things out of the
+  rectangles). Asked: every goal reached, the body never more than
+  0.15 m inside a trunk or a boulder. `--walls`: all of them walls, the
+  way it was, to compare. **Bear and cow fail it for now** (into the
+  trunks on their way: step 3 of docs/claude/04_navigation_plan.md leads
+  the ways round the capsules; the setting is off in the game till then).
 - **nav_stress.py** — a course of 17 stations built from boxes (terraces
   with treads 0.15 to 0.45 m, balustrade openings 0.5 to 1.2 m, bar rails
   at 0.9 and 1.3 m, huts with doors 0.5 and 1.0 m wide and 1.4 and 2.0 m

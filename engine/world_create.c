@@ -127,7 +127,9 @@ bool world_create(world_t *world)
 	}
 	world->navigation.maximum_expansions = SDL_max(world->settings->simulation.path_search_cells, 1000);
 	world->navigation.object_minimum_meters = world->settings->simulation.navigation_object_meters;
-	world->navigation.small_object_meters = world->settings->simulation.navigation_small_object_meters;
+	world->navigation.wall_reach_meters = world->settings->simulation.navigation_wall_meters;
+	world->navigation.soft_kilograms = world->settings->simulation.navigation_soft_kilograms;
+	world->navigation.small_out = world->settings->simulation.navigation_small_out;
 	world->navigation.small_detour_meters = world->settings->simulation.small_object_detour_meters;
 	navigation_set_slope_cost(&world->navigation, world->settings->simulation.path_slope_degrees, world->settings->simulation.path_slope_cost);
 	// Path finding tells the log what it does (debugging)

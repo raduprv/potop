@@ -59,6 +59,18 @@ typedef enum
 	OBJECT_SHAPE_MESH              // the model's triangles (static bodies only)
 } object_shape_t;
 
+// What an object is to those that walk (navigation.h): a wall in the map
+// of where they can go, a small thing they go round (a trunk, a boulder),
+// or a soft one (a bucket: gone round at a walk, run through); auto: by
+// its footprint's longest reach and its mass
+typedef enum
+{
+	OBJECT_NAVIGATION_AUTO,
+	OBJECT_NAVIGATION_WALL,
+	OBJECT_NAVIGATION_ROUND,
+	OBJECT_NAVIGATION_SOFT
+} object_navigation_t;
+
 typedef struct
 {
 	char name[OBJECT_TYPE_NAME_LENGTH];
@@ -138,6 +150,7 @@ typedef struct
 	bool falls_when_uprooted;      // trees tip over before they drift
 	object_shape_t shape;
 	bool blocks_water;             // a wall for the water simulation
+	object_navigation_t navigation; // what it is to those that walk (auto: by its footprint and mass)
 	bool blocks_water_given;       // set in the ini (else it follows physics)
 	// Flood (physics = flood)
 	object_flood_t flood;

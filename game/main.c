@@ -2,11 +2,13 @@
 // player's input, the game's rules, the engine's frame (potop.h)
 //
 //     potop [--map NAME] [--seed N] [--width W --height H] [--houses [CATEGORY]]
-//           [--set SECTION.KEY=VALUE]... [--hour H] [--sim SECONDS [--sim-step S]] [--trace FILE]
+//           [--put TYPE X,Z[;X,Z...]]... [--set SECTION.KEY=VALUE]... [--hour H] [--sim SECONDS [--sim-step S]] [--trace FILE]
 //           [--walk_test TYPE X,Z[;X,Z...] [--walk_from X,Z] [--walk_run] [--walk_chase SPEED[,PAUSE]]]
 //
 // --houses: no map, small flat ground with every house (objects.ini's
 // category "buildings", or "fable", or the one named) in rows
+// --put: with --houses, objects of the type put down at the points too (a
+// test's trunks and stones)
 // --set: a setting over data/settings.ini's (render.day_length_minutes=24)
 // --hour: the day starts at that hour
 // --sim: a test without the picture: fixed steps (--sim-step, 0.05 s) for
@@ -111,6 +113,15 @@ static void read_command_line(potop_options_t *options, int argument_count, char
 		{
 			walk_test_type = value;
 			walk_test_goals = arguments[i + 2];
+			i += 2;
+		}
+		else if (SDL_strcmp(argument, "--put") == 0 && i + 2 < argument_count)
+		{
+			if (options->put_count < POTOP_OPTIONS_PUT_MAX)
+			{
+				options->put_types[options->put_count] = value;
+				options->put_points[options->put_count++] = arguments[i + 2];
+			}
 			i += 2;
 		}
 		else if (SDL_strcmp(argument, "--walk_from") == 0)

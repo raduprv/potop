@@ -195,8 +195,26 @@ the walk plays at the pace of its speed (there, at 0.58).
 
 The surfaces for the feet are the navigation's, so what is not a surface
 there is not stepped on. Objects under `navigation_object_meters` across
-([simulation], 0.3 m) are walked through, pebbles. Small objects, up to
-`navigation_small_object_meters` (0.8 m), a stone, are no surface either
+([simulation], 0.3 m) are walked through, pebbles.
+
+What a bigger object is to those that walk goes by its footprint and its
+mass (or by `navigation = wall|round|soft` in objects.ini, for the odd
+one). A module's parts, and an object on its own whose footprint's
+longest reach (what of it stands lower than a man) is over
+`navigation_wall_meters` ([simulation], 1.2 m), are walls: a fence's
+segment is thin, but 2 m long. Under that it is a small thing, gone
+round: a trunk, a boulder. A small thing that is a body lighter than
+`navigation_soft_kilograms` (20 kg), a bucket, is soft. Small and soft
+things are also kept as capsules (two ends and a radius, fitted to the
+model's collision shape: one for a straight trunk, a few for a crooked
+one); F4 draws them, orange and blue. With `navigation_small_out`
+([simulation], off for now) the small things are left out of the mesh's
+rectangles, so a forest is a few big rectangles instead of one round
+every tree; the ways are not yet led round the capsules when they are
+planned, so with it on wide animals walk into the trunks on their way
+(their guard and the fine way are all that stops them).
+
+Soft things are no surface
 and take no room: each cell keeps the height of the highest one in it,
 and each actor decides by its size. Lower than its step, it walks over
 it; lower than itself, the cell is passable but costs

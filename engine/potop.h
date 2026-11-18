@@ -54,6 +54,7 @@ typedef struct
 //     potop_stop(potop);
 
 #define POTOP_OPTIONS_SETTINGS_MAX 16
+#define POTOP_OPTIONS_PUT_MAX 8
 
 typedef struct
 {
@@ -67,6 +68,11 @@ typedef struct
 	// Settings set over the files' ("render.day_length_minutes=24"), in turn
 	const char *settings_set[POTOP_OPTIONS_SETTINGS_MAX];
 	int settings_set_count;
+	// With houses: objects put down besides ("TYPE X,Z[;X,Z...]": the
+	// type, then where; a test's trunks and stones)
+	const char *put_types[POTOP_OPTIONS_PUT_MAX];
+	const char *put_points[POTOP_OPTIONS_PUT_MAX];
+	int put_count;
 	bool start_hour_set;           // the day starts at start_hour (0..24)
 	float start_hour;
 	// A test without the picture (sim_seconds > 0): fixed steps of

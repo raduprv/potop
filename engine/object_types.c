@@ -407,6 +407,12 @@ static bool apply_key(object_types_t *types, object_type_t *type, bool in_defaul
 
 		return parse_choice(value, names, 5, (int *)&type->shape);
 	}
+	if (SDL_strcmp(key, "navigation") == 0)
+	{
+		static const char *names[] = { "auto", "wall", "round", "soft" };
+
+		return parse_choice(value, names, 4, (int *)&type->navigation);
+	}
 	if (SDL_strcmp(key, "blocks_water") == 0)
 	{
 		if (SDL_strcasecmp(value, "default") == 0)

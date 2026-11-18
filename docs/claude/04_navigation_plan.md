@@ -182,6 +182,29 @@ Each step leaves main working and the three suites passing
 Later, if the numbers ask for it: polygons, islands (which rectangles
 are joined at all), a coarse graph for ways of kilometers.
 
+## Where it stands
+
+- Steps 1 and 2 are in (Nov 19 2026). Step 2: `object_kind`
+  (navigation.c) is the rule above; the reach is measured on the
+  capsules up to 2 m (a man), the mass is the ini's or the density
+  times the model's volume, and only bodies can be soft (a static thing
+  is not kicked away). `fit_model_shape` makes the capsules (slices of
+  0.5 m, a circle round each, one capsule if they line up, cut in two
+  where they do not, 4 at most); a region keeps those of its small and
+  soft things, in the world (32 bytes each: the type and "soft" with
+  them). A rectangle's `small` says a capsule reaches into it. F4 draws
+  the capsules.
+- **The small things are out of the rectangles only with [simulation]
+  navigation_small_out = true, off by default**, till step 3: the
+  surfaces (the grid) still have them, so the guard and the fine way
+  keep the walkers off them, but a way planned straight through a trunk
+  is not good enough for a wide body. tests/navigation/small.py (a grove
+  of 96 things in 20 x 20 m and a row of trunks): with it on, 4
+  rectangles in the grove instead of about 250, hen and farmer clean,
+  bear and cow 10 samples up to 0.31 m inside a trunk (33 running), on
+  the spot 24 s instead of 10. Step 3 is to make that test pass and
+  turn the setting on.
+
 ## Known and left
 
 - A memory regression of Nov 18: a cell partly under something gets a

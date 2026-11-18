@@ -219,6 +219,46 @@ static float house_gallery_pack(const objects_t *objects, const bool *chosen, fl
 }
 
 // Returns where the rows start (z, meters): the player is set in front of them
+// The objects a test puts down besides the gallery (potop_options_t.put_types)
+static void put_objects(potop_t *potop, const potop_options_t *options)
+{
+	objects_t *objects = &potop->world.objects;
+
+	for (int k = 0; k < options->put_count; k++)
+	{
+		int type = object_types_find(&objects->types, options->put_types[k]);
+		const char *at = options->put_points[k];
+		int placed = 0;
+
+		if (type < 0)
+		{
+			SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "--put: no type '%s' in objects.ini", options->put_types[k]);
+			continue;
+		}
+		while (at != NULL && *at != '\0')
+		{
+			char *end = NULL;
+			float x = (float)SDL_strtod(at, &end);
+			float z;
+
+			if (end == at || *end != ',')
+			{
+				break;
+			}
+			at = end + 1;
+			z = (float)SDL_strtod(at, &end);
+			if (end == at)
+			{
+				break;
+			}
+			placed += objects_add(objects, &potop->world.terrain, type, x, z, 0.0f,
+				0.5f * (objects->types.types[type].scale_minimum + objects->types.types[type].scale_maximum), 0) ? 1 : 0;
+			at = *end == ';' ? end + 1 : NULL;
+		}
+		SDL_Log("Put: %d of '%s'", placed, options->put_types[k]);
+	}
+}
+
 static float place_house_gallery(potop_t *potop, const char *category_name)
 {
 	objects_t *objects = &potop->world.objects;
@@ -455,6 +495,7 @@ bool potop_start(potop_t *potop, const potop_options_t *options)
 	if (options->houses != NULL)
 	{
 		gallery_start_z = place_house_gallery(potop, options->houses);
+		put_objects(potop, options);
 		world_populate(&potop->world, false);
 	}
 	else if (options->map != NULL)
@@ -1132,6 +1173,7 @@ static void draw_viewmodel(void *user, SDL_GPURenderPass *pass, int scene_width,
 #define NAVMESH_OVERLAY_SHAPES 8000
 #define NAVMESH_OVERLAY_RECTS 2048
 #define NAVMESH_OVERLAY_PORTALS 4096
+#define NAVMESH_OVERLAY_CAPSULES 1024
 
 typedef struct
 {
@@ -1216,6 +1258,10 @@ static void fill_navmesh_overlay(potop_t *potop, hud_view_t *view)
 	static const uint8_t ground_tints[4][3] = { { 60, 200, 120 }, { 60, 170, 225 }, { 130, 210, 70 }, { 40, 200, 195 } };
 	static const uint8_t portal_color[4] = { 255, 255, 255, 235 };
 	static const uint8_t jump_color[4] = { 255, 70, 215, 245 };
+	static const uint8_t round_color[4] = { 255, 150, 30, 245 };
+	static const uint8_t soft_color[4] = { 90, 160, 255, 245 };
+	static navigation_capsule_t capsules[NAVMESH_OVERLAY_CAPSULES];
+	int capsule_count;
 	navmesh_overlay_t overlay;
 	const camera_t *camera = &potop->camera;
 	int rect_count = 0;
@@ -1322,6 +1368,31 @@ static void fill_navmesh_overlay(potop_t *potop, hud_view_t *view)
 
 		overlay_line(&overlay, portal->ground, portal->a[0], portal->a[1], portal->b[0], portal->b[1], portal->height, 0.12f,
 			portal->jump ? jump_color : portal_color, portal->jump ? 3.5f : 2.5f);
+	}
+	// The small things' capsules (what a way is led round: orange; soft
+	// ones, run through: blue): a ring at each end, as wide as it
+	capsule_count = navigation_capsules(&potop->world.navigation, camera->eye_position.x - NAVMESH_OVERLAY_METERS,
+		camera->eye_position.z - NAVMESH_OVERLAY_METERS, camera->eye_position.x + NAVMESH_OVERLAY_METERS,
+		camera->eye_position.z + NAVMESH_OVERLAY_METERS, capsules, NAVMESH_OVERLAY_CAPSULES);
+	for (int k = 0; k < capsule_count; k++)
+	{
+		const navigation_capsule_t *capsule = &capsules[k];
+		const uint8_t *color = capsule->soft != 0 ? soft_color : round_color;
+
+		for (int end = 0; end < 2; end++)
+		{
+			const float *point = end == 0 ? capsule->a : capsule->b;
+
+			for (int side = 0; side < 8; side++)
+			{
+				float from = (float)side * SDL_PI_F / 4.0f;
+				float to = (float)(side + 1) * SDL_PI_F / 4.0f;
+
+				overlay_line(&overlay, false, point[0] + SDL_cosf(from) * capsule->radius, point[2] + SDL_sinf(from) * capsule->radius,
+					point[0] + SDL_cosf(to) * capsule->radius, point[2] + SDL_sinf(to) * capsule->radius, point[1], end == 0 ? 0.1f : 0.0f,
+					color, 2.0f);
+			}
+		}
 	}
 	view->world_shapes = shapes;
 	view->world_shape_count = overlay.count;

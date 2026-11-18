@@ -333,8 +333,7 @@ static int compare_object_cells(const void *left, const void *right)
 
 // The model an object takes room with, -1 if it takes none for the
 // navigation (not solid, loose, too small)
-static int navigation_model(const navigation_t *navigation, const objects_t *objects, const object_instance_t *instance, float *radius_out,
-	bool *small_out)
+static int navigation_model(const navigation_t *navigation, const objects_t *objects, const object_instance_t *instance, float *radius_out)
 {
 	const object_type_t *type = &objects->types.types[instance->type];
 	int model;
@@ -353,7 +352,6 @@ static int navigation_model(const navigation_t *navigation, const objects_t *obj
 	{
 		return -1;
 	}
-	*small_out = 2.0f * *radius_out < navigation->small_object_meters;
 	return model;
 }
 
@@ -367,6 +365,420 @@ static void rotate_point(const float rotation[4], const float point[3], float ou
 	out[0] = point[0] + rotation[3] * twice_cross[0] + (rotation[1] * twice_cross[2] - rotation[2] * twice_cross[1]);
 	out[1] = point[1] + rotation[3] * twice_cross[1] + (rotation[2] * twice_cross[0] - rotation[0] * twice_cross[2]);
 	out[2] = point[2] + rotation[3] * twice_cross[2] + (rotation[0] * twice_cross[1] - rotation[1] * twice_cross[0]);
+}
+
+// ---------------------------------------------------------------------------
+// Small things: what an object is to those that walk, and its capsules
+
+#define KIND_WALL 0                    // in the surfaces and in the rectangles
+#define KIND_ROUND 1                   // a small thing gone round: in the surfaces, not in the rectangles
+#define KIND_SOFT 2                    // a soft one: a height per cell, not in the rectangles
+
+#define SHAPE_SLICE_METERS 0.5f        // a model is measured in slices this high (a crooked trunk: a few capsules)
+#define SHAPE_SLICES_MOST 16           // from its foot up (8 m at size 1: over any head)
+#define SHAPE_FIT_SHARE 1.25f          // a capsule this much wider than its widest slice (and SHAPE_FIT_METERS) is cut in two
+#define SHAPE_FIT_METERS 0.05f
+#define KIND_REACH_HEIGHT_METERS 2.0f   // a thing's footprint is what of it stands this low (a man's height)
+#define SHAPE_FULL_SHARE 0.6f          // of its slices' cylinders, a model with no closed shape to measure is taken to fill
+
+// The part of a triangle between two heights: its corners (at most 5)
+static int clip_triangle_to_heights(float corners[3][3], float low, float high, float out[8][3])
+{
+	float points[8][3];
+	float clipped[8][3];
+	int count = 3;
+
+	SDL_memcpy(points, corners, sizeof(float) * 9);
+	for (int side = 0; side < 2; side++)
+	{
+		float limit = side == 0 ? low : high;
+		float sign = side == 0 ? 1.0f : -1.0f;
+		int kept = 0;
+
+		for (int k = 0; k < count; k++)
+		{
+			const float *from = points[k];
+			const float *to = points[(k + 1) % count];
+			float from_in = (from[1] - limit) * sign;
+			float to_in = (to[1] - limit) * sign;
+
+			if (from_in >= 0.0f)
+			{
+				SDL_memcpy(clipped[kept++], from, sizeof(float) * 3);
+			}
+			if ((from_in >= 0.0f) != (to_in >= 0.0f))
+			{
+				float t = from_in / (from_in - to_in);
+
+				for (int axis = 0; axis < 3; axis++)
+				{
+					clipped[kept][axis] = from[axis] + (to[axis] - from[axis]) * t;
+				}
+				kept++;
+			}
+		}
+		count = kept;
+		SDL_memcpy(points, clipped, sizeof(float) * 3 * (size_t)count);
+		if (count == 0)
+		{
+			return 0;
+		}
+	}
+	SDL_memcpy(out, points, sizeof(float) * 3 * (size_t)count);
+	return count;
+}
+
+// A model's capsules, from its collision triangles (the trunk alone of a
+// tree: what the physics uses): a circle round what each slice of its
+// height holds, one capsule from the lowest to the highest if every
+// circle is about as wide as it (a straight trunk, a barrel), else cut in
+// two where it fits worst (a crooked one), up to
+// NAVIGATION_MODEL_CAPSULES_MOST of them
+static void fit_model_shape(const object_model_t *model, navigation_model_shape_t *shape)
+{
+	float low = 1e30f;
+	float high = -1e30f;
+	float centers[SHAPE_SLICES_MOST][2];
+	float radii[SHAPE_SLICES_MOST];
+	float boxes[SHAPE_SLICES_MOST][4];
+	bool filled[SHAPE_SLICES_MOST];
+	int runs[NAVIGATION_MODEL_CAPSULES_MOST][2];
+	int run_count = 0;
+	int slice_count;
+	int first = -1;
+	int last = -1;
+	float slices_volume = 0.0f;
+	float closed_volume = 0.0f;
+
+	SDL_zerop(shape);
+	shape->fitted = true;
+	for (int k = 0; k < model->collision_index_count; k++)
+	{
+		float y = model->collision_positions[3 * model->collision_indices[k] + 1];
+
+		low = SDL_min(low, y);
+		high = SDL_max(high, y);
+	}
+	if (model->collision_index_count < 3 || high - low < 1e-3f)
+	{
+		return;
+	}
+	slice_count = SDL_clamp((int)SDL_ceilf((high - low) / SHAPE_SLICE_METERS), 1, SHAPE_SLICES_MOST);
+	for (int slice = 0; slice < slice_count; slice++)
+	{
+		boxes[slice][0] = boxes[slice][1] = 1e30f;
+		boxes[slice][2] = boxes[slice][3] = -1e30f;
+		radii[slice] = 0.0f;
+		filled[slice] = false;
+	}
+	// The slices' boxes first (their middles), then how far round those
+	// they reach
+	for (int pass = 0; pass < 2; pass++)
+	{
+		for (int t = 0; t + 2 < model->collision_index_count; t += 3)
+		{
+			float corners[3][3];
+			float triangle_low = 1e30f;
+			float triangle_high = -1e30f;
+
+			for (int k = 0; k < 3; k++)
+			{
+				SDL_memcpy(corners[k], &model->collision_positions[3 * model->collision_indices[t + k]], sizeof(float) * 3);
+				triangle_low = SDL_min(triangle_low, corners[k][1]);
+				triangle_high = SDL_max(triangle_high, corners[k][1]);
+			}
+			if (pass == 0)
+			{
+				// (six times the volume between it and the origin: a
+				// closed shape's add up to its own)
+				closed_volume += corners[0][0] * (corners[1][1] * corners[2][2] - corners[1][2] * corners[2][1])
+					- corners[0][1] * (corners[1][0] * corners[2][2] - corners[1][2] * corners[2][0])
+					+ corners[0][2] * (corners[1][0] * corners[2][1] - corners[1][1] * corners[2][0]);
+			}
+			for (int slice = SDL_max((int)SDL_floorf((triangle_low - low) / SHAPE_SLICE_METERS), 0);
+				slice < slice_count && low + (float)slice * SHAPE_SLICE_METERS <= triangle_high; slice++)
+			{
+				float points[8][3];
+				int count = clip_triangle_to_heights(corners, low + (float)slice * SHAPE_SLICE_METERS,
+					low + (float)(slice + 1) * SHAPE_SLICE_METERS, points);
+
+				for (int k = 0; k < count; k++)
+				{
+					if (pass == 0)
+					{
+						boxes[slice][0] = SDL_min(boxes[slice][0], points[k][0]);
+						boxes[slice][1] = SDL_min(boxes[slice][1], points[k][2]);
+						boxes[slice][2] = SDL_max(boxes[slice][2], points[k][0]);
+						boxes[slice][3] = SDL_max(boxes[slice][3], points[k][2]);
+						filled[slice] = true;
+					}
+					else
+					{
+						float dx = points[k][0] - centers[slice][0];
+						float dz = points[k][2] - centers[slice][1];
+
+						radii[slice] = SDL_max(radii[slice], SDL_sqrtf(dx * dx + dz * dz));
+					}
+				}
+			}
+		}
+		for (int slice = 0; slice < slice_count && pass == 0; slice++)
+		{
+			centers[slice][0] = 0.5f * (boxes[slice][0] + boxes[slice][2]);
+			centers[slice][1] = 0.5f * (boxes[slice][1] + boxes[slice][3]);
+		}
+	}
+	for (int slice = 0; slice < slice_count; slice++)
+	{
+		if (filled[slice])
+		{
+			float slice_high = SDL_min(low + (float)(slice + 1) * SHAPE_SLICE_METERS, high);
+
+			first = first < 0 ? slice : first;
+			last = slice;
+			slices_volume += SDL_PI_F * radii[slice] * radii[slice] * SDL_max(slice_high - (low + (float)slice * SHAPE_SLICE_METERS), 0.0f);
+		}
+	}
+	if (first < 0)
+	{
+		return;
+	}
+	closed_volume = SDL_fabsf(closed_volume) / 6.0f;
+	shape->volume = closed_volume > 0.2f * slices_volume && closed_volume <= slices_volume ? closed_volume : SHAPE_FULL_SHARE * slices_volume;
+	runs[0][0] = first;
+	runs[0][1] = last;
+	run_count = 1;
+	for (;;)
+	{
+		int worst_run = -1;
+		float worst_over = 0.0f;
+
+		for (int run = 0; run < run_count; run++)
+		{
+			const float *from = centers[runs[run][0]];
+			const float *to = centers[runs[run][1]];
+			float radius = 0.0f;
+			float widest = 0.0f;
+
+			for (int slice = runs[run][0]; slice <= runs[run][1]; slice++)
+			{
+				float t = runs[run][1] > runs[run][0] ? (float)(slice - runs[run][0]) / (float)(runs[run][1] - runs[run][0]) : 0.0f;
+				float dx = centers[slice][0] - (from[0] + (to[0] - from[0]) * t);
+				float dz = centers[slice][1] - (from[1] + (to[1] - from[1]) * t);
+
+				if (filled[slice])
+				{
+					radius = SDL_max(radius, SDL_sqrtf(dx * dx + dz * dz) + radii[slice]);
+					widest = SDL_max(widest, radii[slice]);
+				}
+			}
+			shape->capsules[run][0] = from[0];
+			shape->capsules[run][1] = low + (float)runs[run][0] * SHAPE_SLICE_METERS;
+			shape->capsules[run][2] = from[1];
+			shape->capsules[run][3] = to[0];
+			shape->capsules[run][4] = SDL_min(low + (float)(runs[run][1] + 1) * SHAPE_SLICE_METERS, high);
+			shape->capsules[run][5] = to[1];
+			shape->capsules[run][6] = radius;
+			if (runs[run][1] > runs[run][0] && radius - (widest * SHAPE_FIT_SHARE + SHAPE_FIT_METERS) > worst_over)
+			{
+				worst_over = radius - (widest * SHAPE_FIT_SHARE + SHAPE_FIT_METERS);
+				worst_run = run;
+			}
+		}
+		if (worst_run < 0 || run_count >= NAVIGATION_MODEL_CAPSULES_MOST)
+		{
+			break;
+		}
+		// (cut in the middle: the lower half keeps its place, the upper is new)
+		runs[run_count][0] = (runs[worst_run][0] + runs[worst_run][1] + 1) / 2;
+		runs[run_count][1] = runs[worst_run][1];
+		runs[worst_run][1] = runs[run_count][0] - 1;
+		run_count++;
+	}
+	shape->capsule_count = run_count;
+}
+
+// A model's shape, fitted the first time it is asked for (the regions are
+// built side by side: one at a time here)
+static void model_shape(navigation_t *navigation, const objects_t *objects, int model, navigation_model_shape_t *shape_out)
+{
+	SDL_zerop(shape_out);
+#pragma omp critical(navigation_model_shape)
+	{
+		if (model >= navigation->model_shape_count)
+		{
+			int count = SDL_max(objects->model_count, model + 1);
+			navigation_model_shape_t *grown = SDL_realloc(navigation->model_shapes, sizeof(navigation_model_shape_t) * (size_t)count);
+
+			if (grown != NULL)
+			{
+				SDL_memset(grown + navigation->model_shape_count, 0,
+					sizeof(navigation_model_shape_t) * (size_t)(count - navigation->model_shape_count));
+				navigation->model_shapes = grown;
+				navigation->model_shape_count = count;
+			}
+		}
+		if (model < navigation->model_shape_count)
+		{
+			if (!navigation->model_shapes[model].fitted)
+			{
+				fit_model_shape(&objects->models[model], &navigation->model_shapes[model]);
+			}
+			*shape_out = navigation->model_shapes[model];
+		}
+	}
+}
+
+// One of a model's capsules as its object stands in the world
+static void place_capsule(const object_instance_t *instance, const float capsule[7], navigation_capsule_t *out)
+{
+	float base_y = objects_instance_base_y(instance);
+
+	for (int end = 0; end < 2; end++)
+	{
+		float scaled[3] = { capsule[3 * end] * instance->scale, capsule[3 * end + 1] * instance->scale, capsule[3 * end + 2] * instance->scale };
+		float turned[3];
+		float *point = end == 0 ? out->a : out->b;
+
+		rotate_point(instance->rotation, scaled, turned);
+		point[0] = instance->x + turned[0];
+		point[1] = base_y + turned[1];
+		point[2] = instance->z + turned[2];
+	}
+	out->radius = capsule[6] * instance->scale;
+	out->type = (int16_t)instance->type;
+	out->soft = 0;
+	out->padding = 0;
+}
+
+// The part of a capsule's axis between two heights; false: none of it
+static bool capsule_between(const navigation_capsule_t *capsule, float low, float high, float a_out[2], float b_out[2])
+{
+	float dy = capsule->b[1] - capsule->a[1];
+	float from = 0.0f;
+	float to = 1.0f;
+
+	if (SDL_fabsf(dy) < 1e-5f)
+	{
+		if (capsule->a[1] < low || capsule->a[1] > high)
+		{
+			return false;
+		}
+	}
+	else
+	{
+		float t_low = (low - capsule->a[1]) / dy;
+		float t_high = (high - capsule->a[1]) / dy;
+
+		from = SDL_max(from, SDL_min(t_low, t_high));
+		to = SDL_min(to, SDL_max(t_low, t_high));
+		if (from > to)
+		{
+			return false;
+		}
+	}
+	a_out[0] = capsule->a[0] + (capsule->b[0] - capsule->a[0]) * from;
+	a_out[1] = capsule->a[2] + (capsule->b[2] - capsule->a[2]) * from;
+	b_out[0] = capsule->a[0] + (capsule->b[0] - capsule->a[0]) * to;
+	b_out[1] = capsule->a[2] + (capsule->b[2] - capsule->a[2]) * to;
+	return true;
+}
+
+// What an object is to those that walk (KIND_), and its capsules as it
+// stands (capsules_out, NAVIGATION_MODEL_CAPSULES_MOST of them): what its
+// type says (objects.ini: navigation), else a wall if it is a module's
+// part or its footprint's longest reach, up to a man's height
+// (KIND_REACH_HEIGHT_METERS), is over wall_reach_meters (a fence's segment is thin, but long: a
+// wall; so is a trunk lying down); under it a small thing gone round, or
+// a soft one if it is a body lighter than soft_kilograms
+static int object_kind(navigation_t *navigation, const objects_t *objects, const object_instance_t *instance, int model,
+	navigation_capsule_t *capsules_out, int *capsule_count_out)
+{
+	const object_type_t *type = &objects->types.types[instance->type];
+	navigation_model_shape_t shape;
+	float base_y = objects_instance_base_y(instance);
+	float ends[2 * NAVIGATION_MODEL_CAPSULES_MOST][2];
+	float radii[2 * NAVIGATION_MODEL_CAPSULES_MOST];
+	int end_count = 0;
+	float reach = 0.0f;
+	int kind;
+
+	*capsule_count_out = 0;
+	if (type->navigation == OBJECT_NAVIGATION_WALL || (type->navigation == OBJECT_NAVIGATION_AUTO && (instance->state & OBJECT_STATE_PART) != 0))
+	{
+		return KIND_WALL;
+	}
+	model_shape(navigation, objects, model, &shape);
+	for (int k = 0; k < shape.capsule_count; k++)
+	{
+		navigation_capsule_t *capsule = &capsules_out[*capsule_count_out];
+
+		place_capsule(instance, shape.capsules[k], capsule);
+		if (capsule_between(capsule, base_y, base_y + NAVIGATION_OBJECT_HEIGHT_METERS, ends[end_count], ends[end_count + 1]))
+		{
+			(*capsule_count_out)++;
+		}
+		if (capsule_between(capsule, base_y, base_y + KIND_REACH_HEIGHT_METERS, ends[end_count], ends[end_count + 1]))
+		{
+			radii[end_count] = radii[end_count + 1] = capsule->radius;
+			end_count += 2;
+		}
+	}
+	for (int i = 0; i < end_count; i++)
+	{
+		for (int j = i; j < end_count; j++)
+		{
+			float dx = ends[j][0] - ends[i][0];
+			float dz = ends[j][1] - ends[i][1];
+
+			reach = SDL_max(reach, SDL_sqrtf(dx * dx + dz * dz) + radii[i] + radii[j]);
+		}
+	}
+	if (type->navigation == OBJECT_NAVIGATION_ROUND)
+	{
+		kind = KIND_ROUND;
+	}
+	else if (type->navigation == OBJECT_NAVIGATION_SOFT)
+	{
+		kind = KIND_SOFT;
+	}
+	else if (end_count == 0 || reach > navigation->wall_reach_meters)
+	{
+		// (nothing of it measured: as it always was)
+		kind = KIND_WALL;
+	}
+	else
+	{
+		float size = instance->scale * instance->scale * instance->scale;
+		float mass = type->mass_kilograms > 0.0f ? type->mass_kilograms * size
+			: SDL_max(type->density_kilograms_per_cubic_meter, 1.0f) * shape.volume * size;
+
+		kind = type->physics == OBJECT_PHYSICS_BODY && mass < navigation->soft_kilograms ? KIND_SOFT : KIND_ROUND;
+	}
+	for (int k = 0; k < *capsule_count_out; k++)
+	{
+		capsules_out[k].soft = kind == KIND_SOFT ? 1 : 0;
+	}
+	*capsule_count_out = kind == KIND_WALL ? 0 : *capsule_count_out;
+	return kind;
+}
+
+// A small thing's capsule kept with a region
+static void append_region_capsule(navigation_region_t *region, const navigation_capsule_t *capsule)
+{
+	if (region->capsule_count == region->capsule_capacity)
+	{
+		int32_t capacity = SDL_max(2 * region->capsule_capacity, 16);
+		navigation_capsule_t *grown = SDL_realloc(region->capsules, sizeof(navigation_capsule_t) * (size_t)capacity);
+
+		if (grown == NULL)
+		{
+			return;
+		}
+		region->capsules = grown;
+		region->capsule_capacity = capacity;
+	}
+	region->capsules[region->capsule_count++] = *capsule;
 }
 
 // One object's room in the cells of [first_x, last_x] x [first_z, last_z]
@@ -738,6 +1150,7 @@ static void clear_box(navigation_t *navigation, const terrain_t *terrain, const 
 			navigation->terrain_blocker[cell] = -1;
 			navigation->object_top[cell] = 0;
 			navigation->small_height[cell] = 0;
+			navigation->small_only[cell] = 0;
 			navigation->extra_count[cell] = 0;
 			navigation->extra_first[cell] = 0;
 		}
@@ -1373,7 +1786,6 @@ static uint64_t region_signature(const navigation_t *navigation, const objects_t
 		float fields[8];
 		float radius;
 		float unused_radius;
-		bool unused_small;
 		bool stood_on;
 
 		if (model < 0)
@@ -1385,7 +1797,7 @@ static uint64_t region_signature(const navigation_t *navigation, const objects_t
 		{
 			continue;
 		}
-		stood_on = navigation_model(navigation, objects, instance, &unused_radius, &unused_small) >= 0;
+		stood_on = navigation_model(navigation, objects, instance, &unused_radius) >= 0;
 		fields[0] = instance->x;
 		fields[1] = instance->z;
 		fields[2] = stood_on ? SDL_floorf(objects_instance_base_y(instance) / OBJECT_HEIGHT_STEP_METERS) : 0.0f;
@@ -1480,20 +1892,35 @@ static int changed_box(const navigation_t *navigation, int32_t region_index, con
 static void build_box(navigation_t *navigation, const terrain_t *terrain, const objects_t *objects, int32_t region_index, const int32_t box[4],
 	object_scratch_t *scratch)
 {
+	navigation_region_t *region = &navigation->regions[region_index];
 	object_cells_t list = { NULL, 0, 0 };
-	object_cells_t small_cells = { NULL, 0, 0 };
+	object_cells_t round_cells = { NULL, 0, 0 };
+	object_cells_t soft_cells = { NULL, 0, 0 };
 	int32_t count = objects != NULL ? gather_region_objects(navigation, objects, region_index, scratch) : 0;
 
+	// (the capsules of all its small things again, whatever the box)
+	region->capsule_count = 0;
 	for (int32_t object = 0; object < count; object++)
 	{
 		const object_instance_t *instance = &objects->instances[scratch->items[object]];
+		navigation_capsule_t capsules[NAVIGATION_MODEL_CAPSULES_MOST];
+		int capsule_count;
 		float radius;
 		int model;
-		bool small;
+		int kind;
 
 		raise_object_tops(navigation, objects, instance, box);
-		model = navigation_model(navigation, objects, instance, &radius, &small);
-		if (model < 0 || !object_reaches_box(instance, radius, box))
+		model = navigation_model(navigation, objects, instance, &radius);
+		if (model < 0)
+		{
+			continue;
+		}
+		kind = object_kind(navigation, objects, instance, model, capsules, &capsule_count);
+		for (int k = 0; k < capsule_count; k++)
+		{
+			append_region_capsule(region, &capsules[k]);
+		}
+		if (!object_reaches_box(instance, radius, box))
 		{
 			continue;
 		}
@@ -1501,25 +1928,43 @@ static void build_box(navigation_t *navigation, const terrain_t *terrain, const 
 			SDL_max(box[0], (int32_t)SDL_floorf((instance->x - radius) / NAVIGATION_CELL_METERS)),
 			SDL_max(box[1], (int32_t)SDL_floorf((instance->z - radius) / NAVIGATION_CELL_METERS)),
 			SDL_min(box[2], (int32_t)SDL_floorf((instance->x + radius) / NAVIGATION_CELL_METERS)),
-			SDL_min(box[3], (int32_t)SDL_floorf((instance->z + radius) / NAVIGATION_CELL_METERS)), small ? &small_cells : &list);
-		if (small)
+			SDL_min(box[3], (int32_t)SDL_floorf((instance->z + radius) / NAVIGATION_CELL_METERS)),
+			kind == KIND_WALL ? &list : kind == KIND_ROUND ? &round_cells : &soft_cells);
+		if (kind == KIND_SOFT)
 		{
-			// Small objects are no surface and take no room: each cell
+			// Soft things are no surface and take no room: each cell
 			// keeps the height of the highest one standing in it
-			for (int32_t item_index = 0; item_index < small_cells.count; item_index++)
+			for (int32_t item_index = 0; item_index < soft_cells.count; item_index++)
 			{
-				const object_cell_t *item = &small_cells.items[item_index];
+				const object_cell_t *item = &soft_cells.items[item_index];
 				float above = item->top - navigation->ground_height[item->cell];
 				uint8_t units = (uint8_t)SDL_clamp(SDL_ceilf(above / SMALL_UNIT_METERS), 0.0f, 255.0f);
 
 				navigation->small_height[item->cell] = SDL_max(navigation->small_height[item->cell], units);
 			}
-			small_cells.count = 0;
+			soft_cells.count = 0;
 		}
+	}
+	// The cells only small things stand in: open ground to the rectangles,
+	// if they are to be left out of those (small_out); a wall there too,
+	// a barrel on a porch: as the surfaces have it. The surfaces keep
+	// them all
+	for (int32_t item_index = 0; item_index < round_cells.count && navigation->small_out; item_index++)
+	{
+		navigation->small_only[round_cells.items[item_index].cell] = 1;
+	}
+	for (int32_t item_index = 0; item_index < list.count; item_index++)
+	{
+		navigation->small_only[list.items[item_index].cell] = 0;
+	}
+	for (int32_t item_index = 0; item_index < round_cells.count; item_index++)
+	{
+		append_object_cell(&list, &round_cells.items[item_index]);
 	}
 	finish_region(navigation, terrain, region_index, &list);
 	SDL_free(list.items);
-	SDL_free(small_cells.items);
+	SDL_free(round_cells.items);
+	SDL_free(soft_cells.items);
 }
 
 // Builds the given regions again (marked dirty while it runs), from the
@@ -1987,6 +2432,7 @@ static void free_map(navigation_t *navigation)
 	{
 		SDL_free(navigation->regions[r].surfaces);
 		SDL_free(navigation->regions[r].prints);
+		SDL_free(navigation->regions[r].capsules);
 	}
 	SDL_free(navigation->regions);
 	SDL_free(navigation->ground_height);
@@ -1994,6 +2440,8 @@ static void free_map(navigation_t *navigation)
 	SDL_free(navigation->terrain_blocker);
 	SDL_free(navigation->object_top);
 	SDL_free(navigation->ground_slope);
+	SDL_free(navigation->small_only);
+	SDL_free(navigation->model_shapes);
 	SDL_free(navigation->small_height);
 	SDL_free(navigation->blocked);
 	navigation->blocked = NULL;
@@ -2012,6 +2460,9 @@ static void free_map(navigation_t *navigation)
 	navigation->terrain_blocker = NULL;
 	navigation->object_top = NULL;
 	navigation->ground_slope = NULL;
+	navigation->small_only = NULL;
+	navigation->model_shapes = NULL;
+	navigation->model_shape_count = 0;
 	navigation->small_height = NULL;
 	navigation->extra_count = NULL;
 	navigation->extra_first = NULL;
@@ -2036,6 +2487,7 @@ static bool resize(navigation_t *navigation, const terrain_t *terrain)
 	navigation->terrain_blocker = SDL_malloc(cells * sizeof(int16_t));
 	navigation->object_top = SDL_calloc(cells, 1);
 	navigation->ground_slope = SDL_calloc(cells, 1);
+	navigation->small_only = SDL_calloc(cells, 1);
 	navigation->small_height = SDL_calloc(cells, 1);
 	navigation->blocked = SDL_calloc(cells, 1);
 	navigation->blocker_count = 0;
@@ -2044,7 +2496,7 @@ static bool resize(navigation_t *navigation, const terrain_t *terrain)
 	navigation->region_generation = SDL_calloc((size_t)region_count, sizeof(uint32_t));
 	navigation->build_list = SDL_calloc((size_t)region_count, sizeof(int32_t));
 	if (navigation->build_list == NULL || navigation->regions == NULL || navigation->ground_height == NULL || navigation->terrain_clearance == NULL
-		|| navigation->terrain_blocker == NULL || navigation->object_top == NULL || navigation->ground_slope == NULL || navigation->small_height == NULL || navigation->blocked == NULL
+		|| navigation->terrain_blocker == NULL || navigation->object_top == NULL || navigation->ground_slope == NULL || navigation->small_height == NULL || navigation->small_only == NULL || navigation->blocked == NULL
 		|| navigation->extra_count == NULL
 		|| navigation->extra_first == NULL || navigation->region_generation == NULL)
 	{
@@ -2069,7 +2521,9 @@ bool navigation_create(navigation_t *navigation, const terrain_t *terrain)
 	SDL_zerop(navigation);
 	navigation->maximum_expansions = 200000;
 	navigation->object_minimum_meters = 0.3f;
-	navigation->small_object_meters = 0.8f;
+	navigation->wall_reach_meters = 1.2f;
+	navigation->soft_kilograms = 20.0f;
+	navigation->small_out = false;
 	navigation->small_detour_meters = 10.0f;
 	navigation_set_slope_cost(navigation, 40.0f, 1.5f);
 	return resize(navigation, terrain);
@@ -3585,6 +4039,14 @@ static void mesh_build_cell(const navigation_t *navigation, const navigation_mes
 		ground_room = NAVIGATION_CLEARANCE_OPEN;
 		ground_roomy = true;
 	}
+	// (only small things in it, a trunk: the rectangles lie through them,
+	// a way is led round them after)
+	if (navigation->small_only[cell] != 0)
+	{
+		count = 1;
+		ground_room = NAVIGATION_CLEARANCE_OPEN;
+		ground_roomy = true;
+	}
 	for (int32_t sub = 0; sub < NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS; sub++)
 	{
 		int32_t at = first + (sub / NAVIGATION_SUBCELLS) * build->span + sub % NAVIGATION_SUBCELLS;
@@ -3653,8 +4115,8 @@ static bool mesh_cell_plain(const navigation_t *navigation, int32_t cell_x, int3
 		return false;
 	}
 	cell = cell_z * navigation->size + cell_x;
-	return navigation->extra_count[cell] == 0 && navigation->terrain_clearance[cell] == NAVIGATION_CLEARANCE_OPEN
-		&& !navigation->regions[region_of_cell(navigation, cell)].stale;
+	return ((navigation->extra_count[cell] == 0 && navigation->terrain_clearance[cell] == NAVIGATION_CLEARANCE_OPEN)
+		|| navigation->small_only[cell] != 0) && !navigation->regions[region_of_cell(navigation, cell)].stale;
 }
 
 // The level of the next quarter (at next) that carries on the rectangle
@@ -4318,7 +4780,7 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 			float cost = navigation->walk_factors[navigation->ground_slope[cell]];
 			uint32_t cell_key = MESH_KEY_FIT | (build.wet[local_z * build.width + local_x] ? MESH_KEY_WET : 0)
 				| ((uint32_t)(navigation->blocked != NULL ? navigation->blocked[cell] : 0) << 8);
-			uint32_t ground_key = cell_key | ((uint32_t)SDL_clamp((int)((cost - 1.0f) * 4.0f), 0, 31) << 24) | navigation->small_height[cell];
+			uint32_t ground_key = cell_key | ((uint32_t)SDL_clamp((int)((cost - 1.0f) * 4.0f), 0, 31) << 24);
 			bool plain = true;
 
 			// (open ground, and all round it, within reach: a body has
@@ -4445,7 +4907,7 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 				rect->depth = (uint8_t)depth;
 				rect->flags = (uint8_t)(((key & MESH_KEY_TOP) != 0 ? 0 : NAVIGATION_RECT_GROUND) | (wet ? NAVIGATION_RECT_WET : 0));
 				rect->blocked = (uint8_t)(key >> 8);
-				rect->small = (key & MESH_KEY_TOP) != 0 ? 0 : (uint8_t)key;
+				rect->small = 0;
 				rect->clearance = NAVIGATION_CLEARANCE_OPEN;
 				for (int32_t j = 0; j < depth; j++)
 				{
@@ -4484,6 +4946,29 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 	}
 	tile->built = true;
 	tile->generation = navigation->region_generation[region];
+	// The rectangles small things stand in (within a body's half width of
+	// one): a way through them looks out for them
+	for (int32_t k = 0; k < navigation->regions[region].capsule_count; k++)
+	{
+		const navigation_capsule_t *capsule = &navigation->regions[region].capsules[k];
+		float reach = capsule->radius + class->radius;
+		float capsule_low[2] = { SDL_min(capsule->a[0], capsule->b[0]) - reach, SDL_min(capsule->a[2], capsule->b[2]) - reach };
+		float capsule_high[2] = { SDL_max(capsule->a[0], capsule->b[0]) + reach, SDL_max(capsule->a[2], capsule->b[2]) + reach };
+
+		for (int32_t r = 0; r < tile->rect_count; r++)
+		{
+			navigation_rect_t *rect = &tile->rects[r];
+			float low[2];
+			float high[2];
+
+			mesh_rect_box(navigation, c, (region << 16) | r, low, high);
+			if (low[0] <= capsule_high[0] && high[0] >= capsule_low[0] && low[1] <= capsule_high[1] && high[1] >= capsule_low[1]
+				&& rect->height <= SDL_max(capsule->a[1], capsule->b[1]) && rect_height_high(rect) + class->height >= SDL_min(capsule->a[1], capsule->b[1]))
+			{
+				rect->small = 1;
+			}
+		}
+	}
 	tile->margin_signature = mesh_margin_signature(navigation, region);
 	tile->class_epoch = class->epoch;
 	tile->water_signature = mesh_water_signature(navigation, water, region);
@@ -4609,14 +5094,13 @@ static void mesh_rect_info(const navigation_t *navigation, const terrain_t *terr
 		node_info(navigation, terrain, water, agent, mesh_wet_node(navigation, c, id), info);
 		return;
 	}
-	info->passable = roomy(rect->clearance, agent) && (rect->blocked & agent->groups) == 0
-		&& (float)rect->small * SMALL_UNIT_METERS < agent->height_meters;
+	info->passable = roomy(rect->clearance, agent) && (rect->blocked & agent->groups) == 0;
 	info->water_class = CLASS_DRY;
 	info->cost_factor = 1.0f + (float)rect->cost / 32.0f;
 	info->height = rect->height;
-	info->small = (float)rect->small * SMALL_UNIT_METERS > agent->step_meters;
+	info->small = false;
 	info->surface = (rect->flags & NAVIGATION_RECT_GROUND) == 0;
-	info->extra_cost = info->small ? navigation->small_detour_meters : 0.0f;
+	info->extra_cost = 0.0f;
 }
 
 // The rectangle of a class at a point, on the level nearest the height
@@ -6480,6 +6964,39 @@ static int mesh_line_passable(navigation_t *navigation, const terrain_t *terrain
 	// (its body's middle's line: the rectangles are where its body fits)
 	navigation->mesh.lines++;
 	return mesh_line(navigation, terrain, water, agent, from_x, from_z, from_height, to_x, to_z, blocked_x, blocked_z, blocked_height);
+}
+
+int navigation_capsules(const navigation_t *navigation, float minimum_x, float minimum_z, float maximum_x, float maximum_z,
+	navigation_capsule_t *capsules_out, int most)
+{
+	int32_t first_x = SDL_clamp((int32_t)SDL_floorf(minimum_x / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+	int32_t first_z = SDL_clamp((int32_t)SDL_floorf(minimum_z / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+	int32_t last_x = SDL_clamp((int32_t)SDL_floorf(maximum_x / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+	int32_t last_z = SDL_clamp((int32_t)SDL_floorf(maximum_z / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+	int count = 0;
+
+	for (int32_t region_z = first_z; region_z <= last_z; region_z++)
+	{
+		for (int32_t region_x = first_x; region_x <= last_x; region_x++)
+		{
+			const navigation_region_t *region = &navigation->regions[region_z * navigation->regions_per_side + region_x];
+
+			for (int32_t k = 0; k < region->capsule_count && !region->stale && count < most; k++)
+			{
+				const navigation_capsule_t *capsule = &region->capsules[k];
+				// (one that reaches into a few regions: the one its first end is in tells it)
+				int32_t own_x = SDL_clamp((int32_t)SDL_floorf(capsule->a[0] / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+				int32_t own_z = SDL_clamp((int32_t)SDL_floorf(capsule->a[2] / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+
+				if (own_x == region_x && own_z == region_z && capsule->a[0] >= minimum_x && capsule->a[0] <= maximum_x
+					&& capsule->a[2] >= minimum_z && capsule->a[2] <= maximum_z)
+				{
+					capsules_out[count++] = *capsule;
+				}
+			}
+		}
+	}
+	return count;
 }
 
 int navigation_mesh_rects(const navigation_t *navigation, const navigation_agent_t *agent, float minimum_x, float minimum_z, float maximum_x,

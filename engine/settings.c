@@ -294,7 +294,9 @@ static const setting_field_t setting_fields[] =
 	FIELD("simulation", "threads", SETTING_INT, simulation.threads),
 	FIELD("simulation", "path_search_cells", SETTING_INT, simulation.path_search_cells),
 	FIELD("simulation", "navigation_object_meters", SETTING_FLOAT, simulation.navigation_object_meters),
-	FIELD("simulation", "navigation_small_object_meters", SETTING_FLOAT, simulation.navigation_small_object_meters),
+	FIELD("simulation", "navigation_wall_meters", SETTING_FLOAT, simulation.navigation_wall_meters),
+	FIELD("simulation", "navigation_soft_kilograms", SETTING_FLOAT, simulation.navigation_soft_kilograms),
+	FIELD("simulation", "navigation_small_out", SETTING_BOOL, simulation.navigation_small_out),
 	FIELD("simulation", "small_object_detour_meters", SETTING_FLOAT, simulation.small_object_detour_meters),
 	FIELD("simulation", "path_slope_degrees", SETTING_FLOAT, simulation.path_slope_degrees),
 	FIELD("simulation", "path_slope_cost", SETTING_FLOAT, simulation.path_slope_cost),
@@ -709,7 +711,9 @@ void settings_set_defaults(settings_t *settings)
 	settings->simulation.diagnostics_interval_seconds = 30.0f;
 	settings->simulation.path_search_cells = 100000;
 	settings->simulation.navigation_object_meters = 0.3f;
-	settings->simulation.navigation_small_object_meters = 0.8f;
+	settings->simulation.navigation_wall_meters = 1.2f;
+	settings->simulation.navigation_soft_kilograms = 20.0f;
+	settings->simulation.navigation_small_out = false;
 	settings->simulation.small_object_detour_meters = 10.0f;
 	settings->simulation.path_slope_degrees = 40.0f;
 	settings->simulation.path_slope_cost = 1.5f;

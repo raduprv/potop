@@ -205,6 +205,12 @@ def build():
 	boxes.clear()
 	for index, station in enumerate(STATIONS):
 		station[1](station_x(index))
+	write_model(boxes, "nav_stress")
+	print("course: %d stations, %d boxes -> %s" % (len(STATIONS), len(boxes), MODEL))
+
+
+# A model made of boxes (x0, x1, y0, y1, z0, z1), into data/objects/NAME.pobj
+def write_model(boxes, name):
 	positions = []
 	normals = []
 	uvs = []
@@ -253,7 +259,7 @@ def build():
 		"asset": {"version": "2.0", "generator": "tests/navigation/nav_stress.py"},
 		"scene": 0,
 		"scenes": [{"nodes": [0]}],
-		"nodes": [{"mesh": 0, "name": "nav_stress"}],
+		"nodes": [{"mesh": 0, "name": name}],
 		"materials": [{"name": "stone", "pbrMetallicRoughness": {"baseColorFactor": [0.55, 0.52, 0.48, 1.0], "metallicFactor": 0.0,
 			"roughnessFactor": 0.9}}],
 		"meshes": [{"primitives": [{"attributes": {"POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2}, "indices": 3, "material": 0}]}],
@@ -266,12 +272,11 @@ def build():
 		"bufferViews": views,
 		"buffers": [{"byteLength": len(blob), "uri": "data:application/octet-stream;base64," + base64.b64encode(bytes(blob)).decode()}],
 	}
-	gltf_path = os.path.join(ROOT, "build", "nav_stress.gltf")
+	gltf_path = os.path.join(ROOT, "build", name + ".gltf")
 	os.makedirs(os.path.dirname(gltf_path), exist_ok=True)
 	with open(gltf_path, "w") as out:
 		json.dump(gltf, out)
-	subprocess.run([os.path.join(ROOT, "tools", "potop_convert"), gltf_path, MODEL], check=True)
-	print("course: %d stations, %d boxes -> %s" % (len(STATIONS), len(boxes), MODEL))
+	subprocess.run([os.path.join(ROOT, "tools", "potop_convert"), gltf_path, os.path.join(ROOT, "data", "objects", name + ".pobj")], check=True)
 
 
 def game_command(extra):

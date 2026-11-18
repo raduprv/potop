@@ -65,7 +65,9 @@ rectangles are green and blue (tints only tell neighbors apart), objects'
 tops yellow at the ground through red to purple at 3 m and more, with
 their height over the ground written on them; white lines are the
 openings from one rectangle to the next, pink ones edges that are only
-jumped. What stands nearer hides it, as it would in the world.
+jumped. The small things a way is led round (trunks, boulders: see
+actors.md) have a ring at each end of their capsules, orange; soft ones
+(a bucket) blue. What stands nearer hides it, as it would in the world.
 
 On foot (C) the mouse looks around (its field of view, Camera → On foot, from
 15 to 110 degrees: 70 is a 17 mm lens on a 35 mm camera, 30 about 45 mm;
