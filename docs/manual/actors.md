@@ -47,7 +47,12 @@ model's width, 0.74 m for the bear) from anything in the way on either
 side, so it does not scrape its flank along a stone or a trunk; the search
 itself goes through cell centers, half a meter from their neighbors.
 
-On the way it turns towards each waypoint (`turn_degrees_per_second`),
+On the way it steers for a point a little ahead on its path, turning
+as fast as its pace lets it: `pivot_degrees_per_second` standing (90 by
+default: about on the spot in two seconds), down to
+`turn_degrees_per_second` at its walking pace and faster. It goes no
+faster than it can turn onto that point (a running cow slows where its
+turn does not fit, instead of going round the point in circles). It
 walks slower uphill and through water deeper than `wade_depth_meters`,
 and swims where the water is deeper than `swim_depth_meters`: afloat, its
 body that deep under the surface, level, at `swim_meters_per_second`, with

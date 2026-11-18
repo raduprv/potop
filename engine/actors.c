@@ -15,6 +15,7 @@
 
 // MAX_BONES in data/shaders/actor_skinning.glsl
 #define ACTOR_MAX_BONES_DRAWN 64
+#define PIVOT_DEGREES_PER_SECOND 90.0f     // pivot_degrees_per_second not given
 #define SPOT_TURN_FOUR_LEGS_DEGREES 20.0f  // spot_turn_degrees not given, on four legs
 #define SPOT_TURN_WALK_FRACTION 0.4f        // its arc's walk then, if it has none
 #define SPOT_TURN_GOING_SPEED 0.1f          // m/s: going at least this fast (forward or back), it turns freely
@@ -46,6 +47,7 @@ static void set_type_defaults(actor_type_t *type, const char *name)
 	type->walk_action = -1;
 	type->turn_degrees_per_second = 180.0f;
 	type->spot_turn_degrees = -1.0f;
+	type->pivot_degrees_per_second = -1.0f;
 	SDL_strlcpy(type->turn_left_action_name, "turn_left", sizeof(type->turn_left_action_name));
 	type->turn_left_action = -1;
 	SDL_strlcpy(type->turn_right_action_name, "turn_right", sizeof(type->turn_right_action_name));
@@ -157,6 +159,10 @@ static bool load_key(void *user_data, const char *section, const char *key, cons
 	if (SDL_strcmp(key, "turn_degrees_per_second") == 0)
 	{
 		return ini_value_to_float(value, &type->turn_degrees_per_second);
+	}
+	if (SDL_strcmp(key, "pivot_degrees_per_second") == 0)
+	{
+		return ini_value_to_float(value, &type->pivot_degrees_per_second);
 	}
 	if (SDL_strcmp(key, "walk_left_action") == 0)
 	{
@@ -482,6 +488,11 @@ static void load_models(actors_t *actors)
 		type->swim_meters_per_second = SDL_max(type->swim_meters_per_second, 0.05f);
 		type->turn_degrees_per_second = SDL_max(type->turn_degrees_per_second, 1.0f);
 		type->turn_walk_fraction = SDL_clamp(type->turn_walk_fraction, 0.0f, 1.0f);
+		if (type->pivot_degrees_per_second < 0.0f)
+		{
+			type->pivot_degrees_per_second = PIVOT_DEGREES_PER_SECOND;
+		}
+		type->pivot_degrees_per_second = SDL_max(type->pivot_degrees_per_second, type->turn_degrees_per_second);
 		if (type->spot_turn_degrees < 0.0f)
 		{
 			type->spot_turn_degrees = type->ground_align > 0.0f ? SPOT_TURN_FOUR_LEGS_DEGREES : 0.0f;
@@ -1667,8 +1678,8 @@ void actors_clear(actors_t *actors)
 // Where a walk steers for (steer_point): this far ahead along the path at
 // a standstill, more the faster (up to the most), found again this often
 #define STEER_AHEAD_METERS 1.5f
-#define STEER_AHEAD_PER_SPEED 0.3f    // meters more per meter a second
-#define STEER_AHEAD_MOST_METERS 2.5f
+#define STEER_AHEAD_PER_SPEED 0.8f    // meters more per meter a second
+#define STEER_AHEAD_MOST_METERS 4.5f
 #define STEER_SECONDS 0.2f
 #define STRAIGHT_WAYPOINT_METERS 0.25f
 #define BODY_BRUSHES 2               // of its body's 8 points (navigation_quarter_tightness): its sides brushing, let be
@@ -1679,6 +1690,7 @@ void actors_clear(actors_t *actors)
 #define LOOK_SECONDS 0.5f             // how often it looks at the path ahead
 #define STUCK_SECONDS 3.0f            // this long without getting half a meter: search again
 #define STUCK_METERS 0.5f
+#define STUCK_TURN_RADIANS 1.0f       // its way this far round: turning about, not stuck (its time counts a quarter)
 #define MAXIMUM_REPLANS 3             // searches in a row that got nowhere: give up
 #define ACCELERATION 3.0f             // meters per second, per second
 
@@ -2100,6 +2112,35 @@ static float inertial_turn(actor_t *actor, float turn, float most_per_second, fl
 		actor->angular_speed = 0.0f;
 	}
 	return applied;
+}
+
+// On a path, how fast it may turn at a speed (radians a second): standing,
+// its pivot; from its walking pace up, its walk's curve; between the two,
+// between (the slower it goes the tighter it turns, as one does)
+static float path_turn_radians_per_second(const actor_type_t *type, float speed)
+{
+	float pivot = degrees_to_radians(type->pivot_degrees_per_second);
+	float turning = degrees_to_radians(type->turn_degrees_per_second);
+	float share = SDL_clamp(SDL_fabsf(speed) / type->walk_meters_per_second, 0.0f, 1.0f);
+
+	return pivot + (turning - pivot) * share;
+}
+
+// The fastest it goes round a circle of radius meters turning no faster
+// than it may at that pace (path_turn_radians_per_second): from its
+// walking pace up, its walk's curve; under it, the pace at which its
+// turning (quicker the slower it goes) just makes the circle
+static float arc_speed(const actor_type_t *type, float radius)
+{
+	float pivot = degrees_to_radians(type->pivot_degrees_per_second);
+	float turning = degrees_to_radians(type->turn_degrees_per_second);
+	float walk = type->walk_meters_per_second;
+
+	if (turning * radius >= walk)
+	{
+		return turning * radius;
+	}
+	return pivot * radius / (1.0f + (pivot - turning) * radius / walk);
 }
 
 // Where a walk on its path steers for (not a straight walker's: its
@@ -3196,6 +3237,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 	float yaw_before = actor->yaw_radians;
 	float x_before = actor->x;
 	float z_before = actor->z;
+	bool turning_about = false;
 
 	// A step between standing and walking under way: its clip moves it
 	actor->animation_held = false;
@@ -3348,7 +3390,9 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 		float target_z = actor->path[actor->path_index][1];
 		float heading;
 		float turn;
-		float most = degrees_to_radians(type->turn_degrees_per_second) * seconds;
+		// (on a path: quicker the slower it goes, its pivot standing)
+		float most = (actor->straight || actor->swimming ? degrees_to_radians(type->turn_degrees_per_second)
+			: path_turn_radians_per_second(type, actor->speed)) * seconds;
 		bool steered_off = false;
 		bool turn_refused = false;
 		bool creep_ahead = false;
@@ -3451,6 +3495,9 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 			}
 		}
 		turn = wrap_angle(heading - actor->yaw_radians);
+		// (on a path, its way far round: turning about, which is not being
+		// stuck)
+		turning_about = !actor->straight && SDL_fabsf(turn) > STUCK_TURN_RADIANS;
 		{
 			float new_yaw = wrap_angle(actor->yaw_radians + inertial_turn(actor, turn, most / seconds, seconds));
 
@@ -3538,6 +3585,24 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 			if (depth > type->wade_depth_meters)
 			{
 				wanted_speed *= 0.6f;
+			}
+			// On a path: no faster than it can turn onto the point it steers
+			// for, round the circle that takes it there from the way it faces
+			// (its radius the point's distance over twice the sine of how far
+			// round the point is). A point inside its turning circle at its
+			// pace it went round and round (a running cow, 6 m wide, for a
+			// minute): it slows to where the turn fits
+			if (!actor->straight && wanted_speed > 0.0f)
+			{
+				float to_x = target_x - actor->x;
+				float to_z = target_z - actor->z;
+				float off = SDL_fabsf(wrap_angle(SDL_atan2f(to_x, to_z) - actor->yaw_radians));
+				float sine = SDL_sinf(SDL_min(off, MATH3D_PI * 0.5f));
+
+				if (sine > 1e-3f)
+				{
+					wanted_speed = SDL_min(wanted_speed, arc_speed(type, SDL_sqrtf(to_x * to_x + to_z * to_z) / (2.0f * sine)));
+				}
 			}
 		}
 		// Do not overshoot the goal
@@ -3700,7 +3765,9 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 			actor->stuck_seconds = 0.0f;
 			actor->replans = 0;
 		}
-		else if ((actor->stuck_seconds += seconds) > STUCK_SECONDS)
+		// (turning about takes its time: a quarter of it counted, so one
+		// that turns for ever is still found)
+		else if ((actor->stuck_seconds += seconds * (turning_about ? 0.25f : 1.0f)) > STUCK_SECONDS)
 		{
 			actor->stuck_seconds = 0.0f;
 			if (actors->log_paths)

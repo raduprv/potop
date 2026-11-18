@@ -109,6 +109,12 @@ typedef struct
 	// Moving about
 	float walk_cycle_meters;           // ground covered by one loop of the walk; 0: the walk at walk speed
 	float turn_degrees_per_second;
+	// On a path, how fast it turns standing (degrees a second; below 0,
+	// not given: PIVOT_DEGREES_PER_SECOND, or turn_degrees_per_second if
+	// that is more): a walker turns about on the spot in a second or two,
+	// not at its walk's wide curve. From there down to
+	// turn_degrees_per_second at its walking pace and faster
+	float pivot_degrees_per_second;
 	// Turning on the spot: these actions if the model has them (optional),
 	// else the walk at the pace its feet go round
 	char turn_left_action_name[ACTOR_FILE_NAME_LENGTH];
