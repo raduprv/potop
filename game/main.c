@@ -3,7 +3,7 @@
 //
 //     potop [--map NAME] [--seed N] [--width W --height H] [--houses [CATEGORY]]
 //           [--set SECTION.KEY=VALUE]... [--hour H] [--sim SECONDS [--sim-step S]] [--trace FILE]
-//           [--walk_test TYPE X,Z[;X,Z...] [--walk_from X,Z] [--walk_run]]
+//           [--walk_test TYPE X,Z[;X,Z...] [--walk_from X,Z] [--walk_run] [--walk_chase SPEED[,PAUSE]]]
 //
 // --houses: no map, small flat ground with every house (objects.ini's
 // category "buildings", or "fable", or the one named) in rows
@@ -17,7 +17,10 @@
 // at --walk_from) and sent to each goal in turn (game/walk_test.c); with
 // --trace its trail, the goals and the navigation mesh round it; with
 // --sim over when the last goal is (or the seconds are); --walk_run: it
-// runs
+// runs; --walk_chase: the goals are a runner's route (a farmer's way from
+// each to the next, at SPEED meters a second, standing PAUSE seconds at
+// each; "X,Z!": straight there and back if no farmer gets there), the
+// actor after the runner as a bear after the player
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -30,6 +33,8 @@ static const char *walk_test_type = NULL;
 static const char *walk_test_goals = NULL;
 static const char *walk_test_from = NULL;
 static bool walk_test_running = false;
+static float walk_chase_speed = 0.0f;
+static float walk_chase_pause = 0.0f;
 
 static void read_command_line(potop_options_t *options, int argument_count, char **arguments)
 {
@@ -117,6 +122,12 @@ static void read_command_line(potop_options_t *options, int argument_count, char
 		{
 			walk_test_running = true;
 		}
+		else if (SDL_strcmp(argument, "--walk_chase") == 0)
+		{
+			walk_chase_speed = (float)SDL_atof(value);
+			walk_chase_pause = SDL_strchr(value, ',') != NULL ? (float)SDL_atof(SDL_strchr(value, ',') + 1) : 0.0f;
+			i++;
+		}
 	}
 }
 
@@ -150,6 +161,8 @@ int main(int argument_count, char **arguments)
 	{
 		game_walk_test_set(&game, walk_test_type, walk_test_goals, walk_test_from);
 		game.walk_test_running = walk_test_running;
+		game.walk_chase_speed = walk_chase_speed;
+		game.walk_chase_pause = walk_chase_pause;
 	}
 	while (potop_frame_begin(potop, &input, &seconds))
 	{

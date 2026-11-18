@@ -304,7 +304,8 @@ typedef struct
 	bool path_partial;                 // the goal cannot be reached; the path ends as near as it gets
 	// Its fine way round what its path's whole cells pass over (a post, a
 	// cell's corner): points over the quarter meters to the waypoint
-	// fine_for, made when its steps were refused (navigation_fine_path);
+	// fine_for, made when its body has no straight way there or its steps
+	// were refused (navigation_fine_path);
 	// dropped when the path moves on or changes
 	float fine_path[ACTOR_FINE_POINTS][2];
 	int fine_count;
@@ -312,8 +313,17 @@ typedef struct
 	int fine_for;
 	float fine_for_x;
 	float fine_for_z;
+	bool fine_to_waypoint;             // it ends by that waypoint: at its end the waypoint is reached
 	float guard_seconds;               // its steps refused this long
 	float fine_wait;                   // till it looks for a fine way again
+	int fine_failures;                 // fine ways looked for in a row and none found, where it is (FINE_FAILURES_MOST: no way, it gives up)
+	// Whether its body has the straight way to its waypoint (steer_point:
+	// not: a fine way at once), and the room for its turn's arc to where
+	// it steers for (move_actor, looked at every ARC_SECONDS: not: it
+	// turns on the spot first)
+	bool steer_blocked;
+	bool arc_clear;
+	float arc_seconds;
 	uint32_t path_generation;          // the navigation's generation when it last looked ahead
 	float look_seconds;                // until it looks ahead again
 	float speed;                       // meters per second, its own (the current comes on top)

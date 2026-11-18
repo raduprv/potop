@@ -476,11 +476,26 @@ bool navigation_quarter_free(const navigation_t *navigation, const terrain_t *te
 int navigation_quarter_tightness(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
 	float x, float z, float near_height);
 
+// Whether an agent's body can go straight from one point to another (it
+// at from_height): every eighth of a meter of the line somewhere it stands
+// (a step at a time on from the last) with room for its body round it
+// (navigation_quarter_tightness: most_brushes of its points taken or
+// fewer; or, out of a tighter place, no tighter than the step before).
+// The quarter meters' truth about a way the cells' rectangles let through
+// (navigation_line_passable: a square of its width fits somewhere in each
+// cell, a post beside it or not): a walker asks both before it leaves its
+// path's own corners (a point ahead, a corner cut, a turn's arc), and
+// its steps are held to the same (its step guard)
+bool navigation_body_line(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
+	float from_x, float from_z, float from_height, float to_x, float to_z, int most_brushes);
+
 // The fine way from (from_x, from_z) at from_height to (to_x, to_z), a few
 // meters apart, over the quarter meters: round a post inside a cell, past
-// a cell's corner, its body's radius off what it cannot stand on. Its
-// corners into points_out (at most most of them, the last near the goal);
-// the count, 0 if there is none in the window (or the two too far apart)
+// a cell's corner, its body's radius off what it cannot stand on (where
+// there is such a way; else brushing by, as it must). Its corners into
+// points_out (at most most of them), the last by the goal: its own
+// quarter, or one beside it (a clear one rather than a tight one). The
+// count; 0 if there is none in the window (or the two too far apart)
 int navigation_fine_path(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
 	float from_x, float from_z, float from_height, float to_x, float to_z, float (*points_out)[2], int most);
 

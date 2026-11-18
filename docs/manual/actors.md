@@ -52,8 +52,16 @@ as fast as its pace lets it: `pivot_degrees_per_second` standing (90 by
 default: about on the spot in two seconds), down to
 `turn_degrees_per_second` at its walking pace and faster. It goes no
 faster than it can turn onto that point (a running cow slows where its
-turn does not fit, instead of going round the point in circles). It
-walks slower uphill and through water deeper than `wade_depth_meters`,
+turn does not fit, instead of going round the point in circles), and
+where its body has no room for the turn's arc (a narrow terrace, a
+stair's top) it turns on the spot first and then goes straight. It
+leaves its path's corners (for the point ahead, to cut a corner) only
+where its body fits all the way, by the quarter meter; where it does not
+fit straight to its next corner (a post beside it) it finds a way round
+over the quarter meters at once, and where there is none (stairs with
+treads higher than its `step_meters` that the coarser search took for a
+way) it gives the walk up within a second or so. It slows for a sharp
+corner as it comes to it. It walks slower uphill and through water deeper than `wade_depth_meters`,
 and swims where the water is deeper than `swim_depth_meters`: afloat, its
 body that deep under the surface, level, at `swim_meters_per_second`, with
 the walk animation (there is no swimming one). The walk plays at the pace

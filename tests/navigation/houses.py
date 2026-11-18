@@ -48,6 +48,10 @@ def walk(case, agent, running):
 	log = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, text=True).stdout
 	with open(os.path.join(ROOT, "build", name + ".log"), "w") as out:
 		out.write(log)
+	# (the house not there (its model, a texture of it missing): the walk
+	# would cross empty ground and reach everything)
+	if "Houses: 1 of" not in log:
+		sys.exit("%s: the house did not load (see build/%s.log)" % (case, name))
 	ends = {}
 	for line in log.splitlines():
 		if line.startswith("Walk test: goal ") and "walk_test_goal" not in line:

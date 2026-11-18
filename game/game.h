@@ -400,6 +400,24 @@ typedef struct
 	bool walk_test_running;        // it runs to them (--walk_run)
 	float walk_test_goal_seconds;  // since it was sent to this goal
 	float walk_test_trail[2][2];   // the trail's box (minimum, maximum), for the trace's map
+	// (a chase, --walk_chase SPEED: the goals are a runner's route, a
+	// farmer's way from each to the next, gone along at that speed; the
+	// actor after the runner as a bear after the player)
+	float walk_chase_speed;        // meters a second; 0: no chase, the goals in turn
+	float walk_chase_route[1024][2];
+	int walk_chase_route_count;
+	float walk_chase_meters;       // the runner's, along its route
+	float walk_chase_pause;        // seconds the runner stands at each goal
+	bool walk_chase_straight[64];  // a goal the runner goes straight to and back from if no farmer gets there ("X,Z!"); else it is left out
+	float walk_chase_stops[64];    // the goals' meters along the route
+	int walk_chase_stop_next;
+	float walk_chase_pause_left;
+	float walk_chase_sent[2];      // where the actor was last sent
+	bool walk_chase_going;
+	double walk_chase_again_at;    // not sent again before this (world time)
+	float walk_chase_seconds;      // since the runner set out
+	float walk_chase_idle_seconds; // the actor standing, the runner out of its reach
+	int walk_chase_sends;
 	// The workers (workers.c): a smith in each smithy near the eye
 	worker_mind_t workers[GAME_WORKERS_MAX];
 	int worker_count;

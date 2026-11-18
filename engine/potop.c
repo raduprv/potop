@@ -635,6 +635,45 @@ bool potop_actor_can_stand(potop_t *potop, uint32_t id, float x, float z)
 	return navigation_standable(&potop->world.navigation, &potop->world.terrain, &potop->world.water, &agent, x, z);
 }
 
+bool potop_actor_stand_near(potop_t *potop, uint32_t id, float x, float z, float reach_meters, float *x_out, float *z_out)
+{
+	// (round from the actor's side: straight, then an eighth of a turn
+	// either way, a quarter, and so on to the far side)
+	static const float ROUND[8] = { 0.0f, 0.785398f, -0.785398f, 1.570796f, -1.570796f, 2.356194f, -2.356194f, 3.141593f };
+	int index = actors_find(&potop->world.actors, id);
+	navigation_agent_t agent;
+	float toward;
+
+	if (index < 0)
+	{
+		return false;
+	}
+	agent = actors_agent(&potop->world.actors, potop->world.actors.actors[index].type);
+	*x_out = x;
+	*z_out = z;
+	if (navigation_standable(&potop->world.navigation, &potop->world.terrain, &potop->world.water, &agent, x, z))
+	{
+		return true;
+	}
+	toward = SDL_atan2f(potop->world.actors.actors[index].x - x, potop->world.actors.actors[index].z - z);
+	for (float off = 1.0f; off <= reach_meters + 1e-3f; off += 1.0f)
+	{
+		for (int k = 0; k < (int)SDL_arraysize(ROUND); k++)
+		{
+			float try_x = x + SDL_sinf(toward + ROUND[k]) * off;
+			float try_z = z + SDL_cosf(toward + ROUND[k]) * off;
+
+			if (navigation_standable(&potop->world.navigation, &potop->world.terrain, &potop->world.water, &agent, try_x, try_z))
+			{
+				*x_out = try_x;
+				*z_out = try_z;
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 void potop_actor_stop(potop_t *potop, uint32_t id)
 {
 	actors_stop(&potop->world.actors, id);

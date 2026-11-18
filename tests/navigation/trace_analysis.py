@@ -22,6 +22,8 @@ SPOT_PACE_SHARE = 0.5
 ACTORS_INI = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "actors.ini")
 # A rectangle's height this near the actor's: the one it stands on
 HEIGHT_SLACK = 0.5
+# A loop: turned one way within this much walking (most_one_way)
+LOOP_METERS = 8.0
 
 
 # Each type's walking pace (data/actors.ini: walk_meters_per_second, 1.5
@@ -106,10 +108,33 @@ def spot_turns(samples):
 	return [run for run in runs if run["degrees"] > 1.0]
 
 
+# The most it turned one way (left or right, the other way taken off)
+# within LOOP_METERS of walking: a house's corner is a quarter turn, a
+# turn about on a terrace half a one; a whole turn and more is a loop, a
+# spin on the spot or one walked
+def most_one_way(samples):
+	meters = [0.0]
+	turned = [0.0]
+	for previous, sample in zip(samples, samples[1:]):
+		meters.append(meters[-1] + math.hypot(sample["x"] - previous["x"], sample["z"] - previous["z"]))
+		turned.append(turned[-1] + math.degrees(wrap(sample["yaw"] - previous["yaw"])))
+	most = {"degrees": 0.0, "start": 0.0, "end": 0.0, "x": 0.0, "z": 0.0}
+	first = 0
+	for last in range(len(samples)):
+		while meters[last] - meters[first] > LOOP_METERS:
+			first += 1
+		for k in range(first, last):
+			if abs(turned[last] - turned[k]) > most["degrees"]:
+				most = {"degrees": abs(turned[last] - turned[k]), "start": samples[k]["time"], "end": samples[last]["time"], "x": samples[last]["x"],
+					"z": samples[last]["z"]}
+	return most
+
+
 def summary(path):
 	samples, rects, goals = read(path)
 	off = off_mesh(samples, rects)
 	turns = spot_turns(samples)
+	loop = most_one_way(samples)
 	spins = [turn for turn in turns if turn["degrees"] > 360.0]
 	lines = ["%d samples, %d off the mesh" % (len(samples), len(off))]
 	for sample in off[:10]:
@@ -118,8 +143,10 @@ def summary(path):
 		sum(turn["seconds"] for turn in turns), max([turn["degrees"] for turn in turns] or [0.0]), len(spins)))
 	for turn in sorted(turns, key=lambda turn: -turn["degrees"])[:5]:
 		lines.append("  %.0f degrees in %.1f s from %.2f s at (%.2f, %.2f)" % (turn["degrees"], turn["seconds"], turn["start"], turn["x"], turn["z"]))
+	lines.append("the most one way within %.0f m: %.0f degrees, from %.1f to %.1f s, by (%.2f, %.2f)" % (LOOP_METERS, loop["degrees"], loop["start"],
+		loop["end"], loop["x"], loop["z"]))
 	return {"off": len(off), "turn_seconds": sum(turn["seconds"] for turn in turns), "most_degrees": max([turn["degrees"] for turn in turns] or [0.0]),
-		"spins": len(spins), "text": "\n".join(lines)}
+		"spins": len(spins), "loop_degrees": loop["degrees"], "text": "\n".join(lines)}
 
 
 if __name__ == "__main__":

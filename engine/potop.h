@@ -409,6 +409,13 @@ bool potop_actor_remove(potop_t *potop, uint32_t id);
 // Cheap: worth asking before potop_actor_go_to, whose search for a way to
 // somewhere it cannot be costs the most
 bool potop_actor_can_stand(potop_t *potop, uint32_t id, float x, float z);
+// Where the actor could stand nearest (x, z), within reach_meters of it:
+// there itself if it can; else a meter off, then two and so on, on the
+// side the actor is on first (the bank before the water, not the far
+// one), then round either way. The same place for the same question, so
+// one that asks again and again (after someone standing where it cannot
+// be) is not sent about. False if nowhere
+bool potop_actor_stand_near(potop_t *potop, uint32_t id, float x, float z, float reach_meters, float *x_out, float *z_out);
 // A way from (from_x, from_z) to (to_x, to_z) for an actor of that type
 // (actors.ini's) as it would find it, with no actor: its points (x, z, the
 // start left out) into points_out, at most maximum; how many (0: no way,

@@ -20,11 +20,10 @@ static const float THINK_SECONDS = 0.15f;
 static const float WANDER_LEAST_METERS = 10.0f;
 static const float WANDER_MOST_METERS = 25.0f;
 static const float WANDER_TURN_RADIANS = 1.0f;
-// Where it wants to go is no place for it (deep water): this many places
-// tried (the first that one, the others nearer itself, this much aside),
-// then it waits a while
-enum { GO_TRIES = 3 };
-static const float GO_ASIDE_METERS = 4.0f;
+// Where it wants to go is no place for it (deep water): the nearest
+// place by it that is, this far off at the most (go_to); none: it waits a
+// while
+static const float GO_NEAR_METERS = 6.0f;
 static const float GO_AGAIN_SECONDS_LEAST = 4.0f;
 static const float GO_AGAIN_SECONDS_MOST = 8.0f;
 static const float STAND_SECONDS_LEAST = 3.0f;
@@ -123,39 +122,33 @@ static void stand(potop_t *potop, bear_mind_t *bear)
 	bear->going = false;
 }
 
-// Sent somewhere it can stand: there if it can, else a few places between
-// there and itself (the bank before the water a splash was heard in); in
-// deep water or inside a rock it does not even look for a way (the search
-// for a way to somewhere it cannot get costs the most). None of them: it
-// stays where it is and tries again a few seconds later
+// Sent somewhere it can stand: there if it can, else the nearest place by
+// it that it can (potop_actor_stand_near: the bank before the water a
+// splash was heard in; the same place each time it is asked, so after
+// someone who stands where it cannot be it is not sent now here, now
+// there); in deep water or inside a rock it does not even look for a way
+// (the search for a way to somewhere it cannot get costs the most). None:
+// it stays where it is and tries again a few seconds later
 static void go_to(game_t *game, potop_t *potop, bear_mind_t *bear, float x, float z, bool running)
 {
-	static const float TOWARD_ITSELF[GO_TRIES] = { 0.0f, 0.3f, 0.6f };
 	potop_actor_info_t actor;
 	double now = potop_world_time(potop);
+	float near_x;
+	float near_z;
 
 	if (now < bear->go_again_at || !potop_actor_get(potop, bear->actor_id, &actor))
 	{
 		return;
 	}
-	for (int attempt = 0; attempt < GO_TRIES; attempt++)
+	if (potop_actor_stand_near(potop, bear->actor_id, x, z, GO_NEAR_METERS, &near_x, &near_z))
 	{
-		float try_x = x + (actor.x - x) * TOWARD_ITSELF[attempt];
-		float try_z = z + (actor.z - z) * TOWARD_ITSELF[attempt];
-
-		if (attempt > 0)
-		{
-			try_x += random_between(game, -GO_ASIDE_METERS, GO_ASIDE_METERS);
-			try_z += random_between(game, -GO_ASIDE_METERS, GO_ASIDE_METERS);
-		}
-		if (potop_actor_can_stand(potop, bear->actor_id, try_x, try_z))
-		{
-			potop_actor_set_running(potop, bear->actor_id, running);
-			bear->going = potop_actor_go_to(potop, bear->actor_id, try_x, try_z);
-			bear->goal_x = try_x;
-			bear->goal_z = try_z;
-			return;
-		}
+		potop_actor_set_running(potop, bear->actor_id, running);
+		bear->going = potop_actor_go_to(potop, bear->actor_id, near_x, near_z);
+		// (where it was sent after: the one who sends it asks whether that
+		// has moved on, not the place by it)
+		bear->goal_x = x;
+		bear->goal_z = z;
+		return;
 	}
 	stand(potop, bear);
 	bear->go_again_at = now + (double)random_between(game, GO_AGAIN_SECONDS_LEAST, GO_AGAIN_SECONDS_MOST);
