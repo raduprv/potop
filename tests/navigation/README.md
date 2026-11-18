@@ -100,10 +100,29 @@ out by a refused step:
   as near the goal as it gets. Nothing to shut (the last rectangle),
   the way is cut where it stops holding. So the cow is not sent up the
   inn's stairs to find out there: it goes to the foot of the terrace
-  and stands. The mesh itself is as it was (1 m cells): the quarters
-  are asked about the one way found, not built into every tile (that
-  was the other way to do it: rectangles over quarter meters near
-  objects, every tile's build that much heavier).
+  and stands. (Since the mesh is built from the quarter meters, below,
+  this is a net: in the tests no way is refused by it any more.)
+
+- **The mesh from the quarter meters** (mesh_build_tile). It was built
+  from 1 m cells: a cell was usable to a class if a square of its width
+  fitted somewhere in it or its neighbors, the ground of a cell with
+  anything over any part of it was taken whole, portals were cut at
+  quarter lines after the fact. So the 75 cm of ground beside the
+  church porch's end were no one's, waypoints sat by posts, and the
+  quarters had to be asked afterwards whether a body gets there. Now a
+  quarter meter's level (the ground, an object's top) is in a class's
+  mesh where a body of the class can have its middle there: it stands
+  there and all eight points round it (the guard's own,
+  quarter_tightness) rest within a step. The rectangles are in quarter
+  meters and are the space of the bodies' middles. A class two quarters
+  wide (the man) is tried with its middle where four quarters meet, so
+  a doorway two quarters wide is one line of its mesh (its rectangles
+  lie half a quarter low: mesh_offset). The ground of a cell partly
+  under something is kept by the quarter (a surface at the ground's
+  height, finish_region), heights to the nearest 2 cm (a tread 0.34
+  under its terrace read 0.36 by rounding up). A goal where no body's
+  middle can be goes to the nearest quarter level with it; a start off
+  the mesh to the nearest rectangle it has a straight way to.
 
 - **Jumps** (mesh_jump, actors.c jump_move): an agent with
   `jump_up_meters` / `jump_down_meters` (actors.ini; the bear 0.9 and
@@ -120,15 +139,17 @@ out by a refused step:
   landing, gathers, goes over on an arc (0.25 m over the higher end,
   falling as things fall, tilted by how it rises and falls, no IK),
   lands, goes on. Clips if the model has them: jump_start, jump_air,
-  jump_land (none yet: it goes over as it walks). A terrace ends short
-  of its cell's side as often as not (the church's porch 0.75 m short):
-  each side's surface is looked for in from the portal's line
-  (mesh_surface_begins), and the quarters between are open if nothing
-  stands in them at the upper level and no other top is in the way
-  (mesh_gap_open; the ground's own room is its cell's, of no use
-  there). The bear jumps the inn's and the church's terraces at their
-  ends (no balustrade there) and the gallery house's; not over a
-  balustrade, not onto the ledges along walls (too narrow to land on).
+  jump_land (the bear has them). Between the ground's rectangles and a
+  terrace's there are quarters that are neither's (a body's middle is
+  not by the terrace's face nor on its edge): a portal over them has a
+  gap (navigation_portal_t.gap, up to 4 quarters) and is only jumped.
+  mesh_jump goes over the gap's quarters: each stood on at the level it
+  leaves, then at the one it lands on (a post, a balustrade, a bench
+  against the face: neither, no jump); the edge is where the one
+  becomes the other. The bear jumps the inn's and the church's
+  terraces at their ends (no balustrade there) and the gallery house's;
+  at the church it leaves the ground beside the porch's end now, 1.1 m
+  from where it lands (it was 2 m: that ground was no one's).
 
 The step guard is still there (a net: steps are no longer planned to be
 refused), and the slide along an edge with it.
@@ -150,16 +171,46 @@ given up at a stair; nav_stress.py 0 wrong, cow+run on the spot 76 ->
 69 s; chase.py behind at the end 78 -> 72 s. A search costs about
 0.02 ms more (0.3 ms where a fine way has to be looked for).
 
+The mesh from the quarter meters, against the commit before it (same
+tests, same day):
+
+```
+nav_stress.py run            : 0 wrong -> 0 wrong (the hen no longer takes treads of 0.225 with its
+                               step of 0.2: either was right); on the spot, the six walkers:
+                               40 60 67 76 61 71 s -> 38 59 58 59 45 47 s
+houses.py --run (24 walks)   : goals wrong 0 -> 0; on the spot 380 -> 314 s; the biggest turn 283 -> 179
+                               degrees; steps refused 2 -> 0; fine searches that find nothing 19 -> 0;
+                               ways refused by the check: none
+chase.py (14 houses x 2)     : behind the runner at the end 74 -> 48 s; steps refused 2 -> 0; on the
+                               spot 293 -> 326 s (the inns 58 -> 100 s: more of the way is jumped,
+                               the turn and the gathering before each count; the rest 235 -> 226 s);
+                               idle 18 -> 32 s (the log cabin, the cottage: it waits at the nearest
+                               place its body fits while the runner is where it does not)
+a search                     : median 0.03 ms as before; a tile's build 1.3 ms of open ground, 3 to
+                               3.5 ms with a church on it (this machine; once a tile and class)
+```
+
+"Off the mesh" in the traces means less now: the mesh is where a body's
+middle is planned, a walker brushing along a wall is off it and fine.
+
 What is on the spot now is mostly the turn at a walk's start (a second
 or so each: the tests send it off from a standstill, the goal behind
 it) and a turn at a tight corner (under a second, about one a station).
 
 Still open:
 
-- **Waypoints by posts.** The funnel's corners are the rectangles'
-  (inset by the radius), not the free quarters'; by a stair's side the
-  waypoint is over the stringer. The fine way goes round it at the
-  place; the way given out could carry the fine way's points instead.
+- **A class is its widest agent.** The bear (0.35) and the cow (0.37)
+  share a mesh made for 0.37 and the lower of the two; what an agent
+  cannot do that its class can (a step, a beam) is still found at the
+  portals and by the check of the way. A third width of animal that is
+  much wider wants a class of its own.
+- **Memory.** Round a house a tile has a few hundred rectangles where
+  it had a few dozen; a forest will have thousands. Tiles are built
+  only where something walks. The editor's bake (planned) is the place
+  to make them once and well.
+- **A tile's build** is 1.3 ms and up, once a tile and class and again
+  when its region or one beside it changes (a tile looks a cell into
+  its neighbors).
 - **Lines** (navigation_line_passable) do not know the shut portals;
   the follower asks its body's line besides, so it does not matter to
   it, but a game that asks a line alone gets the mesh's word.
@@ -183,26 +234,32 @@ engine/actors.c (following a path: move_actor and the helpers above it).
    height) and `room[]` (clearance above). Objects' tops within
    MERGE_METERS (0.1) of the ground count as ground; anything higher
    in a cell blocks the ground there (terrain_clearance per cell).
+   A cell partly under something has its free ground as a surface too
+   (at the ground's height, `ground_below`), each quarter with its own
+   room.
 2. **The mesh** (mesh_build_tile, lazy per 64 m tile and per class).
    Three classes of agent by width in quarters (round(2r / 0.25)): 1 a
-   hen, 2 a man, 3 a bear or a cow. A node per cell (ground) or per
-   surface; usable for a class where a square of its width of quarters
-   with room for its lowest agent fits (surface_square_room, looking
-   into the 8 neighbor cells too). Usable cells merged greedily into
-   rectangles (at most 16 cells a side) of alike nodes. **Portals**
-   between rectangles where the quarters on either side meet within a
-   step (node_edge_rise / node_edge_span), cut to the quarter lines
-   that meet, dropped if narrower than the class.
+   hen, 2 a man, 3 a bear or a cow. Per quarter meter up to four levels
+   (mesh_build_cell: the ground, the cell's surfaces); a level is the
+   class's where its lowest agent stands there and the eight points of
+   its widest body round it rest within a step (mesh_point_rests; open
+   ground all round: no test). Those are merged greedily into
+   rectangles (at most 64 quarters a side) of alike levels, each step
+   inside one the whole class takes. **Portals**: along each side,
+   quarter by quarter, the level beyond nearest in height that is
+   another rectangle's (mesh_side_portals), runs of the same step
+   level; over quarters that are no rectangle's, to the first that is
+   (4 at most), a portal with a gap: an edge to jump. Each node's
+   rectangle is kept per cell, or per quarter where its quarters differ
+   (navigation_mesh_tile_t.detail).
 3. **Search**: A* over rectangles (mesh_search), then the funnel
-   (mesh_funnel, portals inset by the agent's radius), then the way
-   gone over the quarter meters (mesh_way_holds; a portal shut and
-   searched again where it does not hold: mesh_find_path). Lines
-   (navigation_line_passable) walk the rectangles and their portals.
-   The cells themselves are not searched any more (their A*, its
-   per-cell state and `simulation.navmesh` are gone): a walker on no
-   rectangle is sent straight to the nearest within 8 cells; a line
-   from where the rectangles have nothing is still sampled over the
-   cells (line_clear).
+   (mesh_funnel, through the middles of the portals' end quarters),
+   then the way gone over the quarter meters (mesh_way_holds; a portal
+   shut and searched again where it does not hold: mesh_find_path).
+   Lines (navigation_line_passable) walk the rectangles and their
+   portals, and go over the quarter meters for a meter at most at
+   either end, where a walker or a goal is off the rectangles.
+   The cells themselves are neither searched nor sampled any more.
 4. **Following** (actors.c move_actor):
    - inertial_turn: turn speed ramps up and down (0.2 s); on a path at
      most pivot_degrees_per_second standing (90), down to the type's

@@ -78,27 +78,28 @@ flag and stable ids. At the end: maps as recipes (seed, size, painted
 layers, object changes with their final state; a version number, and maps
 from an older version get their terrain difference baked in once).
 
-## Navigation mesh (Nov 2026: phases 1-3 in, navigation.h)
+## Navigation mesh (Nov 2026: built from the quarter meters, navigation.h)
 
-- The small class at 0.5 m: the region build rasterizes objects into 1 m
-  cells; a 0.5 m grid for the small class (hens through fences, people in
-  narrow rooms) needs that build at 0.5 m first.
+- The editor's bake: a map's tiles made once (the same builder, no hurry)
+  and saved with it, a hash per tile; the game builds only tiles that
+  changed. Then islands (which rectangles are joined at all) and a coarse
+  graph for long ways.
+- A tile's memory round houses and in a forest (hundreds to thousands of
+  rectangles, their search state in each: tests/navigation/README.md).
 - Phase 4, memory for big maps (8k): the per cell grid only while a tile
   is built (heights from the terrain, feet on objects from the tile's
   surfaces); the mesh (and the flyers' coarse grid) kept. Baked maps save
   the mesh with the map.
 - Phase 5, any number of levels: the build reads the objects' collision
   straight into columns of surfaces (now 3 above the terrain at most).
-- Then the cells' A* and the path pulling can go.
 - The open problem (spins at stairs, turning on the spot, the two grids):
   tests/navigation/README.md, with the tests and the baseline.
 - A running cow (3.3 m/s, 30 degrees a second: a turn 6 m wide) on a
   terrace 2 m deep goes round in circles at the rail (the step guard
   keeps it in): it should slow to a walk where its turn does not fit.
 - Church porch: the farmer (1.85) under its 1.65 m beam (see below).
-- Stress test (tests/navigation/nav_stress.py run) known limits: ground cells are still whole meters (a 1 m
-  door on bare ground can come out shut); the portals to the next tile
-  are not cut to their quarter meters. Each fix: a station for it.
+- Stress test (tests/navigation/nav_stress.py run): each new failure a
+  station for it.
 - Church porch: a beam 1.65 m over the top of its stair: the farmer (1.85,
   his model's height) no longer goes up. A height_meters for people
   (stooping) or the model's beam higher: Radu's call.

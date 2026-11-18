@@ -26,14 +26,24 @@ trunk is in the way and its crown is not; objects smaller than
 actors walk through pebbles. A wall takes exactly the room it
 has, a bridge can be crossed on top and, if there is room, under.
 
-The surfaces are gathered into rectangles (the navigation mesh: per 64 m
-of map and per width of actor, cells merged where they are alike and a
-step apart at most), and a search is A* over those, through the openings
-between them. An actor can be on a surface with at least its
+Where an actor's body fits is gathered into rectangles (the navigation
+mesh: per 64 m of map and per width of actor), and a search is A* over
+those, through the openings between them. The mesh is made from the
+quarter meters, not from the cells: a quarter meter of a surface is in
+it where a body of that width can have its middle there, with all of the
+body on something within a step. So it ends a body's half width (a
+little less: the body may brush) from a wall, a post, the open edge of a
+terrace; a gap is in it if the body gets through, and the strip of
+ground beside a porch is ground like any other. Its rectangles are in
+quarter meters (up to 16 m a side on open ground, small ones round a
+house); a region's are made when a search first gets there (about a
+millisecond of open ground, a few with a house on it) and again when
+something in the region or by its edge changes. An actor can be on a
+surface with at least its
 `height_meters` of room (by default its model's height), not in water too
 deep or too fast for it; it gets from one rectangle to the next if the
-height between them is within its `step_meters` or its
-`maximum_slope_degrees`. Steep ground and water cost more, so it takes a
+height between them is within its `step_meters` (an object's top: a
+stair's tread) or its `maximum_slope_degrees` (the ground). Steep ground and water cost more, so it takes a
 detour rather than the hill or the lake when the detour is not too long.
 The estimate of the way left is weighed a little over the truth (by 1.3),
 which keeps the search heading for the goal, for paths at most that much
@@ -42,10 +52,14 @@ longer than the best. The search gives up after an eighth of
 the reached one nearest the goal. A search across a meadow is a few
 rectangles, a few hundredths of a millisecond; round a village a few
 tenths. The way through the rectangles is pulled tight into at most 32
-waypoints, the actor's radius off the openings' ends; a longer path is
-searched on from its last waypoint. An actor that stands on no rectangle
-(pushed onto a rock, into a corner too tight for it) is sent straight to
-the nearest one within 8 m; with none that near it has no way.
+waypoints; a longer path is searched on from its last waypoint. A goal
+where its body's middle cannot be (right by a wall, by a table) is taken
+to the nearest place it can, up to 0.75 m off and level with the goal
+(not the ground beside the porch the goal is on). An actor that stands
+on no rectangle (by a wall, pushed onto a rock, into a corner too tight
+for it) starts from the nearest one, one it has a straight way to if
+there is one within 2 m, any within 8 m; with none that near it has no
+way.
 
 On the way it steers for a point a little ahead on its path, turning
 as fast as its pace lets it: `pivot_degrees_per_second` standing (90 by

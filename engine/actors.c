@@ -2253,7 +2253,7 @@ static float arc_speed(const actor_type_t *type, float radius)
 }
 
 // Whether its body can go straight from where it is to a point: the
-// path finding's line there (the cells' rectangles: no wall, no drop, no
+// path finding's line there (the navigation mesh's: no wall, no drop, no
 // deep water between) and its body's along it over the quarter meters
 // (navigation_body_line, the first BODY_WAY_METERS of it: by its step
 // guard's own measure, so the steps of a way this lets through are not
@@ -3309,7 +3309,7 @@ static void plan_fine(actors_t *actors, actor_t *actor, const navigation_t *navi
 	actor->fine_for_x = actor->path[actor->path_index][0];
 	actor->fine_for_z = actor->path[actor->path_index][1];
 	// (to the waypoint itself, by it: the clear quarter nearest it, the
-	// waypoint a corner of the cells' rectangles, by a post as often as not)
+	// waypoint a corner of the mesh's rectangles, by a post as often as not)
 	actor->fine_to_waypoint = false;
 	if (actor->fine_count > 0)
 	{
@@ -3318,7 +3318,7 @@ static void plan_fine(actors_t *actors, actor_t *actor, const navigation_t *navi
 
 		actor->fine_to_waypoint = end_x * end_x + end_z * end_z < FINE_BY_WAYPOINT_METERS * FINE_BY_WAYPOINT_METERS;
 	}
-	// (none: the quarter meters have no way where the cells' rectangles
+	// (none: the quarter meters have no way where the mesh's rectangles
 	// found one, up a stair's treads too high for it, under a beam too
 	// low; none again a little later: it gives up, move_actor)
 	actor->fine_failures = actor->fine_count > 0 ? 0 : actor->fine_failures + 1;
@@ -3358,7 +3358,7 @@ static bool step_passable(const navigation_t *navigation, const terrain_t *terra
 	ahead_free = navigation_quarter_free(navigation, terrain, water, &center, ahead_x, ahead_z, actor->center_ground);
 	// (and its body room where the step ends: a brush or two of its
 	// sides, or no tighter than where it is; not onto the ledge outside a
-	// balustrade, a strip the cells' rectangles take in whole)
+	// balustrade)
 	if (ahead_free && !fine)
 	{
 		int tight_after = navigation_quarter_tightness(navigation, terrain, water, agent, actor->x + step_x, actor->z + step_z, actor->center_ground);

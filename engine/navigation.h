@@ -53,37 +53,50 @@
 // blocks of 4 x 4 cells around what does (a mountain), climbing costing a
 // little. How high they fly along the way is theirs (see actors.h).
 //
-// The navigation mesh: the same surfaces gathered into rectangles the
-// walkers' searches go over (the cells themselves were searched once: a
-// node each, tens of megabytes of search state on a big map). Per region (a tile) and per class of agent (by its width in quarter
-// meters: a hen 1, a man 2, a cow or a bear 3), the usable surfaces are merged greedily into rectangles (up to
-// NAVIGATION_MESH_RECT_MOST cells a side) where every cell is alike (the
-// room above, the blockers' groups, a small object, the slope's cost, the
-// same kind: ground or an object's top) and any step between neighbors is
-// within the class's reach (the least of its agents': anyone of the class
-// goes anywhere inside). Cells with water at the build stay rectangles of
-// one cell (looked at with the water as it is, as the cells are); the
-// tile is built again when its water's cells change, when its region is
-// (its generation), or when an agent of a lesser reach (or a lower or a
-// wider one) joins the class. Nothing here is fitted to a house: an
-// object's top is usable to a class where a square of its quarter meters
-// the class's width a side has the room of the class's lowest; a quarter
-// with less room (under a rail) is a wall to it; a portal ends where the
-// quarters on either side meet within a step and is left out if narrower
-// than the class; ground cells keep away from what takes all the room, by
-// the widest agent's radius in whole cells. Rectangles meet at
-// portals (a run of the shared edge, its worst step: per agent at search
-// time whether it climbs that), within the tile and across to the next
-// (linked when either is built). A* over the rectangles (the agent's own
+// The navigation mesh: where a walker's body fits, gathered into
+// rectangles its searches go over. It is built from the quarter meters
+// the objects are sampled at, not from the cells: each quarter meter of a
+// cell has its levels (the ground, the cell's objects' tops, each with
+// its own room above), and a level of a quarter is in the mesh of a class
+// of agents where a body of the class can have its middle there: it
+// stands there, and every point round it rests on something within a
+// step (the points the walkers' own guard measures a body by,
+// navigation_quarter_tightness). So the mesh is the space of the bodies'
+// middles: by a wall it stops where the body would be in the wall, a gap
+// is in it if the body gets through, a terrace's floor ends short of its
+// open edge, and the 75 cm of ground beside a porch are ground. A class
+// is its agents' width in quarter meters (a hen 1, a man 2, a cow or a
+// bear 3 and more); a body an odd number of quarters wide is tried with
+// its middle in a quarter's middle, an even one where four quarters meet
+// (a man in a doorway two quarters wide), so an even class's rectangles
+// lie half a quarter low of the quarter meters. Per region (a tile) and
+// class, the quarters are merged greedily into rectangles (up to
+// NAVIGATION_MESH_RECT_MOST of them a side) that are alike (the room
+// above, the blockers' groups, a small object, the slope's cost, the
+// ground or an object's top) with every step between neighbors one the
+// whole class takes (the ground: its slope's reach). Cells with water at
+// the build stay rectangles within their cell (looked at with the water
+// as it is); the tile is built again when its water's cells change, when
+// its region or one round it is (it looks a cell into them), or when an
+// agent of a lesser reach or step (or a lower or a wider one) joins the
+// class. Rectangles meet at portals: a run of quarters along a side
+// whose level beyond is another rectangle's, with its worst step (per
+// agent at search time whether it takes that: an object's top a step,
+// the ground its slope), within the tile and across to the next (linked
+// when either is built). Where two rectangles more than a step apart
+// have only quarters between them that are neither's (the ground by a
+// terrace's face, the terrace's own edge) the portal has a gap: an edge
+// to jump, for an agent that jumps (mesh_jump finds where it leaves the
+// ground and where it lands). A* over the rectangles (the agent's own
 // rules for the room, the groups, small objects and the water, at the
-// time), then the corridor pulled tight (the funnel), the agent's radius
-// off the portals' ends. The doors are links between the rectangles of
-// their ends' cells. The straight line (navigation_line_passable) walks the
-// rectangles, looking only where it crosses from one to the next. Where
-// the mesh has nothing (the start on a cell the large class keeps off, a
-// map's edge) the cells' way is taken, as before. The classes are built
-// from the 1 m cells for now (the small one at 0.5 m wants the region
-// build at 0.5 m first: TODO.md).
+// time), then the corridor pulled tight (the funnel) through the middles
+// of the portals' end quarters. A goal where no body's middle can be (by
+// a wall, by a table) is taken to the nearest quarter that is level with
+// it. The doors are links between the rectangles nearest their ends. The
+// straight line (navigation_line_passable) walks the rectangles, looking
+// only where it crosses from one to the next; off them (a walker by a
+// wall, a line's end by a table) it goes over the quarter meters, for a
+// meter at each end at most.
 //
 // The search's working memory belongs to the navigation and is reused
 // between searches without clearing (nodes carry the number of the search
@@ -203,6 +216,12 @@ typedef struct
 	// agent too tall for a quarter's room takes it for a wall (under a
 	// balustrade's rail)
 	uint8_t room[NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS];
+	// The ground's own quarters in it, where something stands on or over
+	// only part of its cell (the 75 cm beside a porch's end, the strip
+	// along a wall): their below value (the ground's height under its
+	// own), NAVIGATION_SUBCELL_NONE if it has none. The cell's ground as a
+	// whole is taken then (terrain_clearance 0): this is where it is free
+	uint8_t ground_below;
 } navigation_surface_t;
 
 // A node waiting in the search's open list, and its priority (the cost so
@@ -216,7 +235,7 @@ typedef struct
 
 // The navigation mesh (see the top)
 #define NAVIGATION_MESH_CLASSES 3               // by width in quarter meters: 1 (a hen), 2 (a man), 3 and more (a cow, a bear)
-#define NAVIGATION_MESH_RECT_MOST 16            // cells a side of a rectangle at most
+#define NAVIGATION_MESH_RECT_MOST 64            // quarter meters a side of a rectangle at most
 
 // Where one rectangle leads into the next: a run of the edge they share
 typedef struct
@@ -226,14 +245,19 @@ typedef struct
 	float a[2];                        // the run's ends (x, z, meters)
 	float b[2];
 	float rise;                        // the worst step across it (meters)
-	bool cross_surface;                // between the ground and an object's top (a step only, no slope)
+	bool cross_surface;                // an object's top on either side (a step only, no slope: that is the ground's)
+	// Quarter meters between the two that are neither's (where a body's
+	// middle cannot be: by a terrace's face below, on its edge above): not
+	// walked through, only an edge to jump (navigation_agent_t's jumps). 0:
+	// they touch
+	uint8_t gap;
 } navigation_portal_t;
 
 typedef struct
 {
-	int32_t x;                         // its first cell (x, z)
+	int32_t x;                         // its first quarter meter (x, z, over the whole map)
 	int32_t z;
-	uint8_t width;                     // cells
+	uint8_t width;                     // quarter meters
 	uint8_t depth;
 	uint8_t kind;                      // 0: the ground, 1: an object's top
 	uint8_t clearance;                 // the least room above (NAVIGATION_CLEARANCE_UNIT_METERS each, or OPEN)
@@ -261,6 +285,7 @@ typedef struct
 {
 	bool built;
 	uint32_t generation;               // its region's at the build
+	uint32_t margin_signature;         // the regions round it at the build (a cell of each is looked into)
 	uint32_t class_epoch;              // its class's at the build
 	uint64_t water_signature;          // its water's cells at the build
 	uint64_t water_checked_ticks;      // when they were last compared (SDL_GetTicks)
@@ -275,8 +300,15 @@ typedef struct
 	navigation_portal_t *border[4];    // to the next tile (+x, -x, +z, -z)
 	int32_t border_count[4];
 	int32_t border_capacity[4];
-	int16_t *ground_rect;              // per cell of the region: the rectangle its ground is in (-1: none)
-	int16_t *extra_rect;               // per extra surface slot of the region
+	// Per cell of the region, and per extra surface slot of it: the
+	// rectangle all its quarter meters are in, -1: none of them in any, or
+	// -2 - a row of detail: its sixteen quarters' own (each a rectangle or
+	// -1: a cell by a wall, some of it no place for a body's middle)
+	int16_t *ground_rect;
+	int16_t *extra_rect;
+	int16_t *detail;                   // rows of NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS
+	int32_t detail_count;
+	int32_t detail_capacity;
 } navigation_mesh_tile_t;
 
 typedef struct
@@ -284,7 +316,8 @@ typedef struct
 	float reach;                       // the least step (or slope over a cell) of its agents seen
 	float height;                      // the lowest of them
 	float step;                        // the least step of them (onto an object's top)
-	int32_t erosion_cells;             // cells kept off what takes all the room (its widest)
+	float step_most;                   // and the highest (what a body's points rest on round its middle)
+	float radius;                      // the widest of them (half its width): where its body's middle can be
 	int32_t width_quarters;            // its agents' width in quarter meters (the class's own: its index + 1)
 	uint32_t epoch;                    // a change of the above: its tiles built again
 	navigation_mesh_tile_t *tiles;     // per region
@@ -325,7 +358,6 @@ typedef struct
 	int64_t searches;                  // statistics: over the rectangles
 	int64_t search_fallbacks;          // of which none: no rectangle anywhere near the start
 	int64_t lines;
-	int64_t line_fallbacks;
 } navigation_mesh_t;
 
 // What a search knows of a node: all of it side by side (one cache line,
