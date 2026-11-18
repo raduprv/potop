@@ -10,16 +10,41 @@
 # object's top); "g X Z" the walk test's goals in turn.
 
 import math
+import os
 import sys
 
 # Moved less than this in a quarter of a second (0.4 m/s): on the spot,
-# or as good as (a bear walks 0.77 m/s)
+# or as good as (a bear walks 0.77 m/s); or less than half its walking
+# pace, for one that walks slower than that (a hen's 0.25 m/s: all of its
+# walk was "on the spot", 20 minutes of it, and its turns walking "spins")
 SPOT_METERS = 0.1
+SPOT_PACE_SHARE = 0.5
+ACTORS_INI = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "actors.ini")
 # A rectangle's height this near the actor's: the one it stands on
 HEIGHT_SLACK = 0.5
 
 
+# Each type's walking pace (data/actors.ini: walk_meters_per_second, 1.5
+# where it is not given)
+def walking_paces():
+	paces = {}
+	section = None
+	try:
+		with open(ACTORS_INI) as ini:
+			for line in ini:
+				line = line.split(";")[0].strip()
+				if line.startswith("[") and line.endswith("]"):
+					section = line[1:-1]
+					paces[section] = 1.5
+				elif section is not None and line.replace(" ", "").startswith("walk_meters_per_second="):
+					paces[section] = float(line.split("=")[1])
+	except OSError:
+		pass
+	return paces
+
+
 def read(path):
+	paces = walking_paces()
 	samples = []
 	rects = []
 	goals = []
@@ -30,7 +55,7 @@ def read(path):
 				continue
 			if parts[0] == "a" and len(parts) >= 11:
 				samples.append({"time": float(parts[1]), "x": float(parts[5]), "z": float(parts[6]), "moving": parts[7] == "1",
-					"yaw": float(parts[9]), "y": float(parts[10])})
+					"yaw": float(parts[9]), "y": float(parts[10]), "pace": paces.get(parts[3], 1.5)})
 			elif parts[0] == "r" and len(parts) >= 7:
 				rects.append((float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4]), int(parts[5]), float(parts[6])))
 			elif parts[0] == "g" and len(parts) >= 3:
@@ -68,7 +93,7 @@ def spot_turns(samples):
 	run = None
 	for previous, sample in zip(samples, samples[1:]):
 		moved = math.hypot(sample["x"] - previous["x"], sample["z"] - previous["z"])
-		if sample["moving"] and moved < SPOT_METERS:
+		if sample["moving"] and moved < min(SPOT_METERS, SPOT_PACE_SHARE * sample["pace"] * (sample["time"] - previous["time"])):
 			if run is None:
 				run = {"start": previous["time"], "x": previous["x"], "z": previous["z"], "degrees": 0.0, "seconds": 0.0}
 			run["degrees"] += abs(math.degrees(wrap(sample["yaw"] - previous["yaw"])))
