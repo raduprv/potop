@@ -640,6 +640,37 @@ void navigation_build_all(navigation_t *navigation, const terrain_t *terrain, co
 // surface queries read (they do not build anything themselves)
 void navigation_prepare_around(navigation_t *navigation, float x, float z);
 
+// The navigation mesh as it is, for showing it (the game's overlay): a
+// class's rectangles that reach into a box (meters), and their portals.
+// The box's tiles are made first if the class has agents (false from
+// navigation_mesh_class_used: nothing to show)
+typedef struct
+{
+	float x0;                          // its box, meters
+	float z0;
+	float x1;
+	float z1;
+	float height_low;                  // of its surface
+	float height_high;
+	bool ground;                       // the ground (its height is the terrain's); or an object's top
+	int32_t id;                        // its tile * 65536 + its index
+} navigation_debug_rect_t;
+
+typedef struct
+{
+	float a[2];                        // its ends (x, z, meters)
+	float b[2];
+	float height;                      // of the rectangle it leaves (an object's top)
+	bool ground;                       // or the ground: the terrain's there
+	bool jump;                         // over what is neither rectangle's: only jumped
+	float rise;                        // its worst step
+} navigation_debug_portal_t;
+
+bool navigation_mesh_class_used(const navigation_t *navigation, int class_index);
+void navigation_mesh_debug(navigation_t *navigation, const water_t *water, int class_index, float minimum_x, float minimum_z, float maximum_x,
+	float maximum_z, navigation_debug_rect_t *rects_out, int rects_most, int *rect_count_out, navigation_debug_portal_t *portals_out,
+	int portals_most, int *portal_count_out);
+
 // The navigation mesh's rectangles of the agent's class (built ones) that
 // reach into the box: x, z (their first corner, meters), width, depth
 // (meters), kind (0 the ground, 1 an object's top), its highest cell's height, at most most; how many

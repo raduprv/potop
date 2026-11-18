@@ -50,6 +50,7 @@ struct potop_s
 	console_t console;             // ` (or ~): the log and the commands
 	bool map_loaded;               // the console loaded a map: the game is told at the next frame
 	bool screenshot_requested;
+	int navmesh_overlay_class;         // F4: the navigation mesh shown, of this class of walkers (by width); -1: not
 	char title[64];                // the window's (the loading screen's too)
 	const char *stage_name;        // what is being made (the loading screen)
 	uint64_t stage_counter;

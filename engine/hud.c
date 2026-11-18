@@ -15,6 +15,7 @@
 #define NOTICES_WINDOW "notices"
 #define DIALOG_WINDOW "dialog"
 #define NAMES_WINDOW "names"
+#define SHAPES_WINDOW "world shapes"
 #define DEBUG_WINDOW "debug"
 
 #define ROW_HEIGHT 26.0f
@@ -1078,6 +1079,60 @@ static void journal_window(hud_t *hud, const hud_view_t *view)
 // Names and the dialog
 
 // Over the named actors near the eye
+// The shapes drawn in the world (hud_world_shape_t): each with its own
+// depth, hidden by what stands nearer
+static void world_shapes_window(hud_t *hud, const hud_view_t *view)
+{
+	struct nk_context *context = &hud->backend->context;
+	struct nk_rect bounds = nk_rect(0.0f, 0.0f, hud->backend->width, hud->backend->height);
+	struct nk_color background = hud->colors[NK_COLOR_WINDOW];
+
+	if (view->world_shape_count == 0 || view->world_shapes == NULL)
+	{
+		nk_window_show(context, SHAPES_WINDOW, NK_HIDDEN);
+		return;
+	}
+	nk_window_show(context, SHAPES_WINDOW, NK_SHOWN);
+	background.a = 0;
+	nk_style_push_style_item(context, &context->style.window.fixed_background, nk_style_item_color(background));
+	if (nk_begin(context, SHAPES_WINDOW, bounds, NK_WINDOW_NO_SCROLLBAR | NK_WINDOW_NO_INPUT | NK_WINDOW_BACKGROUND))
+	{
+		struct nk_command_buffer *canvas = nk_window_get_canvas(context);
+		const struct nk_user_font *font = context->style.font;
+
+		nk_window_set_bounds(context, SHAPES_WINDOW, bounds);
+		for (int i = 0; i < view->world_shape_count; i++)
+		{
+			const hud_world_shape_t *shape = &view->world_shapes[i];
+			struct nk_color color = nk_rgba(shape->color[0], shape->color[1], shape->color[2], shape->color[3]);
+
+			nk_set_user_data(context, ui_backend_world_depth(shape->depth));
+			if (shape->count == 4)
+			{
+				float points[8];
+
+				SDL_memcpy(points, shape->points, sizeof(points));
+				nk_fill_polygon(canvas, points, 4, color);
+			}
+			else if (shape->count == 2)
+			{
+				nk_stroke_line(canvas, shape->points[0], shape->points[1], shape->points[2], shape->points[3], shape->thickness, color);
+			}
+			if (shape->label[0] != '\0')
+			{
+				int length = nk_strlen(shape->label);
+				float width = font->width(font->userdata, font->height, shape->label, length);
+
+				nk_draw_text(canvas, nk_rect(shape->points[0] - 0.5f * width, shape->points[1] - 0.5f * font->height, width + 2.0f, font->height),
+					shape->label, length, font, nk_rgba(0, 0, 0, 0), nk_rgb(255, 255, 255));
+			}
+		}
+		nk_set_user_data(context, nk_handle_id(0));
+	}
+	nk_end(context);
+	nk_style_pop_style_item(context);
+}
+
 static void names_window(hud_t *hud, const hud_view_t *view)
 {
 	struct nk_context *context = &hud->backend->context;
@@ -1270,6 +1325,7 @@ void hud_update(hud_t *hud, ui_backend_t *backend, const struct nk_color *colors
 	}
 	hud->backend = backend;
 	hud->colors = colors;
+	world_shapes_window(hud, view);
 	names_window(hud, view);
 	compass_window(hud, view);
 	dialog_window(hud, view);

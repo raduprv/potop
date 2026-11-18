@@ -6152,6 +6152,99 @@ int navigation_mesh_rects(const navigation_t *navigation, const navigation_agent
 	return count;
 }
 
+bool navigation_mesh_class_used(const navigation_t *navigation, int class_index)
+{
+	return class_index >= 0 && class_index < NAVIGATION_MESH_CLASSES && navigation->mesh.classes[class_index].tiles != NULL
+		&& navigation->mesh.classes[class_index].radius > 0.0f;
+}
+
+void navigation_mesh_debug(navigation_t *navigation, const water_t *water, int class_index, float minimum_x, float minimum_z, float maximum_x,
+	float maximum_z, navigation_debug_rect_t *rects_out, int rects_most, int *rect_count_out, navigation_debug_portal_t *portals_out,
+	int portals_most, int *portal_count_out)
+{
+	float region_meters = (float)navigation->region_size * NAVIGATION_CELL_METERS;
+	int32_t first_x = SDL_clamp((int32_t)SDL_floorf(minimum_x / region_meters), 0, navigation->regions_per_side - 1);
+	int32_t first_z = SDL_clamp((int32_t)SDL_floorf(minimum_z / region_meters), 0, navigation->regions_per_side - 1);
+	int32_t last_x = SDL_clamp((int32_t)SDL_floorf(maximum_x / region_meters), 0, navigation->regions_per_side - 1);
+	int32_t last_z = SDL_clamp((int32_t)SDL_floorf(maximum_z / region_meters), 0, navigation->regions_per_side - 1);
+	int c = class_index;
+
+	*rect_count_out = 0;
+	*portal_count_out = 0;
+	if (!navigation_mesh_class_used(navigation, class_index))
+	{
+		return;
+	}
+	// (as a search does: the tiles current, each looked at once)
+	navigation->mesh.search_number++;
+	for (int32_t region_z = first_z; region_z <= last_z; region_z++)
+	{
+		for (int32_t region_x = first_x; region_x <= last_x; region_x++)
+		{
+			mesh_tile_ready(navigation, c, region_z * navigation->regions_per_side + region_x, water);
+		}
+	}
+	for (int32_t region_z = first_z; region_z <= last_z; region_z++)
+	{
+		for (int32_t region_x = first_x; region_x <= last_x; region_x++)
+		{
+			int32_t region = region_z * navigation->regions_per_side + region_x;
+			const navigation_mesh_tile_t *tile = &navigation->mesh.classes[c].tiles[region];
+
+			for (int32_t r = 0; tile->built && r < tile->rect_count; r++)
+			{
+				const navigation_rect_t *rect = &tile->rects[r];
+				float low[2];
+				float high[2];
+
+				mesh_rect_box(c, rect, low, high);
+				if (high[0] < minimum_x || high[1] < minimum_z || low[0] > maximum_x || low[1] > maximum_z)
+				{
+					continue;
+				}
+				if (*rect_count_out < rects_most)
+				{
+					navigation_debug_rect_t *out = &rects_out[(*rect_count_out)++];
+
+					out->x0 = low[0];
+					out->z0 = low[1];
+					out->x1 = high[0];
+					out->z1 = high[1];
+					out->height_low = rect->height_low;
+					out->height_high = rect->height_high;
+					out->ground = rect->kind == 0;
+					out->id = (region << 16) | r;
+				}
+				// (its portals: within the tile, and over the tile's sides)
+				for (int list = 0; list < 5; list++)
+				{
+					const navigation_portal_t *portals = list == 0 ? &tile->portals[rect->first_portal] : tile->border[list - 1];
+					int32_t count = list == 0 ? rect->portal_count : tile->border_count[list - 1];
+
+					for (int32_t p = 0; p < count && *portal_count_out < portals_most; p++)
+					{
+						navigation_debug_portal_t *out;
+
+						if (portals[p].from != r)
+						{
+							continue;
+						}
+						out = &portals_out[(*portal_count_out)++];
+						out->a[0] = portals[p].a[0];
+						out->a[1] = portals[p].a[1];
+						out->b[0] = portals[p].b[0];
+						out->b[1] = portals[p].b[1];
+						out->height = rect->height_high;
+						out->ground = rect->kind == 0;
+						out->jump = portals[p].gap != 0;
+						out->rise = portals[p].rise;
+					}
+				}
+			}
+		}
+	}
+}
+
 void navigation_mesh_describe(const navigation_t *navigation, char *text_out, size_t text_size)
 {
 	int32_t region_count = navigation->regions_per_side * navigation->regions_per_side;

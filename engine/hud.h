@@ -80,6 +80,20 @@ typedef struct
 	float map_marker_z;
 } hud_requests_t;
 
+// A shape drawn in the world (the navigation mesh's overlay): its corners
+// on the screen (pixels), its depth as the scene's depth buffer has it
+// (what stands nearer hides it), its color; a line is two corners and a
+// thickness
+typedef struct
+{
+	float points[8];                   // x, y of up to four corners
+	uint8_t count;                     // 4: a filled shape; 2: a line
+	uint8_t color[4];
+	float thickness;                   // a line's, pixels
+	float depth;
+	char label[12];                    // written at its first corner (empty: none)
+} hud_world_shape_t;
+
 // What the HUD shows, for one frame
 typedef struct
 {
@@ -101,6 +115,9 @@ typedef struct
 	dialog_t *dialog;              // NULL: none
 	hud_nameplate_t nameplates[HUD_NAMEPLATES_MAX];
 	int nameplate_count;
+	// Shapes drawn in the world, under everything else of the HUD (NULL: none)
+	const hud_world_shape_t *world_shapes;
+	int world_shape_count;
 	// The world map's picture (NULL: none) and how many meters it spans
 	SDL_GPUTexture *map_texture;
 	int map_texture_width;

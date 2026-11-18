@@ -754,6 +754,34 @@ bool potop_frame_begin(potop_t *potop, potop_input_t *input_out, float *seconds_
 	{
 		potop->screenshot_requested = true;
 	}
+	// F4: the navigation mesh shown in the world, one class of walkers
+	// after the other (the widest first), then not
+	if (input->request_diagnostics)
+	{
+		const navigation_t *navigation = &potop->world.navigation;
+		int next = potop->navmesh_overlay_class < 0 ? NAVIGATION_MESH_CLASSES - 1 : potop->navmesh_overlay_class - 1;
+		char text[160];
+
+		while (next >= 0 && !navigation_mesh_class_used(navigation, next))
+		{
+			next--;
+		}
+		if (next < 0 && potop->navmesh_overlay_class < 0)
+		{
+			SDL_snprintf(text, sizeof(text), "Navigation mesh: none yet (no walker has looked for a way)");
+		}
+		else if (next < 0)
+		{
+			SDL_snprintf(text, sizeof(text), "Navigation mesh: off");
+		}
+		else
+		{
+			SDL_snprintf(text, sizeof(text), "Navigation mesh: walkers %d quarter meter%s wide%s (ground green and blue, objects' tops yellow to "
+				"purple by height; portals white, edges to jump pink)", next + 1, next == 0 ? "" : "s", next == NAVIGATION_MESH_CLASSES - 1 ? " and more" : "");
+		}
+		potop->navmesh_overlay_class = next;
+		hud_notify(&potop->hud, text, 5.0f, HUD_NOTIFY_INFO);
+	}
 	if (input->toggle_fullscreen)
 	{
 		bool fullscreen = (SDL_GetWindowFlags(potop->window) & SDL_WINDOW_FULLSCREEN) != 0;
@@ -1094,6 +1122,211 @@ static void draw_viewmodel(void *user, SDL_GPURenderPass *pass, int scene_width,
 		(float)scene_width / (float)SDL_max(scene_height, 1), camera->walker_on_ground ? walking : 0.0f, potop->session.player.weapon_seconds);
 }
 
+// The navigation mesh shown in the world (F4): the rectangles round the
+// eye as shapes for the HUD, lying on what they are (the ground's follow
+// the terrain, in pieces; an object's top at its height, its height over
+// the ground written on it), their edges, and the portals between them
+#define NAVMESH_OVERLAY_METERS 30.0f
+#define NAVMESH_OVERLAY_PIECE_METERS 2.0f
+#define NAVMESH_OVERLAY_LABEL_METERS 15.0f
+#define NAVMESH_OVERLAY_SHAPES 8000
+#define NAVMESH_OVERLAY_RECTS 2048
+#define NAVMESH_OVERLAY_PORTALS 4096
+
+typedef struct
+{
+	const camera_t *camera;
+	const terrain_t *terrain;
+	float width;
+	float height;
+	hud_world_shape_t *shapes;
+	int count;
+} navmesh_overlay_t;
+
+// A point of the world on the screen (false: behind the eye)
+static bool overlay_point(const navmesh_overlay_t *overlay, float x, float y, float z, float screen_out[2], float *depth_out)
+{
+	vec4_t point = { x, y, z, 1.0f };
+	vec4_t clip = mat4_transform(overlay->camera->view_projection, point);
+
+	if (clip.w <= 0.1f)
+	{
+		return false;
+	}
+	screen_out[0] = (clip.x / clip.w * 0.5f + 0.5f) * overlay->width;
+	screen_out[1] = (0.5f - clip.y / clip.w * 0.5f) * overlay->height;
+	*depth_out = clip.z / clip.w;
+	return true;
+}
+
+// A point's height: the terrain's there (the ground's), or a given one
+static float overlay_height(const navmesh_overlay_t *overlay, bool ground, float x, float z, float height, float lift)
+{
+	return (ground ? terrain_sample_height_meters(overlay->terrain, x, z) : height) + lift;
+}
+
+static bool overlay_near(const navmesh_overlay_t *overlay, float x, float z, float meters)
+{
+	float dx = x - overlay->camera->eye_position.x;
+	float dz = z - overlay->camera->eye_position.z;
+
+	return dx * dx + dz * dz <= meters * meters;
+}
+
+// A line from one point to another, in pieces (following the terrain)
+static void overlay_line(navmesh_overlay_t *overlay, bool ground, float x0, float z0, float x1, float z1, float height, float lift,
+	const uint8_t color[4], float thickness)
+{
+	float length = SDL_sqrtf((x1 - x0) * (x1 - x0) + (z1 - z0) * (z1 - z0));
+	int pieces = SDL_max((int)SDL_ceilf(length / NAVMESH_OVERLAY_PIECE_METERS), 1);
+
+	for (int k = 0; k < pieces && overlay->count < NAVMESH_OVERLAY_SHAPES; k++)
+	{
+		float from = (float)k / (float)pieces;
+		float to = (float)(k + 1) / (float)pieces;
+		float ax = x0 + (x1 - x0) * from;
+		float az = z0 + (z1 - z0) * from;
+		float bx = x0 + (x1 - x0) * to;
+		float bz = z0 + (z1 - z0) * to;
+		hud_world_shape_t *shape = &overlay->shapes[overlay->count];
+		float depth_a;
+		float depth_b;
+
+		if (!overlay_near(overlay, 0.5f * (ax + bx), 0.5f * (az + bz), NAVMESH_OVERLAY_METERS)
+			|| !overlay_point(overlay, ax, overlay_height(overlay, ground, ax, az, height, lift), az, &shape->points[0], &depth_a)
+			|| !overlay_point(overlay, bx, overlay_height(overlay, ground, bx, bz, height, lift), bz, &shape->points[2], &depth_b))
+		{
+			continue;
+		}
+		shape->count = 2;
+		SDL_memcpy(shape->color, color, 4);
+		shape->thickness = thickness;
+		shape->depth = SDL_min(depth_a, depth_b);
+		shape->label[0] = '\0';
+		overlay->count++;
+	}
+}
+
+static void fill_navmesh_overlay(potop_t *potop, hud_view_t *view)
+{
+	static hud_world_shape_t shapes[NAVMESH_OVERLAY_SHAPES];
+	static navigation_debug_rect_t rects[NAVMESH_OVERLAY_RECTS];
+	static navigation_debug_portal_t portals[NAVMESH_OVERLAY_PORTALS];
+	// (the ground's rectangles told apart: a few tints, by their number)
+	static const uint8_t ground_tints[4][3] = { { 60, 200, 120 }, { 60, 170, 225 }, { 130, 210, 70 }, { 40, 200, 195 } };
+	static const uint8_t portal_color[4] = { 255, 255, 255, 235 };
+	static const uint8_t jump_color[4] = { 255, 70, 215, 245 };
+	navmesh_overlay_t overlay;
+	const camera_t *camera = &potop->camera;
+	int rect_count = 0;
+	int portal_count = 0;
+
+	if (potop->navmesh_overlay_class < 0 || !potop->ui_ready)
+	{
+		return;
+	}
+	overlay.camera = camera;
+	overlay.terrain = &potop->world.terrain;
+	overlay.width = (float)potop->backend.width;
+	overlay.height = (float)potop->backend.height;
+	overlay.shapes = shapes;
+	overlay.count = 0;
+	navigation_mesh_debug(&potop->world.navigation, &potop->world.water, potop->navmesh_overlay_class,
+		camera->eye_position.x - NAVMESH_OVERLAY_METERS, camera->eye_position.z - NAVMESH_OVERLAY_METERS,
+		camera->eye_position.x + NAVMESH_OVERLAY_METERS, camera->eye_position.z + NAVMESH_OVERLAY_METERS, rects, NAVMESH_OVERLAY_RECTS, &rect_count,
+		portals, NAVMESH_OVERLAY_PORTALS, &portal_count);
+	for (int r = 0; r < rect_count; r++)
+	{
+		const navigation_debug_rect_t *rect = &rects[r];
+		float middle_x = 0.5f * (rect->x0 + rect->x1);
+		float middle_z = 0.5f * (rect->z0 + rect->z1);
+		float over_ground = rect->height_high - terrain_sample_height_meters(overlay.terrain, middle_x, middle_z);
+		uint8_t fill[4];
+		uint8_t edge[4];
+		int across = SDL_max((int)SDL_ceilf((rect->x1 - rect->x0) / NAVMESH_OVERLAY_PIECE_METERS), 1);
+		int deep = SDL_max((int)SDL_ceilf((rect->z1 - rect->z0) / NAVMESH_OVERLAY_PIECE_METERS), 1);
+
+		if (rect->ground)
+		{
+			SDL_memcpy(fill, ground_tints[(rect->id * 7 + (rect->id >> 16) * 3) & 3], 3);
+			fill[3] = 60;
+		}
+		else
+		{
+			// (yellow at the ground, red a meter and a half up, purple from
+			// three meters)
+			float amount = SDL_clamp(over_ground / 3.0f, 0.0f, 1.0f);
+			float first = SDL_clamp(amount * 2.0f, 0.0f, 1.0f);
+			float second = SDL_clamp(amount * 2.0f - 1.0f, 0.0f, 1.0f);
+
+			fill[0] = (uint8_t)(255.0f + (240.0f - 255.0f) * first + (170.0f - 240.0f) * second);
+			fill[1] = (uint8_t)(225.0f + (70.0f - 225.0f) * first + (60.0f - 70.0f) * second);
+			fill[2] = (uint8_t)(60.0f + (50.0f - 60.0f) * first + (225.0f - 50.0f) * second);
+			fill[3] = 105;
+		}
+		SDL_memcpy(edge, fill, 3);
+		edge[3] = 230;
+		for (int j = 0; j < deep; j++)
+		{
+			for (int i = 0; i < across && overlay.count < NAVMESH_OVERLAY_SHAPES; i++)
+			{
+				float x0 = rect->x0 + (rect->x1 - rect->x0) * (float)i / (float)across;
+				float x1 = rect->x0 + (rect->x1 - rect->x0) * (float)(i + 1) / (float)across;
+				float z0 = rect->z0 + (rect->z1 - rect->z0) * (float)j / (float)deep;
+				float z1 = rect->z0 + (rect->z1 - rect->z0) * (float)(j + 1) / (float)deep;
+				const float corners[4][2] = { { x0, z0 }, { x1, z0 }, { x1, z1 }, { x0, z1 } };
+				hud_world_shape_t *shape = &overlay.shapes[overlay.count];
+				float depth = 1.0f;
+				bool seen = overlay_near(&overlay, 0.5f * (x0 + x1), 0.5f * (z0 + z1), NAVMESH_OVERLAY_METERS);
+
+				for (int k = 0; k < 4 && seen; k++)
+				{
+					float corner_depth;
+
+					seen = overlay_point(&overlay, corners[k][0], overlay_height(&overlay, rect->ground, corners[k][0], corners[k][1],
+						rect->height_high, 0.05f), corners[k][1], &shape->points[2 * k], &corner_depth);
+					depth = SDL_min(depth, corner_depth);
+				}
+				if (!seen)
+				{
+					continue;
+				}
+				shape->count = 4;
+				SDL_memcpy(shape->color, fill, 4);
+				shape->thickness = 0.0f;
+				shape->depth = depth;
+				shape->label[0] = '\0';
+				overlay.count++;
+			}
+		}
+		overlay_line(&overlay, rect->ground, rect->x0, rect->z0, rect->x1, rect->z0, rect->height_high, 0.07f, edge, 1.5f);
+		overlay_line(&overlay, rect->ground, rect->x1, rect->z0, rect->x1, rect->z1, rect->height_high, 0.07f, edge, 1.5f);
+		overlay_line(&overlay, rect->ground, rect->x1, rect->z1, rect->x0, rect->z1, rect->height_high, 0.07f, edge, 1.5f);
+		overlay_line(&overlay, rect->ground, rect->x0, rect->z1, rect->x0, rect->z0, rect->height_high, 0.07f, edge, 1.5f);
+		// (an object's top: how high over the ground, written on it)
+		if (!rect->ground && overlay.count < NAVMESH_OVERLAY_SHAPES && overlay_near(&overlay, middle_x, middle_z, NAVMESH_OVERLAY_LABEL_METERS))
+		{
+			hud_world_shape_t *shape = &overlay.shapes[overlay.count];
+
+			if (overlay_point(&overlay, middle_x, rect->height_high + 0.1f, middle_z, &shape->points[0], &shape->depth))
+			{
+				shape->count = 0;
+				SDL_snprintf(shape->label, sizeof(shape->label), "%.2f", (double)over_ground);
+				overlay.count++;
+			}
+		}
+	}
+	for (int p = 0; p < portal_count; p++)
+	{
+		const navigation_debug_portal_t *portal = &portals[p];
+
+		overlay_line(&overlay, portal->ground, portal->a[0], portal->a[1], portal->b[0], portal->b[1], portal->height, 0.12f,
+			portal->jump ? jump_color : portal_color, portal->jump ? 3.5f : 2.5f);
+	}
+	view->world_shapes = shapes;
+	view->world_shape_count = overlay.count;
+}
+
 void potop_frame_end(potop_t *potop)
 {
 	float seconds = potop->frame_seconds;
@@ -1106,6 +1339,7 @@ void potop_frame_end(potop_t *potop)
 	frame_profile_end(FRAME_GAME, potop->game_counter);
 	// The HUD laid out (what the game said this frame), what it asks
 	fill_hud_view(potop, &view);
+	fill_navmesh_overlay(potop, &view);
 	hud_update(&potop->hud, potop->ui_ready ? &potop->backend : NULL, potop->style.colors, &view, potop->world.elapsed_seconds);
 	if (potop->ui_ready)
 	{

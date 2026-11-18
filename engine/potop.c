@@ -32,6 +32,7 @@ potop_t *potop_create(void)
 	if (potop != NULL)
 	{
 		random_seed(&potop->edit_random, 0x9e3779b97f4a7c15ull);
+		potop->navmesh_overlay_class = -1;
 	}
 	return potop;
 }
