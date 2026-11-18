@@ -15,6 +15,7 @@
 !/plant_plans/
 !/props_plan/
 !/data/
+!/tests/
 
 # data/: all of it but what is made at run time (cache), what make shaders
 # makes (spirv) and the actors (models under a license that does not allow
