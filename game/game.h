@@ -389,13 +389,15 @@ typedef struct
 	// of the type put down (at walk_test_from, or where the player stands)
 	// and sent to each goal in turn, into the trace
 	char walk_test_type[32];
-	float walk_test_goals[16][2];
+	float walk_test_goals[64][2];
 	int walk_test_goal_count;
 	int walk_test_next;            // the goal it is going to
 	bool walk_test_from_set;
 	float walk_test_from[2];
 	uint32_t walk_test_actor;      // 0: not put down yet
 	float walk_test_wait;          // seconds till it is put down / still since it stopped
+	bool walk_test_done;           // every goal tried
+	float walk_test_goal_seconds;  // since it was sent to this goal
 	float walk_test_trail[2][2];   // the trail's box (minimum, maximum), for the trace's map
 	// The workers (workers.c): a smith in each smithy near the eye
 	worker_mind_t workers[GAME_WORKERS_MAX];

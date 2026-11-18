@@ -55,9 +55,8 @@
 //
 // The navigation mesh (navigation.use_navmesh, simulation.navmesh): the
 // same surfaces gathered into rectangles a search goes over instead of the
-// cells. Per region (a tile) and per class of agent (small: a hen, a man;
-// large, radius NAVIGATION_MESH_LARGE_RADIUS and up: a cow, a bear), the
-// usable surfaces are merged greedily into rectangles (up to
+// cells. Per region (a tile) and per class of agent (by its width in quarter
+// meters: a hen 1, a man 2, a cow or a bear 3), the usable surfaces are merged greedily into rectangles (up to
 // NAVIGATION_MESH_RECT_MOST cells a side) where every cell is alike (the
 // room above, the blockers' groups, a small object, the slope's cost, the
 // same kind: ground or an object's top) and any step between neighbors is
@@ -65,9 +64,14 @@
 // goes anywhere inside). Cells with water at the build stay rectangles of
 // one cell (looked at with the water as it is, as the cells are); the
 // tile is built again when its water's cells change, when its region is
-// (its generation), or when an agent of a lesser reach (or, large, a wider
-// one) joins the class. The large class's rectangles keep away from what
-// takes all the room, by its widest agent's radius. Rectangles meet at
+// (its generation), or when an agent of a lesser reach (or a lower or a
+// wider one) joins the class. Nothing here is fitted to a house: an
+// object's top is usable to a class where a square of its quarter meters
+// the class's width a side has the room of the class's lowest; a quarter
+// with less room (under a rail) is a wall to it; a portal ends where the
+// quarters on either side meet within a step and is left out if narrower
+// than the class; ground cells keep away from what takes all the room, by
+// the widest agent's radius in whole cells. Rectangles meet at
 // portals (a run of the shared edge, its worst step: per agent at search
 // time whether it climbs that), within the tile and across to the next
 // (linked when either is built). A* over the rectangles (the agent's own
@@ -77,7 +81,7 @@
 // their ends' cells. The straight line (navigation_line_passable) walks the
 // rectangles, looking only where it crosses from one to the next. Where
 // the mesh has nothing (the start on a cell the large class keeps off, a
-// map's edge) the cells' way is taken, as before. Both classes are built
+// map's edge) the cells' way is taken, as before. The classes are built
 // from the 1 m cells for now (the small one at 0.5 m wants the region
 // build at 0.5 m first: TODO.md).
 //
@@ -194,6 +198,10 @@ typedef struct
 	// NAVIGATION_SUBCELL_NONE where it is not (a rock's top covers part of
 	// a cell): where a foot stands
 	uint8_t below[NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS];
+	// And the room above it there (as clearance; 0 where it is not): an
+	// agent too tall for a quarter's room takes it for a wall (under a
+	// balustrade's rail)
+	uint8_t room[NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS];
 } navigation_surface_t;
 
 // A node waiting in the search's open list, and its priority (the cost so
@@ -206,8 +214,7 @@ typedef struct
 } navigation_heap_entry_t;
 
 // The navigation mesh (see the top)
-#define NAVIGATION_MESH_CLASSES 2
-#define NAVIGATION_MESH_LARGE_RADIUS 0.33f      // meters: from this radius an agent is of the large class (a bear's 0.35, rounded down)
+#define NAVIGATION_MESH_CLASSES 3               // by width in quarter meters: 1 (a hen), 2 (a man), 3 and more (a cow, a bear)
 #define NAVIGATION_MESH_RECT_MOST 16            // cells a side of a rectangle at most
 
 // Where one rectangle leads into the next: a run of the edge they share
@@ -273,6 +280,7 @@ typedef struct
 	float reach;                       // the least step (or slope over a cell) of its agents seen
 	float height;                      // the lowest of them
 	int32_t erosion_cells;             // cells kept off what takes all the room (its widest)
+	int32_t width_quarters;            // its agents' width in quarter meters (the class's own: its index + 1)
 	uint32_t epoch;                    // a change of the above: its tiles built again
 	navigation_mesh_tile_t *tiles;     // per region
 } navigation_mesh_class_t;

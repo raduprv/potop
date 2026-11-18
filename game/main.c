@@ -15,7 +15,8 @@
 // tools/animal_trace.py
 // --walk_test: an actor of the type put down where the player stands (or
 // at --walk_from) and sent to each goal in turn (game/walk_test.c); with
-// --trace its trail, the goals and the navigation mesh round it
+// --trace its trail, the goals and the navigation mesh round it; with
+// --sim over when the last goal is (or the seconds are)
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -208,6 +209,11 @@ int main(int argument_count, char **arguments)
 		game_trace_update(&game, potop, seconds);
 		potop_frame_end(potop);
 		game_after_update(&game, potop);
+		// (a test without the picture: over when its walk is)
+		if (game.walk_test_done && options.sim_seconds > 0.0f)
+		{
+			break;
+		}
 	}
 	game_trace_finish(&game, potop);
 	system_monitor_stop();

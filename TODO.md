@@ -90,6 +90,14 @@ from an older version get their terrain difference baked in once).
 - Phase 5, any number of levels: the build reads the objects' collision
   straight into columns of surfaces (now 3 above the terrain at most).
 - Then the cells' A* and the path pulling can go.
+- Stress test (tools/nav_stress.py run) known limits: a first tread within
+  MERGE_METERS (0.2) of the ground is ground, so a hen (step 0.2) sees the
+  second as one step of two; ground cells are still whole meters (a 1 m
+  door on bare ground can come out shut); the portals to the next tile
+  are not cut to their quarter meters. Each fix: a station for it.
+- Church porch: a beam 1.65 m over the top of its stair: the farmer (1.85,
+  his model's height) no longer goes up. A height_meters for people
+  (stooping) or the model's beam higher: Radu's call.
 
 ## Particles
 

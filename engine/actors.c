@@ -3075,6 +3075,21 @@ static bool gait_plan_stop(actors_t *actors, actor_t *actor)
 	return false;
 }
 
+// Whether, short of its waypoint, it can go straight on to the next one
+// from where it is (the corner cut)
+static bool corner_cut_passable(const actors_t *actors, const actor_t *actor, const navigation_t *navigation, const terrain_t *terrain,
+	const water_t *water)
+{
+	navigation_agent_t agent = agent_of(&actors->types[actor->type]);
+
+	if (actor->path_index + 1 >= actor->path_count)
+	{
+		return true;
+	}
+	return navigation_line_passable(navigation, terrain, water, &agent, actor->x, actor->z, actor->y, actor->path[actor->path_index + 1][0],
+		actor->path[actor->path_index + 1][1], NULL, NULL, NULL);
+}
+
 static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigation, const terrain_t *terrain, const water_t *water,
 	float seconds)
 {
@@ -3205,8 +3220,11 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 		}
 		// (a straight walker's waypoints are its mind's spots, a door's
 		// before it: reached close, or it cuts the corner into the jamb)
+		// (a corner left short of it only where the way on is straight from
+		// here: not over the edge of what it goes round)
 		if (distance < (last ? (actor->arrive_meters > 0.0f ? actor->arrive_meters : ARRIVE_METERS)
-			: (actor->straight ? STRAIGHT_WAYPOINT_METERS : WAYPOINT_METERS)))
+			: (actor->straight ? STRAIGHT_WAYPOINT_METERS : WAYPOINT_METERS))
+			&& (last || actor->straight || distance < STRAIGHT_WAYPOINT_METERS || corner_cut_passable(actors, actor, navigation, terrain, water)))
 		{
 			if (!last)
 			{

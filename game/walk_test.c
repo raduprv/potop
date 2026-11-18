@@ -16,6 +16,8 @@ static const float WALK_TEST_START_SECONDS = 1.0f;
 static const float WALK_TEST_STILL_SECONDS = 1.5f;
 // Nearer than this to the goal: there
 static const float WALK_TEST_THERE_METERS = 1.0f;
+// Still walking after this long (going round in circles): given up on
+static const float WALK_TEST_GOAL_MOST_SECONDS = 120.0f;
 
 static bool read_point(const char *text, float out[2])
 {
@@ -52,6 +54,7 @@ bool game_walk_test_set(game_t *game, const char *type_name, const char *goals, 
 	game->walk_test_next = 0;
 	game->walk_test_actor = 0;
 	game->walk_test_wait = WALK_TEST_START_SECONDS;
+	game->walk_test_done = false;
 	return game->walk_test_goal_count > 0;
 }
 
@@ -85,6 +88,7 @@ static void send_on(game_t *game, potop_t *potop)
 	SDL_Log("Walk test: %s", text);
 	game_trace_event(game, potop, game->walk_test_actor, text);
 	game->walk_test_wait = WALK_TEST_STILL_SECONDS;
+	game->walk_test_goal_seconds = 0.0f;
 	// The way a search finds from where it stands (the log's: what it
 	// was told, not what it walks)
 	{
@@ -157,7 +161,8 @@ void game_walk_test_update(game_t *game, potop_t *potop, float seconds)
 		return;
 	}
 	trail_take(game, actor.x, actor.z);
-	if (actor.moving)
+	game->walk_test_goal_seconds += seconds;
+	if (actor.moving && game->walk_test_goal_seconds < WALK_TEST_GOAL_MOST_SECONDS)
 	{
 		game->walk_test_wait = WALK_TEST_STILL_SECONDS;
 		return;
@@ -176,6 +181,10 @@ void game_walk_test_update(game_t *game, potop_t *potop, float seconds)
 		char text[96];
 
 		SDL_snprintf(text, sizeof(text), distance < WALK_TEST_THERE_METERS ? "walk_test_there %.2f" : "walk_test_short %.2f_m", (double)distance);
+		if (actor.moving)
+		{
+			SDL_snprintf(text, sizeof(text), "walk_test_timeout %.2f_m", (double)distance);
+		}
 		SDL_Log("Walk test: goal %d (%.2f %.2f): %s, at %.2f %.2f, %.2f m up", game->walk_test_next, (double)goal[0], (double)goal[1], text,
 			(double)actor.x, (double)actor.z, (double)actor.y);
 		game_trace_event(game, potop, game->walk_test_actor, text);
@@ -184,5 +193,10 @@ void game_walk_test_update(game_t *game, potop_t *potop, float seconds)
 	if (game->walk_test_next < game->walk_test_goal_count)
 	{
 		send_on(game, potop);
+	}
+	else
+	{
+		SDL_Log("Walk test: done");
+		game->walk_test_done = true;
 	}
 }
