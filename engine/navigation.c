@@ -3325,21 +3325,6 @@ bool navigation_path_jump(const navigation_t *navigation, int waypoint, float *h
 #define MESH_GOAL_MORE_EXPANSIONS 32   // got to one of those: so many more rectangles looked at for a nearer one
 #define MESH_TILE_CELLS_MOST 4096      // a region's cells at most (64 x 64)
 
-// Thresholds a portal's steps are told apart by: a run of steps between the
-// same two of them is one portal (whether an agent climbs them is the same)
-static const float mesh_rise_levels[] = { 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.7f, 1.0f, 1.5f };
-
-static int mesh_rise_level(float rise)
-{
-	int level = 0;
-
-	while (level < (int)SDL_arraysize(mesh_rise_levels) && rise > mesh_rise_levels[level])
-	{
-		level++;
-	}
-	return level;
-}
-
 // An agent's width in quarter meters, the nearest (a hen 1, a man 2, a
 // bear or a cow 3), at least 1, at most the widest class's
 static int32_t agent_width_quarters(const navigation_agent_t *agent)
@@ -3403,14 +3388,12 @@ static void mesh_note_agent(navigation_t *navigation, const navigation_agent_t *
 static void mesh_free_tile(navigation_mesh_tile_t *tile)
 {
 	SDL_free(tile->rects);
-	SDL_free(tile->portals);
+	SDL_free(tile->neighbors);
 	for (int side = 0; side < 4; side++)
 	{
 		SDL_free(tile->border[side]);
 	}
-	SDL_free(tile->ground_rect);
-	SDL_free(tile->extra_rect);
-	SDL_free(tile->detail);
+	SDL_free(tile->bucket_rects);
 	SDL_zerop(tile);
 }
 
@@ -3429,6 +3412,9 @@ static void mesh_free(navigation_t *navigation)
 		SDL_free(class->tiles);
 		class->tiles = NULL;
 	}
+	SDL_free(navigation->mesh.visits);
+	navigation->mesh.visits = NULL;
+	navigation->mesh.visit_capacity = 0;
 }
 
 static bool mesh_allocate(navigation_t *navigation)
@@ -3702,97 +3688,13 @@ static int mesh_match(const mesh_build_t *build, int level, int32_t at, int32_t 
 	return best;
 }
 
-// The rectangle (global id) a quarter meter of a node is in (sub: its
-// quarter of the cell, row by row), if its region's tile of the class is
-// built; -1 if none
-static int32_t mesh_rect_of_quarter(const navigation_t *navigation, int c, int32_t node, int32_t cell, int32_t sub)
-{
-	int32_t cells = cell_count(navigation);
-	int32_t region = region_of_cell(navigation, cell);
-	const navigation_mesh_tile_t *tile = &navigation->mesh.classes[c].tiles[region];
-	int32_t first_x;
-	int32_t first_z;
-	int32_t last_x;
-	int32_t last_z;
-	int16_t rect;
-
-	if (!tile->built)
-	{
-		return -1;
-	}
-	if (node < cells)
-	{
-		region_bounds(navigation, region, &first_x, &first_z, &last_x, &last_z);
-		rect = tile->ground_rect[(cell / navigation->size - first_z) * navigation->region_size + cell % navigation->size - first_x];
-	}
-	else
-	{
-		rect = tile->extra_rect[(node - cells) % NAVIGATION_REGION_EXTRA_SLOTS];
-	}
-	if (rect <= -2)
-	{
-		rect = tile->detail[(-2 - rect) * NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS + sub];
-	}
-	return rect < 0 ? -1 : (region << 16) | rect;
-}
-
 // A quarter meter's level that is in a rectangle
 typedef struct
 {
 	int32_t rect;                      // (global id)
-	int32_t node;
 	float height;
 	bool ground;                       // the ground's (not an object's top)
 } mesh_level_t;
-
-// The levels of a quarter meter (x, z in quarters over the whole map)
-// that are in rectangles of the class (of built tiles); how many
-static int mesh_levels_at(const navigation_t *navigation, int c, int32_t quarter_x, int32_t quarter_z, mesh_level_t levels_out[MESH_LEVELS])
-{
-	int32_t cell_x = quarter_x >> 2;
-	int32_t cell_z = quarter_z >> 2;
-	int32_t sub = (quarter_z & 3) * NAVIGATION_SUBCELLS + (quarter_x & 3);
-	int32_t cell;
-	int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
-	int node_count_here;
-	int count = 0;
-
-	if (quarter_x < 0 || quarter_z < 0 || cell_x >= navigation->size || cell_z >= navigation->size)
-	{
-		return 0;
-	}
-	cell = cell_z * navigation->size + cell_x;
-	if (!navigation->mesh.classes[c].tiles[region_of_cell(navigation, cell)].built)
-	{
-		return 0;
-	}
-	node_count_here = cell_nodes(navigation, cell, nodes);
-	for (int k = 0; k < node_count_here; k++)
-	{
-		int32_t rect = mesh_rect_of_quarter(navigation, c, nodes[k], cell, sub);
-
-		if (rect < 0)
-		{
-			continue;
-		}
-		levels_out[count].rect = rect;
-		levels_out[count].node = nodes[k];
-		if (k == 0)
-		{
-			levels_out[count].height = navigation->ground_height[cell];
-			levels_out[count].ground = true;
-		}
-		else
-		{
-			const navigation_surface_t *surface = extra_surface(navigation, nodes[k]);
-
-			levels_out[count].height = surface->height - (float)surface->below[sub] * NAVIGATION_SUBCELL_UNIT_METERS;
-			levels_out[count].ground = surface->below[sub] == surface->ground_below;
-		}
-		count++;
-	}
-	return count;
-}
 
 // How far low of the quarter meters a class's rectangles lie: half a
 // quarter for a width of an even number of them (see above)
@@ -3821,163 +3723,290 @@ static float mesh_quarter_middle(int c, int32_t quarter)
 	return ((float)quarter + 0.5f) * (NAVIGATION_CELL_METERS / (float)NAVIGATION_SUBCELLS) - mesh_offset(c);
 }
 
-// A rectangle's box, meters
-static void mesh_rect_box(int c, const navigation_rect_t *rect, float low_out[2], float high_out[2])
+// A rectangle's quarter meters over the whole map: its first (x, z), how
+// many across and deep
+typedef struct
 {
-	low_out[0] = mesh_quarter_low(c, rect->x);
-	low_out[1] = mesh_quarter_low(c, rect->z);
-	high_out[0] = mesh_quarter_low(c, rect->x + rect->width);
-	high_out[1] = mesh_quarter_low(c, rect->z + rect->depth);
+	int32_t x;
+	int32_t z;
+	int32_t width;
+	int32_t depth;
+} mesh_box_t;
+
+static mesh_box_t mesh_box(const navigation_t *navigation, int c, int32_t id)
+{
+	const navigation_rect_t *rect = mesh_rect(navigation, c, id);
+	int32_t region = id >> 16;
+	mesh_box_t box;
+
+	box.x = (region % navigation->regions_per_side) * navigation->region_size * NAVIGATION_SUBCELLS + rect->x;
+	box.z = (region / navigation->regions_per_side) * navigation->region_size * NAVIGATION_SUBCELLS + rect->z;
+	box.width = rect->width;
+	box.depth = rect->depth;
+	return box;
+}
+
+// A rectangle's box, meters
+static void mesh_rect_box(const navigation_t *navigation, int c, int32_t id, float low_out[2], float high_out[2])
+{
+	mesh_box_t box = mesh_box(navigation, c, id);
+
+	low_out[0] = mesh_quarter_low(c, box.x);
+	low_out[1] = mesh_quarter_low(c, box.z);
+	high_out[0] = mesh_quarter_low(c, box.x + box.width);
+	high_out[1] = mesh_quarter_low(c, box.z + box.depth);
+}
+
+// Whether a rectangle is over a quarter of its class's mesh
+static bool rect_has_quarter(const navigation_t *navigation, int c, int32_t id, int32_t quarter_x, int32_t quarter_z)
+{
+	mesh_box_t box = mesh_box(navigation, c, id);
+
+	return quarter_x >= box.x && quarter_z >= box.z && quarter_x < box.x + box.width && quarter_z < box.z + box.depth;
+}
+
+// The point of a rectangle nearest a point (the middles of its outer
+// quarters at the furthest: where a body's middle was tried)
+static void rect_nearest(const navigation_t *navigation, int c, int32_t id, float x, float z, float out[2])
+{
+	mesh_box_t box = mesh_box(navigation, c, id);
+
+	out[0] = SDL_clamp(x, mesh_quarter_middle(c, box.x), mesh_quarter_middle(c, box.x + box.width - 1));
+	out[1] = SDL_clamp(z, mesh_quarter_middle(c, box.z), mesh_quarter_middle(c, box.z + box.depth - 1));
+}
+
+static float rect_height_high(const navigation_rect_t *rect)
+{
+	return rect->height + (float)rect->height_span * NAVIGATION_RECT_SPAN_UNIT_METERS;
+}
+
+// The height of a rectangle's surface at one of its quarter meters: the
+// ground's is its cell's; a flat top's its own; an uneven top's (a ramp,
+// treads the class takes in its stride) the cell's surface there that is
+// within the rectangle's heights
+static float mesh_height_at(const navigation_t *navigation, int c, int32_t id, int32_t quarter_x, int32_t quarter_z)
+{
+	const navigation_rect_t *rect = mesh_rect(navigation, c, id);
+	int32_t cell_x = SDL_clamp(quarter_x >> 2, 0, navigation->size - 1);
+	int32_t cell_z = SDL_clamp(quarter_z >> 2, 0, navigation->size - 1);
+	int32_t cell = cell_z * navigation->size + cell_x;
+	int32_t sub = (quarter_z & 3) * NAVIGATION_SUBCELLS + (quarter_x & 3);
+	int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
+	int count;
+	float high = rect_height_high(rect);
+	float best = rect->height + 0.5f * (high - rect->height);
+	float best_off = 1e30f;
+
+	if ((rect->flags & NAVIGATION_RECT_GROUND) != 0)
+	{
+		return navigation->ground_height[cell];
+	}
+	if (rect->height_span == 0)
+	{
+		return rect->height;
+	}
+	count = cell_nodes(navigation, cell, nodes);
+	for (int k = 1; k < count; k++)
+	{
+		const navigation_surface_t *surface = extra_surface(navigation, nodes[k]);
+		uint8_t below = surface->below[sub];
+		float height;
+		float off;
+
+		if (below >= NAVIGATION_SUBCELL_BLOCKED)
+		{
+			continue;
+		}
+		height = surface->height - (float)below * NAVIGATION_SUBCELL_UNIT_METERS;
+		off = height < rect->height ? rect->height - height : height > high ? height - high : 0.0f;
+		if (off < best_off)
+		{
+			best_off = off;
+			best = height;
+		}
+	}
+	return best;
+}
+
+// The rectangles of a class over a quarter meter (x, z in quarters over
+// the whole map), of built tiles: each with its height there; how many
+static int mesh_levels_at(const navigation_t *navigation, int c, int32_t quarter_x, int32_t quarter_z, mesh_level_t levels_out[MESH_LEVELS])
+{
+	int32_t cell_x = quarter_x >> 2;
+	int32_t cell_z = quarter_z >> 2;
+	int32_t region;
+	const navigation_mesh_tile_t *tile;
+	int32_t local_x;
+	int32_t local_z;
+	int32_t bucket;
+	int count = 0;
+
+	if (quarter_x < 0 || quarter_z < 0 || cell_x >= navigation->size || cell_z >= navigation->size)
+	{
+		return 0;
+	}
+	region = region_of_cell(navigation, cell_z * navigation->size + cell_x);
+	tile = &navigation->mesh.classes[c].tiles[region];
+	if (!tile->built)
+	{
+		return 0;
+	}
+	local_x = quarter_x - (region % navigation->regions_per_side) * navigation->region_size * NAVIGATION_SUBCELLS;
+	local_z = quarter_z - (region / navigation->regions_per_side) * navigation->region_size * NAVIGATION_SUBCELLS;
+	bucket = (local_z >> 4) * NAVIGATION_MESH_BUCKETS + (local_x >> 4);
+	for (uint32_t k = tile->bucket_first[bucket]; k < tile->bucket_first[bucket + 1] && count < MESH_LEVELS; k++)
+	{
+		const navigation_rect_t *rect = &tile->rects[tile->bucket_rects[k]];
+		int32_t id = (region << 16) | tile->bucket_rects[k];
+
+		if (local_x < rect->x || local_z < rect->z || local_x >= rect->x + rect->width || local_z >= rect->z + rect->depth)
+		{
+			continue;
+		}
+		levels_out[count].rect = id;
+		levels_out[count].height = mesh_height_at(navigation, c, id, quarter_x, quarter_z);
+		levels_out[count].ground = (rect->flags & NAVIGATION_RECT_GROUND) != 0;
+		count++;
+	}
+	return count;
 }
 
 // The level of a rectangle at a quarter meter (false: it is not there)
 static bool mesh_level_of(const navigation_t *navigation, int c, int32_t id, int32_t quarter_x, int32_t quarter_z, mesh_level_t *level_out)
 {
-	mesh_level_t levels[MESH_LEVELS];
-	int count = mesh_levels_at(navigation, c, quarter_x, quarter_z, levels);
-
-	for (int k = 0; k < count; k++)
+	if (!rect_has_quarter(navigation, c, id, quarter_x, quarter_z))
 	{
-		if (levels[k].rect == id)
-		{
-			*level_out = levels[k];
-			return true;
-		}
+		return false;
 	}
-	return false;
+	level_out->rect = id;
+	level_out->height = mesh_height_at(navigation, c, id, quarter_x, quarter_z);
+	level_out->ground = (mesh_rect(navigation, c, id)->flags & NAVIGATION_RECT_GROUND) != 0;
+	return true;
 }
 
-// The portals out of the rectangle id over one of its sides (0: +x, 1: -x,
-// 2: +z, 3: -z), appended to a list: along the side, quarter by quarter,
-// the level beyond nearest in height (within MESH_PORTAL_RISE_MOST) that
-// is another rectangle's; a run of them into the same rectangle with
-// steps of the same level is one portal. Where the quarter beyond is no
-// rectangle's (no place for a body's middle: by a terrace's face, on its
-// edge), the first one further out that is (MESH_JUMP_GAP_QUARTERS at
-// most), if it is more than a step off: an edge to jump (the portal's
-// gap; mesh_jump finds what is between). Only into built tiles, and only
-// into the tile keep_region (the rectangle's own, or the one over that
-// side: the border's)
-static bool mesh_side_portals(navigation_t *navigation, int c, int32_t id, int side, int32_t keep_region, navigation_portal_t **list,
-	int32_t *count, int32_t *capacity)
+// A tile's buckets made from its rectangles: which of them reach into
+// each 4 m of it
+static bool mesh_fill_buckets(navigation_mesh_tile_t *tile)
 {
-	const navigation_rect_t *rect = mesh_rect(navigation, c, id);
-	int32_t along = side < 2 ? rect->depth : rect->width;
-	int32_t out_x = side == 0 ? 1 : side == 1 ? -1 : 0;
-	int32_t out_z = side == 2 ? 1 : side == 3 ? -1 : 0;
-	float step = SDL_min(navigation->mesh.classes[c].step, 50.0f);
-	int32_t run_to = -1;
-	int run_level = 0;
-	bool run_cross = false;
-	int32_t run_gap = 0;
-	float run_rise = 0.0f;
-	int32_t run_start = 0;
+	uint32_t total = 0;
+	static uint32_t counts[NAVIGATION_MESH_BUCKETS * NAVIGATION_MESH_BUCKETS];
 
-	for (int32_t k = 0; k <= along; k++)
+	SDL_memset(counts, 0, sizeof(counts));
+	for (int pass = 0; pass < 2; pass++)
 	{
-		int32_t to = -1;
-		int level = 0;
-		bool cross = false;
-		int32_t gap = 0;
-		float rise = 0.0f;
-
-		if (k < along)
+		for (int32_t r = 0; r < tile->rect_count; r++)
 		{
-			int32_t inside_x = side == 0 ? rect->x + rect->width - 1 : side == 1 ? rect->x : rect->x + k;
-			int32_t inside_z = side == 2 ? rect->z + rect->depth - 1 : side == 3 ? rect->z : rect->z + k;
-			mesh_level_t inside;
+			const navigation_rect_t *rect = &tile->rects[r];
 
-			if (mesh_level_of(navigation, c, id, inside_x, inside_z, &inside))
+			for (int32_t bucket_z = rect->z >> 4; bucket_z <= (rect->z + rect->depth - 1) >> 4; bucket_z++)
 			{
-				for (int32_t out = 1; out <= 1 + MESH_JUMP_GAP_QUARTERS && to < 0; out++)
+				for (int32_t bucket_x = rect->x >> 4; bucket_x <= (rect->x + rect->width - 1) >> 4; bucket_x++)
 				{
-					mesh_level_t levels[MESH_LEVELS];
-					int level_count = mesh_levels_at(navigation, c, inside_x + out_x * out, inside_z + out_z * out, levels);
-					float best = MESH_PORTAL_RISE_MOST;
-					bool any = false;
+					int32_t bucket = bucket_z * NAVIGATION_MESH_BUCKETS + bucket_x;
 
-					for (int n = 0; n < level_count; n++)
+					if (pass == 0)
 					{
-						float difference = SDL_fabsf(levels[n].height - inside.height);
-
-						if (levels[n].rect == id || difference > best)
-						{
-							continue;
-						}
-						any = true;
-						best = difference;
-						to = levels[n].rect;
-						rise = difference;
-						cross = !levels[n].ground || !inside.ground;
-						gap = out - 1;
+						counts[bucket]++;
 					}
-					// (a rectangle within a step across what a body does not
-					// get through: no way; and nothing is looked for behind it)
-					if (any && gap > 0 && rise <= step + 1e-4f)
+					else
 					{
-						to = -1;
-					}
-					if (any)
-					{
-						break;
+						tile->bucket_rects[tile->bucket_first[bucket] + counts[bucket]++] = (uint16_t)r;
 					}
 				}
-				if (to >= 0 && (to >> 16) != keep_region)
-				{
-					to = -1;
-				}
-				level = mesh_rise_level(rise);
 			}
 		}
-		// The run so far ends here: its portal
-		if (run_to >= 0 && (k == along || to != run_to || level != run_level || cross != run_cross || gap != run_gap))
+		if (pass == 0)
 		{
-			navigation_portal_t *portal;
-			float start = mesh_quarter_low(c, (side < 2 ? rect->z : rect->x) + run_start);
-			float end = mesh_quarter_low(c, (side < 2 ? rect->z : rect->x) + k);
-			float edge = mesh_quarter_low(c, side == 0 ? rect->x + rect->width : side == 1 ? rect->x : side == 2 ? rect->z + rect->depth : rect->z);
-
-			if (!mesh_grow((void **)list, capacity, *count + 1, sizeof(navigation_portal_t)))
+			for (int32_t bucket = 0; bucket < NAVIGATION_MESH_BUCKETS * NAVIGATION_MESH_BUCKETS; bucket++)
+			{
+				tile->bucket_first[bucket] = total;
+				total += counts[bucket];
+				counts[bucket] = 0;
+			}
+			tile->bucket_first[NAVIGATION_MESH_BUCKETS * NAVIGATION_MESH_BUCKETS] = total;
+			if (!mesh_grow((void **)&tile->bucket_rects, &tile->bucket_capacity, (int32_t)SDL_max(total, 1u), sizeof(uint16_t)))
 			{
 				return false;
 			}
-			portal = &(*list)[(*count)++];
-			portal->from = id & 0xFFFF;
-			portal->to = run_to;
-			portal->rise = run_rise;
-			portal->cross_surface = run_cross;
-			portal->gap = (uint8_t)run_gap;
-			if (side < 2)
-			{
-				portal->a[0] = edge;
-				portal->a[1] = start;
-				portal->b[0] = edge;
-				portal->b[1] = end;
-			}
-			else
-			{
-				portal->a[0] = start;
-				portal->a[1] = edge;
-				portal->b[0] = end;
-				portal->b[1] = edge;
-			}
-			run_to = -1;
-		}
-		if (to >= 0 && run_to < 0)
-		{
-			run_to = to;
-			run_level = level;
-			run_cross = cross;
-			run_gap = gap;
-			run_rise = rise;
-			run_start = k;
-		}
-		else if (to >= 0)
-		{
-			run_rise = SDL_max(run_rise, rise);
 		}
 	}
 	return true;
+}
+
+// The valid neighbors of the rectangle id over one of its sides (0: +x,
+// 1: -x, 2: +z, 3: -z), added to a list (each once): along the side,
+// quarter by quarter, the rectangle beyond nearest in height (within
+// MESH_PORTAL_RISE_MOST). Where the quarter beyond is no rectangle's (no
+// place for a body's middle: by a terrace's face, on its edge), the first
+// one further out that is (MESH_JUMP_GAP_QUARTERS at most), if it is more
+// than a step off: an edge to jump (mesh_jump finds what is between). Only
+// in built tiles, and only in the tile keep_region (the rectangle's own,
+// or the one over that side: the border's)
+#define MESH_SIDE_NEIGHBORS_MOST 512
+static void mesh_side_neighbors(const navigation_t *navigation, int c, int32_t id, int side, int32_t keep_region, int32_t *list, int *count)
+{
+	mesh_box_t box = mesh_box(navigation, c, id);
+	int32_t along = side < 2 ? box.depth : box.width;
+	int32_t out_x = side == 0 ? 1 : side == 1 ? -1 : 0;
+	int32_t out_z = side == 2 ? 1 : side == 3 ? -1 : 0;
+	float step = SDL_min(navigation->mesh.classes[c].step, 50.0f);
+	int32_t last = -1;
+
+	for (int32_t k = 0; k < along; k++)
+	{
+		int32_t inside_x = side == 0 ? box.x + box.width - 1 : side == 1 ? box.x : box.x + k;
+		int32_t inside_z = side == 2 ? box.z + box.depth - 1 : side == 3 ? box.z : box.z + k;
+		float inside_height = mesh_height_at(navigation, c, id, inside_x, inside_z);
+		int32_t to = -1;
+
+		for (int32_t out = 1; out <= 1 + MESH_JUMP_GAP_QUARTERS && to < 0; out++)
+		{
+			mesh_level_t levels[MESH_LEVELS];
+			int level_count = mesh_levels_at(navigation, c, inside_x + out_x * out, inside_z + out_z * out, levels);
+			float best = MESH_PORTAL_RISE_MOST;
+			bool any = false;
+
+			for (int n = 0; n < level_count; n++)
+			{
+				float difference = SDL_fabsf(levels[n].height - inside_height);
+
+				if (levels[n].rect == id || difference > best)
+				{
+					continue;
+				}
+				any = true;
+				best = difference;
+				to = levels[n].rect;
+			}
+			// (a rectangle within a step across what a body does not get
+			// through: no way; and nothing is looked for behind it)
+			if (any && out > 1 && best <= step + 1e-4f)
+			{
+				to = -1;
+			}
+			if (any)
+			{
+				break;
+			}
+		}
+		if (to < 0 || (to >> 16) != keep_region || to == last)
+		{
+			continue;
+		}
+		last = to;
+		{
+			bool known = false;
+
+			for (int n = 0; n < *count && !known; n++)
+			{
+				known = list[n] == to;
+			}
+			if (!known && *count < MESH_SIDE_NEIGHBORS_MOST)
+			{
+				list[(*count)++] = to;
+			}
+		}
+	}
 }
 
 static void region_neighbor(const navigation_t *navigation, int32_t region, int side, int32_t *neighbor_out)
@@ -3990,7 +4019,7 @@ static void region_neighbor(const navigation_t *navigation, int32_t region, int 
 }
 
 // Is a rectangle by its tile's side: on it, or as near as an edge is
-// jumped over (its portals may lead into the tile beyond)?
+// jumped over (its neighbors may be in the tile beyond)?
 static bool rect_by_side(const navigation_t *navigation, const navigation_rect_t *rect, int32_t region, int side)
 {
 	int32_t first_x;
@@ -3999,14 +4028,14 @@ static bool rect_by_side(const navigation_t *navigation, const navigation_rect_t
 	int32_t last_z;
 
 	region_bounds(navigation, region, &first_x, &first_z, &last_x, &last_z);
-	return side == 0 ? rect->x + rect->width + MESH_JUMP_GAP_QUARTERS >= (last_x + 1) * NAVIGATION_SUBCELLS
-		: side == 1 ? rect->x - MESH_JUMP_GAP_QUARTERS <= first_x * NAVIGATION_SUBCELLS
-		: side == 2 ? rect->z + rect->depth + MESH_JUMP_GAP_QUARTERS >= (last_z + 1) * NAVIGATION_SUBCELLS
-		: rect->z - MESH_JUMP_GAP_QUARTERS <= first_z * NAVIGATION_SUBCELLS;
+	return side == 0 ? rect->x + rect->width + MESH_JUMP_GAP_QUARTERS >= (last_x - first_x + 1) * NAVIGATION_SUBCELLS
+		: side == 1 ? rect->x <= MESH_JUMP_GAP_QUARTERS
+		: side == 2 ? rect->z + rect->depth + MESH_JUMP_GAP_QUARTERS >= (last_z - first_z + 1) * NAVIGATION_SUBCELLS
+		: rect->z <= MESH_JUMP_GAP_QUARTERS;
 }
 
-// The portals between a tile and the next one over a side, both ways, made
-// again (either built anew: the other's portals into it are stale)
+// The neighbors between a tile and the next one over a side, both ways,
+// made again (either built anew: the other's into it are stale)
 static void mesh_link_border(navigation_t *navigation, int c, int32_t region, int side)
 {
 	navigation_mesh_tile_t *tiles = navigation->mesh.classes[c].tiles;
@@ -4033,13 +4062,77 @@ static void mesh_link_border(navigation_t *navigation, int c, int32_t region, in
 
 		for (int32_t r = 0; r < tile->rect_count; r++)
 		{
-			if (rect_by_side(navigation, &tile->rects[r], from_region, from_side))
+			int32_t list[MESH_SIDE_NEIGHBORS_MOST];
+			int count = 0;
+
+			if (!rect_by_side(navigation, &tile->rects[r], from_region, from_side))
 			{
-				mesh_side_portals(navigation, c, (from_region << 16) | r, from_side, to_region, &tile->border[from_side],
-					&tile->border_count[from_side], &tile->border_capacity[from_side]);
+				continue;
+			}
+			mesh_side_neighbors(navigation, c, (from_region << 16) | r, from_side, to_region, list, &count);
+			if (!mesh_grow((void **)&tile->border[from_side], &tile->border_capacity[from_side], tile->border_count[from_side] + count,
+				sizeof(navigation_border_t)))
+			{
+				return;
+			}
+			for (int n = 0; n < count; n++)
+			{
+				navigation_border_t *entry = &tile->border[from_side][tile->border_count[from_side]++];
+
+				entry->from = (uint16_t)r;
+				entry->to = (uint16_t)(list[n] & 0xFFFF);
 			}
 		}
 	}
+}
+
+// Where one rectangle leads into another that is over one of its sides:
+// the part of that side they share (its ends on the first one's side,
+// meters), how many quarter meters lie between them (0: they touch), and
+// along which quarters (first to last, of the whole map, along the side).
+// False if they share none
+typedef struct
+{
+	int side;
+	int32_t first;                     // quarters along the side they share: from this one
+	int32_t last;                      // to before this one
+	int32_t inside;                    // the first one's quarter across the side (x for sides 0 and 1, z for 2 and 3)
+	int32_t beyond;                    // the other's
+	int32_t gap;
+} mesh_shared_t;
+
+static bool mesh_shared(const navigation_t *navigation, int c, int32_t from, int32_t to, int side, mesh_shared_t *out)
+{
+	mesh_box_t a = mesh_box(navigation, c, from);
+	mesh_box_t b = mesh_box(navigation, c, to);
+	int32_t a_low = side < 2 ? a.z : a.x;
+	int32_t a_high = side < 2 ? a.z + a.depth : a.x + a.width;
+	int32_t b_low = side < 2 ? b.z : b.x;
+	int32_t b_high = side < 2 ? b.z + b.depth : b.x + b.width;
+	// (the first one's edge quarter, the first quarter past it, and where
+	// the other one is nearest going out)
+	int32_t edge = side == 0 ? a.x + a.width - 1 : side == 1 ? a.x : side == 2 ? a.z + a.depth - 1 : a.z;
+	int32_t direction = side == 0 || side == 2 ? 1 : -1;
+	int32_t b_near = side == 0 ? b.x : side == 1 ? b.x + b.width - 1 : side == 2 ? b.z : b.z + b.depth - 1;
+	int32_t b_far = side == 0 ? b.x + b.width - 1 : side == 1 ? b.x : side == 2 ? b.z + b.depth - 1 : b.z;
+	int32_t next = edge + direction;
+
+	out->side = side;
+	out->first = SDL_max(a_low, b_low);
+	out->last = SDL_min(a_high, b_high);
+	out->inside = edge;
+	// (the other one over the quarter past the edge: they touch; else as
+	// far out as it begins)
+	if ((b_near - next) * direction <= 0 && (b_far - next) * direction >= 0)
+	{
+		out->beyond = next;
+	}
+	else
+	{
+		out->beyond = b_near;
+	}
+	out->gap = (out->beyond - next) * direction;
+	return out->last > out->first && out->gap >= 0 && out->gap <= MESH_JUMP_GAP_QUARTERS;
 }
 
 // The water's cells of a region, in a number (0: none, or dry tiles all
@@ -4136,7 +4229,6 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 	navigation_mesh_tile_t *tile = &class->tiles[region];
 	int32_t last_x;
 	int32_t last_z;
-	int32_t cells = cell_count(navigation);
 	uint64_t start_ticks = SDL_GetPerformanceCounter();
 	float reach = SDL_min(class->reach, 50.0f);
 	float step = SDL_min(class->step, 50.0f);
@@ -4154,23 +4246,11 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 	build.span = quarters_wide + 2 * MESH_MARGIN_QUARTERS;
 	tile->built = false;
 	tile->rect_count = 0;
-	tile->portal_count = 0;
-	tile->detail_count = 0;
-	if (tile->ground_rect == NULL)
-	{
-		tile->ground_rect = SDL_malloc(sizeof(int16_t) * (size_t)(navigation->region_size * navigation->region_size));
-		tile->extra_rect = SDL_malloc(sizeof(int16_t) * NAVIGATION_REGION_EXTRA_SLOTS);
-		if (tile->ground_rect == NULL || tile->extra_rect == NULL)
-		{
-			return false;
-		}
-	}
+	tile->neighbor_count = 0;
 	if (build.width > REGION_CELLS || build.depth > REGION_CELLS)
 	{
 		return false;
 	}
-	SDL_memset(tile->ground_rect, 0xFF, sizeof(int16_t) * (size_t)(navigation->region_size * navigation->region_size));
-	SDL_memset(tile->extra_rect, 0xFF, sizeof(int16_t) * NAVIGATION_REGION_EXTRA_SLOTS);
 	// The quarter meters' levels, the margin's too (off the map: none);
 	// the water on the tile's cells now
 	for (int level = 0; level < MESH_LEVELS; level++)
@@ -4306,7 +4386,7 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 				int32_t index;
 				float cost_sum = 0.0f;
 
-				if (key == 0 || build.rect[level][at] >= 0 || tile->rect_count >= 0x7FFF)
+				if (key == 0 || build.rect[level][at] >= 0 || tile->rect_count >= NAVIGATION_MESH_TILE_RECTS_MOST)
 				{
 					continue;
 				}
@@ -4356,18 +4436,17 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 				index = tile->rect_count++;
 				rect = &tile->rects[index];
 				SDL_zerop(rect);
-				rect->x = build.first_x * NAVIGATION_SUBCELLS + quarter_x;
-				rect->z = build.first_z * NAVIGATION_SUBCELLS + quarter_z;
+				float height_low = 1e30f;
+				float height_high = -1e30f;
+
+				rect->x = (uint8_t)quarter_x;
+				rect->z = (uint8_t)quarter_z;
 				rect->width = (uint8_t)width;
 				rect->depth = (uint8_t)depth;
-				rect->kind = (key & MESH_KEY_TOP) != 0 ? 1 : 0;
+				rect->flags = (uint8_t)(((key & MESH_KEY_TOP) != 0 ? 0 : NAVIGATION_RECT_GROUND) | (wet ? NAVIGATION_RECT_WET : 0));
 				rect->blocked = (uint8_t)(key >> 8);
-				rect->small = rect->kind == 0 ? (uint8_t)key : 0;
+				rect->small = (key & MESH_KEY_TOP) != 0 ? 0 : (uint8_t)key;
 				rect->clearance = NAVIGATION_CLEARANCE_OPEN;
-				rect->height_low = 1e30f;
-				rect->height_high = -1e30f;
-				rect->wet_node = -1;
-				rect->came_from = -1;
 				for (int32_t j = 0; j < depth; j++)
 				{
 					for (int32_t i = 0; i < width; i++)
@@ -4378,9 +4457,9 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 
 						build.rect[there_level][there] = (int16_t)index;
 						rect->clearance = SDL_min(rect->clearance, build.room[there_level][there]);
-						rect->height_low = SDL_min(rect->height_low, height);
-						rect->height_high = SDL_max(rect->height_high, height);
-						if (rect->kind == 0)
+						height_low = SDL_min(height_low, height);
+						height_high = SDL_max(height_high, height);
+						if ((key & MESH_KEY_TOP) == 0)
 						{
 							cost_sum += navigation->walk_factors[navigation->ground_slope[(build.first_z + (quarter_z + j) / NAVIGATION_SUBCELLS)
 								* navigation->size + build.first_x + (quarter_x + i) / NAVIGATION_SUBCELLS]];
@@ -4391,58 +4470,17 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 						}
 					}
 				}
-				rect->cost = cost_sum / (float)(width * depth);
-				if (wet)
-				{
-					int32_t cell = (build.first_z + quarter_z / NAVIGATION_SUBCELLS) * navigation->size + build.first_x + quarter_x / NAVIGATION_SUBCELLS;
-					int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
-
-					cell_nodes(navigation, cell, nodes);
-					rect->wet_node = nodes[level];
-				}
+				rect->height = height_low;
+				// (flat: its heights all one; else how far apart, at least a unit)
+				rect->height_span = height_high - height_low < 0.005f ? 0
+					: (uint8_t)SDL_clamp(SDL_ceilf((height_high - height_low) / NAVIGATION_RECT_SPAN_UNIT_METERS), 1.0f, 255.0f);
+				rect->cost = (uint8_t)SDL_clamp((cost_sum / (float)(width * depth) - 1.0f) * 32.0f + 0.5f, 0.0f, 255.0f);
 			}
 		}
 	}
-	// Each node's rectangle: one for all its quarters, or a row of detail
-	for (int32_t local_z = 0; local_z < build.depth; local_z++)
+	if (!mesh_fill_buckets(tile))
 	{
-		for (int32_t local_x = 0; local_x < build.width; local_x++)
-		{
-			int32_t cell = (build.first_z + local_z) * navigation->size + build.first_x + local_x;
-			int32_t first = (local_z * NAVIGATION_SUBCELLS + MESH_MARGIN_QUARTERS) * build.span + local_x * NAVIGATION_SUBCELLS + MESH_MARGIN_QUARTERS;
-			int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
-			int count = cell_nodes(navigation, cell, nodes);
-
-			for (int level = 0; level < count; level++)
-			{
-				int16_t *slot = level == 0 ? &tile->ground_rect[local_z * navigation->region_size + local_x]
-					: &tile->extra_rect[(nodes[level] - cells) % NAVIGATION_REGION_EXTRA_SLOTS];
-				int16_t one = build.rect[level][first];
-				bool same = true;
-
-				for (int32_t sub = 1; sub < NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS && same; sub++)
-				{
-					same = build.rect[level][first + (sub / NAVIGATION_SUBCELLS) * build.span + sub % NAVIGATION_SUBCELLS] == one;
-				}
-				if (same)
-				{
-					*slot = one;
-					continue;
-				}
-				if (tile->detail_count >= 0x7FF0 || !mesh_grow((void **)&tile->detail, &tile->detail_capacity, tile->detail_count + 1,
-					sizeof(int16_t) * NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS))
-				{
-					return false;
-				}
-				for (int32_t sub = 0; sub < NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS; sub++)
-				{
-					tile->detail[tile->detail_count * NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS + sub]
-						= build.rect[level][first + (sub / NAVIGATION_SUBCELLS) * build.span + sub % NAVIGATION_SUBCELLS];
-				}
-				*slot = (int16_t)(-2 - tile->detail_count);
-				tile->detail_count++;
-			}
-		}
+		return false;
 	}
 	tile->built = true;
 	tile->generation = navigation->region_generation[region];
@@ -4450,21 +4488,29 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 	tile->class_epoch = class->epoch;
 	tile->water_signature = mesh_water_signature(navigation, water, region);
 	tile->water_checked_ticks = SDL_GetTicks();
-	// The portals within the tile (into rectangles of this tile only: the
-	// others are the border's), each rectangle's together
+	// Each rectangle's valid neighbors within the tile, together (the ones
+	// in the tiles round it are the border's)
 	for (int32_t r = 0; r < tile->rect_count; r++)
 	{
-		int32_t first = tile->portal_count;
+		int32_t list[MESH_SIDE_NEIGHBORS_MOST];
+		int count = 0;
 
+		tile->rects[r].first_neighbor = (uint32_t)tile->neighbor_count;
 		for (int side = 0; side < 4; side++)
 		{
-			if (!mesh_side_portals(navigation, c, (region << 16) | r, side, region, &tile->portals, &tile->portal_count, &tile->portal_capacity))
+			int before = count;
+
+			mesh_side_neighbors(navigation, c, (region << 16) | r, side, region, list, &count);
+			if (!mesh_grow((void **)&tile->neighbors, &tile->neighbor_capacity, tile->neighbor_count + count - before, sizeof(uint16_t)))
 			{
 				return false;
 			}
+			for (int n = before; n < count; n++)
+			{
+				tile->neighbors[tile->neighbor_count++] = (uint16_t)((list[n] & NAVIGATION_MESH_TILE_RECTS_MOST) | (side << 14));
+			}
 		}
-		tile->rects[r].first_portal = first;
-		tile->rects[r].portal_count = tile->portal_count - first;
+		tile->rects[r].neighbor_count = (uint16_t)((uint32_t)tile->neighbor_count - tile->rects[r].first_neighbor);
 	}
 	for (int side = 0; side < 4; side++)
 	{
@@ -4515,42 +4561,62 @@ static bool mesh_tile_ready(navigation_t *navigation, int c, int32_t region, con
 	return true;
 }
 
+// The node a rectangle with water on it at the build is of (its cell's
+// ground, or the cell's surface within its heights): what the water is
+// asked about
+static int32_t mesh_wet_node(const navigation_t *navigation, int c, int32_t id)
+{
+	const navigation_rect_t *rect = mesh_rect(navigation, c, id);
+	mesh_box_t box = mesh_box(navigation, c, id);
+	int32_t cell = (box.z >> 2) * navigation->size + (box.x >> 2);
+	int32_t sub = (box.z & 3) * NAVIGATION_SUBCELLS + (box.x & 3);
+	int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
+	int count = cell_nodes(navigation, cell, nodes);
+	bool ground = (rect->flags & NAVIGATION_RECT_GROUND) != 0;
+
+	if (ground && navigation->terrain_clearance[cell] != 0)
+	{
+		return cell;
+	}
+	for (int k = 1; k < count; k++)
+	{
+		const navigation_surface_t *surface = extra_surface(navigation, nodes[k]);
+		uint8_t below = surface->below[sub];
+		float height;
+
+		if (below >= NAVIGATION_SUBCELL_BLOCKED || (below == surface->ground_below) != ground)
+		{
+			continue;
+		}
+		height = surface->height - (float)below * NAVIGATION_SUBCELL_UNIT_METERS;
+		if (height >= rect->height - 0.03f && height <= rect_height_high(rect) + 0.03f)
+		{
+			return nodes[k];
+		}
+	}
+	return cell;
+}
+
 // What a rectangle is to an agent now: as node_info's (a wet one's its
 // cell's, the water as it is)
 static void mesh_rect_info(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
-	const navigation_rect_t *rect, node_info_t *info)
+	int c, int32_t id, node_info_t *info)
 {
-	if (rect->wet_node >= 0)
+	const navigation_rect_t *rect = mesh_rect(navigation, c, id);
+
+	if ((rect->flags & NAVIGATION_RECT_WET) != 0)
 	{
-		node_info(navigation, terrain, water, agent, rect->wet_node, info);
+		node_info(navigation, terrain, water, agent, mesh_wet_node(navigation, c, id), info);
 		return;
 	}
 	info->passable = roomy(rect->clearance, agent) && (rect->blocked & agent->groups) == 0
 		&& (float)rect->small * SMALL_UNIT_METERS < agent->height_meters;
 	info->water_class = CLASS_DRY;
-	info->cost_factor = rect->cost;
-	info->height = rect->height_low;
+	info->cost_factor = 1.0f + (float)rect->cost / 32.0f;
+	info->height = rect->height;
 	info->small = (float)rect->small * SMALL_UNIT_METERS > agent->step_meters;
-	info->surface = rect->kind == 1;
+	info->surface = (rect->flags & NAVIGATION_RECT_GROUND) == 0;
 	info->extra_cost = info->small ? navigation->small_detour_meters : 0.0f;
-}
-
-// Can the agent go through a portal from one rectangle (as it is to it)
-// to the next?
-static bool mesh_portal_allowed(const navigation_agent_t *agent, const navigation_portal_t *portal, const node_info_t *from,
-	const node_info_t *to)
-{
-	// (across what a body does not get through: an edge to jump, if any)
-	if (!to->passable || portal->gap != 0)
-	{
-		return false;
-	}
-	if (from->water_class == CLASS_SWIM && to->water_class == CLASS_SWIM)
-	{
-		return true;
-	}
-	// (an object's top: a step; the ground to the ground: its slope)
-	return portal->rise <= (portal->cross_surface ? agent->step_meters : agent_reach(agent));
 }
 
 // The rectangle of a class at a point, on the level nearest the height
@@ -4560,6 +4626,7 @@ static bool mesh_portal_allowed(const navigation_agent_t *agent, const navigatio
 // its middle gets to in a straight line if there is one near (not the
 // one beyond the wall)
 #define MESH_LOCATE_LINES_MOST 6
+#define MESH_LOCATE_KEPT 8
 static bool center_line_free(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
 	const float from[2], const float to[2], float height);
 static int32_t mesh_locate(navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
@@ -4568,98 +4635,124 @@ static int32_t mesh_locate(navigation_t *navigation, const terrain_t *terrain, c
 	int c = mesh_class_of(agent);
 	int32_t quarter_x;
 	int32_t quarter_z;
-	int32_t fallback = -1;
-	float fallback_score = 1e30f;
-	int lines = 0;
+	int32_t tile_quarters = navigation->region_size * NAVIGATION_SUBCELLS;
+	int32_t first_region_x;
+	int32_t first_region_z;
+	int32_t last_region_x;
+	int32_t last_region_z;
+	// (the best few, nearest first)
+	int32_t kept[MESH_LOCATE_KEPT];
+	float kept_score[MESH_LOCATE_KEPT];
+	float kept_point[MESH_LOCATE_KEPT][2];
+	int kept_count = 0;
 	float from[2] = { x, z };
+	int lines = 0;
 
 	mesh_quarter_at(c, x, z, &quarter_x, &quarter_z);
-	for (int32_t ring = 0; ring <= reach_quarters; ring++)
+	first_region_x = SDL_clamp((quarter_x - reach_quarters) / tile_quarters, 0, navigation->regions_per_side - 1);
+	first_region_z = SDL_clamp((quarter_z - reach_quarters) / tile_quarters, 0, navigation->regions_per_side - 1);
+	last_region_x = SDL_clamp((quarter_x + reach_quarters) / tile_quarters, 0, navigation->regions_per_side - 1);
+	last_region_z = SDL_clamp((quarter_z + reach_quarters) / tile_quarters, 0, navigation->regions_per_side - 1);
+	for (int32_t region_z = first_region_z; region_z <= last_region_z; region_z++)
 	{
-		int32_t best = -1;
-		float best_score = 1e30f;
-		float best_point[2] = { x, z };
-
-		for (int32_t dz = -ring; dz <= ring; dz++)
+		for (int32_t region_x = first_region_x; region_x <= last_region_x; region_x++)
 		{
-			// (the ring's own quarters: its two rows whole, the ends of the rest)
-			int32_t stride = dz == -ring || dz == ring || ring == 0 ? 1 : 2 * ring;
+			int32_t region = region_z * navigation->regions_per_side + region_x;
+			const navigation_mesh_tile_t *tile = &navigation->mesh.classes[c].tiles[region];
+			int32_t local_x = quarter_x - region_x * tile_quarters;
+			int32_t local_z = quarter_z - region_z * tile_quarters;
+			int32_t first_bucket_x = SDL_clamp((local_x - reach_quarters) >> 4, 0, NAVIGATION_MESH_BUCKETS - 1);
+			int32_t first_bucket_z = SDL_clamp((local_z - reach_quarters) >> 4, 0, NAVIGATION_MESH_BUCKETS - 1);
+			int32_t last_bucket_x = SDL_clamp((local_x + reach_quarters) >> 4, 0, NAVIGATION_MESH_BUCKETS - 1);
+			int32_t last_bucket_z = SDL_clamp((local_z + reach_quarters) >> 4, 0, NAVIGATION_MESH_BUCKETS - 1);
 
-			for (int32_t dx = -ring; dx <= ring; dx += stride)
+			if (!mesh_tile_ready(navigation, c, region, water))
 			{
-				int32_t here_x = quarter_x + dx;
-				int32_t here_z = quarter_z + dz;
-				mesh_level_t levels[MESH_LEVELS];
-				int count;
-				float point[2] = { mesh_quarter_middle(c, here_x), mesh_quarter_middle(c, here_z) };
-
-				if (here_x < 0 || here_z < 0 || (here_x >> 2) >= navigation->size || (here_z >> 2) >= navigation->size
-					|| !mesh_tile_ready(navigation, c, region_of_cell(navigation, (here_z >> 2) * navigation->size + (here_x >> 2)), water))
+				continue;
+			}
+			for (int32_t bucket_z = first_bucket_z; bucket_z <= last_bucket_z; bucket_z++)
+			{
+				for (int32_t bucket_x = first_bucket_x; bucket_x <= last_bucket_x; bucket_x++)
 				{
-					continue;
-				}
-				count = mesh_levels_at(navigation, c, here_x, here_z, levels);
-				for (int k = 0; k < count; k++)
-				{
-					node_info_t info;
-					float difference = SDL_fabsf(levels[k].height - height);
-					float score;
+					int32_t bucket = bucket_z * NAVIGATION_MESH_BUCKETS + bucket_x;
 
-					mesh_rect_info(navigation, terrain, water, agent, mesh_rect(navigation, c, levels[k].rect), &info);
-					if (!info.passable)
+					for (uint32_t k = tile->bucket_first[bucket]; k < tile->bucket_first[bucket + 1]; k++)
 					{
-						continue;
-					}
-					// (out of its reach in height last: a deck a meter up over
-					// it is not where it stands; then how far, then in height)
-					score = (difference > agent_reach(agent) ? 10000.0f : 0.0f)
-						+ ((point[0] - x) * (point[0] - x) + (point[1] - z) * (point[1] - z)) * 100.0f + difference;
-					if (score < best_score)
-					{
-						best_score = score;
-						best = levels[k].rect;
-						best_point[0] = point[0];
-						best_point[1] = point[1];
+						const navigation_rect_t *rect = &tile->rects[tile->bucket_rects[k]];
+						int32_t id = (region << 16) | tile->bucket_rects[k];
+						// (its quarter nearest the point's)
+						int32_t near_x = SDL_clamp(local_x, rect->x, rect->x + rect->width - 1);
+						int32_t near_z = SDL_clamp(local_z, rect->z, rect->z + rect->depth - 1);
+						bool own = near_x == local_x && near_z == local_z;
+						float point[2] = { own ? x : mesh_quarter_middle(c, near_x + region_x * tile_quarters),
+							own ? z : mesh_quarter_middle(c, near_z + region_z * tile_quarters) };
+						float off_squared = (point[0] - x) * (point[0] - x) + (point[1] - z) * (point[1] - z);
+						node_info_t info;
+						float difference;
+						float score;
+						int at;
+						bool known = false;
+
+						if (SDL_abs(near_x - local_x) > reach_quarters || SDL_abs(near_z - local_z) > reach_quarters)
+						{
+							continue;
+						}
+						for (int n = 0; n < kept_count && !known; n++)
+						{
+							known = kept[n] == id;
+						}
+						if (known)
+						{
+							continue;
+						}
+						mesh_rect_info(navigation, terrain, water, agent, c, id, &info);
+						if (!info.passable)
+						{
+							continue;
+						}
+						// (out of its reach in height last: a deck a meter up over
+						// it is not where it stands; then how far, then in height)
+						difference = SDL_fabsf(mesh_height_at(navigation, c, id, near_x + region_x * tile_quarters, near_z + region_z * tile_quarters)
+							- height);
+						score = (difference > agent_reach(agent) ? 10000.0f : 0.0f) + off_squared * 100.0f + difference;
+						at = kept_count;
+						while (at > 0 && kept_score[at - 1] > score)
+						{
+							at--;
+						}
+						if (at >= MESH_LOCATE_KEPT)
+						{
+							continue;
+						}
+						for (int n = SDL_min(kept_count, MESH_LOCATE_KEPT - 1); n > at; n--)
+						{
+							kept[n] = kept[n - 1];
+							kept_score[n] = kept_score[n - 1];
+							kept_point[n][0] = kept_point[n - 1][0];
+							kept_point[n][1] = kept_point[n - 1][1];
+						}
+						kept[at] = id;
+						kept_score[at] = score;
+						kept_point[at][0] = point[0];
+						kept_point[at][1] = point[1];
+						kept_count = SDL_min(kept_count + 1, MESH_LOCATE_KEPT);
 					}
 				}
 			}
 		}
-		if (best < 0)
-		{
-			continue;
-		}
-		if (best_score < 10000.0f && (ring == 0 || (lines < MESH_LOCATE_LINES_MOST
-			&& center_line_free(navigation, terrain, water, agent, from, best_point, height))))
-		{
-			return best;
-		}
-		lines += best_score < 10000.0f ? 1 : 0;
-		if (best_score < fallback_score)
-		{
-			fallback_score = best_score;
-			fallback = best;
-		}
-		// (none of the near ones by a straight line: the nearest)
-		if (lines >= MESH_LOCATE_LINES_MOST && fallback_score < 10000.0f)
-		{
-			break;
-		}
 	}
-	return fallback;
-}
-
-// Whether a rectangle is over a quarter of its class's mesh
-static bool rect_has_quarter(const navigation_rect_t *rect, int32_t quarter_x, int32_t quarter_z)
-{
-	return quarter_x >= rect->x && quarter_z >= rect->z && quarter_x < rect->x + rect->width && quarter_z < rect->z + rect->depth;
-}
-
-// The point of a rectangle nearest a point (the middles of its outer
-// quarters at the furthest: where a body's middle was tried)
-static void rect_nearest(int c, const navigation_rect_t *rect, float x, float z, float out[2])
-{
-	out[0] = SDL_clamp(x, mesh_quarter_middle(c, rect->x), mesh_quarter_middle(c, rect->x + rect->width - 1));
-	out[1] = SDL_clamp(z, mesh_quarter_middle(c, rect->z), mesh_quarter_middle(c, rect->z + rect->depth - 1));
+	for (int n = 0; n < kept_count && kept_score[n] < 10000.0f; n++)
+	{
+		// (its own quarter's: there. Else the nearest it has a straight
+		// line to, of the near ones)
+		if ((kept_point[n][0] == x && kept_point[n][1] == z) || (lines < MESH_LOCATE_LINES_MOST
+			&& center_line_free(navigation, terrain, water, agent, from, kept_point[n], height)))
+		{
+			return kept[n];
+		}
+		lines++;
+	}
+	return kept_count > 0 ? kept[0] : -1;
 }
 
 static float distance_2d(const float a[2], const float b[2])
@@ -4694,6 +4787,260 @@ static float triangle_area_2(const float a[2], const float b[2], const float c[2
 static bool same_point(const float a[2], const float b[2])
 {
 	return (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) < 1e-6f;
+}
+
+// A rectangle's valid neighbors: the ones in its own tile and the ones
+// over its tile's sides (their tiles built), each with the side of the
+// rectangle it is over; how many
+#define MESH_NEIGHBORS_MOST 1024
+static int mesh_neighbors(const navigation_t *navigation, int c, int32_t id, int32_t *ids_out, uint8_t *sides_out)
+{
+	int32_t region = id >> 16;
+	const navigation_mesh_tile_t *tile = &navigation->mesh.classes[c].tiles[region];
+	const navigation_rect_t *rect = &tile->rects[id & 0xFFFF];
+	int count = 0;
+
+	for (uint32_t k = 0; k < rect->neighbor_count && count < MESH_NEIGHBORS_MOST; k++)
+	{
+		uint16_t entry = tile->neighbors[rect->first_neighbor + k];
+
+		ids_out[count] = (region << 16) | (entry & NAVIGATION_MESH_TILE_RECTS_MOST);
+		sides_out[count++] = (uint8_t)(entry >> 14);
+	}
+	for (int side = 0; side < 4; side++)
+	{
+		int32_t neighbor;
+
+		if (tile->border_count[side] == 0 || !rect_by_side(navigation, rect, region, side))
+		{
+			continue;
+		}
+		region_neighbor(navigation, region, side, &neighbor);
+		if (neighbor < 0 || !navigation->mesh.classes[c].tiles[neighbor].built)
+		{
+			continue;
+		}
+		for (int32_t k = 0; k < tile->border_count[side] && count < MESH_NEIGHBORS_MOST; k++)
+		{
+			if (tile->border[side][k].from == (uint16_t)(id & 0xFFFF)
+				&& tile->border[side][k].to < navigation->mesh.classes[c].tiles[neighbor].rect_count)
+			{
+				ids_out[count] = (neighbor << 16) | tile->border[side][k].to;
+				sides_out[count++] = (uint8_t)side;
+			}
+		}
+	}
+	return count;
+}
+
+// The step from a rectangle to its neighbor at one quarter along the side
+// they share
+static float mesh_step_at(const navigation_t *navigation, int c, int32_t from, int32_t to, const mesh_shared_t *shared, int32_t along)
+{
+	bool by_x = shared->side < 2;
+
+	return SDL_fabsf(mesh_height_at(navigation, c, to, by_x ? shared->beyond : along, by_x ? along : shared->beyond)
+		- mesh_height_at(navigation, c, from, by_x ? shared->inside : along, by_x ? along : shared->inside));
+}
+
+// The crossing from a rectangle to a neighbor over one of its sides, for
+// an agent: the part of the side they share (portal_out: its ends, the
+// gap between the two), where along it the agent crosses (between the
+// points of it nearest two given points: where it came in and where it
+// is going) and the step there. Whether it walks across there
+// (walk_out): they touch and the step is one it takes (an object's top:
+// its step; the ground to the ground: its slope); where the step changes
+// along the side (the ground along a terrace) the crossing is narrowed to
+// the stretch it takes, the nearest such to where it would cross. False:
+// they share nothing
+static bool mesh_crossing(const navigation_t *navigation, int c, const navigation_agent_t *agent, int32_t from, int32_t to, int side,
+	const float near_a[2], const float near_b[2], navigation_portal_t *portal_out, float crossing_out[2], bool *walk_out)
+{
+	const float quarter = NAVIGATION_CELL_METERS / (float)NAVIGATION_SUBCELLS;
+	const navigation_rect_t *from_rect = mesh_rect(navigation, c, from);
+	const navigation_rect_t *to_rect = mesh_rect(navigation, c, to);
+	mesh_shared_t shared;
+	bool cross = (from_rect->flags & NAVIGATION_RECT_GROUND) == 0 || (to_rect->flags & NAVIGATION_RECT_GROUND) == 0;
+	bool level = cross && from_rect->height_span == 0 && to_rect->height_span == 0 && (from_rect->flags & NAVIGATION_RECT_GROUND) == 0
+		&& (to_rect->flags & NAVIGATION_RECT_GROUND) == 0;
+	float limit = cross ? agent->step_meters : agent_reach(agent);
+	float edge;
+	float toward_a[2];
+	float toward_b[2];
+	float wanted[2];
+	int32_t at;
+	int32_t run_first;
+	int32_t run_last;
+	float rise;
+	bool walk;
+
+	if (!mesh_shared(navigation, c, from, to, side, &shared))
+	{
+		return false;
+	}
+	edge = mesh_quarter_low(c, side == 0 || side == 2 ? shared.inside + 1 : shared.inside);
+	portal_out->from = from;
+	portal_out->to = to;
+	portal_out->cross_surface = cross;
+	portal_out->gap = (uint8_t)shared.gap;
+	portal_out->a[side < 2 ? 0 : 1] = edge;
+	portal_out->b[side < 2 ? 0 : 1] = edge;
+	portal_out->a[side < 2 ? 1 : 0] = mesh_quarter_low(c, shared.first);
+	portal_out->b[side < 2 ? 1 : 0] = mesh_quarter_low(c, shared.last);
+	segment_nearest(portal_out->a, portal_out->b, near_a, toward_a);
+	segment_nearest(portal_out->a, portal_out->b, near_b, toward_b);
+	wanted[0] = 0.5f * (toward_a[0] + toward_b[0]);
+	wanted[1] = 0.5f * (toward_a[1] + toward_b[1]);
+	at = SDL_clamp((int32_t)SDL_floorf((wanted[side < 2 ? 1 : 0] + mesh_offset(c)) / quarter), shared.first, shared.last - 1);
+	run_first = shared.first;
+	run_last = shared.last;
+	rise = mesh_step_at(navigation, c, from, to, &shared, at);
+	walk = shared.gap == 0 && rise <= limit;
+	// (all of both within the step of each other: any of it is taken)
+	level = level || SDL_max(rect_height_high(from_rect), rect_height_high(to_rect)) - SDL_min(from_rect->height, to_rect->height) <= limit;
+	// (the step not the same all along: the stretch of it it takes)
+	if (shared.gap == 0 && !level)
+	{
+		if (!walk)
+		{
+			// (the nearest quarter along the side that it does take)
+			for (int32_t off = 1; off < shared.last - shared.first && !walk; off++)
+			{
+				for (int sign = -1; sign <= 1 && !walk; sign += 2)
+				{
+					int32_t k = at + sign * off;
+
+					if (k >= shared.first && k < shared.last && mesh_step_at(navigation, c, from, to, &shared, k) <= limit)
+					{
+						at = k;
+						rise = mesh_step_at(navigation, c, from, to, &shared, k);
+						walk = true;
+					}
+				}
+			}
+		}
+		if (walk)
+		{
+			run_first = at;
+			run_last = at + 1;
+			while (run_first > shared.first && mesh_step_at(navigation, c, from, to, &shared, run_first - 1) <= limit)
+			{
+				run_first--;
+			}
+			while (run_last < shared.last && mesh_step_at(navigation, c, from, to, &shared, run_last) <= limit)
+			{
+				run_last++;
+			}
+			portal_out->a[side < 2 ? 1 : 0] = mesh_quarter_low(c, run_first);
+			portal_out->b[side < 2 ? 1 : 0] = mesh_quarter_low(c, run_last);
+		}
+	}
+	portal_out->rise = rise;
+	segment_nearest(portal_out->a, portal_out->b, wanted, crossing_out);
+	*walk_out = walk;
+	return true;
+}
+
+// The searches' notes (navigation_mesh_visit_t): the one of a rectangle
+// in the search going on, NULL if it has none
+static navigation_mesh_visit_t *mesh_visit_find(const navigation_t *navigation, int32_t id)
+{
+	const navigation_mesh_t *mesh = &navigation->mesh;
+	uint32_t mask = (uint32_t)mesh->visit_capacity - 1u;
+
+	if (mesh->visits == NULL)
+	{
+		return NULL;
+	}
+	for (uint32_t at = ((uint32_t)id * 2654435761u) & mask;; at = (at + 1u) & mask)
+	{
+		navigation_mesh_visit_t *visit = &mesh->visits[at];
+
+		if (visit->search != mesh->visit_search)
+		{
+			return NULL;
+		}
+		if (visit->rect == id)
+		{
+			return visit;
+		}
+	}
+}
+
+// The note of a rectangle in the search going on, made if it has none
+// (not reached yet: a cost beyond any); NULL if there is no memory. A
+// note made may move the others: none is kept over this
+static navigation_mesh_visit_t *mesh_visit_make(navigation_t *navigation, int32_t id)
+{
+	navigation_mesh_t *mesh = &navigation->mesh;
+	navigation_mesh_visit_t *visit = mesh_visit_find(navigation, id);
+	uint32_t mask;
+
+	if (visit != NULL)
+	{
+		return visit;
+	}
+	// (half full: twice as many, this search's put in again)
+	if (mesh->visits == NULL || 2 * (mesh->visit_count + 1) > mesh->visit_capacity)
+	{
+		int32_t capacity = mesh->visits == NULL ? 1024 : mesh->visit_capacity * 2;
+		navigation_mesh_visit_t *grown = SDL_calloc((size_t)capacity, sizeof(navigation_mesh_visit_t));
+
+		if (grown == NULL)
+		{
+			return NULL;
+		}
+		for (int32_t k = 0; k < mesh->visit_capacity; k++)
+		{
+			if (mesh->visits[k].search == mesh->visit_search)
+			{
+				uint32_t at = ((uint32_t)mesh->visits[k].rect * 2654435761u) & ((uint32_t)capacity - 1u);
+
+				while (grown[at].search == mesh->visit_search)
+				{
+					at = (at + 1u) & ((uint32_t)capacity - 1u);
+				}
+				grown[at] = mesh->visits[k];
+			}
+		}
+		SDL_free(mesh->visits);
+		mesh->visits = grown;
+		mesh->visit_capacity = capacity;
+	}
+	mask = (uint32_t)mesh->visit_capacity - 1u;
+	for (uint32_t at = ((uint32_t)id * 2654435761u) & mask;; at = (at + 1u) & mask)
+	{
+		visit = &mesh->visits[at];
+		if (visit->search != mesh->visit_search)
+		{
+			SDL_zerop(visit);
+			visit->rect = id;
+			visit->search = mesh->visit_search;
+			visit->cost = 1e30f;
+			visit->came_from = -1;
+			mesh->visit_count++;
+			return visit;
+		}
+	}
+}
+
+// A search begins: no rectangle has a note
+static void mesh_visits_begin(navigation_t *navigation)
+{
+	navigation_mesh_t *mesh = &navigation->mesh;
+
+	mesh->visit_search++;
+	mesh->visit_count = 0;
+	// (the numbers gone round: the table cleared, an old note not taken
+	// for this search's)
+	if (mesh->visit_search == 0)
+	{
+		if (mesh->visits != NULL)
+		{
+			SDL_memset(mesh->visits, 0, sizeof(navigation_mesh_visit_t) * (size_t)mesh->visit_capacity);
+		}
+		mesh->visit_search = 1;
+	}
 }
 
 // The corridor's portals pulled tight (the simple stupid funnel): each
@@ -5006,7 +5353,6 @@ static bool mesh_jump(const navigation_t *navigation, const terrain_t *terrain, 
 	float *landing_height_out, float *cost_out)
 {
 	const float quarter = NAVIGATION_CELL_METERS / (float)NAVIGATION_SUBCELLS;
-	const navigation_rect_t *from_rect = mesh_rect(navigation, c, from);
 	float along[2] = { portal->b[0] - portal->a[0], portal->b[1] - portal->a[1] };
 	float length = SDL_sqrtf(along[0] * along[0] + along[1] * along[1]);
 	float across[2];
@@ -5033,7 +5379,7 @@ static bool mesh_jump(const navigation_t *navigation, const terrain_t *terrain, 
 	along[0] /= length;
 	along[1] /= length;
 	// (across the edge, out of the rectangle it leaves)
-	mesh_rect_box(c, from_rect, low, high);
+	mesh_rect_box(navigation, c, from, low, high);
 	across[0] = -along[1];
 	across[1] = along[0];
 	if ((portal->a[0] - 0.5f * (low[0] + high[0])) * across[0] + (portal->a[1] - 0.5f * (low[1] + high[1])) * across[1] < 0.0f)
@@ -5202,11 +5548,11 @@ static int mesh_find_path(navigation_t *navigation, const terrain_t *terrain, co
 			const navigation_rect_t *rect = mesh_rect(navigation, c, mesh_chain[k]);
 			float off;
 
-			if (!rect_has_quarter(rect, failed_quarter_x, failed_quarter_z))
+			if (!rect_has_quarter(navigation, c, mesh_chain[k], failed_quarter_x, failed_quarter_z))
 			{
 				continue;
 			}
-			off = SDL_fabsf(SDL_clamp(failed_height, rect->height_low, rect->height_high) - failed_height);
+			off = SDL_fabsf(SDL_clamp(failed_height, rect->height, rect_height_high(rect)) - failed_height);
 			if (off <= at_off)
 			{
 				at_off = off;
@@ -5249,20 +5595,21 @@ static int mesh_find_path(navigation_t *navigation, const terrain_t *terrain, co
 // The rectangle of a door's end (the nearest to its point, a few quarter
 // meters round: a door's ends are by its wall, where a body's middle may
 // not be), found once a search. near: only if the end is by this
-// rectangle at all (the others' ends are not looked for)
+// rectangle (-1: wherever it is) at all (the others' ends are not looked
+// for)
 static int32_t mesh_link_rect(navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
-	int link, int end, const navigation_rect_t *near)
+	int link, int end, int32_t near)
 {
 	static int32_t rects[NAVIGATION_LINKS_MAX][2];
 	static uint32_t searches[NAVIGATION_LINKS_MAX][2];
 	const float *point = end == 0 ? navigation->links[link].a : navigation->links[link].b;
 
-	if (near != NULL)
+	if (near >= 0)
 	{
 		float low[2];
 		float high[2];
 
-		mesh_rect_box(mesh_class_of(agent), near, low, high);
+		mesh_rect_box(navigation, mesh_class_of(agent), near, low, high);
 		if (point[0] < low[0] - NAVIGATION_CELL_METERS || point[1] < low[1] - NAVIGATION_CELL_METERS || point[0] > high[0] + NAVIGATION_CELL_METERS
 			|| point[1] > high[1] + NAVIGATION_CELL_METERS)
 		{
@@ -5292,7 +5639,6 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 	int32_t start;
 	int32_t best;
 	float best_distance;
-	uint32_t reached_tag;
 	bool found = false;
 	int32_t chain_length = 0;
 	float goal[2] = { to_x, to_z };
@@ -5325,7 +5671,6 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 	{
 		navigation->mesh.search_number = 1;
 	}
-	reached_tag = navigation->mesh.search_number * 2;
 	start = mesh_locate(navigation, terrain, water, agent, from_x, from_z, from_height, MESH_START_NEAR_QUARTERS);
 	// (on no rectangle, none beside it: pushed off them, onto a rock, into
 	// a corner the class is kept out of; the nearest farther round, straight
@@ -5427,16 +5772,17 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 			}
 		}
 	}
+	mesh_visits_begin(navigation);
 	{
-		navigation_rect_t *rect = mesh_rect(navigation, c, start);
+		navigation_mesh_visit_t *visit = mesh_visit_make(navigation, start);
 
-		rect->tag = reached_tag;
-		rect->search_cost = 0.0f;
-		rect->came_from = -1;
-		rect->entry[0] = from_x;
-		rect->entry[1] = from_z;
-		rect->came_by_door = false;
-		rect->came_by_jump = false;
+		if (visit == NULL)
+		{
+			return -1;
+		}
+		visit->cost = 0.0f;
+		visit->entry[0] = from_x;
+		visit->entry[1] = from_z;
 	}
 	navigation->heap_count = 0;
 	if (!heap_push(navigation, start, goal_distance))
@@ -5447,22 +5793,31 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 	{
 		float nearest[2];
 
-		rect_nearest(c, mesh_rect(navigation, c, start), to_x, to_z, nearest);
+		rect_nearest(navigation, c, start, to_x, to_z, nearest);
 		best_distance = distance_2d(nearest, goal);
 	}
 	while (navigation->heap_count > 0)
 	{
+		static int32_t neighbor_ids[MESH_NEIGHBORS_MOST];
+		static uint8_t neighbor_sides[MESH_NEIGHBORS_MOST];
 		int32_t id = heap_pop(navigation);
 		int32_t region = id >> 16;
-		navigation_mesh_tile_t *tile = &navigation->mesh.classes[c].tiles[region];
-		navigation_rect_t *rect = &tile->rects[id & 0xFFFF];
+		const navigation_rect_t *rect = mesh_rect(navigation, c, id);
+		// (its note as it is now: making the next ones' may move it)
+		navigation_mesh_visit_t visit;
 		node_info_t here;
+		int neighbor_count;
 
-		if (rect->tag == reached_tag + 1)
 		{
-			continue;
+			navigation_mesh_visit_t *own = mesh_visit_find(navigation, id);
+
+			if (own == NULL || own->closed)
+			{
+				continue;
+			}
+			own->closed = true;
+			visit = *own;
 		}
-		rect->tag = reached_tag + 1;
 		// By the goal: there, if at the goal itself; else a little further
 		// is looked for one nearer it (MESH_GOAL_MORE_EXPANSIONS)
 		for (int n = 0; n < goal_near_count; n++)
@@ -5480,7 +5835,7 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 			float nearest[2];
 			float distance;
 
-			rect_nearest(c, rect, to_x, to_z, nearest);
+			rect_nearest(navigation, c, id, to_x, to_z, nearest);
 			distance = distance_2d(nearest, goal);
 			if (distance < best_distance)
 			{
@@ -5492,9 +5847,9 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 		{
 			break;
 		}
-		mesh_rect_info(navigation, terrain, water, agent, rect, &here);
-		// The tiles round it that it touches, current before their portals
-		// are read (building one links its border both ways)
+		mesh_rect_info(navigation, terrain, water, agent, c, id, &here);
+		// The tiles round it that it touches, current before its neighbors
+		// there are read (building one links its border both ways)
 		for (int side = 0; side < 4; side++)
 		{
 			int32_t neighbor;
@@ -5505,99 +5860,88 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 				if (neighbor >= 0)
 				{
 					mesh_tile_ready(navigation, c, neighbor, water);
-					// (a build may have moved this tile's arrays: not, its
-					// rectangles are its own; the border lists are read below)
 				}
 			}
 		}
-		for (int list = 0; list < 5; list++)
+		neighbor_count = mesh_neighbors(navigation, c, id, neighbor_ids, neighbor_sides);
+		for (int n = 0; n < neighbor_count; n++)
 		{
-			const navigation_portal_t *portals = list == 0 ? &tile->portals[rect->first_portal] : tile->border[list - 1];
-			int32_t count = list == 0 ? rect->portal_count : tile->border_count[list - 1];
+			int32_t to = neighbor_ids[n];
+			navigation_portal_t portal;
+			navigation_mesh_visit_t *next = mesh_visit_find(navigation, to);
+			node_info_t there;
+			float crossing[2];
+			float cost;
+			float takeoff[2];
+			float landing[2];
+			float landing_height = 0.0f;
+			float jump_cost = 0.0f;
+			bool walk;
+			bool jump = false;
 
-			if (list > 0 && !rect_by_side(navigation, rect, region, list - 1))
+			if (next != NULL && next->closed)
 			{
 				continue;
 			}
-			for (int32_t p = 0; p < count; p++)
+			mesh_rect_info(navigation, terrain, water, agent, c, to, &there);
+			if (!there.passable || (navigation->mesh.shut_count > 0 && mesh_is_shut(navigation, c, agent, id, to)))
 			{
-				const navigation_portal_t *portal = &portals[p];
-				navigation_rect_t *next;
-				node_info_t there;
-				float crossing[2];
-				float toward_entry[2];
-				float toward_goal[2];
-				float cost;
-				float takeoff[2];
-				float landing[2];
-				float landing_height = 0.0f;
-				float jump_cost = 0.0f;
-				bool jump = false;
-
-				if (list > 0 && portal->from != (id & 0xFFFF))
+				continue;
+			}
+			// Where it crosses: between the points of the side they share
+			// nearest where it came in and nearest the goal
+			if (!mesh_crossing(navigation, c, agent, id, to, neighbor_sides[n], visit.entry, goal, &portal, crossing, &walk))
+			{
+				continue;
+			}
+			// (swimming on: any step; an edge it does not walk: one it
+			// jumps, if it does)
+			if (!walk && !(portal.gap == 0 && here.water_class == CLASS_SWIM && there.water_class == CLASS_SWIM))
+			{
+				if (here.water_class == CLASS_SWIM || there.water_class == CLASS_SWIM
+					|| !mesh_jump(navigation, terrain, water, agent, c, id, to, &portal, crossing, takeoff, landing, &landing_height, &jump_cost))
 				{
 					continue;
 				}
-				next = mesh_rect(navigation, c, portal->to);
-				if (next->tag == reached_tag + 1)
+				jump = true;
+			}
+			cost = visit.cost + distance_2d(visit.entry, jump ? takeoff : crossing) * here.cost_factor + there.extra_cost + (jump ? jump_cost : 0.0f);
+			if (next == NULL || cost < next->cost)
+			{
+				next = mesh_visit_make(navigation, to);
+				if (next == NULL)
 				{
-					continue;
+					navigation->heap_count = 0;
+					break;
 				}
-				mesh_rect_info(navigation, terrain, water, agent, next, &there);
-				if (navigation->mesh.shut_count > 0 && mesh_is_shut(navigation, c, agent, id, portal->to))
+				next->cost = cost;
+				next->came_from = id;
+				next->entry[0] = jump ? landing[0] : crossing[0];
+				next->entry[1] = jump ? landing[1] : crossing[1];
+				next->came_a[0] = jump ? takeoff[0] : portal.a[0];
+				next->came_a[1] = jump ? takeoff[1] : portal.a[1];
+				next->came_b[0] = jump ? landing[0] : portal.b[0];
+				next->came_b[1] = jump ? landing[1] : portal.b[1];
+				next->came_by_door = false;
+				next->came_by_jump = jump;
+				next->came_height = jump ? landing_height : 0.0f;
+				if (!heap_push(navigation, to, cost + HEURISTIC_WEIGHT * distance_2d(crossing, goal)))
 				{
-					continue;
-				}
-				// Where it crosses: between the portal's points nearest where
-				// it came in and nearest the goal
-				segment_nearest(portal->a, portal->b, rect->entry, toward_entry);
-				segment_nearest(portal->a, portal->b, goal, toward_goal);
-				crossing[0] = 0.5f * (toward_entry[0] + toward_goal[0]);
-				crossing[1] = 0.5f * (toward_entry[1] + toward_goal[1]);
-				// (an edge it does not step: one it jumps, if it does)
-				if (!mesh_portal_allowed(agent, portal, &here, &there))
-				{
-					if (!there.passable || here.water_class == CLASS_SWIM || there.water_class == CLASS_SWIM
-						|| !mesh_jump(navigation, terrain, water, agent, c, id, portal->to, portal, crossing, takeoff, landing, &landing_height, &jump_cost))
-					{
-						continue;
-					}
-					jump = true;
-				}
-				cost = rect->search_cost + distance_2d(rect->entry, jump ? takeoff : crossing) * here.cost_factor + there.extra_cost
-					+ (jump ? jump_cost : 0.0f);
-				if (next->tag != reached_tag || cost < next->search_cost)
-				{
-					next->tag = reached_tag;
-					next->search_cost = cost;
-					next->came_from = id;
-					next->entry[0] = jump ? landing[0] : crossing[0];
-					next->entry[1] = jump ? landing[1] : crossing[1];
-					next->came_a[0] = jump ? takeoff[0] : portal->a[0];
-					next->came_a[1] = jump ? takeoff[1] : portal->a[1];
-					next->came_b[0] = jump ? landing[0] : portal->b[0];
-					next->came_b[1] = jump ? landing[1] : portal->b[1];
-					next->came_by_door = false;
-					next->came_by_jump = jump;
-					next->came_height = jump ? landing_height : 0.0f;
-					if (!heap_push(navigation, portal->to, cost + HEURISTIC_WEIGHT * distance_2d(crossing, goal)))
-					{
-						navigation->heap_count = 0;
-						break;
-					}
+					navigation->heap_count = 0;
+					break;
 				}
 			}
 		}
 		// Through a door from here (its ends on the ground), open or one it
 		// opens, to the rectangle of its other end
-		if (navigation->link_count > 0 && rect->kind == 0 && here.passable)
+		if (navigation->link_count > 0 && (rect->flags & NAVIGATION_RECT_GROUND) != 0 && here.passable)
 		{
 			for (int k = 0; k < navigation->link_count; k++)
 			{
 				int end = -1;
 				int32_t other_cell;
 				int32_t other;
-				navigation_rect_t *next;
+				navigation_mesh_visit_t *next;
 				node_info_t there;
 				float cost;
 				float door_a[2];
@@ -5609,7 +5953,7 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 				}
 				for (int e = 0; e < 2; e++)
 				{
-					if (mesh_link_rect(navigation, terrain, water, agent, k, e, rect) == id)
+					if (mesh_link_rect(navigation, terrain, water, agent, k, e, id) == id)
 					{
 						end = e;
 					}
@@ -5619,17 +5963,17 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 					continue;
 				}
 				other_cell = navigation->link_cells[k][1 - end];
-				other = mesh_link_rect(navigation, terrain, water, agent, k, 1 - end, NULL);
+				other = mesh_link_rect(navigation, terrain, water, agent, k, 1 - end, -1);
 				if (other < 0 || other == id)
 				{
 					continue;
 				}
-				next = mesh_rect(navigation, c, other);
-				if (next->tag == reached_tag + 1)
+				next = mesh_visit_find(navigation, other);
+				if (next != NULL && next->closed)
 				{
 					continue;
 				}
-				mesh_rect_info(navigation, terrain, water, agent, next, &there);
+				mesh_rect_info(navigation, terrain, water, agent, c, other, &there);
 				if (!there.passable || SDL_fabsf(navigation->ground_height[other_cell] - navigation->ground_height[navigation->link_cells[k][end]])
 					> SDL_max(agent->step_meters, 0.6f) || (navigation->mesh.shut_count > 0 && mesh_is_shut(navigation, c, agent, id, other)))
 				{
@@ -5639,12 +5983,17 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 				door_a[1] = end == 0 ? navigation->links[k].a[1] : navigation->links[k].b[1];
 				door_b[0] = end == 0 ? navigation->links[k].b[0] : navigation->links[k].a[0];
 				door_b[1] = end == 0 ? navigation->links[k].b[1] : navigation->links[k].a[1];
-				cost = rect->search_cost + distance_2d(rect->entry, door_a) * here.cost_factor + navigation->link_meters[k]
+				cost = visit.cost + distance_2d(visit.entry, door_a) * here.cost_factor + navigation->link_meters[k]
 					+ (navigation->links[k].open ? 0.0f : LINK_SHUT_METERS);
-				if (next->tag != reached_tag || cost < next->search_cost)
+				if (next == NULL || cost < next->cost)
 				{
-					next->tag = reached_tag;
-					next->search_cost = cost;
+					next = mesh_visit_make(navigation, other);
+					if (next == NULL)
+					{
+						navigation->heap_count = 0;
+						break;
+					}
+					next->cost = cost;
 					next->came_from = id;
 					next->entry[0] = door_b[0];
 					next->entry[1] = door_b[1];
@@ -5674,9 +6023,12 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 	navigation->last_search_ticks = navigation->mesh.last_search_ticks;
 	navigation->last_expansions = expansions;
 	// The rectangles from the end back to the start
-	for (int32_t id = best; id >= 0 && chain_length < (int32_t)SDL_arraysize(mesh_chain); id = mesh_rect(navigation, c, id)->came_from)
+	for (int32_t id = best; id >= 0 && chain_length < (int32_t)SDL_arraysize(mesh_chain);)
 	{
+		const navigation_mesh_visit_t *visit = mesh_visit_find(navigation, id);
+
 		chain[chain_length++] = id;
+		id = visit != NULL ? visit->came_from : -1;
 	}
 	mesh_chain_length = chain_length;
 	if (chain_length == 1 && !found)
@@ -5686,7 +6038,7 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 		float end[2];
 		float here[2] = { from_x, from_z };
 
-		rect_nearest(c, mesh_rect(navigation, c, start), to_x, to_z, end);
+		rect_nearest(navigation, c, start, to_x, to_z, end);
 		if (distance_2d(end, here) < 0.5f)
 		{
 			return NAVIGATION_PATH_NONE;
@@ -5721,8 +6073,16 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 		portal_count++;
 		for (int32_t k = chain_length - 2; k >= 0 && portal_count < (int)SDL_arraysize(lefts) - 3 && !more; k--)
 		{
-			const navigation_rect_t *from_rect = mesh_rect(navigation, c, chain[k + 1]);
-			const navigation_rect_t *to_rect = mesh_rect(navigation, c, chain[k]);
+			// (the note of the rectangle it comes into: how it came there)
+			const navigation_mesh_visit_t *to_rect = mesh_visit_find(navigation, chain[k]);
+			float from_low[2];
+			float from_high[2];
+
+			if (to_rect == NULL)
+			{
+				break;
+			}
+			mesh_rect_box(navigation, c, chain[k + 1], from_low, from_high);
 
 			if (to_rect->came_by_jump)
 			{
@@ -5776,8 +6136,7 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 				continue;
 			}
 			{
-				float from_middle[2] = { 0.5f * (mesh_quarter_low(c, from_rect->x) + mesh_quarter_low(c, from_rect->x + from_rect->width)),
-					0.5f * (mesh_quarter_low(c, from_rect->z) + mesh_quarter_low(c, from_rect->z + from_rect->depth)) };
+				float from_middle[2] = { 0.5f * (from_low[0] + from_high[0]), 0.5f * (from_low[1] + from_high[1]) };
 				float portal_middle[2] = { 0.5f * (to_rect->came_a[0] + to_rect->came_b[0]), 0.5f * (to_rect->came_a[1] + to_rect->came_b[1]) };
 				float direction[2] = { portal_middle[0] - from_middle[0], portal_middle[1] - from_middle[1] };
 				float to_a[2] = { to_rect->came_a[0] - portal_middle[0], to_rect->came_a[1] - portal_middle[1] };
@@ -5816,7 +6175,7 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 		}
 		else
 		{
-			rect_nearest(c, mesh_rect(navigation, c, best), to_x, to_z, end);
+			rect_nearest(navigation, c, best, to_x, to_z, end);
 		}
 		if (!more)
 		{
@@ -5905,7 +6264,7 @@ static int mesh_line(navigation_t *navigation, const terrain_t *terrain, const w
 	{
 		const navigation_rect_t *rect = mesh_rect(navigation, c, id);
 
-		if (SDL_fabsf(SDL_clamp(from_height, rect->height_low, rect->height_high) - from_height) > agent_reach(agent))
+		if (SDL_fabsf(SDL_clamp(from_height, rect->height, rect_height_high(rect)) - from_height) > agent_reach(agent))
 		{
 			id = -1;
 		}
@@ -5922,7 +6281,7 @@ static int mesh_line(navigation_t *navigation, const terrain_t *terrain, const w
 		node_info_t here;
 		node_info_t there;
 		int32_t region;
-		const navigation_portal_t *through = NULL;
+		bool any_beyond = false;
 
 		if (id < 0)
 		{
@@ -5964,7 +6323,7 @@ static int mesh_line(navigation_t *navigation, const terrain_t *terrain, const w
 				count = mesh_levels_at(navigation, c, quarter_x, quarter_z, levels);
 				for (int k = 0; k < count && id < 0; k++)
 				{
-					mesh_rect_info(navigation, terrain, water, agent, mesh_rect(navigation, c, levels[k].rect), &there);
+					mesh_rect_info(navigation, terrain, water, agent, c, levels[k].rect, &there);
 					if (there.passable && SDL_fabsf(levels[k].height - height) <= (levels[k].ground ? agent_reach(agent) : agent->step_meters + 0.05f))
 					{
 						id = levels[k].rect;
@@ -5979,7 +6338,7 @@ static int mesh_line(navigation_t *navigation, const terrain_t *terrain, const w
 		}
 		rect = mesh_rect(navigation, c, id);
 		region = id >> 16;
-		mesh_rect_box(c, rect, low, high);
+		mesh_rect_box(navigation, c, id, low, high);
 		if (to_x >= low[0] && to_x <= high[0] && to_z >= low[1] && to_z <= high[1])
 		{
 			return 1;
@@ -6032,9 +6391,10 @@ static int mesh_line(navigation_t *navigation, const terrain_t *terrain, const w
 		travelled = leave;
 		exit[0] = from_x + direction[0] * leave;
 		exit[1] = from_z + direction[1] * leave;
-		height = SDL_clamp(height, rect->height_low, rect->height_high);
-		// The portal over that side the point is in (the tile beyond made
-		// current first)
+		height = SDL_clamp(height, rect->height, rect_height_high(rect));
+		// The neighbor over that side the point crosses into (the tile
+		// beyond made current first): the one it walks into there, the
+		// least step if there are two (the ground and a deck over it)
 		if (rect_by_side(navigation, rect, region, side))
 		{
 			int32_t neighbor;
@@ -6045,50 +6405,52 @@ static int mesh_line(navigation_t *navigation, const terrain_t *terrain, const w
 				mesh_tile_ready(navigation, c, neighbor, water);
 			}
 		}
+		mesh_rect_info(navigation, terrain, water, agent, c, id, &here);
 		{
-			const navigation_mesh_tile_t *tile = &navigation->mesh.classes[c].tiles[region];
+			static int32_t neighbor_ids[MESH_NEIGHBORS_MOST];
+			static uint8_t neighbor_sides[MESH_NEIGHBORS_MOST];
+			int neighbor_count = mesh_neighbors(navigation, c, id, neighbor_ids, neighbor_sides);
+			float least = 1e30f;
 
-			for (int list = 0; list < 2 && through == NULL; list++)
+			for (int n = 0; n < neighbor_count; n++)
 			{
-				const navigation_portal_t *portals = list == 0 ? &tile->portals[rect->first_portal] : tile->border[side];
-				int32_t count = list == 0 ? rect->portal_count : (rect_by_side(navigation, rect, region, side) ? tile->border_count[side] : 0);
+				navigation_portal_t portal;
+				float crossing[2];
+				bool walk;
+				bool along_x = side < 2;
 
-				for (int32_t p = 0; p < count; p++)
+				if (neighbor_sides[n] != side
+					|| !mesh_crossing(navigation, c, agent, id, neighbor_ids[n], side, exit, exit, &portal, crossing, &walk))
 				{
-					const navigation_portal_t *portal = &portals[p];
-					bool along_x = side < 2;
-
-					if (portal->from != (id & 0xFFFF) || portal->gap != 0)
+					continue;
+				}
+				any_beyond = any_beyond || (portal.gap == 0
+					&& (along_x ? exit[1] >= SDL_min(portal.a[1], portal.b[1]) - 1e-3f && exit[1] <= SDL_max(portal.a[1], portal.b[1]) + 1e-3f
+						: exit[0] >= SDL_min(portal.a[0], portal.b[0]) - 1e-3f && exit[0] <= SDL_max(portal.a[0], portal.b[0]) + 1e-3f));
+				mesh_rect_info(navigation, terrain, water, agent, c, neighbor_ids[n], &there);
+				if (!there.passable || !(walk || (portal.gap == 0 && here.water_class == CLASS_SWIM && there.water_class == CLASS_SWIM)))
+				{
+					continue;
+				}
+				// (the stretch it walks across has the point in it)
+				if (along_x ? (exit[1] >= SDL_min(portal.a[1], portal.b[1]) - 1e-3f && exit[1] <= SDL_max(portal.a[1], portal.b[1]) + 1e-3f)
+					: (exit[0] >= SDL_min(portal.a[0], portal.b[0]) - 1e-3f && exit[0] <= SDL_max(portal.a[0], portal.b[0]) + 1e-3f))
+				{
+					if (portal.rise < least)
 					{
-						continue;
-					}
-					// (on this side's line, the point within its run)
-					if (along_x ? SDL_fabsf(portal->a[0] - exit[0]) > 1e-3f : SDL_fabsf(portal->a[1] - exit[1]) > 1e-3f)
-					{
-						continue;
-					}
-					if (along_x ? (exit[1] >= SDL_min(portal->a[1], portal->b[1]) - 1e-3f && exit[1] <= SDL_max(portal->a[1], portal->b[1]) + 1e-3f)
-						: (exit[0] >= SDL_min(portal->a[0], portal->b[0]) - 1e-3f && exit[0] <= SDL_max(portal->a[0], portal->b[0]) + 1e-3f))
-					{
-						through = portal;
-						break;
+						least = portal.rise;
+						next = neighbor_ids[n];
 					}
 				}
 			}
 		}
-		mesh_rect_info(navigation, terrain, water, agent, rect, &here);
-		if (through != NULL)
+		if (next >= 0)
 		{
-			next = through->to;
-			mesh_rect_info(navigation, terrain, water, agent, mesh_rect(navigation, c, next), &there);
-			if (mesh_portal_allowed(agent, through, &here, &there))
-			{
-				id = next;
-				continue;
-			}
+			id = next;
+			continue;
 		}
 		// (no rectangle beyond: its last stretch, if that is all that is left)
-		if (through == NULL && (1.0f - travelled) * length <= MESH_LINE_OFF_METERS)
+		if (!any_beyond && (1.0f - travelled) * length <= MESH_LINE_OFF_METERS)
 		{
 			id = -1;
 			continue;
@@ -6130,12 +6492,18 @@ int navigation_mesh_rects(const navigation_t *navigation, const navigation_agent
 		for (int32_t k = 0; tile->built && k < tile->rect_count && count < most; k++)
 		{
 			const navigation_rect_t *rect = &tile->rects[k];
-			int c = mesh_class_of(agent);
-			float x0 = mesh_quarter_low(c, rect->x);
-			float z0 = mesh_quarter_low(c, rect->z);
-			float x1 = mesh_quarter_low(c, rect->x + rect->width);
-			float z1 = mesh_quarter_low(c, rect->z + rect->depth);
+			float low[2];
+			float high[2];
+			float x0;
+			float z0;
+			float x1;
+			float z1;
 
+			mesh_rect_box(navigation, mesh_class_of(agent), (r << 16) | k, low, high);
+			x0 = low[0];
+			z0 = low[1];
+			x1 = high[0];
+			z1 = high[1];
 			if (x1 < minimum_x || z1 < minimum_z || x0 > maximum_x || z0 > maximum_z)
 			{
 				continue;
@@ -6144,8 +6512,8 @@ int navigation_mesh_rects(const navigation_t *navigation, const navigation_agent
 			rects_out[count][1] = z0;
 			rects_out[count][2] = x1 - x0;
 			rects_out[count][3] = z1 - z0;
-			rects_out[count][4] = (float)rect->kind;
-			rects_out[count][5] = rect->height_high;
+			rects_out[count][4] = (rect->flags & NAVIGATION_RECT_GROUND) != 0 ? 0.0f : 1.0f;
+			rects_out[count][5] = rect_height_high(rect);
 			count++;
 		}
 	}
@@ -6197,7 +6565,7 @@ void navigation_mesh_debug(navigation_t *navigation, const water_t *water, int c
 				float low[2];
 				float high[2];
 
-				mesh_rect_box(c, rect, low, high);
+				mesh_rect_box(navigation, c, (region << 16) | r, low, high);
 				if (high[0] < minimum_x || high[1] < minimum_z || low[0] > maximum_x || low[1] > maximum_z)
 				{
 					continue;
@@ -6210,34 +6578,38 @@ void navigation_mesh_debug(navigation_t *navigation, const water_t *water, int c
 					out->z0 = low[1];
 					out->x1 = high[0];
 					out->z1 = high[1];
-					out->height_low = rect->height_low;
-					out->height_high = rect->height_high;
-					out->ground = rect->kind == 0;
+					out->height_low = rect->height;
+					out->height_high = rect_height_high(rect);
+					out->ground = (rect->flags & NAVIGATION_RECT_GROUND) != 0;
 					out->id = (region << 16) | r;
 				}
-				// (its portals: within the tile, and over the tile's sides)
-				for (int list = 0; list < 5; list++)
+				// (its neighbors: the part of its sides it shares with each)
 				{
-					const navigation_portal_t *portals = list == 0 ? &tile->portals[rect->first_portal] : tile->border[list - 1];
-					int32_t count = list == 0 ? rect->portal_count : tile->border_count[list - 1];
+					static int32_t neighbor_ids[MESH_NEIGHBORS_MOST];
+					static uint8_t neighbor_sides[MESH_NEIGHBORS_MOST];
+					int neighbor_count = mesh_neighbors(navigation, c, (region << 16) | r, neighbor_ids, neighbor_sides);
 
-					for (int32_t p = 0; p < count && *portal_count_out < portals_most; p++)
+					for (int n = 0; n < neighbor_count && *portal_count_out < portals_most; n++)
 					{
+						mesh_shared_t shared;
 						navigation_debug_portal_t *out;
+						int side = neighbor_sides[n];
+						float edge;
 
-						if (portals[p].from != r)
+						if (!mesh_shared(navigation, c, (region << 16) | r, neighbor_ids[n], side, &shared))
 						{
 							continue;
 						}
+						edge = mesh_quarter_low(c, side == 0 || side == 2 ? shared.inside + 1 : shared.inside);
 						out = &portals_out[(*portal_count_out)++];
-						out->a[0] = portals[p].a[0];
-						out->a[1] = portals[p].a[1];
-						out->b[0] = portals[p].b[0];
-						out->b[1] = portals[p].b[1];
-						out->height = rect->height_high;
-						out->ground = rect->kind == 0;
-						out->jump = portals[p].gap != 0;
-						out->rise = portals[p].rise;
+						out->a[side < 2 ? 0 : 1] = edge;
+						out->b[side < 2 ? 0 : 1] = edge;
+						out->a[side < 2 ? 1 : 0] = mesh_quarter_low(c, shared.first);
+						out->b[side < 2 ? 1 : 0] = mesh_quarter_low(c, shared.last);
+						out->height = rect_height_high(rect);
+						out->ground = (rect->flags & NAVIGATION_RECT_GROUND) != 0;
+						out->jump = shared.gap != 0;
+						out->rise = mesh_step_at(navigation, c, (region << 16) | r, neighbor_ids[n], &shared, (shared.first + shared.last) / 2);
 					}
 				}
 			}
@@ -6267,15 +6639,14 @@ void navigation_mesh_describe(const navigation_t *navigation, char *text_out, si
 			}
 			tiles[c]++;
 			rects[c] += tile->rect_count;
-			portals[c] += tile->portal_count;
-			bytes += sizeof(navigation_rect_t) * (size_t)tile->rect_capacity + sizeof(navigation_portal_t) * (size_t)tile->portal_capacity;
+			portals[c] += tile->neighbor_count;
+			bytes += sizeof(navigation_mesh_tile_t) + sizeof(navigation_rect_t) * (size_t)tile->rect_capacity
+				+ sizeof(uint16_t) * (size_t)(tile->neighbor_capacity + tile->bucket_capacity);
 			for (int side = 0; side < 4; side++)
 			{
 				portals[c] += tile->border_count[side];
-				bytes += sizeof(navigation_portal_t) * (size_t)tile->border_capacity[side];
+				bytes += sizeof(navigation_border_t) * (size_t)tile->border_capacity[side];
 			}
-			bytes += sizeof(int16_t) * (size_t)(navigation->region_size * navigation->region_size + NAVIGATION_REGION_EXTRA_SLOTS
-				+ tile->detail_capacity * NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS);
 		}
 	}
 	{
@@ -6285,7 +6656,7 @@ void navigation_mesh_describe(const navigation_t *navigation, char *text_out, si
 		{
 			const navigation_mesh_class_t *class = &navigation->mesh.classes[c];
 
-			used += (size_t)SDL_snprintf(text_out + used, text_size - used, " %d quarter%s wide: %lld tiles, %lld rectangles, %lld portals (reach %.2f m, "
+			used += (size_t)SDL_snprintf(text_out + used, text_size - used, " %d quarter%s wide: %lld tiles, %lld rectangles, %lld neighbors (reach %.2f m, "
 				"height %.2f m, radius %.2f m);", c + 1, c == 0 ? "" : "s", (long long)tiles[c], (long long)rects[c], (long long)portals[c],
 				(double)(class->reach < 1e8f ? class->reach : 0.0f), (double)(class->height < 1e8f ? class->height : 0.0f), (double)class->radius);
 		}
@@ -6751,17 +7122,18 @@ void navigation_fill_overlay(navigation_t *navigation, const terrain_t *terrain,
 			for (int32_t k = 0; tile->built && k < tile->rect_count; k++)
 			{
 				const navigation_rect_t *rect = &tile->rects[k];
+				mesh_box_t box = mesh_box(navigation, c, (r << 16) | k);
 
-				if (rect->kind != 0)
+				if ((rect->flags & NAVIGATION_RECT_GROUND) == 0)
 				{
 					continue;
 				}
 				// (the cells its outer quarter meters are in)
-				for (int32_t z = rect->z; z < rect->z + rect->depth; z++)
+				for (int32_t z = box.z; z < box.z + box.depth; z++)
 				{
-					for (int32_t x = rect->x; x < rect->x + rect->width; x++)
+					for (int32_t x = box.x; x < box.x + box.width; x++)
 					{
-						if (x == rect->x || z == rect->z || x == rect->x + rect->width - 1 || z == rect->z + rect->depth - 1)
+						if (x == box.x || z == box.z || x == box.x + box.width - 1 || z == box.z + box.depth - 1)
 						{
 							overlay_out[(z / NAVIGATION_SUBCELLS) * navigation->size + x / NAVIGATION_SUBCELLS] |= NAVIGATION_OVERLAY_MESH_EDGE;
 						}

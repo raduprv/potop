@@ -79,15 +79,21 @@
 // as it is); the tile is built again when its water's cells change, when
 // its region or one round it is (it looks a cell into them), or when an
 // agent of a lesser reach or step (or a lower or a wider one) joins the
-// class. Rectangles meet at portals: a run of quarters along a side
-// whose level beyond is another rectangle's, with its worst step (per
-// agent at search time whether it takes that: an object's top a step,
-// the ground its slope), within the tile and across to the next (linked
-// when either is built). Where two rectangles more than a step apart
-// have only quarters between them that are neither's (the ground by a
-// terrace's face, the terrace's own edge) the portal has a gap: an edge
-// to jump, for an agent that jumps (mesh_jump finds where it leaves the
-// ground and where it lands). A* over the rectangles (the agent's own
+// class. A rectangle (20 bytes) keeps its corners, its height (and how
+// far its highest is over it: 0 for a flat top), the room above, the
+// slope's cost and where its neighbors are listed: the rectangles a body
+// gets to from it, within the tile and across to the next (linked when
+// either is built). Where it crosses to one is not kept: the part of
+// their sides they share follows from their corners, the step from
+// their heights there, and whether an agent takes it is the agent's
+// (an object's top a step, the ground its slope: mesh_crossing). Where
+// two rectangles more than a step apart have only quarters between them
+// that are neither's (the ground by a terrace's face, the terrace's own
+// edge) they are neighbors over a gap: an edge to jump, for an agent
+// that jumps (mesh_jump finds where it leaves the ground and where it
+// lands). Which rectangle a point is on is found among the tile's (by
+// buckets of 4 m), not in a table per cell. A* over the rectangles, its
+// notes on them in a small table of its own (the agent's own
 // rules for the room, the groups, small objects and the water, at the
 // time), then the corridor pulled tight (the funnel) through the middles
 // of the portals' end quarters. A goal where no body's middle can be (by
@@ -237,14 +243,16 @@ typedef struct
 #define NAVIGATION_MESH_CLASSES 3               // by width in quarter meters: 1 (a hen), 2 (a man), 3 and more (a cow, a bear)
 #define NAVIGATION_MESH_RECT_MOST 64            // quarter meters a side of a rectangle at most
 
-// Where one rectangle leads into the next: a run of the edge they share
+// Where one rectangle leads into the next: the part of their sides they
+// share. Not kept: worked out from the two rectangles when a search or a
+// line gets there (mesh_crossing)
 typedef struct
 {
-	int32_t from;                      // the rectangle in this tile it leaves
-	int32_t to;                        // the one it enters: its tile * 65536 + its index
-	float a[2];                        // the run's ends (x, z, meters)
+	int32_t from;                      // the rectangle it leaves (its tile * 65536 + its index)
+	int32_t to;                        // the one it enters
+	float a[2];                        // its ends (x, z, meters), on the side of the one it leaves
 	float b[2];
-	float rise;                        // the worst step across it (meters)
+	float rise;                        // the step across it where it is crossed (meters)
 	bool cross_surface;                // an object's top on either side (a step only, no slope: that is the ground's)
 	// Quarter meters between the two that are neither's (where a body's
 	// middle cannot be: by a terrace's face below, on its edge above): not
@@ -253,33 +261,57 @@ typedef struct
 	uint8_t gap;
 } navigation_portal_t;
 
+// A rectangle of the mesh: quarter meters a body's middle can be on, all
+// alike. 20 bytes; a search's own notes on it are the search's
+// (navigation_mesh_visit_t)
+#define NAVIGATION_RECT_GROUND 1                // the ground (its heights the terrain's); else an object's top
+#define NAVIGATION_RECT_WET 2                   // a cell with water at the build: looked at with the water as it is
+#define NAVIGATION_RECT_SPAN_UNIT_METERS 0.05f
+#define NAVIGATION_MESH_TILE_RECTS_MOST 0x3FFF  // (a neighbor is 14 bits of index and its side)
+
 typedef struct
 {
-	int32_t x;                         // its first quarter meter (x, z, over the whole map)
-	int32_t z;
+	uint8_t x;                         // its first quarter meter within its tile (x, z)
+	uint8_t z;
 	uint8_t width;                     // quarter meters
 	uint8_t depth;
-	uint8_t kind;                      // 0: the ground, 1: an object's top
+	float height;                      // its surface's, where it is lowest
+	uint8_t height_span;               // how much higher its highest is (NAVIGATION_RECT_SPAN_UNIT_METERS each; 0: flat)
 	uint8_t clearance;                 // the least room above (NAVIGATION_CLEARANCE_UNIT_METERS each, or OPEN)
+	uint8_t flags;                     // NAVIGATION_RECT_*
+	uint8_t cost;                      // what a meter on it costs over 1 (its slope), in 32nds
 	uint8_t blocked;                   // the blockers' groups over it
 	uint8_t small;                     // a small object's height on it (as navigation_t.small_height)
-	float cost;                        // what a meter on it costs (its slope; 1 on an object's top)
-	float height_low;
-	float height_high;
-	int32_t wet_node;                  // a cell with water at the build: its node (the water looked at then); -1: dry
-	int32_t first_portal;              // in its tile's portals
-	int32_t portal_count;
-	// The search's (tag as navigation_search_node_t's)
-	uint32_t tag;
-	float search_cost;
+	uint16_t neighbor_count;
+	uint32_t first_neighbor;           // in its tile's neighbors
+} navigation_rect_t;
+
+// A rectangle a search has got to: the search's notes on it. They live in
+// a table of the navigation's, found by the rectangle, reused from search
+// to search (one of another search's is as good as none)
+typedef struct
+{
+	int32_t rect;
+	uint32_t search;                   // the search that wrote it
+	float cost;                        // so far
 	int32_t came_from;                 // -1: the start
 	float entry[2];                    // where the search came in
-	float came_a[2];                   // the portal it came through (or a door's two ends)
+	float came_a[2];                   // the crossing it came through (or a door's two ends)
 	float came_b[2];
+	float came_height;                 // (a jump: the height it lands at)
+	bool closed;                       // done with
 	bool came_by_door;
-	bool came_by_jump;                 // or over an edge it jumps: came_a where it leaves the ground, came_b where it lands
-	float came_height;                 // (and at what height)
-} navigation_rect_t;
+	bool came_by_jump;                 // over an edge it jumps: came_a where it leaves the ground, came_b where it lands
+} navigation_mesh_visit_t;
+
+// A rectangle's neighbor in the next tile: a border's entry
+typedef struct
+{
+	uint16_t from;                     // the rectangle in this tile
+	uint16_t to;                       // the one in the tile over that side
+} navigation_border_t;
+
+#define NAVIGATION_MESH_BUCKETS 16              // a side: a tile's rectangles are found by the bucket of 4 m they reach into
 
 typedef struct
 {
@@ -294,21 +326,22 @@ typedef struct
 	navigation_rect_t *rects;
 	int32_t rect_count;
 	int32_t rect_capacity;
-	navigation_portal_t *portals;      // within the tile, by rectangle
-	int32_t portal_count;
-	int32_t portal_capacity;
-	navigation_portal_t *border[4];    // to the next tile (+x, -x, +z, -z)
+	// Each rectangle's valid neighbors within the tile, together: its
+	// index (14 bits) and the side of the rectangle it is over (the 2 above:
+	// 0: +x, 1: -x, 2: +z, 3: -z). Only ones a body gets to: the next one
+	// along, or one more than a step off over quarters that are neither's
+	// (an edge to jump)
+	uint16_t *neighbors;
+	int32_t neighbor_count;
+	int32_t neighbor_capacity;
+	navigation_border_t *border[4];    // to the next tile (+x, -x, +z, -z)
 	int32_t border_count[4];
 	int32_t border_capacity[4];
-	// Per cell of the region, and per extra surface slot of it: the
-	// rectangle all its quarter meters are in, -1: none of them in any, or
-	// -2 - a row of detail: its sixteen quarters' own (each a rectangle or
-	// -1: a cell by a wall, some of it no place for a body's middle)
-	int16_t *ground_rect;
-	int16_t *extra_rect;
-	int16_t *detail;                   // rows of NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS
-	int32_t detail_count;
-	int32_t detail_capacity;
+	// Which rectangles reach into each bucket: bucket_rects from
+	// bucket_first[b] to bucket_first[b + 1]
+	uint32_t bucket_first[NAVIGATION_MESH_BUCKETS * NAVIGATION_MESH_BUCKETS + 1];
+	uint16_t *bucket_rects;
+	int32_t bucket_capacity;
 } navigation_mesh_tile_t;
 
 typedef struct
@@ -349,6 +382,10 @@ typedef struct
 	navigation_mesh_shut_t shut[NAVIGATION_MESH_SHUT_MOST];
 	int32_t shut_count;
 	int32_t shut_next;                 // the one written next (the oldest, once all are)
+	navigation_mesh_visit_t *visits;   // the searches' notes (a table found by the rectangle: a power of two of them)
+	int32_t visit_capacity;
+	int32_t visit_count;               // of the search going on
+	uint32_t visit_search;             // its number
 	int64_t ways_refused;              // statistics: ways found that did not hold, a portal shut for each
 	int64_t ways_cut;                  // and those kept as far as they held
 	uint32_t search_number;

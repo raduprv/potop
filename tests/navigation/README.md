@@ -249,10 +249,16 @@ engine/actors.c (following a path: move_actor and the helpers above it).
    quarter by quarter, the level beyond nearest in height that is
    another rectangle's (mesh_side_portals), runs of the same step
    level; over quarters that are no rectangle's, to the first that is
-   (4 at most), a portal with a gap: an edge to jump. Each node's
-   rectangle is kept per cell, or per quarter where its quarters differ
-   (navigation_mesh_tile_t.detail).
-3. **Search**: A* over rectangles (mesh_search), then the funnel
+   (4 at most), a neighbor over a gap: an edge to jump. A rectangle is
+   20 bytes (corners, height, room, slope's cost, where its neighbors
+   are listed); a neighbor 2 (its index and side). Where two meet and
+   the step between them are worked out when a search gets there
+   (mesh_crossing), which rectangle a point is on is found among the
+   tile's by buckets of 4 m (mesh_levels_at, mesh_locate): no table per
+   cell. docs/claude/04_navigation_plan.md has where this is going.
+3. **Search**: A* over rectangles (mesh_search; its notes on the ones it
+   gets to in a table of the navigation's, navigation_mesh_visit_t, not
+   in the rectangles), then the funnel
    (mesh_funnel, through the middles of the portals' end quarters),
    then the way gone over the quarter meters (mesh_way_holds; a portal
    shut and searched again where it does not hold: mesh_find_path).
