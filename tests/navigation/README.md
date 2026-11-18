@@ -91,6 +91,20 @@ out by a refused step:
   each time. It took random places 4 m aside before, and (its goal then
   more than 2 m from the player) a new one every frame of a chase.
 
+- **A way found is gone over the quarters before it is given out**
+  (step 3, mesh_find_path / mesh_way_holds): as the walker will go it,
+  straight where its body has the straight way, by a fine way where
+  not. Where it does not hold, the portal out of the rectangle it got
+  no further in is shut to agents like this one (30 s, or till a tile
+  there is built again) and the way searched again: another stair, or
+  as near the goal as it gets. Nothing to shut (the last rectangle),
+  the way is cut where it stops holding. So the cow is not sent up the
+  inn's stairs to find out there: it goes to the foot of the terrace
+  and stands. The mesh itself is as it was (1 m cells): the quarters
+  are asked about the one way found, not built into every tile (that
+  was the other way to do it: rectangles over quarter meters near
+  objects, every tile's build that much heavier).
+
 The step guard is still there (a net: steps are no longer planned to be
 refused), and the slide along an edge with it.
 
@@ -105,23 +119,25 @@ chase.py (14 houses x 2)     : behind the runner at the end 305 -> 78 s in all; 
 nav_stress.py run            : 0 wrong -> 0 wrong; spins (cow+run) 3 -> 0
 ```
 
+With step 3 on top: houses.py --run on the spot 451 -> 418 s, fine
+searches that find nothing 81 -> 19, off the mesh 183 -> 136, no walk
+given up at a stair; nav_stress.py 0 wrong, cow+run on the spot 76 ->
+69 s; chase.py behind at the end 78 -> 72 s. A search costs about
+0.02 ms more (0.3 ms where a fine way has to be looked for).
+
 What is on the spot now is mostly the turn at a walk's start (a second
 or so each: the tests send it off from a standstill, the goal behind
 it) and a turn at a tight corner (under a second, about one a station).
 
 Still open:
 
-- **The mesh and the quarters still disagree**, the walker finds out on
-  the spot (and gives up quickly now). The mesh takes a stair cell for
-  passable if a square of the class fits somewhere in it; whether each
-  tread is within the agent's step, the quarters know. The honest fix is
-  the mesh's own: portals and rectangles at quarter meters near objects
-  (step 3 of the plan), so a search does not send an animal to stairs it
-  cannot climb.
 - **Waypoints by posts.** The funnel's corners are the rectangles'
   (inset by the radius), not the free quarters'; by a stair's side the
-  waypoint is over the stringer. The fine way goes round it; a mesh at
-  quarter meters would not put it there.
+  waypoint is over the stringer. The fine way goes round it at the
+  place; the way given out could carry the fine way's points instead.
+- **Lines** (navigation_line_passable) do not know the shut portals;
+  the follower asks its body's line besides, so it does not matter to
+  it, but a game that asks a line alone gets the mesh's word.
 - **The old cell search** is still the fallback where a walker stands
   on no rectangle of its class (navigation_find_path). To go: first a
   way back onto the mesh for such a walker, then the cells' search,
@@ -156,8 +172,10 @@ engine/actors.c (following a path: move_actor and the helpers above it).
    between rectangles where the quarters on either side meet within a
    step (node_edge_rise / node_edge_span), cut to the quarter lines
    that meet, dropped if narrower than the class.
-3. **Search**: A* over rectangles (mesh_find_path), then the funnel
-   (mesh_funnel, portals inset by the agent's radius). Lines
+3. **Search**: A* over rectangles (mesh_search), then the funnel
+   (mesh_funnel, portals inset by the agent's radius), then the way
+   gone over the quarter meters (mesh_way_holds; a portal shut and
+   searched again where it does not hold: mesh_find_path). Lines
    (navigation_line_passable) walk the rectangles and their portals.
    The old cell grid is the fallback when the mesh cannot answer.
 4. **Following** (actors.c move_actor):
@@ -228,7 +246,9 @@ it is not set). Everything writes into build/.
   the mesh, time on the spot, the biggest turn, spins. The goals some
   types must not reach are listed (the shut church; the church porch's
   beam at 1.65 m for the 1.85 m farmer; the inns' 0.32 m tread for the
-  cow's 0.3 m step).
+  cow's 0.3 m step). A goal on a terrace counts as reached only if the
+  way went all the way ("under": it stands within a meter of it on the
+  map, on the ground below).
 - **chase.py** — a chase round each of 14 real houses (their .pobj
   made from house_plans/ with tools/potop_house): a runner (a farmer's
   way: the player, about) goes round the house close to its walls, onto

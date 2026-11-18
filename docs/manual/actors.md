@@ -58,9 +58,12 @@ stair's top) it turns on the spot first and then goes straight. It
 leaves its path's corners (for the point ahead, to cut a corner) only
 where its body fits all the way, by the quarter meter; where it does not
 fit straight to its next corner (a post beside it) it finds a way round
-over the quarter meters at once, and where there is none (stairs with
-treads higher than its `step_meters` that the coarser search took for a
-way) it gives the walk up within a second or so. It slows for a sharp
+over the quarter meters at once. A way the search finds is gone over
+by the quarter meter before the actor sets out: stairs with treads
+higher than its `step_meters`, a beam lower than it is tall are left
+out and another way looked for, or the actor goes as near as it can get
+and stops there (should it meet such a place on its way all the same,
+it gives the walk up within a second or so). It slows for a sharp
 corner as it comes to it. It walks slower uphill and through water deeper than `wade_depth_meters`,
 and swims where the water is deeper than `swim_depth_meters`: afloat, its
 body that deep under the surface, level, at `swim_meters_per_second`, with

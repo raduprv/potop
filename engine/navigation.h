@@ -263,6 +263,7 @@ typedef struct
 	uint64_t water_signature;          // its water's cells at the build
 	uint64_t water_checked_ticks;      // when they were last compared (SDL_GetTicks)
 	uint32_t checked_search;           // the search that last found it current
+	uint32_t build_serial;             // which build of all the tiles' this is (a shut portal's rectangles are this build's)
 	navigation_rect_t *rects;
 	int32_t rect_count;
 	int32_t rect_capacity;
@@ -287,9 +288,34 @@ typedef struct
 	navigation_mesh_tile_t *tiles;     // per region
 } navigation_mesh_class_t;
 
+// A portal shut to an agent: a way a search found through it did not
+// hold over the quarter meters for it (mesh_way_holds: a stair's treads
+// higher than its step, a beam lower than it is tall, inside cells the
+// rectangles take whole). Its searches leave the portal out, till either
+// rectangle's tile is built again or a while has gone by
+#define NAVIGATION_MESH_SHUT_MOST 32
+
+typedef struct
+{
+	int32_t from;                      // the rectangles (of the agent's class)
+	int32_t to;
+	uint32_t from_serial;              // their tiles' builds
+	uint32_t to_serial;
+	uint8_t class;
+	float step;                        // the agent's: one alike is kept out
+	float height;
+	float radius;
+	uint64_t until_ticks;              // SDL_GetTicks
+} navigation_mesh_shut_t;
+
 typedef struct
 {
 	navigation_mesh_class_t classes[NAVIGATION_MESH_CLASSES];
+	navigation_mesh_shut_t shut[NAVIGATION_MESH_SHUT_MOST];
+	int32_t shut_count;
+	int32_t shut_next;                 // the one written next (the oldest, once all are)
+	int64_t ways_refused;              // statistics: ways found that did not hold, a portal shut for each
+	int64_t ways_cut;                  // and those kept as far as they held
 	uint32_t search_number;
 	float last_build_milliseconds;     // statistics: the last tile's
 	int64_t tiles_built;

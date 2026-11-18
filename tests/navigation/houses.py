@@ -53,14 +53,24 @@ def walk(case, agent, running):
 	if "Houses: 1 of" not in log:
 		sys.exit("%s: the house did not load (see build/%s.log)" % (case, name))
 	ends = {}
+	# (a goal on a terrace is "there" within a meter of it on the map: under
+	# it on the ground too. Reached only if its way went all the way)
+	short_ways = set()
+	sent = -1
 	for line in log.splitlines():
-		if line.startswith("Walk test: goal ") and "walk_test_goal" not in line:
+		if line.startswith("Walk test: walk_test_goal ") or line.startswith("Walk test: walk_test_no_way "):
+			sent += 1
+		elif line.startswith("Walk test: its way, ") and "(not all the way)" in line:
+			short_ways.add(sent)
+		elif line.startswith("Walk test: goal ") and "walk_test_goal" not in line:
 			parts = line.split()
 			ends[int(parts[3])] = parts[6]
 	wrong = 0
 	marks = []
 	for index in range(len(goals)):
 		end = ends.get(index, "none")
+		if end == "walk_test_there" and index in short_ways:
+			end = "walk_test_under"
 		there = end == "walk_test_there"
 		if there == (index in unreachable):
 			wrong += 1
