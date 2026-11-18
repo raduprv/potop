@@ -157,6 +157,19 @@ typedef struct
 	float jump_up_meters;
 	float jump_down_meters;
 	int jump_actions[3];
+	// How its clips meet in the air (as they were made): the pitch
+	// (nose up) the pose of "jump_air" has where "jump_start" ends and
+	// where "jump_land" begins, the body's middle it is pitched round
+	// (above the model's root and ahead of it, in "jump_air"'s pose) and
+	// how high over the ground that middle is at "jump_start"'s end and
+	// at the first touch ("jump_land"'s start). Not given: a little nose
+	// up, then down, round half its height
+	float jump_takeoff_pitch_degrees;
+	float jump_landing_pitch_degrees;
+	float jump_center_meters;
+	float jump_center_ahead_meters;
+	float jump_start_center_meters;
+	float jump_land_center_meters;
 	float walk_start_meters;
 	float walk_start_180_meters;
 	float walk_start_180_delay;        // of its length, before it moves
@@ -323,8 +336,8 @@ typedef struct
 	int jump_phase;
 	float jump_seconds;
 	float jump_phase_seconds;
-	float jump_from[3];
-	float jump_to[3];
+	float jump_from[3];                // (its body's middle, where the arc begins)
+	float jump_to[3];                  // (where it lands: the ground there)
 	float jump_air_seconds;
 	float jump_rise_speed;
 	bool jump_replan;

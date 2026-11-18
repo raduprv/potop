@@ -16,6 +16,7 @@
 // MAX_BONES in data/shaders/actor_skinning.glsl
 #define ACTOR_MAX_BONES_DRAWN 64
 #define PIVOT_DEGREES_PER_SECOND 90.0f     // pivot_degrees_per_second not given
+#define JUMP_MIDDLE_SHARE 0.5f             // jump_center_meters not given: this much of its height
 #define SPOT_TURN_FOUR_LEGS_DEGREES 20.0f  // spot_turn_degrees not given, on four legs
 #define SPOT_TURN_WALK_FRACTION 0.4f        // its arc's walk then, if it has none
 #define SPOT_TURN_GOING_SPEED 0.1f          // m/s: going at least this fast (forward or back), it turns freely
@@ -51,6 +52,12 @@ static void set_type_defaults(actor_type_t *type, const char *name)
 	type->jump_up_meters = 0.0f;
 	type->jump_down_meters = 0.0f;
 	type->jump_actions[0] = type->jump_actions[1] = type->jump_actions[2] = -1;
+	type->jump_takeoff_pitch_degrees = 12.0f;
+	type->jump_landing_pitch_degrees = -12.0f;
+	type->jump_center_meters = -1.0f;
+	type->jump_center_ahead_meters = 0.0f;
+	type->jump_start_center_meters = -1.0f;
+	type->jump_land_center_meters = -1.0f;
 	SDL_strlcpy(type->turn_left_action_name, "turn_left", sizeof(type->turn_left_action_name));
 	type->turn_left_action = -1;
 	SDL_strlcpy(type->turn_right_action_name, "turn_right", sizeof(type->turn_right_action_name));
@@ -174,6 +181,30 @@ static bool load_key(void *user_data, const char *section, const char *key, cons
 	if (SDL_strcmp(key, "jump_down_meters") == 0)
 	{
 		return ini_value_to_float(value, &type->jump_down_meters);
+	}
+	if (SDL_strcmp(key, "jump_takeoff_pitch_degrees") == 0)
+	{
+		return ini_value_to_float(value, &type->jump_takeoff_pitch_degrees);
+	}
+	if (SDL_strcmp(key, "jump_landing_pitch_degrees") == 0)
+	{
+		return ini_value_to_float(value, &type->jump_landing_pitch_degrees);
+	}
+	if (SDL_strcmp(key, "jump_center_meters") == 0)
+	{
+		return ini_value_to_float(value, &type->jump_center_meters);
+	}
+	if (SDL_strcmp(key, "jump_center_ahead_meters") == 0)
+	{
+		return ini_value_to_float(value, &type->jump_center_ahead_meters);
+	}
+	if (SDL_strcmp(key, "jump_start_center_meters") == 0)
+	{
+		return ini_value_to_float(value, &type->jump_start_center_meters);
+	}
+	if (SDL_strcmp(key, "jump_land_center_meters") == 0)
+	{
+		return ini_value_to_float(value, &type->jump_land_center_meters);
 	}
 	if (SDL_strcmp(key, "walk_left_action") == 0)
 	{
@@ -499,6 +530,20 @@ static void load_models(actors_t *actors)
 				for (int j = 0; j < 3; j++)
 				{
 					type->jump_actions[j] = actor_model_find_action(&actors->models[type->model], jump_names[j]);
+				}
+				// (its middle not given: half its height up, the same on
+				// the ground and in the air)
+				if (type->jump_center_meters < 0.0f)
+				{
+					type->jump_center_meters = JUMP_MIDDLE_SHARE * type->height_meters;
+				}
+				if (type->jump_start_center_meters < 0.0f)
+				{
+					type->jump_start_center_meters = type->jump_center_meters;
+				}
+				if (type->jump_land_center_meters < 0.0f)
+				{
+					type->jump_land_center_meters = type->jump_center_meters;
 				}
 			}
 			// Optional: without it, a flyer flaps on the way down too
@@ -1717,9 +1762,9 @@ void actors_clear(actors_t *actors)
 #define FINE_POINT_METERS 0.15f      // a fine way's point reached this near // past a straight walker's waypoint (its mind's spot)
 // Its jump (jump_move): the phases; faced this near before it goes; no
 // longer turning to it than this; without clips, gathered and landed this
-// long; its arc's top this far over the higher of its ends; how much of
-// the way it flies its body tilts by, and at the most; its body's middle
-// (the tilt's center) this much of its height up
+// long; its arc's top this far over the higher of its ends; with a clip,
+// its feet let go of the ground this soon as it gathers (the front ones
+// leave it first)
 #define JUMP_NONE 0
 #define JUMP_TURN 1
 #define JUMP_OFF 2
@@ -1731,9 +1776,7 @@ void actors_clear(actors_t *actors)
 #define JUMP_LAND_SECONDS 0.2f
 #define JUMP_OVER_METERS 0.25f
 #define JUMP_GRAVITY 9.81f
-#define JUMP_PITCH_SHARE 0.6f
-#define JUMP_PITCH_MOST_RADIANS 0.5f
-#define JUMP_MIDDLE_SHARE 0.5f
+#define JUMP_FEET_OFF_SECONDS 0.1f
 #define LOOK_SECONDS 0.5f             // how often it looks at the path ahead
 #define STUCK_SECONDS 3.0f            // this long without getting half a meter: search again
 #define STUCK_METERS 0.5f
@@ -3486,6 +3529,7 @@ static void jump_move(actors_t *actors, actor_t *actor, navigation_t *navigation
 		if (type->jump_actions[0] >= 0)
 		{
 			actor->animation_held = true;
+			actor->ik_weight *= SDL_clamp(1.0f - actor->jump_seconds / JUMP_FEET_OFF_SECONDS, 0.0f, 1.0f);
 		}
 		else
 		{
@@ -3493,12 +3537,16 @@ static void jump_move(actors_t *actors, actor_t *actor, navigation_t *navigation
 		}
 		if (actor->jump_seconds >= actor->jump_phase_seconds)
 		{
-			float top = SDL_max(actor->y, actor->jump_to[1]) + JUMP_OVER_METERS;
-			float up_seconds = SDL_sqrtf(2.0f * (top - actor->y) / JUMP_GRAVITY);
-			float down_seconds = SDL_sqrtf(2.0f * (top - actor->jump_to[1]) / JUMP_GRAVITY);
+			// (its body's middle goes the arc: from where the gathering
+			// leaves it to where the landing takes it up)
+			float from_height = actor->y + type->jump_start_center_meters * actor->scale;
+			float to_height = actor->jump_to[1] + type->jump_land_center_meters * actor->scale;
+			float top = SDL_max(from_height, to_height) + JUMP_OVER_METERS;
+			float up_seconds = SDL_sqrtf(2.0f * (top - from_height) / JUMP_GRAVITY);
+			float down_seconds = SDL_sqrtf(2.0f * (top - to_height) / JUMP_GRAVITY);
 
 			actor->jump_from[0] = actor->x;
-			actor->jump_from[1] = actor->y;
+			actor->jump_from[1] = from_height;
 			actor->jump_from[2] = actor->z;
 			actor->jump_rise_speed = JUMP_GRAVITY * up_seconds;
 			actor->jump_air_seconds = SDL_max(up_seconds + down_seconds, 0.1f);
@@ -3524,20 +3572,24 @@ static void jump_move(actors_t *actors, actor_t *actor, navigation_t *navigation
 		float across_x = actor->jump_to[0] - actor->jump_from[0];
 		float across_z = actor->jump_to[2] - actor->jump_from[2];
 		float across_speed = SDL_sqrtf(across_x * across_x + across_z * across_z) / actor->jump_air_seconds;
-		float rising = actor->jump_rise_speed - JUMP_GRAVITY * t;
-		// (level as it leaves the ground and as it lands: its clips' ends)
-		float ends = SDL_min(SDL_min(share / 0.15f, (1.0f - share) / 0.2f), 1.0f);
-		float pitch = SDL_clamp(SDL_atan2f(rising, SDL_max(across_speed, 0.5f)) * JUMP_PITCH_SHARE, -JUMP_PITCH_MOST_RADIANS,
-			JUMP_PITCH_MOST_RADIANS) * ends;
-		float middle = JUMP_MIDDLE_SHARE * type->height_meters;
+		// (nose up as the gathering left it, down to how the landing takes
+		// it up, evenly: as it stops rising and falls. Without the clips:
+		// eased into)
+		float pitch = degrees_to_radians(type->jump_takeoff_pitch_degrees
+			+ (type->jump_landing_pitch_degrees - type->jump_takeoff_pitch_degrees) * share);
+		float middle = type->jump_center_meters * actor->scale;
+		float ahead = type->jump_center_ahead_meters * actor->scale;
+		float middle_up;
+		float middle_ahead;
 
-		actor->pitch_radians += (pitch - actor->pitch_radians) * SDL_min(12.0f * seconds, 1.0f);
-		// (tilted round its middle, not its feet: the model's turn is
-		// round its origin, its middle goes back by so much nose up)
-		actor->x = actor->jump_from[0] + across_x * share + SDL_sinf(actor->yaw_radians) * middle * SDL_sinf(actor->pitch_radians);
-		actor->z = actor->jump_from[2] + across_z * share + SDL_cosf(actor->yaw_radians) * middle * SDL_sinf(actor->pitch_radians);
-		actor->y = actor->jump_from[1] + actor->jump_rise_speed * t - 0.5f * JUMP_GRAVITY * t * t
-			+ middle * (1.0f - SDL_cosf(actor->pitch_radians));
+		actor->pitch_radians = type->jump_actions[1] >= 0 ? pitch : actor->pitch_radians + (pitch - actor->pitch_radians) * SDL_min(12.0f * seconds, 1.0f);
+		// (the model turns round its root: its middle, so far up and ahead
+		// of the root, is kept on the arc; nose up takes the middle back)
+		middle_up = middle * SDL_cosf(actor->pitch_radians) + ahead * SDL_sinf(actor->pitch_radians);
+		middle_ahead = -middle * SDL_sinf(actor->pitch_radians) + ahead * SDL_cosf(actor->pitch_radians);
+		actor->x = actor->jump_from[0] + across_x * share + SDL_sinf(actor->yaw_radians) * (ahead - middle_ahead);
+		actor->z = actor->jump_from[2] + across_z * share + SDL_cosf(actor->yaw_radians) * (ahead - middle_ahead);
+		actor->y = actor->jump_from[1] + actor->jump_rise_speed * t - 0.5f * JUMP_GRAVITY * t * t - middle_up;
 		actor->speed = across_speed;
 		actor->ik_weight = 0.0f;
 		compose_rotation(actor->yaw_radians - degrees_to_radians(type->front_degrees), actor->pitch_radians, 0.0f, actor->rotation);

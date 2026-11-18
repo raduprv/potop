@@ -79,8 +79,17 @@ model has them: `jump_start` (from the idle pose), `jump_air` (a pose
 held, about level: the engine tilts the body by how it rises and falls,
 round its middle) and `jump_land` (from the first touch to the idle
 pose), all on the spot; its feet are let go of the ground in the air and
-taken up again as `jump_land` plays. Without the clips it goes over as
-it walks. It walks slower uphill and through water deeper than `wade_depth_meters`,
+taken up again as `jump_land` plays. How the clips meet in the air is
+the type's to say, as they were made: `jump_takeoff_pitch_degrees` and
+`jump_landing_pitch_degrees` (the pitch `jump_air`'s pose has where
+`jump_start` ends and where `jump_land` begins: the body goes evenly
+from the one to the other), `jump_center_meters` and
+`jump_center_ahead_meters` (its body's middle, which it is pitched
+round: above the model's root and ahead of it in `jump_air`'s pose) and
+`jump_start_center_meters`, `jump_land_center_meters` (how high over
+the ground that middle is at `jump_start`'s end and at the first touch:
+the arc is the middle's, from the one to the other). Without the clips
+it goes over as it walks. It walks slower uphill and through water deeper than `wade_depth_meters`,
 and swims where the water is deeper than `swim_depth_meters`: afloat, its
 body that deep under the surface, level, at `swim_meters_per_second`, with
 the walk animation (there is no swimming one). The walk plays at the pace
