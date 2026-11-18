@@ -5311,9 +5311,12 @@ static bool center_line_free(const navigation_t *navigation, const terrain_t *te
 
 // Whether the agent stands at a point on a level: the surface there it
 // would be on from that height is the level's own (the same top; the
-// ground as it slopes), not the next one up within a step
+// ground as it slopes, if the level is the ground's), not the next one
+// up within a step, nor the ground by a terrace's face for the terrace
+// (within the slope's reach of it: the edge was found a quarter meter
+// early, and the bear landed with its front paws on it)
 static bool stands_on_level(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
-	float x, float z, float level)
+	float x, float z, float level, bool level_ground)
 {
 	int32_t cell;
 	int32_t sub_x;
@@ -5323,18 +5326,18 @@ static bool stands_on_level(const navigation_t *navigation, const terrain_t *ter
 
 	return quarter_of_point(navigation, x, z, &cell, &sub_x, &sub_z)
 		&& quarter_stand_on(navigation, terrain, water, agent, cell, sub_x, sub_z, level, &height, &ground)
-		&& SDL_fabsf(height - level) <= (ground ? agent_reach(agent) : MESH_JUMP_LEVEL_METERS);
+		&& SDL_fabsf(height - level) <= (ground && level_ground ? agent_reach(agent) : MESH_JUMP_LEVEL_METERS);
 }
 
 // Whether a spot is one the agent's body has the room at, on a level (as
 // where it walks: a brush or two)
 static bool jump_spot(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
-	const float spot[2], float level)
+	const float spot[2], float level, bool level_ground)
 {
 	float height;
 	int tight = quarter_tightness(navigation, terrain, water, agent, spot[0], spot[1], level, &height);
 
-	return tight >= 0 && tight <= MESH_VERIFY_BRUSHES && stands_on_level(navigation, terrain, water, agent, spot[0], spot[1], level);
+	return tight >= 0 && tight <= MESH_VERIFY_BRUSHES && stands_on_level(navigation, terrain, water, agent, spot[0], spot[1], level, level_ground);
 }
 
 // Whether the agent jumps a portal it does not walk (a terrace's edge,
@@ -5417,8 +5420,8 @@ static bool mesh_jump(const navigation_t *navigation, const terrain_t *terrain, 
 	{
 		float x = edge[0] + across[0] * ((float)k + 0.5f) * quarter;
 		float z = edge[1] + across[1] * ((float)k + 0.5f) * quarter;
-		bool on_from = stands_on_level(navigation, terrain, water, agent, x, z, from_level.height);
-		bool on_to = stands_on_level(navigation, terrain, water, agent, x, z, to_level.height);
+		bool on_from = stands_on_level(navigation, terrain, water, agent, x, z, from_level.height, from_level.ground);
+		bool on_to = stands_on_level(navigation, terrain, water, agent, x, z, to_level.height, to_level.ground);
 
 		if (!on_from && !on_to)
 		{
@@ -5443,22 +5446,22 @@ static bool mesh_jump(const navigation_t *navigation, const terrain_t *terrain, 
 	edge[1] += across[1] * (float)from_quarters * quarter + SDL_fabsf(across[1]) * mesh_offset(c);
 	takeoff_out[0] = edge[0] - across[0] * off;
 	takeoff_out[1] = edge[1] - across[1] * off;
-	if (!jump_spot(navigation, terrain, water, agent, takeoff_out, from_level.height))
+	if (!jump_spot(navigation, terrain, water, agent, takeoff_out, from_level.height, from_level.ground))
 	{
 		takeoff_out[0] = inside[0];
 		takeoff_out[1] = inside[1];
-		if (!jump_spot(navigation, terrain, water, agent, takeoff_out, from_level.height))
+		if (!jump_spot(navigation, terrain, water, agent, takeoff_out, from_level.height, from_level.ground))
 		{
 			return false;
 		}
 	}
 	landing_out[0] = edge[0] + across[0] * off;
 	landing_out[1] = edge[1] + across[1] * off;
-	if (!jump_spot(navigation, terrain, water, agent, landing_out, to_level.height))
+	if (!jump_spot(navigation, terrain, water, agent, landing_out, to_level.height, to_level.ground))
 	{
 		landing_out[0] = outside[0];
 		landing_out[1] = outside[1];
-		if (!jump_spot(navigation, terrain, water, agent, landing_out, to_level.height))
+		if (!jump_spot(navigation, terrain, water, agent, landing_out, to_level.height, to_level.ground))
 		{
 			return false;
 		}
@@ -5471,7 +5474,7 @@ static bool mesh_jump(const navigation_t *navigation, const terrain_t *terrain, 
 
 		if ((further[0] - edge[0]) * across[0] + (further[1] - edge[1]) * across[1]
 			> (landing_out[0] - edge[0]) * across[0] + (landing_out[1] - edge[1]) * across[1]
-			&& jump_spot(navigation, terrain, water, agent, further, to_level.height)
+			&& jump_spot(navigation, terrain, water, agent, further, to_level.height, to_level.ground)
 			&& center_line_free(navigation, terrain, water, agent, landing_out, further, to_level.height))
 		{
 			landing_out[0] = further[0];
