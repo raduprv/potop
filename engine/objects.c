@@ -4681,18 +4681,64 @@ static bool order_draws(objects_t *objects)
 		objects->draw_order_capacity = objects->draw_count;
 	}
 	keys = objects->draw_order_keys;
-	for (int d = 0; d < objects->draw_count; d++)
+	// From the last frame's order where there is one for as many draws
+	// (it is nearly this frame's: each key moved a few places up, most
+	// none), else as they come
 	{
-		int model = objects->draw_models[d];
+		bool from_last = objects->draw_order_count == objects->draw_count;
+		int moves = 0;
+		int budget = 8 * objects->draw_count;
+		int d;
 
-		keys[d].distance = model >= 0 && model < objects->model_count ? objects->model_distance[model] : FLT_MAX;
-		keys[d].draw = d;
+		for (d = 0; d < objects->draw_count; d++)
+		{
+			int draw = from_last ? objects->draw_order[d] : d;
+			int model;
+
+			if (draw < 0 || draw >= objects->draw_count)
+			{
+				break;
+			}
+			model = objects->draw_models[draw];
+			keys[d].distance = model >= 0 && model < objects->model_count ? objects->model_distance[model] : FLT_MAX;
+			keys[d].draw = draw;
+		}
+		if (d < objects->draw_count)
+		{
+			// (not an order of these draws after all)
+			for (d = 0; d < objects->draw_count; d++)
+			{
+				int model = objects->draw_models[d];
+
+				keys[d].distance = model >= 0 && model < objects->model_count ? objects->model_distance[model] : FLT_MAX;
+				keys[d].draw = d;
+			}
+			from_last = false;
+		}
+		for (d = 1; from_last && d < objects->draw_count && moves <= budget; d++)
+		{
+			draw_order_key_t key = keys[d];
+			int at = d;
+
+			while (at > 0 && by_draw_distance(&keys[at - 1], &key) > 0)
+			{
+				keys[at] = keys[at - 1];
+				at--;
+				moves++;
+			}
+			keys[at] = key;
+		}
+		// (the view turned and the order with it, or there was none: sorted outright)
+		if (!from_last || moves > budget)
+		{
+			SDL_qsort(keys, (size_t)objects->draw_count, sizeof(draw_order_key_t), by_draw_distance);
+		}
 	}
-	SDL_qsort(keys, (size_t)objects->draw_count, sizeof(draw_order_key_t), by_draw_distance);
 	for (int d = 0; d < objects->draw_count; d++)
 	{
 		objects->draw_order[d] = keys[d].draw;
 	}
+	objects->draw_order_count = objects->draw_count;
 	return true;
 }
 

@@ -219,6 +219,7 @@ typedef struct
 	bool model_distance_valid;
 	int *draw_order;
 	void *draw_order_keys;
+	int draw_order_count;              // how many draws the order kept is of (the last frame's: the next starts from it)
 	int draw_order_capacity;
 	bool draw_order_ready;         // draw_order made for this frame's camera draws
 	float *grid_minimum_y;
