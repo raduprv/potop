@@ -3485,7 +3485,7 @@ void physics_step(physics_t *physics, objects_t *objects, terrain_t *terrain, wa
 #define WALKER_GROUND_LEAST_NORMAL_Y 0.6f // a top this level or more is something to stand on
 #define WALKER_GROUND_REACH_METERS 30.0f  // how far down the rays look
 
-bool physics_walker_ground(physics_t *physics, float x, float z, float feet_height, float step_meters, float *height_out)
+bool physics_walker_ground(physics_t *physics, float x, float z, float feet_height, float step_meters, bool around_too, float *height_out)
 {
 	static const float around[5][2] = { { 0.0f, 0.0f }, { 1.0f, 0.0f }, { -1.0f, 0.0f }, { 0.0f, 1.0f }, { 0.0f, -1.0f } };
 	bool found = false;
@@ -3495,7 +3495,9 @@ bool physics_walker_ground(physics_t *physics, float x, float z, float feet_heig
 	{
 		return false;
 	}
-	for (int k = 0; k < 5; k++)
+	// (around_too: the four round the middle as well, a foot's width; else
+	// the one ray: a body's sample, of which it takes four anyway)
+	for (int k = 0; k < (around_too ? 5 : 1); k++)
 	{
 		b3Vec3 origin = vector(x + around[k][0] * WALKER_FOOT_RADIUS_METERS, feet_height + step_meters, z + around[k][1] * WALKER_FOOT_RADIUS_METERS);
 		b3RayResult result = b3World_CastRayClosest(physics->world, origin, vector(0.0f, -WALKER_GROUND_REACH_METERS, 0.0f), b3DefaultQueryFilter());

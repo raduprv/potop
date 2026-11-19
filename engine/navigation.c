@@ -3817,6 +3817,39 @@ navigation_result_t navigation_find_path(navigation_t *navigation, const terrain
 	return (navigation_result_t)result;
 }
 
+bool navigation_objects_near(const navigation_t *navigation, float x, float z)
+{
+	int32_t cell_x = (int32_t)SDL_floorf(x / NAVIGATION_CELL_METERS);
+	int32_t cell_z = (int32_t)SDL_floorf(z / NAVIGATION_CELL_METERS);
+
+	if (navigation->size <= 0 || cell_x < 1 || cell_z < 1 || cell_x >= navigation->size - 1 || cell_z >= navigation->size - 1)
+	{
+		return true;
+	}
+	for (int32_t dz = -1; dz <= 1; dz++)
+	{
+		for (int32_t dx = -1; dx <= 1; dx++)
+		{
+			int32_t cell = (cell_z + dz) * navigation->size + cell_x + dx;
+
+			if (navigation->extra_count[cell] != 0 || navigation->terrain_clearance[cell] != NAVIGATION_CLEARANCE_OPEN
+				|| navigation->regions[region_of_cell(navigation, cell)].stale)
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+bool navigation_detail_near(const navigation_t *navigation, float x, float z)
+{
+	float dx = x - navigation->detail_x;
+	float dz = z - navigation->detail_z;
+
+	return navigation->detail_meters <= 0.0f || dx * dx + dz * dz <= navigation->detail_meters * navigation->detail_meters;
+}
+
 bool navigation_path_small(const navigation_t *navigation, int waypoint)
 {
 	return waypoint >= 0 && waypoint < NAVIGATION_MAX_WAYPOINTS && navigation->path_small[waypoint] != 0;

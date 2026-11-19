@@ -76,7 +76,7 @@ static float walker_ground_height(void *context, float x, float z, float near_he
 	float terrain = terrain_sample_height_meters(&walker->world->terrain, x, z);
 	float object;
 
-	if (physics_walker_ground(&walker->world->physics, x, z, near_height, walker->player->step_meters, &object))
+	if (physics_walker_ground(&walker->world->physics, x, z, near_height, walker->player->step_meters, true, &object))
 	{
 		return SDL_max(terrain, object);
 	}

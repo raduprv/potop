@@ -674,6 +674,16 @@ navigation_result_t navigation_find_path(navigation_t *navigation, const terrain
 // for the first): up onto or down off an edge the agent does not step
 // (navigation_agent_t.jump_up_meters, jump_down_meters), straight across
 // it; and the height it lands at
+// Whether anything stands in the cell of a point or the eight round it
+// (an object's surface, room taken, a region not built yet: not known).
+// False: bare ground there, nothing for a ray through the physics'
+// shapes to find that the terrain does not say
+bool navigation_objects_near(const navigation_t *navigation, float x, float z);
+
+// Whether a point is where small things matter (navigation_set_detail:
+// near the player, or no limit set)
+bool navigation_detail_near(const navigation_t *navigation, float x, float z);
+
 // Whether the stretch to a waypoint of the last path found passes small
 // things it was led round, or could not be (a walker keeps its eyes open
 // there)

@@ -900,6 +900,9 @@ static void place_on_ground(const actors_t *actors, actor_t *actor, const terrai
 	float easing = seconds > 0.0f && actor->placed ? 1.0f - SDL_expf(-seconds / PLACE_EASE_SECONDS) : 1.0f;
 
 	float ice_top = -1e30f;
+	// The physics' shapes are asked what is underfoot only near the player
+	// (navigation_detail_meters: further off no one sees a paw beside a tread)
+	bool physics_rays = navigation == NULL || navigation_detail_near(navigation, actor->x, actor->z);
 
 	if (water != NULL && !water_sample(water, actor->x, actor->z, &depth, &velocity_x, &velocity_z))
 	{
@@ -969,11 +972,16 @@ static void place_on_ground(const actors_t *actors, actor_t *actor, const terrai
 		// door's step, an inn's terrace, a stair no wider than a navigation
 		// cell's quarter; anything up to a step over the body (people, and
 		// the animals: on a terrace, up its stair)
-		if (actors->physics != NULL && actor->placed)
+		// Only where something stands (bare ground is the terrain's, which
+		// the navigation gave) and near enough the player for it to be
+		// seen: forty rays an actor a frame, everywhere, was a sixth of
+		// the game's time
+		if (actors->physics != NULL && actor->placed && physics_rays)
 		{
 			float top;
 
-			if (physics_walker_ground(actors->physics, x, z, near_height, type->step_meters, &top) && top > samples[k])
+			if ((navigation == NULL || navigation_objects_near(navigation, x, z))
+				&& physics_walker_ground(actors->physics, x, z, near_height, type->step_meters, false, &top) && top > samples[k])
 			{
 				samples[k] = top;
 			}
@@ -1008,11 +1016,11 @@ static void place_on_ground(const actors_t *actors, actor_t *actor, const terrai
 
 			// (and the physics' real shapes under the foot: a tread, a
 			// terrace's flags; then level)
-			if (actors->physics != NULL)
+			if (actors->physics != NULL && physics_rays && navigation_objects_near(navigation, foot_x, foot_z))
 			{
 				float top;
 
-				if (physics_walker_ground(actors->physics, foot_x, foot_z, center_height, type->step_meters, &top) && top > ground + 0.01f)
+				if (physics_walker_ground(actors->physics, foot_x, foot_z, center_height, type->step_meters, true, &top) && top > ground + 0.01f)
 				{
 					ground = top;
 					ground_x = top;

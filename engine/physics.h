@@ -321,7 +321,9 @@ void physics_request_bodies(physics_t *physics, const objects_t *objects, float 
 // object (one level enough to stand on) under a step over the feet's last
 // height, under its middle or the edge of its foot; false where there is
 // none (the terrain then)
-bool physics_walker_ground(physics_t *physics, float x, float z, float feet_height, float step_meters, float *height_out);
+// around: the four rays round the middle too (a foot, the player); else
+// the one (a body's sample)
+bool physics_walker_ground(physics_t *physics, float x, float z, float feet_height, float step_meters, bool around, float *height_out);
 
 // A push (newton seconds) on a body at a point (a loose one moves; one held
 // fast, nothing)
