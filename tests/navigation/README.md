@@ -325,6 +325,10 @@ it is not set). Everything writes into build/.
   them). Asked: every goal reached, the body never more than 0.15 m
   inside a trunk or a boulder. `--walls`: all of them walls, the way it
   was, to compare. Run it with the other three after any change.
+- `BAKE_PATHS=1` in the environment: each of them starts the game with
+  --bake_paths (all the navigation built at the start, for every type
+  of actor at once, as a baked map has it), not region by region as the
+  walker comes to them.
 - **nav_stress.py** — a course of 17 stations built from boxes (terraces
   with treads 0.15 to 0.45 m, balustrade openings 0.5 to 1.2 m, bar rails
   at 0.9 and 1.3 m, huts with doors 0.5 and 1.0 m wide and 1.4 and 2.0 m

@@ -201,6 +201,11 @@ def station_x(index):
 	return (index - (len(STATIONS) - 1) * 0.5) * STATION_SPACING
 
 
+# BAKE_PATHS=1 in the environment: the game builds all its navigation at
+# the start (--bake_paths), as a baked map would have it
+BAKE = ["--bake_paths"] if os.environ.get("BAKE_PATHS") else []
+
+
 def build():
 	boxes.clear()
 	for index, station in enumerate(STATIONS):
@@ -282,7 +287,7 @@ def write_model(boxes, name):
 def game_command(extra):
 	environment = dict(os.environ)
 	environment.setdefault("VK_ICD_FILENAMES", "/usr/share/vulkan/icd.d/lvp_icd.json")
-	return ["timeout", "900", "xvfb-run", "-a", os.path.join(ROOT, "potop"), "--houses", "nav_stress"] + extra, environment
+	return ["timeout", "900", "xvfb-run", "-a", os.path.join(ROOT, "potop"), "--houses", "nav_stress"] + BAKE + extra, environment
 
 
 def course_origin():

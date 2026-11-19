@@ -257,6 +257,10 @@ void console_run_command(console_t *console, potop_t *potop, const char *line, c
 		camera_go_to(&potop->camera, &potop->world.terrain, x, height, z);
 		say_where(potop);
 	}
+	else if (SDL_strcmp(command, "bake") == 0 && has_first && SDL_strcmp(first, "paths") == 0)
+	{
+		potop_bake_paths(potop);
+	}
 	else if (SDL_strcmp(command, "navmesh") == 0)
 	{
 		char text[768];

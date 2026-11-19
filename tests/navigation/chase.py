@@ -24,6 +24,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import nav_stress
 import trace_analysis
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -42,7 +43,7 @@ LOOP_DEGREES = 300.0
 def run(arguments, log_path):
 	environment = dict(os.environ)
 	environment.setdefault("VK_ICD_FILENAMES", "/usr/share/vulkan/icd.d/lvp_icd.json")
-	log = subprocess.run(["timeout", "900", "xvfb-run", "-a", os.path.join(ROOT, "potop")] + arguments, cwd=ROOT, env=environment, capture_output=True,
+	log = subprocess.run(["timeout", "900", "xvfb-run", "-a", os.path.join(ROOT, "potop")] + nav_stress.BAKE + arguments, cwd=ROOT, env=environment, capture_output=True,
 		text=True)
 	text = log.stdout + log.stderr
 	with open(log_path, "w") as out:

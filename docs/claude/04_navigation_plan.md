@@ -260,6 +260,17 @@ are joined at all), a coarse graph for ways of kilometers.
   The stutter line has "path tiles built" and "path build
   microseconds" (regions and tiles together) to tell building from
   searching.
+- `navigation_bake` (the console's "bake paths", the game's
+  --bake_paths, potop_bake_paths; a map editor's bake is to call it):
+  every region's surfaces, then the rectangles of every region for the
+  widths of all the types of actor that walk, the tiles side by side on
+  the machine's threads (every third each way in a round: none shares
+  a neighbor whose border it writes; the build's scratch is a thread's
+  own). In memory only for now: not kept in a file (step 6), and what
+  changes on the map after is built again where it changed, as before.
+  The tests with BAKE_PATHS=1 in the environment run baked: 0 wrong.
+  Found on the way: finish_region's scratch was one for all the threads
+  the regions are built on (now a thread's own).
 - Soft things are not gone round at planning (the walker's own
   business as it goes: the height per cell, as before).
 - tests/navigation/small.py passes: every goal, no body in a trunk or a

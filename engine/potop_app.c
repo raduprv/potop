@@ -536,6 +536,7 @@ bool potop_start(potop_t *potop, const potop_options_t *options)
 	{
 		potop->world.day_hour = SDL_fmod((double)options->start_hour, 24.0);
 	}
+	potop->bake_paths_frames = options->bake_paths ? 3 : 0;
 	input_initialize(&potop->input);
 	potop->previous_counter = SDL_GetPerformanceCounter();
 	return true;
@@ -1408,6 +1409,12 @@ void potop_frame_end(potop_t *potop)
 	uint64_t section_start = SDL_GetPerformanceCounter();
 
 	frame_profile_end(FRAME_GAME, potop->game_counter);
+	// (--bake_paths: once the world has been through a frame or two, the
+	// navigation knowing its map)
+	if (potop->bake_paths_frames > 0 && --potop->bake_paths_frames == 0)
+	{
+		potop_bake_paths(potop);
+	}
 	// The HUD laid out (what the game said this frame), what it asks
 	fill_hud_view(potop, &view);
 	fill_navmesh_overlay(potop, &view);

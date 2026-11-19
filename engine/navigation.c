@@ -1353,7 +1353,8 @@ static int compare_clearances(const void *left, const void *right)
 static void finish_region(navigation_t *navigation, const terrain_t *terrain, int32_t region_index, object_cells_t *list)
 {
 	navigation_region_t *region = &navigation->regions[region_index];
-	static surface_candidate_t candidates[4096];
+	// (a thread's own: the regions are built side by side)
+	static _Thread_local surface_candidate_t candidates[4096];
 
 	if (list->count == 0)
 	{
@@ -4458,7 +4459,7 @@ static bool mesh_level_of(const navigation_t *navigation, int c, int32_t id, int
 static bool mesh_fill_buckets(navigation_mesh_tile_t *tile)
 {
 	uint32_t total = 0;
-	static uint32_t counts[NAVIGATION_MESH_BUCKETS * NAVIGATION_MESH_BUCKETS];
+	static _Thread_local uint32_t counts[NAVIGATION_MESH_BUCKETS * NAVIGATION_MESH_BUCKETS];
 
 	SDL_memset(counts, 0, sizeof(counts));
 	for (int pass = 0; pass < 2; pass++)
@@ -4939,7 +4940,7 @@ static int compare_small_circles(const void *a, const void *b)
 // search is to know it
 static void mesh_weld_small(const navigation_t *navigation, const navigation_mesh_class_t *class, int c, mesh_build_t *build)
 {
-	static small_circle_t circles[MESH_WELD_CIRCLES_MOST];
+	static _Thread_local small_circle_t circles[MESH_WELD_CIRCLES_MOST];
 	float first_x = (float)build->first_x * NAVIGATION_CELL_METERS;
 	float first_z = (float)build->first_z * NAVIGATION_CELL_METERS;
 	int count = small_circles(navigation, class->height, false, SMALL_MARGIN_METERS, first_x, first_z, first_x + (float)build->width * NAVIGATION_CELL_METERS,
@@ -5022,8 +5023,9 @@ static void mesh_weld_small(const navigation_t *navigation, const navigation_mes
 // ones to the tiles round it
 static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, const water_t *water)
 {
-	static mesh_build_t build;
-	static uint8_t grid[NAVIGATION_MESH_RECT_MOST][NAVIGATION_MESH_RECT_MOST];
+	// (a thread's own: navigation_bake builds tiles side by side)
+	static _Thread_local mesh_build_t build;
+	static _Thread_local uint8_t grid[NAVIGATION_MESH_RECT_MOST][NAVIGATION_MESH_RECT_MOST];
 	navigation_mesh_class_t *class = &navigation->mesh.classes[c];
 	navigation_mesh_tile_t *tile = &class->tiles[region];
 	int32_t last_x;
@@ -5364,12 +5366,15 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 	{
 		mesh_link_border(navigation, c, region, side);
 	}
-	navigation->mesh.tiles_built++;
-	tile->build_serial = (uint32_t)navigation->mesh.tiles_built;
-	navigation->mesh.last_build_milliseconds = (float)((double)(SDL_GetPerformanceCounter() - start_ticks) * 1000.0
-		/ (double)SDL_GetPerformanceFrequency());
-	frame_profile_count(FRAME_NAVIGATION_TILES, 1);
-	frame_profile_count(FRAME_NAVIGATION_BUILD_MICROSECONDS, (int32_t)(navigation->mesh.last_build_milliseconds * 1000.0f));
+#pragma omp critical(navigation_tile_built)
+	{
+		navigation->mesh.tiles_built++;
+		tile->build_serial = (uint32_t)navigation->mesh.tiles_built;
+		navigation->mesh.last_build_milliseconds = (float)((double)(SDL_GetPerformanceCounter() - start_ticks) * 1000.0
+			/ (double)SDL_GetPerformanceFrequency());
+		frame_profile_count(FRAME_NAVIGATION_TILES, 1);
+		frame_profile_count(FRAME_NAVIGATION_BUILD_MICROSECONDS, (int32_t)(navigation->mesh.last_build_milliseconds * 1000.0f));
+	}
 	return true;
 }
 
@@ -7929,6 +7934,73 @@ int navigation_mesh_rects(const navigation_t *navigation, const navigation_agent
 		}
 	}
 	return count;
+}
+
+void navigation_bake(navigation_t *navigation, const water_t *water, const navigation_agent_t *agents, int agent_count,
+	int32_t *regions_out, int32_t *tiles_out)
+{
+	int32_t region_count = navigation->regions_per_side * navigation->regions_per_side;
+	int32_t regions = 0;
+	int32_t tiles = 0;
+
+	for (int k = 0; k < agent_count; k++)
+	{
+		mesh_note_agent(navigation, &agents[k]);
+	}
+	for (int32_t r = 0; r < region_count; r++)
+	{
+		regions += navigation->regions[r].stale ? 1 : 0;
+	}
+	prepare_regions(navigation, 0, 0, navigation->regions_per_side - 1, navigation->regions_per_side - 1);
+	// (what each region's edges hold, looked at here, one after another:
+	// the tiles built side by side below only read it)
+	for (int32_t r = 0; r < region_count; r++)
+	{
+		mesh_margin_signature(navigation, r);
+	}
+	for (int c = 0; c < NAVIGATION_MESH_CLASSES; c++)
+	{
+		navigation_mesh_class_t *class = &navigation->mesh.classes[c];
+
+		if (!navigation_mesh_class_used(navigation, c))
+		{
+			continue;
+		}
+		// A tile's build links it with the four beside it (their borders
+		// written): side by side only tiles that share no neighbor, every
+		// third each way, nine rounds
+		for (int round = 0; round < 9; round++)
+		{
+			int32_t built = 0;
+
+#pragma omp parallel for schedule(dynamic, 1) reduction(+ : built)
+			for (int32_t r = 0; r < region_count; r++)
+			{
+				navigation_mesh_tile_t *tile = &class->tiles[r];
+
+				if ((r % navigation->regions_per_side) % 3 != round % 3 || (r / navigation->regions_per_side) % 3 != round / 3
+					|| navigation->regions[r].stale)
+				{
+					continue;
+				}
+				if (tile->built && tile->generation == navigation->region_generation[r] && tile->class_epoch == class->epoch
+					&& tile->margin_signature == mesh_margin_signature(navigation, r))
+				{
+					continue;
+				}
+				built += mesh_build_tile(navigation, c, r, water) ? 1 : 0;
+			}
+			tiles += built;
+		}
+	}
+	if (regions_out != NULL)
+	{
+		*regions_out = regions;
+	}
+	if (tiles_out != NULL)
+	{
+		*tiles_out = tiles;
+	}
 }
 
 bool navigation_mesh_class_used(const navigation_t *navigation, int class_index)

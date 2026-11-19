@@ -9,6 +9,8 @@
 // category "buildings", or "fable", or the one named) in rows
 // --put: with --houses, objects of the type put down at the points too (a
 // test's trunks and stones)
+// --bake_paths: the navigation all built at the start (the console's "bake
+// paths"): no way waits for a build later
 // --set: a setting over data/settings.ini's (render.day_length_minutes=24)
 // --hour: the day starts at that hour
 // --sim: a test without the picture: fixed steps (--sim-step, 0.05 s) for
@@ -123,6 +125,10 @@ static void read_command_line(potop_options_t *options, int argument_count, char
 				options->put_points[options->put_count++] = arguments[i + 2];
 			}
 			i += 2;
+		}
+		else if (SDL_strcmp(argument, "--bake_paths") == 0)
+		{
+			options->bake_paths = true;
 		}
 		else if (SDL_strcmp(argument, "--walk_from") == 0)
 		{

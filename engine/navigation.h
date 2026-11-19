@@ -811,6 +811,15 @@ int navigation_capsules(const navigation_t *navigation, float minimum_x, float m
 int navigation_mesh_rects(const navigation_t *navigation, const navigation_agent_t *agent, float minimum_x, float minimum_z, float maximum_x,
 	float maximum_z, float (*rects_out)[6], int most);
 
+// All of it built now: every region's surfaces, and the rectangles of
+// every region for the widths of the agents given (and of those seen
+// before); the tiles side by side on the machine's threads. What a map
+// editor's bake is to do, and the console's "bake paths": after it no
+// search builds anything, till the map changes. regions_out, tiles_out
+// (either may be NULL): how many it built
+void navigation_bake(navigation_t *navigation, const water_t *water, const navigation_agent_t *agents, int agent_count,
+	int32_t *regions_out, int32_t *tiles_out);
+
 // The navigation mesh in words (the console's navmesh): the tiles built,
 // their rectangles and portals, the memory, the last build and search
 void navigation_mesh_describe(const navigation_t *navigation, char *text_out, size_t text_size);

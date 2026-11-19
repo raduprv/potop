@@ -73,6 +73,7 @@ typedef struct
 	const char *put_types[POTOP_OPTIONS_PUT_MAX];
 	const char *put_points[POTOP_OPTIONS_PUT_MAX];
 	int put_count;
+	bool bake_paths;                   // the navigation all built at the start (potop_bake_paths)
 	bool start_hour_set;           // the day starts at start_hour (0..24)
 	float start_hour;
 	// A test without the picture (sim_seconds > 0): fixed steps of
@@ -372,6 +373,12 @@ typedef struct
 	float x;                       // where it stands now
 	float z;
 } potop_actor_event_t;
+
+// All the navigation built now, for every type of actor (the console's
+// "bake paths", --bake_paths at the start; a map editor's bake): no way
+// searched for waits for a region's surfaces or its rectangles after,
+// till the map changes there. Takes seconds on a big map
+void potop_bake_paths(potop_t *potop);
 
 // An actor of a type of actors.ini put down; 0 if there is no such type
 // (or it has no model)

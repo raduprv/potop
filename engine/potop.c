@@ -567,6 +567,32 @@ int potop_object_spot_find(potop_t *potop, uint32_t id, const char *name, int fr
 	return -1;
 }
 
+void potop_bake_paths(potop_t *potop)
+{
+	navigation_agent_t agents[64];
+	int agent_count = 0;
+	int32_t regions = 0;
+	int32_t tiles = 0;
+	uint64_t start = SDL_GetPerformanceCounter();
+	char text[768];
+
+	// (those that walk and have a body: one whose model did not load has
+	// no height or width, and would make its class's rectangles for a
+	// body of none; a flyer's are made if it ever walks)
+	for (int type = 0; type < potop->world.actors.type_count && agent_count < (int)SDL_arraysize(agents); type++)
+	{
+		if (potop->world.actors.types[type].model >= 0 && !potop->world.actors.types[type].flies)
+		{
+			agents[agent_count++] = actors_agent(&potop->world.actors, type);
+		}
+	}
+	navigation_bake(&potop->world.navigation, &potop->world.water, agents, agent_count, &regions, &tiles);
+	SDL_Log("bake paths: %d regions and %d tiles built in %.1f s, for %d types of actor", regions, tiles,
+		(double)(SDL_GetPerformanceCounter() - start) / (double)SDL_GetPerformanceFrequency(), agent_count);
+	navigation_mesh_describe(&potop->world.navigation, text, sizeof(text));
+	SDL_Log("%s", text);
+}
+
 int potop_find_path(potop_t *potop, const char *actor_type, float from_x, float from_z, float to_x, float to_z, float (*points_out)[2],
 	int maximum, bool *complete_out)
 {

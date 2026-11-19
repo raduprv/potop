@@ -107,7 +107,7 @@ def walk(agent, placed):
 	trace = os.path.join(ROOT, "build", name + ".trace")
 	environment = dict(os.environ)
 	environment.setdefault("VK_ICD_FILENAMES", "/usr/share/vulkan/icd.d/lvp_icd.json")
-	command = ["timeout", "900", "xvfb-run", "-a", os.path.join(ROOT, "potop"), "--houses", "nav_fence"]
+	command = ["timeout", "900", "xvfb-run", "-a", os.path.join(ROOT, "potop"), "--houses", "nav_fence"] + nav_stress.BAKE
 	for model in MODELS:
 		points = ["%.2f,%.2f" % (x, z) for placed_name, x, z in placed if placed_name == model]
 		if points and model != "nav_fence":

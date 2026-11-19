@@ -15,6 +15,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import nav_stress
 import trace_analysis
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -42,7 +43,7 @@ def walk(case, agent, running):
 	trace = os.path.join(ROOT, "build", name + ".trace")
 	environment = dict(os.environ)
 	environment.setdefault("VK_ICD_FILENAMES", "/usr/share/vulkan/icd.d/lvp_icd.json")
-	command = ["timeout", "900", "xvfb-run", "-a", os.path.join(ROOT, "potop"), "--houses", house, "--sim", "1500", "--trace", trace, "--walk_from",
+	command = ["timeout", "900", "xvfb-run", "-a", os.path.join(ROOT, "potop"), "--houses", house] + nav_stress.BAKE + ["--sim", "1500", "--trace", trace, "--walk_from",
 		"%.2f,%.2f" % start] + (["--walk_run"] if running else []) + ["--walk_test", agent, ";".join("%.2f,%.2f" % goal for goal in goals)]
 	os.makedirs(os.path.join(ROOT, "build"), exist_ok=True)
 	log = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, text=True).stdout
