@@ -582,7 +582,7 @@ void settings_set_defaults(settings_t *settings)
 	settings->objects.grass_density = 550.0f;
 	settings->objects.grass_near_density = 2.0f;
 	settings->objects.grass_near_meters = 1.0f;
-	settings->objects.grass_falloff = 2.5f;
+	settings->objects.grass_falloff = 3.0f;
 	settings->objects.grass_height_meters = 0.3f;
 	settings->objects.grass_width_meters = 0.018f;
 	settings->objects.grass_tint[0] = 1.0f;
