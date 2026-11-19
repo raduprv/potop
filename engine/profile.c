@@ -54,7 +54,7 @@ static const char *section_name(frame_section_t section)
 static const char *counter_name(frame_counter_t counter)
 {
 	static const char *names[FRAME_COUNTER_COUNT] = { "steps", "substeps", "evaporations", "collapses", "water tiles in",
-		"ground tiles in", "wet tiles", "chunk uploads", "physics rebuilds", "path regions built", "shadow redraws", "near shadow redraws", "moving shadow redraws",
+		"ground tiles in", "wet tiles", "chunk uploads", "physics rebuilds", "path regions built", "path tiles built", "path build microseconds", "shadow redraws", "near shadow redraws", "moving shadow redraws",
 		"path searches", "path surfaces", "objects checked", "objects moved",
 		"awake bodies", "bodies pushed", "body moves", "objects removed", "gpu water tiles", "terrain chunks drawn", "water chunks drawn",
 		"shadow draw calls" };

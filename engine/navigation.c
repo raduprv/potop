@@ -2093,6 +2093,8 @@ static void build_regions(navigation_t *navigation, const terrain_t *terrain, co
 	}
 	navigation->last_rebuilt_regions = list_count;
 	frame_profile_count(FRAME_NAVIGATION_REGIONS, list_count);
+	frame_profile_count(FRAME_NAVIGATION_BUILD_MICROSECONDS,
+		(int32_t)((double)(SDL_GetPerformanceCounter() - start) * 1000000.0 / (double)SDL_GetPerformanceFrequency()));
 	navigation->rebuilt_region_total += list_count;
 	navigation->partial_region_total += partial_count;
 	if (partial_count > 0)
@@ -4727,7 +4729,93 @@ static uint64_t mesh_water_signature(const navigation_t *navigation, const water
 // (one not built yet: 0). A tile looks a cell into them (where the bodies'
 // points reach from its edge): it is built again when one changes or is
 // built
-static uint32_t mesh_margin_signature(const navigation_t *navigation, int32_t region)
+#define MESH_EDGE_CELLS 3              // a region's cells this far in from an edge are its neighbors' business
+#define MESH_EDGE_METERS 3.0f          // and its small things this near it (welded to ones across it)
+
+static uint64_t hash_bytes(uint64_t hash, const void *bytes, size_t count)
+{
+	const uint8_t *at = bytes;
+
+	for (size_t k = 0; k < count; k++)
+	{
+		hash = (hash ^ at[k]) * 1099511628211ull;
+	}
+	return hash;
+}
+
+// What a region's cells along an edge hold, as the rectangles read them
+static uint64_t region_edge_hash(const navigation_t *navigation, int32_t region_index, int edge)
+{
+	const navigation_region_t *region = &navigation->regions[region_index];
+	int32_t box[4];
+	uint64_t hash = 1469598103934665603ull;
+	float edge_at;
+
+	region_box(navigation, region_index, box);
+	edge_at = (float)(edge == 0 ? box[0] : edge == 1 ? box[2] + 1 : edge == 2 ? box[1] : box[3] + 1) * NAVIGATION_CELL_METERS;
+	if (edge == 0)
+	{
+		box[2] = SDL_min(box[2], box[0] + MESH_EDGE_CELLS - 1);
+	}
+	else if (edge == 1)
+	{
+		box[0] = SDL_max(box[0], box[2] - MESH_EDGE_CELLS + 1);
+	}
+	else if (edge == 2)
+	{
+		box[3] = SDL_min(box[3], box[1] + MESH_EDGE_CELLS - 1);
+	}
+	else
+	{
+		box[1] = SDL_max(box[1], box[3] - MESH_EDGE_CELLS + 1);
+	}
+	for (int32_t cell_z = box[1]; cell_z <= box[3]; cell_z++)
+	{
+		for (int32_t cell_x = box[0]; cell_x <= box[2]; cell_x++)
+		{
+			int32_t cell = cell_z * navigation->size + cell_x;
+			int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
+			int count = cell_nodes(navigation, cell, nodes);
+			uint8_t bytes[6] = { navigation->terrain_clearance[cell], navigation->small_height[cell], navigation->small_only[cell],
+				navigation->blocked != NULL ? navigation->blocked[cell] : 0, navigation->ground_slope[cell], (uint8_t)count };
+
+			hash = hash_bytes(hash, &navigation->ground_height[cell], sizeof(float));
+			hash = hash_bytes(hash, bytes, sizeof(bytes));
+			for (int k = 1; k < count; k++)
+			{
+				const navigation_surface_t *surface = extra_surface(navigation, nodes[k]);
+
+				hash = hash_bytes(hash, &surface->height, sizeof(float));
+				hash = hash_bytes(hash, &surface->clearance, 1);
+				hash = hash_bytes(hash, surface->below, sizeof(surface->below));
+				hash = hash_bytes(hash, surface->room, sizeof(surface->room));
+				hash = hash_bytes(hash, &surface->ground_below, 1);
+			}
+		}
+	}
+	for (int32_t k = 0; k < region->capsule_count; k++)
+	{
+		const navigation_capsule_t *capsule = &region->capsules[k];
+		float off = SDL_fabsf((edge < 2 ? capsule->a[0] : capsule->a[2]) - edge_at);
+
+		if (off <= MESH_EDGE_METERS + capsule->radius)
+		{
+			hash = hash_bytes(hash, capsule->a, sizeof(capsule->a));
+			hash = hash_bytes(hash, capsule->b, sizeof(capsule->b));
+			hash = hash_bytes(hash, &capsule->radius, sizeof(float));
+			hash = hash_bytes(hash, &capsule->soft, 1);
+		}
+	}
+	return hash;
+}
+
+// What the regions round one hold along the edges toward it, as far as
+// its tiles care (their margins: a body's points by a tile's edge reach
+// into the next region): changed, and the tiles are built again. A
+// region built again for something in its middle changes nothing here
+// (each of the eight used to build all the tiles round it again: nine
+// tiles for a felled tree)
+static uint32_t mesh_margin_signature(navigation_t *navigation, int32_t region)
 {
 	int32_t region_x = region % navigation->regions_per_side;
 	int32_t region_z = region / navigation->regions_per_side;
@@ -4740,13 +4828,36 @@ static uint32_t mesh_margin_signature(const navigation_t *navigation, int32_t re
 			int32_t near_x = region_x + dx;
 			int32_t near_z = region_z + dz;
 			int32_t near;
+			navigation_region_t *neighbor;
 
 			if ((dx == 0 && dz == 0) || near_x < 0 || near_z < 0 || near_x >= navigation->regions_per_side || near_z >= navigation->regions_per_side)
 			{
 				continue;
 			}
 			near = near_z * navigation->regions_per_side + near_x;
-			signature = signature * 31u + (navigation->regions[near].stale ? 0u : navigation->region_generation[near]);
+			neighbor = &navigation->regions[near];
+			if (neighbor->stale)
+			{
+				signature = signature * 31u;
+				continue;
+			}
+			if (neighbor->edge_checked_generation != navigation->region_generation[near])
+			{
+				for (int edge = 0; edge < 4; edge++)
+				{
+					uint64_t hash = region_edge_hash(navigation, near, edge);
+
+					if (hash != neighbor->edge_hash[edge] || neighbor->edge_generation[edge] == 0)
+					{
+						neighbor->edge_hash[edge] = hash;
+						neighbor->edge_generation[edge] = navigation->region_generation[near];
+					}
+				}
+				neighbor->edge_checked_generation = navigation->region_generation[near];
+			}
+			// (its edges toward this one: x high of the one at x low, ...)
+			signature = signature * 31u + (dx < 0 ? neighbor->edge_generation[1] : dx > 0 ? neighbor->edge_generation[0] : 0u);
+			signature = signature * 31u + (dz < 0 ? neighbor->edge_generation[3] : dz > 0 ? neighbor->edge_generation[2] : 0u);
 		}
 	}
 	return signature;
@@ -5224,6 +5335,8 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 	tile->build_serial = (uint32_t)navigation->mesh.tiles_built;
 	navigation->mesh.last_build_milliseconds = (float)((double)(SDL_GetPerformanceCounter() - start_ticks) * 1000.0
 		/ (double)SDL_GetPerformanceFrequency());
+	frame_profile_count(FRAME_NAVIGATION_TILES, 1);
+	frame_profile_count(FRAME_NAVIGATION_BUILD_MICROSECONDS, (int32_t)(navigation->mesh.last_build_milliseconds * 1000.0f));
 	return true;
 }
 

@@ -250,6 +250,16 @@ are joined at all), a coarse graph for ways of kilometers.
   than two berths): moved to the middle of the gap. In that forest a
   search is 1.2 ms on average (1.0 with everything a wall); the tiles
   take 6 to 16 ms each either way (a thousand rectangles: as before).
+- A region built again (a collapse, a tree felled) built the tiles of
+  all eight regions round it again too, at the next search through
+  them (mesh_margin_signature went by their generations): 6 to 16 ms a
+  tile in a forest, a stutter of 50 ms. Now each region keeps a hash
+  of its cells and small things along each edge (`edge_hash`,
+  `edge_generation`), looked at again when its generation moves; the
+  tiles round it are built again only if the edge toward them changed.
+  The stutter line has "path tiles built" and "path build
+  microseconds" (regions and tiles together) to tell building from
+  searching.
 - Soft things are not gone round at planning (the walker's own
   business as it goes: the height per cell, as before).
 - tests/navigation/small.py passes: every goal, no body in a trunk or a

@@ -105,6 +105,8 @@ typedef enum
 	FRAME_CHUNK_UPLOADS,
 	FRAME_PHYSICS_REBUILDS,        // Box3D height fields rebuilt
 	FRAME_NAVIGATION_REGIONS,      // path grid regions built
+	FRAME_NAVIGATION_TILES,        // navigation mesh tiles built (the rectangles of a region, for a width of walker)
+	FRAME_NAVIGATION_BUILD_MICROSECONDS, // what building those regions and tiles took, together
 	FRAME_SHADOW_REDRAWS,
 	FRAME_NEAR_SHADOW_REDRAWS,
 	FRAME_MOVING_SHADOW_REDRAWS,   // the near map's moving layer over a copy of the still one

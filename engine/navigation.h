@@ -470,6 +470,14 @@ typedef struct
 	// one's is its end (a line asks for the few by it, many times a frame)
 	navigation_capsule_t *capsules;
 	uint16_t *capsule_first;           // NAVIGATION_CAPSULE_SQUARES squared + 1 of them; NULL: no capsules
+	// Its cells along each edge (x low, x high, z low, z high), which the
+	// tiles of the regions round it read (a body's points by their edge
+	// reach in): what they hold (a hash), the generation that last changed
+	// it, and the region's generation they were last looked at for. A
+	// tree felled in its middle builds none of the tiles round it again
+	uint64_t edge_hash[4];
+	uint32_t edge_generation[4];
+	uint32_t edge_checked_generation;
 	int32_t capsule_count;
 	int32_t capsule_capacity;
 	navigation_object_print_t *prints; // its objects as its signature last saw them (by id)
