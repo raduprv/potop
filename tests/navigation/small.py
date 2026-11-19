@@ -19,6 +19,7 @@ import math
 import os
 import random
 import subprocess
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -37,6 +38,8 @@ MODELS = {
 	"nav_trunk_bent": [(-0.2 + 0.1 * k, 0.2 + 0.1 * k, 0.5 * k, 0.5 * (k + 1), -0.2, 0.2) for k in range(10)],
 	"nav_boulder": [(-0.4, 0.4, 0.0, 0.7, -0.35, 0.35)],
 	"nav_bucket": [(-0.15, 0.15, 0.0, 0.35, -0.15, 0.15)],
+	# (the boulder again, loose: the one pushed)
+	"nav_stone": [(-0.4, 0.4, 0.0, 0.7, -0.35, 0.35)],
 }
 SOFT = {"nav_bucket"}
 # The grove: this box of the flat ground, so many of each, no two nearer
@@ -129,7 +132,7 @@ def walk(agent, placed, pinch=False):
 	log = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, text=True).stdout
 	with open(os.path.join(ROOT, "build", name + ".log"), "w") as out:
 		out.write(log)
-	if "Houses: 1 of" not in log or log.count("Put: ") < len(MODELS) - 1:
+	if "Houses: 1 of" not in log or log.count("Put: ") < len(set(placed_name for placed_name, x, z in placed)):
 		sys.exit("small: the models did not load (tests/navigation/small.py build; see build/%s.log)" % name)
 	ends = {}
 	for line in log.splitlines():
@@ -206,6 +209,43 @@ def take(placed):
 	return wrong
 
 
+# A stone pushed with a walker on its ways: it rolls off, comes to rest,
+# and the navigation has its capsule where it lies then (a loose thing at
+# rest stands where it lies; it had none at all once loose, and the one
+# drawn stayed where the stone had been). Returns 1 if that went wrong
+PUSHED = [("nav_stone", 68.0, 96.0)]
+PUSH_IMPULSE = (0.0, 240.0)
+PUSH_SECONDS = 20.0
+PUSH_LEAST_METERS = 0.5
+PUSH_CAPSULE_METERS = 0.3
+
+
+def push(placed):
+	placed = placed + PUSHED
+	environment = dict(os.environ)
+	environment.setdefault("VK_ICD_FILENAMES", "/usr/share/vulkan/icd.d/lvp_icd.json")
+	command = ["timeout", "900", "xvfb-run", "-a", os.path.join(ROOT, "potop"), "--houses", "nav_fence"] + nav_stress.BAKE
+	for model in MODELS:
+		points = ["%.2f,%.2f" % (x, z) for placed_name, x, z in placed if placed_name == model]
+		if points and model != "nav_fence":
+			command += ["--put", model, ";".join(points)]
+	command += ["--sim", "200", "--push", "%.2f,%.2f,%.0f,%.0f@%.0f" % (PUSHED[0][1], PUSHED[0][2], PUSH_IMPULSE[0], PUSH_IMPULSE[1], PUSH_SECONDS)]
+	command += ["--walk_from", "%.2f,%.2f" % START, "--walk_test", "bear", ";".join("%.2f,%.2f" % goal for goal in GOALS[:4])]
+	log = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, text=True).stdout
+	with open(os.path.join(ROOT, "build", "small_push.log"), "w") as out:
+		out.write(log)
+	found = re.search(r"Push: \d+ s after it lies at \(([-0-9.]+), ([-0-9.]+)\), (moving|at rest); its capsule in the navigation (at|NONE) \(([-0-9.]+), ([-0-9.]+)\)", log)
+	if found is None:
+		print("push: the stone was not pushed (see build/small_push.log)!")
+		return 1
+	moved = math.hypot(float(found.group(1)) - PUSHED[0][1], float(found.group(2)) - PUSHED[0][2])
+	off = math.hypot(float(found.group(5)) - float(found.group(1)), float(found.group(6)) - float(found.group(2))) if found.group(4) == "at" else -1.0
+	bad = moved < PUSH_LEAST_METERS or found.group(3) != "at rest" or off < 0.0 or off > PUSH_CAPSULE_METERS
+	print("push a stone         rolled %.2f m, %s, its capsule %s%s" % (moved, found.group(3),
+		"%.2f m from where it lies" % off if off >= 0.0 else "nowhere", "!" if bad else ""))
+	return 1 if bad else 0
+
+
 def main():
 	if len(sys.argv) < 2 or sys.argv[1] not in ("build", "run"):
 		sys.exit(__doc__ or "small.py build | run [TYPE...]")
@@ -222,6 +262,7 @@ def main():
 			wrong += walk(agent, placed, True)
 	if len([argument for argument in sys.argv[2:] if not argument.startswith("--")]) == 0:
 		wrong += take(placed)
+		wrong += push(placed)
 	print("%d wrong (! above)" % wrong)
 	sys.exit(1 if wrong else 0)
 

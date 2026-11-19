@@ -1357,6 +1357,8 @@ static void sync_bodies(physics_t *physics, objects_t *objects, const terrain_t 
 				continue;
 			}
 			instance->body = -1;
+			// (no body: it lies where it is)
+			objects_set_awake(objects, i, false);
 		}
 		if (wanted)
 		{
@@ -1389,6 +1391,7 @@ static void sync_bodies(physics_t *physics, objects_t *objects, const terrain_t 
 		else
 		{
 			instance->body = -1;
+			objects_set_awake(objects, i, false);
 		}
 	}
 	for (int slot = 0; slot < physics->body_capacity; slot++)
@@ -1562,7 +1565,8 @@ static void follow_changes(physics_t *physics, objects_t *objects, const terrain
 			continue;
 		}
 		instance = &objects->instances[index];
-		if (changes[c].kind == OBJECT_CHANGE_FREED)
+		// (come loose, moving or at rest: the physics' own doing)
+		if (changes[c].kind == OBJECT_CHANGE_FREED || changes[c].kind == OBJECT_CHANGE_STIRRED)
 		{
 			continue;
 		}
@@ -3420,6 +3424,9 @@ void physics_step(physics_t *physics, objects_t *objects, terrain_t *terrain, wa
 			instance->rotation[1] = move->transform.q.v.y;
 			instance->rotation[2] = move->transform.q.v.z;
 			instance->rotation[3] = move->transform.q.s;
+			// (moving, or come to rest where it is now: the navigation
+			// goes by where things stand)
+			objects_set_awake(objects, body->instance, !move->fellAsleep);
 			// Off the map: gone (the water carried it away)
 			if (instance->x < 0.0f || instance->z < 0.0f || instance->x >= map_meters || instance->z >= map_meters
 				|| instance->y < physics->minimum_height - FALL_LIMIT_METERS)

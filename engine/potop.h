@@ -78,6 +78,11 @@ typedef struct
 	// nearest the point, within a meter, so long into the test: a tree
 	// felled, a stone gone, with walkers on their ways)
 	const char *take;
+	// A test's object pushed as it runs ("X,Z,IMPULSE_X,IMPULSE_Z@SECONDS":
+	// the one nearest the point, within a meter, a push of so many newton
+	// seconds; the log says where it lies and where the navigation has
+	// its capsule a while after)
+	const char *push;
 	bool start_hour_set;           // the day starts at start_hour (0..24)
 	float start_hour;
 	// A test without the picture (sim_seconds > 0): fixed steps of

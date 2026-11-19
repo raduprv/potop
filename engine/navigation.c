@@ -69,6 +69,13 @@ static bool mesh_standable(navigation_t *navigation, const terrain_t *terrain, c
 static bool node_sub_height(const navigation_t *navigation, int32_t node, int32_t cell, int32_t sub_x, int32_t sub_z, uint8_t room_needed,
 	float *height_out, bool *blocked_out);
 
+// Whether an object is loose and moving now (OBJECT_STATE_AWAKE): not
+// where anything stands
+static bool object_moving(const object_instance_t *instance)
+{
+	return (instance->state & OBJECT_STATE_FREE) != 0 && (instance->state & OBJECT_STATE_AWAKE) != 0;
+}
+
 static const int32_t direction_x[8] = { 1, -1, 0, 0, 1, 1, -1, -1 };
 static const int32_t direction_z[8] = { 0, 0, 1, -1, 1, -1, 1, -1 };
 static const float direction_length[8] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.41421356f, 1.41421356f, 1.41421356f, 1.41421356f };
@@ -360,7 +367,9 @@ static int navigation_model(const navigation_t *navigation, const objects_t *obj
 	const object_type_t *type = &objects->types.types[instance->type];
 	int model;
 
-	if ((type->physics != OBJECT_PHYSICS_STATIC && type->physics != OBJECT_PHYSICS_BODY) || (instance->state & OBJECT_STATE_FREE) != 0)
+	// (a loose one that moves now is nothing here; one that lies still
+	// stands where it lies)
+	if ((type->physics != OBJECT_PHYSICS_STATIC && type->physics != OBJECT_PHYSICS_BODY) || object_moving(instance))
 	{
 		return -1;
 	}
@@ -1650,7 +1659,7 @@ static void raise_object_tops(navigation_t *navigation, const objects_t *objects
 	int32_t last_x;
 	int32_t last_z;
 
-	if ((instance->state & OBJECT_STATE_FREE) != 0)
+	if (object_moving(instance))
 	{
 		return;
 	}
@@ -1737,6 +1746,7 @@ static int32_t gather_region_objects(const navigation_t *navigation, const objec
 	int32_t last_z;
 	bool use_grid = !objects->grid_dirty && objects->grid_first != NULL && objects->grid_size > 0;
 	int32_t needed = use_grid ? 0 : objects->instance_count;
+	int32_t loose_first = use_grid ? objects->grid_first[objects->grid_size * objects->grid_size] : 0;
 
 	region_bounds(navigation, region_index, &first_x, &first_z, &last_x, &last_z);
 	if (use_grid)
@@ -1757,8 +1767,11 @@ static int32_t gather_region_objects(const navigation_t *navigation, const objec
 
 			needed += objects->grid_first[row + grid_last_x + 1] - objects->grid_first[row + grid_first_x];
 		}
-		// (and those added since the sort, at the list's end: a few)
+		// (and those added since the sort, at the list's end: a few; and
+		// the loose ones, wherever they lie now: sorted past the grid's
+		// cells, or strays come loose since the sort)
 		needed += SDL_max(objects->instance_count - objects->sorted_count, 0);
+		needed += SDL_max(objects->sorted_count - loose_first, 0) + objects->stray_count;
 		if (!grow_object_scratch(scratch, needed))
 		{
 			return 0;
@@ -1767,10 +1780,15 @@ static int32_t gather_region_objects(const navigation_t *navigation, const objec
 		{
 			int32_t row = grid_z * objects->grid_size;
 
-			// The cells of a row are one run of instances
+			// The cells of a row are one run of instances (one come loose
+			// since the sort is still in its cell's: found below, where it
+			// lies)
 			for (int i = objects->grid_first[row + grid_first_x]; i < objects->grid_first[row + grid_last_x + 1]; i++)
 			{
-				scratch->items[count++] = i;
+				if ((objects->instances[i].state & OBJECT_STATE_FREE) == 0)
+				{
+					scratch->items[count++] = i;
+				}
 			}
 		}
 		{
@@ -1783,7 +1801,29 @@ static int32_t gather_region_objects(const navigation_t *navigation, const objec
 			{
 				const object_instance_t *instance = &objects->instances[i];
 
-				if (instance->x >= minimum_x && instance->x <= maximum_x && instance->z >= minimum_z && instance->z <= maximum_z)
+				if ((instance->state & OBJECT_STATE_FREE) == 0 && instance->x >= minimum_x && instance->x <= maximum_x && instance->z >= minimum_z
+					&& instance->z <= maximum_z)
+				{
+					scratch->items[count++] = i;
+				}
+			}
+			for (int i = loose_first; i < objects->sorted_count; i++)
+			{
+				const object_instance_t *instance = &objects->instances[i];
+
+				if ((instance->state & OBJECT_STATE_FREE) != 0 && instance->x >= minimum_x && instance->x <= maximum_x && instance->z >= minimum_z
+					&& instance->z <= maximum_z)
+				{
+					scratch->items[count++] = i;
+				}
+			}
+			for (int n = 0; n < objects->stray_count; n++)
+			{
+				int i = objects->strays[n];
+				const object_instance_t *instance = i < objects->instance_count ? &objects->instances[i] : NULL;
+
+				if (instance != NULL && (instance->state & OBJECT_STATE_FREE) != 0 && instance->x >= minimum_x && instance->x <= maximum_x
+					&& instance->z >= minimum_z && instance->z <= maximum_z)
 				{
 					scratch->items[count++] = i;
 				}
@@ -1852,8 +1892,8 @@ static int compare_prints(const void *left, const void *right)
 }
 
 // A number from the standing objects reaching into a region (every one
-// counts, the heights flyers go over too; loose ones are left out, they
-// move all the time): a region whose number changed is built again (the
+// counts, the heights flyers go over too; loose ones that move now are
+// left out, those that lie still count where they lie): a region whose number changed is built again (the
 // cells round what changed). The height of those the navigation stands on
 // or goes round counts in steps (OBJECT_HEIGHT_STEP_METERS), so following
 // the ground by a few centimeters of erosion changes nothing; that of the
@@ -1872,7 +1912,7 @@ static uint64_t region_signature(const navigation_t *navigation, const objects_t
 	for (int32_t k = 0; k < count; k++)
 	{
 		const object_instance_t *instance = &objects->instances[scratch->items[k]];
-		int model = (instance->state & OBJECT_STATE_FREE) != 0 ? -1 : objects_instance_model(objects, instance);
+		int model = object_moving(instance) ? -1 : objects_instance_model(objects, instance);
 		uint64_t hash = 1469598103934665603ull;
 		float fields[8];
 		float radius;
@@ -3037,18 +3077,33 @@ void navigation_update(navigation_t *navigation, const terrain_t *terrain, const
 		navigation->object_margin_meters = object_margin(objects);
 	}
 	// The object list changed a little (no sort, no new generation): the
-	// regions an object was added to, went from or came loose in compared
-	// again (those within its reach of it)
+	// regions an object was added to, went from, came loose in, began to
+	// move in or came to rest in compared again (those within its reach
+	// of it)
 	if (objects != NULL && navigation->regions != NULL)
 	{
 		int count = 0;
 		uint32_t next;
 		const object_change_t *changes = objects_changes_since(objects, navigation->object_change_serial, &count, &next);
 		float region_meters = (float)navigation->region_size * NAVIGATION_CELL_METERS;
-		float reach = navigation->object_margin_meters;
 
 		for (int c = 0; c < count; c++)
 		{
+			// (as far as the object itself reaches, if it is still told:
+			// not every region within the widest object's reach, each
+			// one's objects gone through again for a stone that rolled)
+			float reach = navigation->object_margin_meters;
+
+			if (changes[c].index >= 0 && changes[c].index < objects->instance_count)
+			{
+				const object_instance_t *instance = &objects->instances[changes[c].index];
+				int model = instance->type >= 0 && instance->type < objects->types.type_count ? objects->types.types[instance->type].model : -1;
+
+				if (model >= 0 && model < objects->model_count)
+				{
+					reach = SDL_min(reach, objects->models[model].horizontal_radius * instance->scale + 2.0f * NAVIGATION_CELL_METERS);
+				}
+			}
 			int32_t first_x = SDL_clamp((int32_t)((changes[c].x - reach) / region_meters), 0, navigation->regions_per_side - 1);
 			int32_t first_z = SDL_clamp((int32_t)((changes[c].z - reach) / region_meters), 0, navigation->regions_per_side - 1);
 			int32_t last_x = SDL_clamp((int32_t)((changes[c].x + reach) / region_meters), 0, navigation->regions_per_side - 1);

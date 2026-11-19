@@ -73,6 +73,12 @@
 // list is compacted only when a map is saved (objects_compact_dead), not
 // sorted again for a pebble
 #define OBJECT_STATE_DEAD 0x40
+// Loose (OBJECT_STATE_FREE) and moving now, its body awake: nothing to the
+// navigation, which goes by where things stand. One that lies still (its
+// body asleep, or it has none) stands where it lies: a stone rolled off
+// is gone round there, a felled tree is a wall across the way. Not kept
+// in a map's file
+#define OBJECT_STATE_AWAKE 0x80
 
 // What changed in the list since its last sort, for those who keep things
 // by the objects' indices (the physics' bodies, the navigation's regions):
@@ -87,7 +93,8 @@ typedef enum
 	OBJECT_CHANGE_ADDED,
 	OBJECT_CHANGE_KILLED,
 	OBJECT_CHANGE_FREED,
-	OBJECT_CHANGE_RETYPED
+	OBJECT_CHANGE_RETYPED,
+	OBJECT_CHANGE_STIRRED              // a loose one began to move, or came to rest (OBJECT_STATE_AWAKE): where it is now
 } object_change_kind_t;
 
 typedef struct
@@ -750,6 +757,9 @@ void objects_update_rotation(object_instance_t *instance);
 // A placed object starts moving with the physics (or stops): moves it out
 // of the grid (or back into it)
 void objects_set_free(objects_t *objects, int instance_index, bool free);
+// A loose object's body woke or fell asleep (OBJECT_STATE_AWAKE): those
+// who go by where things stand are told (OBJECT_CHANGE_STIRRED)
+void objects_set_awake(objects_t *objects, int instance_index, bool awake);
 
 // Moves objects standing on changed terrain (chunks with objects_dirty) to
 // the new ground height, OBJECTS_FOLLOW_BUDGET of them a frame

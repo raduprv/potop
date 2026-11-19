@@ -375,6 +375,20 @@ are joined at all), a coarse graph for ways of kilometers.
     ground or not); only with no current tile there is the region
     grown back. The console's `navmesh` says how many regions are let
     go and what the surfaces take.
+  - Loose things (Radu: a stone pushed kept its capsule where it had
+    stood). Once loose (OBJECT_STATE_FREE) a thing was nothing to the
+    navigation, ever again, and the regions' gathering did not look
+    where a loose one lies. Now `OBJECT_STATE_AWAKE` (its body moves;
+    the physics sets it from its move events, `objects_set_awake`,
+    `OBJECT_CHANGE_STIRRED`): one that moves is nothing, one that lies
+    still stands where it lies, a stone gone round there, a felled
+    tree a wall. A region's objects: the standing ones of its cells'
+    runs, the loose ones sorted past the grid and the strays, by where
+    they are. A change touches the regions the object itself reaches,
+    not all within the widest object's. Tests without the picture did
+    not call `navigation_update` (it was in world_render): they do
+    now. small.py's push (`--push X,Z,IX,IZ@SECONDS`): a loose stone
+    rolls 1.2 m, its capsule is where it lies.
   - Left of step 5: the water (a tile with water is built again when
     the water changes, and its region keeps its cells); F4's cell
     overlay shows a let-go region as open ground; the flyers read

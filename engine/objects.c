@@ -5465,6 +5465,18 @@ void objects_set_free(objects_t *objects, int instance_index, bool free)
 	mark_shadows_dirty(objects, instance->type);
 }
 
+void objects_set_awake(objects_t *objects, int instance_index, bool awake)
+{
+	object_instance_t *instance = &objects->instances[instance_index];
+
+	if (((instance->state & OBJECT_STATE_AWAKE) != 0) == awake)
+	{
+		return;
+	}
+	instance->state = (uint8_t)(awake ? instance->state | OBJECT_STATE_AWAKE : instance->state & ~OBJECT_STATE_AWAKE);
+	note_change(objects, instance_index, OBJECT_CHANGE_STIRRED);
+}
+
 void objects_refresh_ground(objects_t *objects, const terrain_t *terrain, int instance_index)
 {
 	object_instance_t *instance = &objects->instances[instance_index];

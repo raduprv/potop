@@ -537,6 +537,21 @@ bool potop_start(potop_t *potop, const potop_options_t *options)
 		potop->world.day_hour = SDL_fmod((double)options->start_hour, 24.0);
 	}
 	potop->bake_paths_frames = options->bake_paths ? 3 : 0;
+	// (--push: "X,Z,IX,IZ@SECONDS")
+	potop->push_stage = 0;
+	if (options->push != NULL)
+	{
+		const char *at = options->push;
+		char *end = NULL;
+
+		for (int k = 0; k < 4; k++)
+		{
+			potop->push_values[k] = (float)SDL_strtod(at, &end);
+			at = *end == ',' ? end + 1 : end;
+		}
+		potop->push_seconds = *end == '@' ? (float)SDL_strtod(end + 1, &end) : 0.0f;
+		potop->push_stage = 1;
+	}
 	// (--take: "X,Z@SECONDS;...", in the order of their times)
 	potop->take_count = 0;
 	potop->take_done = 0;
@@ -1441,6 +1456,77 @@ void potop_frame_end(potop_t *potop)
 			taken ? "taken away" : "NOT FOUND", (int)potop->world.navigation.mesh.tiles_built);
 		potop->take_told = false;
 	}
+	// (--push: the object nearest the point pushed, its time come; a while
+	// after, where it lies and the navigation's capsule nearest it)
+	if (potop->push_stage == 1 && potop->sim_elapsed >= (double)potop->push_seconds)
+	{
+		objects_t *objects = &potop->world.objects;
+		int nearest = -1;
+		float nearest_squared = 1.0f;
+
+		for (int k = 0; k < objects->instance_count; k++)
+		{
+			float dx = objects->instances[k].x - potop->push_values[0];
+			float dz = objects->instances[k].z - potop->push_values[1];
+
+			if ((objects->instances[k].state & OBJECT_STATE_DEAD) == 0 && dx * dx + dz * dz < nearest_squared)
+			{
+				nearest = k;
+				nearest_squared = dx * dx + dz * dz;
+			}
+		}
+		potop->push_stage = 0;
+		if (nearest >= 0 && objects->instances[nearest].body >= 0)
+		{
+			float impulse[3] = { potop->push_values[2], 0.0f, potop->push_values[3] };
+			float point[3] = { objects->instances[nearest].x, objects_instance_base_y(&objects->instances[nearest]) + 0.3f,
+				objects->instances[nearest].z };
+
+			physics_push_body(&potop->world.physics, objects->instances[nearest].body, impulse, point);
+			potop->push_id = objects->instances[nearest].id;
+			potop->push_stage = 2;
+		}
+		SDL_Log("Push: the object at (%.2f, %.2f) %s", (double)potop->push_values[0], (double)potop->push_values[1],
+			potop->push_stage == 2 ? "pushed" : "NOT FOUND (or it has no body)");
+	}
+	if (potop->push_stage == 2 && potop->sim_elapsed >= (double)potop->push_seconds + POTOP_TAKE_AFTER_SECONDS)
+	{
+		const objects_t *objects = &potop->world.objects;
+
+		potop->push_stage = 0;
+		for (int k = 0; k < objects->instance_count; k++)
+		{
+			const object_instance_t *instance = &objects->instances[k];
+			navigation_capsule_t capsules[64];
+			int count;
+			float best = 1e30f;
+			float best_x = 0.0f;
+			float best_z = 0.0f;
+
+			if (instance->id != potop->push_id)
+			{
+				continue;
+			}
+			count = navigation_capsules(&potop->world.navigation, instance->x - 8.0f, instance->z - 8.0f, instance->x + 8.0f, instance->z + 8.0f,
+				capsules, (int)SDL_arraysize(capsules));
+			for (int n = 0; n < count; n++)
+			{
+				float dx = 0.5f * (capsules[n].a[0] + capsules[n].b[0]) - instance->x;
+				float dz = 0.5f * (capsules[n].a[2] + capsules[n].b[2]) - instance->z;
+
+				if (capsules[n].id == instance->id && dx * dx + dz * dz < best)
+				{
+					best = dx * dx + dz * dz;
+					best_x = instance->x + dx;
+					best_z = instance->z + dz;
+				}
+			}
+			SDL_Log("Push: %.0f s after it lies at (%.2f, %.2f), %s; its capsule in the navigation %s (%.2f, %.2f)", POTOP_TAKE_AFTER_SECONDS,
+				(double)instance->x, (double)instance->z, (instance->state & OBJECT_STATE_AWAKE) != 0 ? "moving" : "at rest",
+				best < 1e29f ? "at" : "NONE", (double)best_x, (double)best_z);
+			break;
+		}
+	}
 	// (and how many a while after the last: what its going built again)
 	if (potop->take_count > 0 && potop->take_done == potop->take_count && !potop->take_told
 		&& potop->sim_elapsed >= (double)potop->take_seconds[potop->take_count - 1] + POTOP_TAKE_AFTER_SECONDS)
@@ -1521,6 +1607,9 @@ void potop_frame_end(potop_t *potop)
 	// uploads) sent, nothing drawn
 	if (potop->sim_seconds > 0.0f)
 	{
+		// (the navigation hears of the objects that changed, as it does
+		// each frame the picture is drawn: world_render)
+		navigation_update(&potop->world.navigation, &potop->world.terrain, &potop->world.objects, potop->world.elapsed_seconds);
 		gpu_flush_uploads();
 		gpu_submit_work(NULL);
 		trace_end();

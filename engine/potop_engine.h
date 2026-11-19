@@ -60,6 +60,12 @@ struct potop_s
 	int take_count;
 	int take_done;
 	bool take_told;
+	// --push: the object a test pushes as it runs (where, how hard, when;
+	// 1: to be pushed, 2: pushed, its id kept, 0: none or told)
+	float push_values[4];
+	float push_seconds;
+	int push_stage;
+	uint32_t push_id;
 	int navmesh_overlay_class;         // F4: the navigation mesh shown, of this class of walkers (by width); -1: not
 	char title[64];                // the window's (the loading screen's too)
 	const char *stage_name;        // what is being made (the loading screen)

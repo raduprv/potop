@@ -420,7 +420,7 @@ static void fill_objects(const objects_t *objects, char *type_names, size_t type
 		saved_objects[i].y = instance->y;
 		saved_objects[i].flatten = instance->flatten;
 		saved_objects[i].flatten_yaw = instance->flatten_yaw;
-		saved_objects[i].state = instance->state;
+		saved_objects[i].state = (uint8_t)(instance->state & ~OBJECT_STATE_AWAKE);
 		saved_objects[i].damage = instance->damage;
 		saved_objects[i].padding[0] = 0;
 		saved_objects[i].padding[1] = 0;
@@ -1285,7 +1285,7 @@ static bool read_sky_and_objects(map_file_reader_t *reader, terrain_t *terrain, 
 							instance->y = record.y;
 							instance->flatten = record.flatten;
 							instance->flatten_yaw = record.flatten_yaw;
-							instance->state = record.state;
+							instance->state = (uint8_t)(record.state & ~OBJECT_STATE_AWAKE);
 							instance->damage = record.damage;
 						}
 						loaded_objects++;

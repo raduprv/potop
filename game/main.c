@@ -2,7 +2,7 @@
 // player's input, the game's rules, the engine's frame (potop.h)
 //
 //     potop [--map NAME] [--seed N] [--width W --height H] [--houses [CATEGORY]]
-//           [--put TYPE X,Z[;X,Z...]]... [--take X,Z@SECONDS[;...]] [--set SECTION.KEY=VALUE]... [--hour H]
+//           [--put TYPE X,Z[;X,Z...]]... [--take X,Z@SECONDS[;...]] [--push X,Z,IX,IZ@SECONDS] [--set SECTION.KEY=VALUE]... [--hour H]
 //           [--sim SECONDS [--sim-step S]] [--trace FILE]
 //           [--walk_test TYPE X,Z[;X,Z...] [--walk_from X,Z] [--walk_run] [--walk_chase SPEED[,PAUSE]]]
 //
@@ -13,6 +13,9 @@
 // --take: with --sim, the object nearest each point (within a meter) taken
 // away so many seconds into the test; the log says how many tiles of the
 // navigation were built till then and half a minute after the last
+// --push X,Z,IX,IZ@SECONDS: with --sim, the object nearest the point pushed
+// (newton seconds) so long into the test; the log says where it lies and
+// where the navigation has its capsule half a minute after
 // --bake_paths: the navigation all built at the start (the console's "bake
 // paths"): no way waits for a build later
 // --set: a setting over data/settings.ini's (render.day_length_minutes=24)
@@ -137,6 +140,11 @@ static void read_command_line(potop_options_t *options, int argument_count, char
 		else if (SDL_strcmp(argument, "--take") == 0 && value != NULL)
 		{
 			options->take = value;
+			i++;
+		}
+		else if (SDL_strcmp(argument, "--push") == 0 && value != NULL)
+		{
+			options->push = value;
 			i++;
 		}
 		else if (SDL_strcmp(argument, "--walk_from") == 0)
