@@ -962,6 +962,9 @@ void objects_destroy(objects_t *objects)
 	SDL_free(objects->run_start);
 	SDL_free(objects->run_type);
 	SDL_free(objects->model_distance);
+	SDL_free(objects->type_marked_distance);
+	SDL_free(objects->near_cell_counts);
+	SDL_free(objects->near_cell_order);
 	SDL_free(objects->draw_order);
 	SDL_free(objects->draw_order_keys);
 	SDL_free(objects->ray_cell_stamps);
@@ -3669,6 +3672,34 @@ static int compare_near_cells(const void *a, const void *b)
 	return distance_a < distance_b ? -1 : (distance_a > distance_b ? 1 : 0);
 }
 
+#define NEAR_STEP_METERS 16.0f         // the camera's cells are put in order by distance this coarsely
+#define NEAR_STEPS 512                 // (8 km: further ones together, last)
+
+static int near_step(float distance)
+{
+	return SDL_clamp((int)(distance / NEAR_STEP_METERS), 0, NEAR_STEPS - 1);
+}
+
+// Whether the water has none anywhere (no tile of it wet or holding any)
+static bool water_all_dry(const water_t *water)
+{
+	int32_t tile_count;
+
+	if (water == NULL || water->tile_state == NULL || water->tile_total_depth == NULL || water->tiles_per_side <= 0)
+	{
+		return false;
+	}
+	tile_count = water->tiles_per_side * water->tiles_per_side;
+	for (int32_t tile = 0; tile < tile_count; tile++)
+	{
+		if (water->tile_state[tile] != WATER_TILE_DRY || water->tile_total_depth[tile] > 0)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *frustum, vec3_t eye, uint32_t *work_out, uint32_t *range_count_out)
 {
 	uint32_t work_total = 0;
@@ -3722,6 +3753,34 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 			objects->model_distance_valid = true;
 		}
 	}
+	// (a map with no water anywhere: every cell is dry, none asked)
+	bool all_dry = pass == PASS_CAMERA && water_all_dry(objects->dry_water);
+	// (a type's models are marked for the nearest cell it is seen in: once
+	// it has been marked this near, the cells further off have nothing to
+	// add. The passes that keep no distance mark it once)
+	bool types_marked = false;
+
+	if (in_view != NULL)
+	{
+		if (objects->type_marked_capacity < objects->types.type_count)
+		{
+			float *grown = SDL_realloc(objects->type_marked_distance, sizeof(float) * (size_t)objects->types.type_count);
+
+			if (grown != NULL)
+			{
+				objects->type_marked_distance = grown;
+				objects->type_marked_capacity = objects->types.type_count;
+			}
+		}
+		if (objects->type_marked_capacity >= objects->types.type_count)
+		{
+			for (int t = 0; t < objects->types.type_count; t++)
+			{
+				objects->type_marked_distance[t] = FLT_MAX;
+			}
+			types_marked = true;
+		}
+	}
 	objects->cell_words_used = words;
 	SDL_memset(objects->cell_visible_staging, 0, sizeof(uint32_t) * 2u * words);
 	// (the camera's cells' ranges nearest first: each model's instances come
@@ -3749,6 +3808,16 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 				(float)j * OBJECTS_GRID_CELL_METERS - 12.0f);
 			cell_maximum = vec3_make((float)(i + 1) * OBJECTS_GRID_CELL_METERS + 12.0f, objects->grid_maximum_y[cell],
 				(float)(j + 1) * OBJECTS_GRID_CELL_METERS + 12.0f);
+			// (too far first: on a big map that is most cells, and cheaper
+			// to tell than the six planes)
+			if (pass != PASS_FAR_SHADOW)
+			{
+				cell_distance = distance_to_box(eye, cell_minimum, cell_maximum);
+				if (cell_distance > objects->grid_draw_distance[cell] * objects->draw_distance_scale)
+				{
+					continue;
+				}
+			}
 			if (frustum != NULL && !frustum_contains_box(frustum, cell_minimum, cell_maximum))
 			{
 				continue;
@@ -3758,11 +3827,6 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 				int low = first;
 				int high = last;
 
-				cell_distance = distance_to_box(eye, cell_minimum, cell_maximum);
-				if (cell_distance > objects->grid_draw_distance[cell] * objects->draw_distance_scale)
-				{
-					continue;
-				}
 				// The first object drawn less far than the cell is
 				while (low < high)
 				{
@@ -3781,7 +3845,7 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 			}
 			bound += (uint32_t)(last - first);
 			objects->cell_visible_staging[cell >> 5] |= 1u << (cell & 31);
-			if (pass == PASS_CAMERA && cell_dry(objects, i, j))
+			if (pass == PASS_CAMERA && (all_dry || cell_dry(objects, i, j)))
 			{
 				objects->cell_visible_staging[words + (uint32_t)(cell >> 5)] |= 1u << (cell & 31);
 			}
@@ -3824,10 +3888,20 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 			{
 				for (int r = objects->run_first[cell]; r < objects->run_first[cell + 1] && objects->run_start[r] < last; r++)
 				{
-					mark_type_models(objects, in_view, objects->run_type[r]);
+					int run_type = objects->run_type[r];
+
+					if (types_marked)
+					{
+						if (objects->type_marked_distance[run_type] <= cell_distance)
+						{
+							continue;
+						}
+						objects->type_marked_distance[run_type] = cell_distance;
+					}
+					mark_type_models(objects, in_view, run_type);
 					if (objects->model_distance_valid)
 					{
-						mark_type_distance(objects, objects->run_type[r], cell_distance);
+						mark_type_distance(objects, run_type, cell_distance);
 					}
 				}
 			}
@@ -3846,10 +3920,56 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 	}
 	if (near_count > 0)
 	{
-		SDL_qsort(objects->near_cells, (size_t)near_count, sizeof(objects_near_cell_t), compare_near_cells);
-		for (int n = 0; n < near_count; n++)
+		// Nearest first, by counting them per NEAR_STEP_METERS of distance
+		// (roughly front to back is all that is asked: no sort of a few
+		// thousand cells every frame)
+		bool counted = false;
+
+		if (objects->near_cell_order_capacity < near_count || objects->near_cell_counts == NULL)
 		{
-			add_order_range(objects, objects->near_cells[n].first, objects->near_cells[n].last, &range_count, &work_total);
+			uint32_t *counts = objects->near_cell_counts != NULL ? objects->near_cell_counts
+				: SDL_malloc(sizeof(uint32_t) * (NEAR_STEPS + 1));
+			uint32_t *order = SDL_realloc(objects->near_cell_order, sizeof(uint32_t) * (size_t)near_count);
+
+			objects->near_cell_counts = counts;
+			if (order != NULL)
+			{
+				objects->near_cell_order = order;
+				objects->near_cell_order_capacity = near_count;
+			}
+		}
+		if (objects->near_cell_counts != NULL && objects->near_cell_order_capacity >= near_count)
+		{
+			uint32_t *counts = objects->near_cell_counts;
+
+			SDL_memset(counts, 0, sizeof(uint32_t) * (NEAR_STEPS + 1));
+			for (int n = 0; n < near_count; n++)
+			{
+				counts[near_step(objects->near_cells[n].distance) + 1]++;
+			}
+			for (int step = 0; step < NEAR_STEPS; step++)
+			{
+				counts[step + 1] += counts[step];
+			}
+			for (int n = 0; n < near_count; n++)
+			{
+				objects->near_cell_order[counts[near_step(objects->near_cells[n].distance)]++] = (uint32_t)n;
+			}
+			for (int n = 0; n < near_count; n++)
+			{
+				const objects_near_cell_t *near = &objects->near_cells[objects->near_cell_order[n]];
+
+				add_order_range(objects, near->first, near->last, &range_count, &work_total);
+			}
+			counted = true;
+		}
+		if (!counted)
+		{
+			SDL_qsort(objects->near_cells, (size_t)near_count, sizeof(objects_near_cell_t), compare_near_cells);
+			for (int n = 0; n < near_count; n++)
+			{
+				add_order_range(objects, objects->near_cells[n].first, objects->near_cells[n].last, &range_count, &work_total);
+			}
 		}
 	}
 	bound += (uint32_t)(objects->grid_first[cell_count + 1] - objects->grid_first[cell_count]);

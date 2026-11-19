@@ -205,6 +205,16 @@ typedef struct
 	// behind it from the depth test before that is shaded)
 	float *model_distance;
 	int model_distance_capacity;
+	// Per type: the nearest visible cell it was marked for this pass
+	// (find_cells: a type is in most cells in view, its models marked once
+	// for the nearest, not once a cell)
+	float *type_marked_distance;
+	int type_marked_capacity;
+	// The camera's visible cells counted by how far they are, to put
+	// their ranges in order without sorting them (find_cells)
+	uint32_t *near_cell_counts;
+	uint32_t *near_cell_order;
+	int near_cell_order_capacity;
 	bool model_distance_valid;
 	int *draw_order;
 	void *draw_order_keys;
