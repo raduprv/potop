@@ -542,6 +542,11 @@ typedef struct
 	float wall_reach_meters;           // [simulation] navigation_wall_meters
 	float soft_kilograms;              // and navigation_soft_kilograms
 	bool small_out;                    // navigation_small_out: small things gone round are not in the rectangles
+	// navigation_follow_mesh: what a walker on its way asks (may it step
+	// there, has its body the room on this line, how high is the ground)
+	// is answered from the rectangles, not from the quarter meters they
+	// were made from; no fine way over those either (it searches again)
+	bool follow_mesh;
 	float small_detour_meters;
 	uint8_t *extra_count;
 	uint16_t *extra_first;
@@ -669,11 +674,29 @@ navigation_result_t navigation_find_path(navigation_t *navigation, const terrain
 	const navigation_agent_t *agent, float from_x, float from_z, float from_height, float to_x, float to_z,
 	float waypoints_out[NAVIGATION_MAX_WAYPOINTS][2], int *waypoint_count_out, bool *complete_out);
 
+// Whether a step of an agent's middle goes into a small thing (a trunk, a
+// boulder: not in the rectangles), deeper than its start is; away (may be
+// NULL): the way straight off the thing from the step's start, a length
+// of one
+bool navigation_small_blocks_step(const navigation_t *navigation, const navigation_agent_t *agent, float from_x, float from_z, float to_x,
+	float to_z, float *away_x_out, float *away_z_out);
+
+// Whether a walker that keeps to the rectangles (navigation_follows_mesh)
+// may make a step of its middle: onto them or along them (a little slack
+// at their edges), by the agent's rules, not into a small thing; one off
+// them already may step any way, back to them
+bool navigation_step_passable(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
+	float from_x, float from_z, float height, float to_x, float to_z);
+
 // Whether the last path found (navigation_find_path, just now) gets to
 // its waypoint of that index by a jump from the one before (the start,
 // for the first): up onto or down off an edge the agent does not step
 // (navigation_agent_t.jump_up_meters, jump_down_meters), straight across
 // it; and the height it lands at
+// Whether a walker's questions are answered from the rectangles
+// (navigation_t.follow_mesh): no fine way then, a new search instead
+bool navigation_follows_mesh(const navigation_t *navigation);
+
 // Whether anything stands in the cell of a point or the eight round it
 // (an object's surface, room taken, a region not built yet: not known).
 // False: bare ground there, nothing for a ray through the physics'

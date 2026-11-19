@@ -355,6 +355,7 @@ typedef struct
 	bool fine_to_waypoint;             // it ends by that waypoint: at its end the waypoint is reached
 	float guard_seconds;               // its steps refused this long
 	float fine_wait;                   // till it looks for a fine way again
+	bool search_again;                 // its steps refused with no fine way to take (the navigation follows its rectangles): a new search
 	int fine_failures;                 // fine ways looked for in a row and none found, where it is (FINE_FAILURES_MOST: no way, it gives up)
 	// Whether its body has the straight way to its waypoint (steer_point:
 	// not: a fine way at once), and the room for its turn's arc to where

@@ -206,7 +206,7 @@ are joined at all), a coarse graph for ways of kilometers.
   thing is left to the guard), and are looked at again. At most 64 new
   points; a way with no room for them (96 waypoints) is cut there, more
   after its last. `path_small` / `navigation_path_small`: the
-  stretches by small things (no one reads it yet: step 4's guard).
+  stretches by small things (mesh_way_holds reads it).
 - Not in the plan, needed: **`mesh_weld_small`**. A row of trunks 0.75 m
   apart was no wall to anyone, and no tangent goes round a thing whose
   neighbor's circle is where the point would be. When a tile is built,
@@ -276,6 +276,44 @@ are joined at all), a coarse graph for ways of kilometers.
 - tests/navigation/small.py passes: every goal, no body in a trunk or a
   boulder; bear running 94 s (96 with everything a wall), on the spot
   11 s (7).
+- Step 4, the follower by the rectangles (Nov 19 2026;
+  `[simulation] navigation_follow_mesh`, on; off: the follower as it
+  was, over the quarter meters). The walker's code is the same, what it
+  asks of the navigation is answered from the rectangles of its class:
+  `navigation_passable` / `navigation_quarter_free` (a level of its
+  class there, within its reach of where it stands; 13 cm of slack at
+  the edges, `mesh_follow_level`), `navigation_body_line` (the line
+  over the rectangles), `navigation_surface_height_on` (the level's
+  height, the terrain's where it is the ground: `mesh_follow_height`),
+  and its step guard is `navigation_step_passable`: the step's end on
+  the rectangles, not deeper into a small thing than its start
+  (`navigation_small_blocks_step`), the line there over them by the
+  agent's rules (the line moved up to the slack any way if not). No
+  fine way (`navigation_fine_path` gives none) and no body points: the
+  rectangles are where its body fits. Steps refused for 0.2 s: the way
+  is searched again from where it stands ("steps refused, searching
+  again").
+  What it took besides: (1) `mesh_line` let a line's last meter run off
+  the rectangles over quarters the grid said could be stood on: a
+  corner cut through the wall beside a door. By the rectangles a line
+  ends on them; off them only one that started off them. (2) A corner
+  is counted as reached 12 cm off, or where the way on from here is
+  over the rectangles (it was 25 cm, always): else it stood beside a
+  stair's portal, its way on through the wall. (3) Refused steps slide:
+  round a small thing along its side; back to the corner just cut;
+  along the rectangle's edge. (4) Corners a hair apart are merged only
+  if the way straight past the earlier one is over the rectangles (the
+  inn's wall corner was cut by 24 cm). (5) The way's corners pushed out
+  of a berth can leave a stretch a few cm off a narrow strip: the
+  guard's slack on the line.
+  The suites as before or better (houses on the spot 291 s against
+  320, the chase 46 s late against 65, small things 7 cm into a trunk
+  at the most against 12 to 25).
+  Still read from the grid by a walker on its way: `navigation_objects_near`
+  (whether its feet need the physics' rays), `navigation_obstacle_height`
+  (flyers), the stuck report's text; and by the rectangles' own code
+  (step 5): an uneven surface's height (`mesh_height_at`), the check of
+  a found way (`mesh_way_holds`), jumps, building a tile.
 
 ## Known and left
 

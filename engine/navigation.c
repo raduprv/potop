@@ -51,6 +51,18 @@ static int mesh_find_path(navigation_t *navigation, const terrain_t *terrain, co
 	int *waypoint_count_out, bool *complete_out);
 static int mesh_line_passable(navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
 	float from_x, float from_z, float from_height, float to_x, float to_z, float *blocked_x, float *blocked_z, float *blocked_height);
+static int mesh_line(navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent, float from_x,
+	float from_z, float from_height, float to_x, float to_z, float *blocked_x, float *blocked_z, float *blocked_height);
+
+#define MESH_FOLLOW_SLACK_METERS 0.13f  // a walker this far off a rectangle's edge is still on it (half a quarter meter)
+#define MESH_FOLLOW_LEVEL_METERS 0.5f   // and on a level this far from its height, at least
+#define MESH_FOLLOW_NEAR_QUARTERS 3     // what is underfoot off the rectangles: the nearest one's, this far
+// The follower's questions answered from the rectangles (follow_mesh:
+// see mesh_follow_level, further down)
+static bool mesh_follow_level(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
+	float x, float z, float near_height, float slack, float *height_out, bool *ground_out);
+static bool mesh_follow_height(const navigation_t *navigation, const terrain_t *terrain, const navigation_agent_t *agent, float x, float z,
+	float near_height, float *height_out, bool *object_out);
 static int mesh_class_of(const navigation_agent_t *agent);
 static bool node_sub_height(const navigation_t *navigation, int32_t node, int32_t cell, int32_t sub_x, int32_t sub_z, uint8_t room_needed,
 	float *height_out, bool *blocked_out);
@@ -2587,6 +2599,7 @@ bool navigation_create(navigation_t *navigation, const terrain_t *terrain)
 	navigation->wall_reach_meters = 1.2f;
 	navigation->soft_kilograms = 20.0f;
 	navigation->small_out = true;
+	navigation->follow_mesh = true;
 	navigation->small_detour_meters = 10.0f;
 	navigation_set_slope_cost(navigation, 40.0f, 1.5f);
 	return resize(navigation, terrain);
@@ -2883,6 +2896,15 @@ float navigation_surface_height_on(const navigation_t *navigation, const terrain
 	float reach = agent != NULL ? SDL_max(agent->step_meters, agent->maximum_slope * NAVIGATION_CELL_METERS) : 0.0f;
 	// The best so far: standable and within reach first, then the nearest
 	float best = terrain_sample_height_meters(terrain, x, z);
+
+	if (navigation->follow_mesh && mesh_follow_height(navigation, terrain, agent, x, z, near_height, &best, &on_object))
+	{
+		if (object_out != NULL)
+		{
+			*object_out = on_object;
+		}
+		return best;
+	}
 	bool best_good;
 	bool covered = false;
 	int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
@@ -2994,6 +3016,10 @@ bool navigation_passable(const navigation_t *navigation, const terrain_t *terrai
 	int count;
 	float reach = SDL_max(agent->step_meters, agent->maximum_slope * NAVIGATION_CELL_METERS);
 
+	if (navigation->follow_mesh)
+	{
+		return mesh_follow_level(navigation, terrain, water, agent, x, z, near_height, MESH_FOLLOW_SLACK_METERS, NULL, NULL);
+	}
 	if (!cell_of_point(navigation, x, z, &cell))
 	{
 		return false;
@@ -3119,6 +3145,10 @@ bool navigation_quarter_free(const navigation_t *navigation, const terrain_t *te
 	int32_t sub_z;
 	float height;
 
+	if (navigation->follow_mesh)
+	{
+		return mesh_follow_level(navigation, terrain, water, agent, x, z, near_height, MESH_FOLLOW_SLACK_METERS, NULL, NULL);
+	}
 	return quarter_of_point(navigation, x, z, &cell, &sub_x, &sub_z)
 		&& quarter_stand(navigation, terrain, water, agent, cell, sub_x, sub_z, near_height, &height);
 }
@@ -3171,6 +3201,13 @@ int navigation_quarter_tightness(const navigation_t *navigation, const terrain_t
 {
 	float height;
 
+	// (on the rectangles a body has all its room, by how they are made;
+	// off them it has none that is known: as tight as it gets, but not
+	// "no standing there": a walker off them is let walk on, back to them)
+	if (navigation->follow_mesh)
+	{
+		return mesh_follow_level(navigation, terrain, water, agent, x, z, near_height, MESH_FOLLOW_SLACK_METERS, NULL, NULL) ? 0 : BODY_POINTS;
+	}
 	return quarter_tightness(navigation, terrain, water, agent, x, z, near_height, &height);
 }
 
@@ -3287,6 +3324,11 @@ bool navigation_body_line(const navigation_t *navigation, const terrain_t *terra
 	float reached;
 	float height;
 
+	// (over the rectangles: where a body's middle goes with all its room)
+	if (navigation->follow_mesh)
+	{
+		return navigation_line_passable(navigation, terrain, water, agent, from_x, from_z, from_height, to_x, to_z, NULL, NULL, NULL);
+	}
 	return body_line_reach(navigation, terrain, water, agent, from_x, from_z, from_height, to_x, to_z, most_brushes, &reached, &height);
 }
 
@@ -3659,6 +3701,12 @@ int navigation_fine_path(const navigation_t *navigation, const terrain_t *terrai
 {
 	float end_height;
 
+	// (no way over the quarter meters: there are none to the follower; it
+	// searches again over the rectangles)
+	if (navigation->follow_mesh)
+	{
+		return 0;
+	}
 	return fine_path_search(navigation, terrain, water, agent, from_x, from_z, from_height, to_x, to_z, points_out, most, &end_height);
 }
 
@@ -3816,6 +3864,48 @@ navigation_result_t navigation_find_path(navigation_t *navigation, const terrain
 		return NAVIGATION_PATH_NONE;
 	}
 	return (navigation_result_t)result;
+}
+
+// Whether a walker that keeps to the rectangles may make a step of its
+// middle: from off them (pushed there, started there) any, back to them;
+// else its end on them, not deeper into a small thing than its start, and
+// the line there over them by the agent's rules (a step up it can take, a
+// door open), the line's ends moved together up to the rectangles' slack
+// any way (a way's corner pushed off a small thing's berth, or kept of
+// two a hair apart, leaves its stretch that far off them)
+bool navigation_step_passable(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
+	float from_x, float from_z, float height, float to_x, float to_z)
+{
+	static const int8_t offsets[9][2] = { { 0, 0 }, { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { -1, 1 }, { 1, -1 }, { -1, -1 } };
+	navigation_agent_t center = *agent;
+
+	center.line_center_only = true;
+	if (!mesh_follow_level(navigation, terrain, water, agent, from_x, from_z, height, MESH_FOLLOW_SLACK_METERS, NULL, NULL))
+	{
+		return true;
+	}
+	if (!mesh_follow_level(navigation, terrain, water, agent, to_x, to_z, height, MESH_FOLLOW_SLACK_METERS, NULL, NULL)
+		|| navigation_small_blocks_step(navigation, agent, from_x, from_z, to_x, to_z, NULL, NULL))
+	{
+		return false;
+	}
+	for (int k = 0; k < 9; k++)
+	{
+		float off_x = (float)offsets[k][0] * MESH_FOLLOW_SLACK_METERS;
+		float off_z = (float)offsets[k][1] * MESH_FOLLOW_SLACK_METERS;
+
+		if (mesh_line((navigation_t *)navigation, terrain, water, &center, from_x + off_x, from_z + off_z, height, to_x + off_x, to_z + off_z, NULL,
+			NULL, NULL) == 1)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool navigation_follows_mesh(const navigation_t *navigation)
+{
+	return navigation->follow_mesh;
 }
 
 bool navigation_objects_near(const navigation_t *navigation, float x, float z)
@@ -7560,7 +7650,16 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 			{
 				if (kept > 0 && distance_2d(waypoints_out[kept - 1], corners[k]) < 0.3f)
 				{
-					if (kept_fixed[kept - 1] == 0)
+					// (a walker that keeps to the rectangles, follow_mesh:
+					// the earlier one stays if the way straight past it to
+					// the later is not over them, a wall's corner between)
+					float start[2] = { from_x, from_z };
+
+					if (kept_fixed[kept - 1] == 0 && navigation->follow_mesh
+						&& !stretch_on_mesh(navigation, c, kept > 1 ? waypoints_out[kept - 2] : start, corners[k]))
+					{
+					}
+					else if (kept_fixed[kept - 1] == 0)
 					{
 						kept--;
 					}
@@ -7604,6 +7703,7 @@ static int mesh_line(navigation_t *navigation, const terrain_t *terrain, const w
 	float travelled = 0.0f;
 	float height = from_height;
 	float stop[2] = { from_x, from_z };
+	bool started_off;
 
 	mesh_note_agent(navigation, agent);
 	navigation->mesh.search_number++;
@@ -7622,6 +7722,7 @@ static int mesh_line(navigation_t *navigation, const terrain_t *terrain, const w
 			id = -1;
 		}
 	}
+	started_off = id < 0;
 	for (int step = 0; step < MESH_RAY_MOST_STEPS; step++)
 	{
 		const navigation_rect_t *rect;
@@ -7654,8 +7755,13 @@ static int mesh_line(navigation_t *navigation, const terrain_t *terrain, const w
 				int32_t quarter_x;
 				int32_t quarter_z;
 
+				// (by the rectangles alone, follow_mesh: off them only one
+				// that started off them, on its way back; what is under it
+				// there is not asked of the quarter meters)
+				there_height = height;
 				if (travelled >= limit || !quarter_of_point(navigation, x, z, &cell, &sub_x, &sub_z)
-					|| !quarter_stand(navigation, terrain, water, agent, cell, sub_x, sub_z, height, &there_height))
+					|| (navigation->follow_mesh ? !started_off
+						: !quarter_stand(navigation, terrain, water, agent, cell, sub_x, sub_z, height, &there_height)))
 				{
 					stop[0] = x;
 					stop[1] = z;
@@ -7802,8 +7908,9 @@ static int mesh_line(navigation_t *navigation, const terrain_t *terrain, const w
 			id = next;
 			continue;
 		}
-		// (no rectangle beyond: its last stretch, if that is all that is left)
-		if (!any_beyond && (1.0f - travelled) * length <= MESH_LINE_OFF_METERS)
+		// (no rectangle beyond: its last stretch, if that is all that is
+		// left; by the rectangles alone a line ends on them)
+		if (!navigation->follow_mesh && !any_beyond && (1.0f - travelled) * length <= MESH_LINE_OFF_METERS)
 		{
 			id = -1;
 			continue;
@@ -7860,6 +7967,199 @@ static int mesh_line_passable(navigation_t *navigation, const terrain_t *terrain
 		*blocked_height = from_height;
 	}
 	return 0;
+}
+
+// ---------------------------------------------------------------------------
+// The follower by the rectangles (follow_mesh): a walker on its way asks
+// where it may step and how high the ground is of the rectangles of its
+// class, not of the quarter meters they were made from
+
+// Whether a step of an agent's middle goes into a small thing (they are
+// not in the rectangles; a way is led round them, but a walker cuts its
+// corners): its end nearer the thing's capsule than the body's half
+// width less SMALL_STEP_METERS, and nearer than its start (out of one it
+// may always step); away: the way straight off the thing from the step's
+// start, a length of one (it goes round along the other)
+#define SMALL_STEP_METERS 0.05f
+static float point_segment_distance(const float point[2], const float a[2], const float b[2])
+{
+	float dx = b[0] - a[0];
+	float dz = b[1] - a[1];
+	float length_squared = dx * dx + dz * dz;
+	float along = length_squared > 1e-8f ? SDL_clamp(((point[0] - a[0]) * dx + (point[1] - a[1]) * dz) / length_squared, 0.0f, 1.0f) : 0.0f;
+	float off_x = a[0] + dx * along - point[0];
+	float off_z = a[1] + dz * along - point[1];
+
+	return SDL_sqrtf(off_x * off_x + off_z * off_z);
+}
+
+bool navigation_small_blocks_step(const navigation_t *navigation, const navigation_agent_t *agent, float from_x, float from_z, float to_x,
+	float to_z, float *away_x_out, float *away_z_out)
+{
+	small_circle_t circles[32];
+	float from[2] = { from_x, from_z };
+	float to[2] = { to_x, to_z };
+	int count = small_circles(navigation, agent->height_meters, true, agent->radius_meters, SDL_min(from_x, to_x), SDL_min(from_z, to_z),
+		SDL_max(from_x, to_x), SDL_max(from_z, to_z), NULL, NULL, circles, (int)SDL_arraysize(circles));
+
+	for (int k = 0; k < count; k++)
+	{
+		float reach = circles[k].capsule_radius + SDL_max(agent->radius_meters - SMALL_STEP_METERS, 0.0f);
+		float to_distance = point_segment_distance(to, circles[k].a, circles[k].b);
+
+		if (to_distance < reach && to_distance < point_segment_distance(from, circles[k].a, circles[k].b) - 1e-4f)
+		{
+			if (away_x_out != NULL && away_z_out != NULL)
+			{
+				// (from the capsule's point nearest the step's start)
+				float dx = circles[k].b[0] - circles[k].a[0];
+				float dz = circles[k].b[1] - circles[k].a[1];
+				float length_squared = dx * dx + dz * dz;
+				float along = length_squared > 1e-8f
+					? SDL_clamp(((from_x - circles[k].a[0]) * dx + (from_z - circles[k].a[1]) * dz) / length_squared, 0.0f, 1.0f) : 0.0f;
+				float off_x = from_x - (circles[k].a[0] + dx * along);
+				float off_z = from_z - (circles[k].a[1] + dz * along);
+				float off = SDL_sqrtf(off_x * off_x + off_z * off_z);
+
+				*away_x_out = off > 1e-5f ? off_x / off : 1.0f;
+				*away_z_out = off > 1e-5f ? off_z / off : 0.0f;
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
+// The class's level at a point nearest a height, if it is one the agent
+// can be on (passable for it, within its reach of the height, or water
+// to swim); slack: also the levels of the points that far round it (a
+// way's corner lies on a rectangle's edge, a walker a hair over it)
+static bool mesh_follow_level(const navigation_t *navigation_const, const terrain_t *terrain, const water_t *water,
+	const navigation_agent_t *agent, float x, float z, float near_height, float slack, float *height_out, bool *ground_out)
+{
+	navigation_t *navigation = (navigation_t *)navigation_const;
+	int c = mesh_class_of(agent);
+	float reach = SDL_max(agent_reach(agent), MESH_FOLLOW_LEVEL_METERS);
+	float best_off = 1e30f;
+	bool found = false;
+
+	mesh_note_agent(navigation, agent);
+	navigation->mesh.search_number++;
+	for (int point = 0; point < (slack > 0.0f ? 9 : 1) && !found; point++)
+	{
+		// (the point itself first, then the eight round it)
+		static const int8_t offsets[9][2] = { { 0, 0 }, { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { -1, 1 }, { 1, -1 }, { -1, -1 } };
+		mesh_level_t levels[MESH_LEVELS];
+		int32_t quarter_x;
+		int32_t quarter_z;
+		int32_t cell_x;
+		int32_t cell_z;
+		int count;
+
+		mesh_quarter_at(c, x + (float)offsets[point][0] * slack, z + (float)offsets[point][1] * slack, &quarter_x, &quarter_z);
+		cell_x = quarter_x >> 2;
+		cell_z = quarter_z >> 2;
+		if (quarter_x < 0 || quarter_z < 0 || cell_x >= navigation->size || cell_z >= navigation->size
+			|| !mesh_tile_ready(navigation, c, region_of_cell(navigation, cell_z * navigation->size + cell_x), water))
+		{
+			continue;
+		}
+		count = mesh_levels_at(navigation, c, quarter_x, quarter_z, levels);
+		for (int k = 0; k < count; k++)
+		{
+			node_info_t info;
+			float height = levels[k].ground ? terrain_sample_height_meters(terrain, x, z) : levels[k].height;
+			float off = SDL_fabsf(height - near_height);
+
+			mesh_rect_info(navigation, terrain, water, agent, c, levels[k].rect, &info);
+			if (!info.passable || (info.water_class != CLASS_SWIM && off > reach) || off >= best_off)
+			{
+				continue;
+			}
+			best_off = off;
+			found = true;
+			if (height_out != NULL)
+			{
+				*height_out = height;
+			}
+			if (ground_out != NULL)
+			{
+				*ground_out = levels[k].ground;
+			}
+		}
+	}
+	return found;
+}
+
+// The height of what is underfoot at a point, by the rectangles: the
+// level nearest near_height of the agent's class (any class's, with no
+// agent) there, or of the nearest point with one within
+// MESH_FOLLOW_NEAR_QUARTERS (a foot by a wall, past a deck's edge: off
+// where the body's middle can be). The ground's: the terrain, smooth;
+// an object's top: its rectangle's. False: none near (the terrain's,
+// the caller's)
+static bool mesh_follow_height(const navigation_t *navigation, const terrain_t *terrain, const navigation_agent_t *agent, float x, float z,
+	float near_height, float *height_out, bool *object_out)
+{
+	int c = -1;
+	float best_off = 1e30f;
+	bool found = false;
+	int32_t quarter_x;
+	int32_t quarter_z;
+	float reach = agent != NULL ? SDL_max(agent_reach(agent), MESH_FOLLOW_LEVEL_METERS) : 0.0f;
+
+	if (agent != NULL)
+	{
+		c = mesh_class_of(agent);
+	}
+	for (int k = 0; c < 0 && k < NAVIGATION_MESH_CLASSES; k++)
+	{
+		c = navigation_mesh_class_used(navigation, k) ? k : -1;
+	}
+	if (c < 0 || navigation->mesh.classes[c].tiles == NULL)
+	{
+		return false;
+	}
+	mesh_quarter_at(c, x, z, &quarter_x, &quarter_z);
+	// (rings round the point: the first with a level ends it)
+	for (int ring = 0; ring <= MESH_FOLLOW_NEAR_QUARTERS && !found; ring++)
+	{
+		for (int dz = -ring; dz <= ring; dz++)
+		{
+			for (int dx = -ring; dx <= ring; dx++)
+			{
+				mesh_level_t levels[MESH_LEVELS];
+				int count;
+
+				if (SDL_max(SDL_abs(dx), SDL_abs(dz)) != ring)
+				{
+					continue;
+				}
+				count = mesh_levels_at(navigation, c, quarter_x + dx, quarter_z + dz, levels);
+				for (int k = 0; k < count; k++)
+				{
+					float height = levels[k].ground ? terrain_sample_height_meters(terrain, x, z) : levels[k].height;
+					// (a little for how far off it is: the nearer of two alike)
+					float off = SDL_fabsf(height - near_height) + 0.01f * (float)(SDL_abs(dx) + SDL_abs(dz));
+
+					// (one it could not be on from where it is, a roof over
+					// its head: not what is underfoot)
+					if (agent != NULL && SDL_fabsf(height - near_height) > reach)
+					{
+						continue;
+					}
+					if (off < best_off)
+					{
+						best_off = off;
+						found = true;
+						*height_out = height;
+						*object_out = !levels[k].ground;
+					}
+				}
+			}
+		}
+	}
+	return found;
 }
 
 int navigation_capsules(const navigation_t *navigation, float minimum_x, float minimum_z, float maximum_x, float maximum_z,

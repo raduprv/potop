@@ -221,6 +221,16 @@ width in the mesh: the search goes round the row. Further than
 round small things. A straight line (a chase) that crosses a small
 thing is not passable: a way is looked for.
 
+A walker on its way keeps to the rectangles too (`navigation_follow_mesh`,
+[simulation], on): a step is made if it ends on a rectangle of its
+width, is not deeper into a small thing, and the line there is one it
+can walk (a step up it can take, a door open). Refused, it slides round
+the small thing, back to the corner it cut, or along the rectangle's
+edge; refused for a fifth of a second, its way is searched again from
+where it stands. The height under its feet is the terrain's, or the
+rectangle's on an object. With the setting off it follows over the
+quarter meters, as before (fine ways, body points).
+
 Soft things are no surface
 and take no room: each cell keeps the height of the highest one in it,
 and each actor decides by its size. Lower than its step, it walks over
