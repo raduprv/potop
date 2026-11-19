@@ -23,6 +23,9 @@
 #include "soils.h"
 #include "world.h"
 
+#define POTOP_TAKE_MAX 16                      // --take: objects a test takes away as it runs
+#define POTOP_TAKE_AFTER_SECONDS 30.0          // and this long after the last, the log says how many tiles are built
+
 struct potop_s
 {
 	settings_t settings;
@@ -51,6 +54,12 @@ struct potop_s
 	bool map_loaded;               // the console loaded a map: the game is told at the next frame
 	bool screenshot_requested;
 	int bake_paths_frames;             // --bake_paths: frames till the navigation is all built (0: not asked, or done)
+	// --take: the objects a test takes away as it runs (where, when; done)
+	float take_points[POTOP_TAKE_MAX][2];
+	float take_seconds[POTOP_TAKE_MAX];
+	int take_count;
+	int take_done;
+	bool take_told;
 	int navmesh_overlay_class;         // F4: the navigation mesh shown, of this class of walkers (by width); -1: not
 	char title[64];                // the window's (the loading screen's too)
 	const char *stage_name;        // what is being made (the loading screen)
@@ -77,3 +86,4 @@ void potop_update_areas(potop_t *potop);
 void potop_update_steps(potop_t *potop, float seconds);
 
 #endif
+

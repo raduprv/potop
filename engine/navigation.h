@@ -469,6 +469,7 @@ typedef struct
 	int model;                         // which of its models (whole, damaged)
 	float fields[8];                   // x, z, its base's height step (0 for those the navigation does not stand on), scale, rotation
 	float reach_meters;                // how far round x, z it reaches (not in the signature)
+	uint8_t kind;                      // what it is to the walkers: a wall, a small thing gone round, a soft one, nothing (navigation.c's KIND_*)
 } navigation_object_print_t;
 
 // A small thing's shape in a body's way: capsules (two ends and a
@@ -484,6 +485,7 @@ typedef struct
 	int16_t type;                      // the object's type
 	uint8_t soft;                      // a soft thing's (a bucket: run through), not one gone round
 	uint8_t padding;
+	uint32_t id;                       // the object's
 } navigation_capsule_t;
 
 #define NAVIGATION_CAPSULE_SQUARES 16
@@ -533,6 +535,12 @@ typedef struct
 	// first and last, inclusive) are built again
 	bool partial;
 	int32_t partial_box[4];
+	// Stale for small things only, none by a wall or near another (the
+	// rectangles are as they were: small things are not in them): built
+	// again, its tiles that were current (at small_change_from, its
+	// generation then) still are
+	bool small_change;
+	uint32_t small_change_from;
 } navigation_region_t;
 
 typedef struct

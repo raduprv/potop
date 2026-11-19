@@ -390,9 +390,11 @@ static void rotate_point(const float rotation[4], const float point[3], float ou
 // ---------------------------------------------------------------------------
 // Small things: what an object is to those that walk, and its capsules
 
+#define MESH_WELD_SHARE 0.9f           // two small things with less than this much of a body's width between them: no way between
 #define KIND_WALL 0                    // in the surfaces and in the rectangles
 #define KIND_ROUND 1                   // a small thing gone round: in the surfaces, not in the rectangles
 #define KIND_SOFT 2                    // a soft one: a height per cell, not in the rectangles
+#define KIND_NONE 3                    // nothing to the walkers (a bush: only the flyers' heights)
 
 #define SHAPE_SLICE_METERS 0.5f        // a model is measured in slices this high (a crooked trunk: a few capsules)
 #define SHAPE_SLICES_MOST 16           // from its foot up (8 m at size 1: over any head)
@@ -669,6 +671,7 @@ static void place_capsule(const object_instance_t *instance, const float capsule
 	out->type = (int16_t)instance->type;
 	out->soft = 0;
 	out->padding = 0;
+	out->id = instance->id;
 }
 
 // The part of a capsule's axis between two heights; false: none of it
@@ -1815,7 +1818,7 @@ static bool object_reaches_region(const navigation_t *navigation, const object_i
 }
 
 // Keeps an object as the signature sees it (grows the list)
-static void keep_print(navigation_region_t *region, uint32_t id, int type, int model, const float fields[8], float reach_meters)
+static void keep_print(navigation_region_t *region, uint32_t id, int type, int model, const float fields[8], float reach_meters, uint8_t kind)
 {
 	if (region->print_count == region->print_capacity)
 	{
@@ -1834,6 +1837,7 @@ static void keep_print(navigation_region_t *region, uint32_t id, int type, int m
 	region->prints[region->print_count].model = model;
 	SDL_memcpy(region->prints[region->print_count].fields, fields, sizeof(float) * 8);
 	region->prints[region->print_count].reach_meters = reach_meters;
+	region->prints[region->print_count].kind = kind;
 	region->print_count++;
 }
 
@@ -1871,6 +1875,7 @@ static uint64_t region_signature(const navigation_t *navigation, const objects_t
 		float fields[8];
 		float radius;
 		float unused_radius;
+		int walked_model;
 		bool stood_on;
 
 		if (model < 0)
@@ -1882,7 +1887,8 @@ static uint64_t region_signature(const navigation_t *navigation, const objects_t
 		{
 			continue;
 		}
-		stood_on = navigation_model(navigation, objects, instance, &unused_radius) >= 0;
+		walked_model = navigation_model(navigation, objects, instance, &unused_radius);
+		stood_on = walked_model >= 0;
 		fields[0] = instance->x;
 		fields[1] = instance->z;
 		fields[2] = stood_on ? SDL_floorf(objects_instance_base_y(instance) / OBJECT_HEIGHT_STEP_METERS) : 0.0f;
@@ -1897,7 +1903,13 @@ static uint64_t region_signature(const navigation_t *navigation, const objects_t
 		signature += hash;
 		if (prints_out != NULL)
 		{
-			keep_print(prints_out, instance->id, instance->type, model, fields, radius);
+			navigation_capsule_t capsules[NAVIGATION_MODEL_CAPSULES_MOST];
+			int capsule_count;
+
+			// (what it is to the walkers: the models' shapes are fitted
+			// once and kept, navigation_t's own)
+			keep_print(prints_out, instance->id, instance->type, model, fields, radius, (uint8_t)(stood_on
+				? object_kind((navigation_t *)navigation, objects, instance, walked_model, capsules, &capsule_count) : KIND_NONE));
 		}
 	}
 	if (prints_out != NULL && prints_out->print_count > 1)
@@ -1970,6 +1982,115 @@ static int changed_box(const navigation_t *navigation, int32_t region_index, con
 	box_out[2] = SDL_min(box_out[2], region[2]);
 	box_out[3] = SDL_min(box_out[3], region[3]);
 	return changes;
+}
+
+// Whether what changed among a region's objects since it was last built
+// (now: as they are) leaves the rectangles as they are: only small things
+// (gone round, soft) or ones that are nothing to the walkers came, went
+// or moved; each one gone round with only open ground or other small
+// things in the cells round it (not by a wall: there it is in the
+// rectangles), and no other one near enough to be welded to it (a row of
+// trunks is a wall: mesh_weld_small)
+static bool changes_are_small(const navigation_t *navigation, int32_t region_index, const navigation_region_t *now)
+{
+	const navigation_region_t *before = &navigation->regions[region_index];
+	float widest = 0.0f;
+	int32_t a = 0;
+	int32_t b = 0;
+
+	for (int c = 0; c < NAVIGATION_MESH_CLASSES; c++)
+	{
+		widest = SDL_max(widest, SDL_min(navigation->mesh.classes[c].radius, 2.0f));
+	}
+	while (a < before->print_count || b < now->print_count)
+	{
+		const navigation_object_print_t *old_print = a < before->print_count ? &before->prints[a] : NULL;
+		const navigation_object_print_t *new_print = b < now->print_count ? &now->prints[b] : NULL;
+		const navigation_object_print_t *changed[2] = { NULL, NULL };
+
+		if (new_print == NULL || (old_print != NULL && old_print->id < new_print->id))
+		{
+			changed[0] = old_print;
+			a++;
+		}
+		else if (old_print == NULL || new_print->id < old_print->id)
+		{
+			changed[0] = new_print;
+			b++;
+		}
+		else
+		{
+			if (SDL_memcmp(old_print->fields, new_print->fields, sizeof(old_print->fields)) != 0 || old_print->model != new_print->model)
+			{
+				changed[0] = old_print;
+				changed[1] = new_print;
+			}
+			a++;
+			b++;
+		}
+		for (int k = 0; k < 2 && changed[k] != NULL; k++)
+		{
+			const navigation_object_print_t *print = changed[k];
+			int32_t box[4] = { INT32_MAX, INT32_MAX, INT32_MIN, INT32_MIN };
+			float reach = print->reach_meters + 2.0f * MESH_WELD_SHARE * widest + 0.05f;
+			int32_t first_region_x = clamp_int((int32_t)SDL_floorf((print->fields[0] - reach - 2.0f) / NAVIGATION_REGION_METERS), 0,
+				navigation->regions_per_side - 1);
+			int32_t first_region_z = clamp_int((int32_t)SDL_floorf((print->fields[1] - reach - 2.0f) / NAVIGATION_REGION_METERS), 0,
+				navigation->regions_per_side - 1);
+			int32_t last_region_x = clamp_int((int32_t)SDL_floorf((print->fields[0] + reach + 2.0f) / NAVIGATION_REGION_METERS), 0,
+				navigation->regions_per_side - 1);
+			int32_t last_region_z = clamp_int((int32_t)SDL_floorf((print->fields[1] + reach + 2.0f) / NAVIGATION_REGION_METERS), 0,
+				navigation->regions_per_side - 1);
+
+			if (print->kind == KIND_WALL)
+			{
+				return false;
+			}
+			if (print->kind != KIND_ROUND)
+			{
+				continue;
+			}
+			grow_box_by_print(navigation, print, box);
+			for (int32_t cell_z = SDL_max(box[1], 0); cell_z <= SDL_min(box[3], navigation->size - 1); cell_z++)
+			{
+				for (int32_t cell_x = SDL_max(box[0], 0); cell_x <= SDL_min(box[2], navigation->size - 1); cell_x++)
+				{
+					int32_t cell = cell_z * navigation->size + cell_x;
+
+					if (navigation->small_only[cell] == 0 && navigation->terrain_clearance[cell] != NAVIGATION_CLEARANCE_OPEN)
+					{
+						return false;
+					}
+				}
+			}
+			for (int32_t region_z = first_region_z; region_z <= last_region_z; region_z++)
+			{
+				for (int32_t region_x = first_region_x; region_x <= last_region_x; region_x++)
+				{
+					const navigation_region_t *region = &navigation->regions[region_z * navigation->regions_per_side + region_x];
+
+					for (int32_t n = 0; n < region->capsule_count; n++)
+					{
+						const navigation_capsule_t *capsule = &region->capsules[n];
+						float dx = capsule->b[0] - capsule->a[0];
+						float dz = capsule->b[2] - capsule->a[2];
+						float length_squared = dx * dx + dz * dz;
+						float along = length_squared > 1e-8f ? SDL_clamp(((print->fields[0] - capsule->a[0]) * dx
+							+ (print->fields[1] - capsule->a[2]) * dz) / length_squared, 0.0f, 1.0f) : 0.0f;
+						float off_x = capsule->a[0] + dx * along - print->fields[0];
+						float off_z = capsule->a[2] + dz * along - print->fields[1];
+						float near = reach + capsule->radius;
+
+						if (capsule->soft == 0 && capsule->id != print->id && off_x * off_x + off_z * off_z < near * near)
+						{
+							return false;
+						}
+					}
+				}
+			}
+		}
+	}
+	return true;
 }
 
 // One region's objects into the cells of box (in it, cleared): the room
@@ -2112,6 +2233,18 @@ static void build_regions(navigation_t *navigation, const terrain_t *terrain, co
 		region->partial = false;
 		region->terrain_touched = false;
 		navigation->region_generation[r] = navigation->generation;
+		// (only small things changed: its tiles that were current still
+		// are; the walkers' ways through it are looked at again)
+		for (int c = 0; c < NAVIGATION_MESH_CLASSES && region->small_change; c++)
+		{
+			navigation_mesh_tile_t *tiles = navigation->mesh.classes[c].tiles;
+
+			if (tiles != NULL && tiles[r].built && tiles[r].generation == region->small_change_from)
+			{
+				tiles[r].generation = navigation->generation;
+			}
+		}
+		region->small_change = false;
 		SDL_free(scratch.items);
 	}
 	for (int32_t k = 0; k < list_count; k++)
@@ -2237,6 +2370,10 @@ static void prepare_regions(navigation_t *navigation, int32_t first_x, int32_t f
 					int32_t whole[4];
 
 					region->stale = region_signature(navigation, objects, r, &scratch, &now) != region->objects_signature;
+					// (small things only, none by a wall or by another: the
+					// rectangles stay)
+					region->small_change = region->stale && navigation->region_generation[r] != 0 && changes_are_small(navigation, r, &now);
+					region->small_change_from = navigation->region_generation[r];
 					// A few objects changed (a boulder washed away, a crate
 					// moved): only the cells round them, if that is less than
 					// half the region
@@ -5077,8 +5214,14 @@ static uint64_t region_edge_hash(const navigation_t *navigation, int32_t region_
 			int32_t cell = cell_z * navigation->size + cell_x;
 			int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
 			int count = cell_nodes(navigation, cell, nodes);
-			uint8_t bytes[6] = { navigation->terrain_clearance[cell], navigation->small_height[cell], navigation->small_only[cell],
-				navigation->blocker_zone[cell], navigation->ground_slope[cell], (uint8_t)count };
+			// (a cell only small things stand in is open ground to the
+			// rectangles, whatever its surfaces: as one with nothing in it;
+			// the soft things' heights are nothing to them either)
+			bool open = navigation->small_only[cell] != 0;
+			uint8_t bytes[4] = { open ? NAVIGATION_CLEARANCE_OPEN : navigation->terrain_clearance[cell], navigation->blocker_zone[cell],
+				navigation->ground_slope[cell], (uint8_t)(open ? 1 : count) };
+
+			count = open ? 1 : count;
 
 			hash = hash_bytes(hash, &navigation->ground_height[cell], sizeof(float));
 			hash = hash_bytes(hash, bytes, sizeof(bytes));
@@ -5184,7 +5327,6 @@ static void mesh_quarter_at(int c, float x, float z, int32_t *quarter_x_out, int
 #define SMALL_MARGIN_METERS 2.0f       // things this far round a stretch are gathered for it (its ways round them stay within that)
 #define SMALL_LINE_MARGIN_METERS 1.0f  // and this far round a line only asked about, or a point
 #define MESH_WELD_CIRCLES_MOST 2048
-#define MESH_WELD_SHARE 0.9f           // two small things with less than this much of a body's width between them: no way between
 #define MESH_WELD_STEP_METERS 0.1f
 
 static int compare_small_circles(const void *a, const void *b)

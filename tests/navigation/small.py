@@ -89,7 +89,7 @@ def placements():
 	while z <= ROW_Z[1] + 1e-6:
 		placed.append(("nav_trunk", ROW_X, z))
 		z += ROW_SPACING
-	return placed + PINCH
+	return placed + PINCH + LONE
 
 
 # How far inside an object's box (as high as the agent) a body's circle
@@ -168,6 +168,44 @@ def walk(agent, placed, pinch=False):
 	return wrong + (1 if through else 0)
 
 
+# A small thing taken away with a walker on its way: a trunk standing
+# alone in the grove builds no tile of the navigation again (it was never
+# in the rectangles); one of the row does (the row is a wall of them).
+# Returns how many of the two went wrong
+TAKE_SECONDS = 40.0
+# (alone: nothing within meters of it, by the walkers' way into the grove,
+# not by its region's edge)
+LONE = [("nav_trunk", 68.0, 90.3)]
+
+
+def take(placed):
+	alone = LONE[0][1:]
+	wrong = 0
+	for label, point, built_wanted in (("a trunk alone", alone, False), ("one of the row", (ROW_X, ROW_Z[0] + 4 * ROW_SPACING), True)):
+		environment = dict(os.environ)
+		environment.setdefault("VK_ICD_FILENAMES", "/usr/share/vulkan/icd.d/lvp_icd.json")
+		command = ["timeout", "900", "xvfb-run", "-a", os.path.join(ROOT, "potop"), "--houses", "nav_fence"] + nav_stress.BAKE
+		for model in MODELS:
+			points = ["%.2f,%.2f" % (x, z) for placed_name, x, z in placed if placed_name == model]
+			if points and model != "nav_fence":
+				command += ["--put", model, ";".join(points)]
+		command += ["--sim", "200", "--take", "%.2f,%.2f@%.0f" % (point[0], point[1], TAKE_SECONDS), "--walk_from", "%.2f,%.2f" % START]
+		command += ["--walk_test", "bear", ";".join("%.2f,%.2f" % goal for goal in GOALS[:4])]
+		log = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, text=True).stdout
+		with open(os.path.join(ROOT, "build", "small_take_%s.log" % ("row" if built_wanted else "alone")), "w") as out:
+			out.write(log)
+		counts = [int(line.split(" navigation tiles built")[0].split()[-1]) for line in log.splitlines() if line.startswith("Take: ")]
+		found = "NOT FOUND" not in log and len(counts) == 2
+		built = counts[1] - counts[0] if found else -1
+		ends = [line.split()[6].replace("walk_test_", "") for line in log.splitlines()
+			if line.startswith("Walk test: goal ") and "walk_test_goal" not in line]
+		bad = not found or (built > 0) != built_wanted or ends != ["there"] * 4
+		print("take %-15s %s tiles built again after it (%s), goals %s%s" % (label, built if found else "?",
+			"some wanted" if built_wanted else "none wanted", " ".join(ends), "!" if bad else ""))
+		wrong += 1 if bad else 0
+	return wrong
+
+
 def main():
 	if len(sys.argv) < 2 or sys.argv[1] not in ("build", "run"):
 		sys.exit(__doc__ or "small.py build | run [TYPE...]")
@@ -182,6 +220,8 @@ def main():
 		wrong += walk(agent, placed)
 		if not agent.startswith("hen"):
 			wrong += walk(agent, placed, True)
+	if len([argument for argument in sys.argv[2:] if not argument.startswith("--")]) == 0:
+		wrong += take(placed)
 	print("%d wrong (! above)" % wrong)
 	sys.exit(1 if wrong else 0)
 

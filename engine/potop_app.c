@@ -537,6 +537,21 @@ bool potop_start(potop_t *potop, const potop_options_t *options)
 		potop->world.day_hour = SDL_fmod((double)options->start_hour, 24.0);
 	}
 	potop->bake_paths_frames = options->bake_paths ? 3 : 0;
+	// (--take: "X,Z@SECONDS;...", in the order of their times)
+	potop->take_count = 0;
+	potop->take_done = 0;
+	for (const char *at = options->take; at != NULL && *at != '\0' && potop->take_count < POTOP_TAKE_MAX;)
+	{
+		char *end;
+		float x = (float)SDL_strtod(at, &end);
+		float z = *end == ',' ? (float)SDL_strtod(end + 1, &end) : 0.0f;
+		float seconds = *end == '@' ? (float)SDL_strtod(end + 1, &end) : 0.0f;
+
+		potop->take_points[potop->take_count][0] = x;
+		potop->take_points[potop->take_count][1] = z;
+		potop->take_seconds[potop->take_count++] = seconds;
+		at = *end == ';' ? end + 1 : NULL;
+	}
 	input_initialize(&potop->input);
 	potop->previous_counter = SDL_GetPerformanceCounter();
 	return true;
@@ -1414,6 +1429,24 @@ void potop_frame_end(potop_t *potop)
 	if (potop->bake_paths_frames > 0 && --potop->bake_paths_frames == 0)
 	{
 		potop_bake_paths(potop);
+	}
+	// (--take: a test's object gone, its time come; how many tiles of the
+	// navigation were built till then is told, to compare after)
+	while (potop->take_done < potop->take_count && potop->sim_elapsed >= (double)potop->take_seconds[potop->take_done])
+	{
+		const float *point = potop->take_points[potop->take_done++];
+		bool taken = objects_remove_nearest(&potop->world.objects, point[0], point[1], 1.0f);
+
+		SDL_Log("Take: the object at (%.2f, %.2f) %s, %d navigation tiles built so far", (double)point[0], (double)point[1],
+			taken ? "taken away" : "NOT FOUND", (int)potop->world.navigation.mesh.tiles_built);
+		potop->take_told = false;
+	}
+	// (and how many a while after the last: what its going built again)
+	if (potop->take_count > 0 && potop->take_done == potop->take_count && !potop->take_told
+		&& potop->sim_elapsed >= (double)potop->take_seconds[potop->take_count - 1] + POTOP_TAKE_AFTER_SECONDS)
+	{
+		potop->take_told = true;
+		SDL_Log("Take: %d navigation tiles built %.0f s after", (int)potop->world.navigation.mesh.tiles_built, POTOP_TAKE_AFTER_SECONDS);
 	}
 	// The HUD laid out (what the game said this frame), what it asks
 	fill_hud_view(potop, &view);

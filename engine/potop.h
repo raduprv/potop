@@ -74,6 +74,10 @@ typedef struct
 	const char *put_points[POTOP_OPTIONS_PUT_MAX];
 	int put_count;
 	bool bake_paths;                   // the navigation all built at the start (potop_bake_paths)
+	// A test's objects taken away as it runs ("X,Z@SECONDS[;...]": the one
+	// nearest the point, within a meter, so long into the test: a tree
+	// felled, a stone gone, with walkers on their ways)
+	const char *take;
 	bool start_hour_set;           // the day starts at start_hour (0..24)
 	float start_hour;
 	// A test without the picture (sim_seconds > 0): fixed steps of

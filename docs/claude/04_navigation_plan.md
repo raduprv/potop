@@ -337,6 +337,19 @@ are joined at all), a coarse graph for ways of kilometers.
     the height underfoot with no tile built there is the terrain's
     (and the physics' rays where anyone looks). A region's surfaces are
     allocated as they come (64, doubling), not 4096 at the first.
+  - Small things that come, go or move (Radu: with us only those do,
+    not walls): `changes_are_small` when a region's objects changed.
+    Only things gone round, soft, or nothing to the walkers; each one
+    gone round with open ground or other small things in the cells
+    round it (by a wall it is in the rectangles) and no other within a
+    weld's reach of it: the region's cells round it are built again
+    (the capsules, the flyers' tops), its tiles that were current stay
+    (`small_change`), the walkers' ways are looked at again. A trunk
+    of a row (welded) or by a wall builds the tile again, as does
+    anything that is a wall (a felled tree lying). The edge hashes take
+    a cell only small things stand in as open ground. small.py's take
+    (the game's `--take X,Z@SECONDS`): a trunk alone 0 tiles, one of
+    the row 1.
   - Left of step 5: the water (a tile is still built again when its
     water changes: wet cells are their own rectangles; dry maps never
     do); letting a region's surfaces go once its tiles are built (see
