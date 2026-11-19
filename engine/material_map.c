@@ -641,6 +641,14 @@ bool material_map_clear_flooded_cover(terrain_t *terrain, const water_t *water, 
 		bool changed = false;
 
 		next_chunk = (next_chunk + 1) % chunk_count;
+		// A tile the water says is dry (its tiles are the terrain's
+		// chunks): none of its cells read. Silt left by water that came
+		// and went between two rounds stays under its grass
+		if (water->tile_state != NULL && water->tile_total_depth != NULL && water->tiles_per_side == terrain->chunks_per_side
+			&& water->tile_state[chunk] == WATER_TILE_DRY && water->tile_total_depth[chunk] <= 0)
+		{
+			continue;
+		}
 		for (int y = start_y; y < start_y + TERRAIN_CHUNK_SIZE; y++)
 		{
 			for (int x = start_x; x < start_x + TERRAIN_CHUNK_SIZE; x++)
