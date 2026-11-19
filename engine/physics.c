@@ -1131,8 +1131,12 @@ static int create_body(physics_t *physics, objects_t *objects, const terrain_t *
 		&& objects->models[type->model].pick_index_count > 0)
 	{
 		// Standing, and nothing of it solid (a flower, a tuft): in no one's
-		// way, but still there for the water to tear out
-		shape_definition.isSensor = true;
+		// way, but still there for the water to tear out. A shape that
+		// collides with nothing and no ray or query finds (its mask
+		// empty), not a sensor: the physics goes over every sensor at
+		// every step, and a map has tens of thousands of these (3% of the
+		// game's time)
+		shape_definition.filter.maskBits = 0;
 		add_moving_shape(physics_type, body->id, &shape_definition, scale);
 	}
 	else
