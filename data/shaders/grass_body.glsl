@@ -585,7 +585,7 @@ void main()
 	vec4 more = random4(spot, 101u);
 	// Clumps: taller and shorter patches
 	float clump = 0.65 + 0.7 * value_noise(world_xz * 0.9);
-	float height = blade.x * (0.6 + 0.8 * more.x) * (0.55 + 0.45 * amount) * clump * thinning * (1.0 - 0.5 * cleared);
+	float height = blade.x * (0.6 + 0.8 * more.x) * (0.55 + 0.45 * amount) * clump * thinning;
 	float distance = length(vec3(world_xz.x, y, world_xz.y) - eye.xyz);
 	// Wider far away, so the thinned out blades still cover the ground
 	float widen = min(pow(max(horizontal / full_radius, 1.0), 1.2), 8.0);

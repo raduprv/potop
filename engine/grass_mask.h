@@ -35,9 +35,9 @@
 #define GRASS_MASK_TEXELS_PER_METER 10
 #define GRASS_MASK_RECENTER_TEXELS 64       // the eye this far from the middle: the window moves
 #define GRASS_MASK_LOOK_SECONDS 0.25f       // the objects changed: made again at most this often
-#define GRASS_MASK_SLICE_BELOW 0.1f         // where a model meets the ground: from this far below its origin
-#define GRASS_MASK_SLICE_ABOVE 0.2f         // to this far above (meters at size 1)
-#define GRASS_MASK_AUTO_METERS 0.15f        // grass_clear_meters auto, for a solid thing
+#define GRASS_MASK_SLICE_BELOW 0.03f        // where a model meets the ground: from this far below its origin
+#define GRASS_MASK_SLICE_ABOVE 0.05f        // to this far above (meters at size 1): the ground line, not what bulges over it
+#define GRASS_MASK_AUTO_METERS 0.0f         // grass_clear_meters auto, for a solid thing: the blades right up to it
 #define GRASS_MASK_HULL_POINTS 48           // a model's outline, at most
 
 // Where a model meets the ground (model x, z, meters at size 1)
