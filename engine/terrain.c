@@ -139,6 +139,8 @@ static void recompute_chunk_bounds(terrain_t *terrain, int32_t chunk_x, int32_t 
 	}
 	chunk->minimum_height_meters = (float)minimum_units * TERRAIN_METERS_PER_HEIGHT_UNIT;
 	chunk->maximum_height_meters = (float)maximum_units * TERRAIN_METERS_PER_HEIGHT_UNIT;
+#pragma omp atomic
+	terrain->chunk_bounds_serial++;
 	chunk->needs_upload = true;
 	chunk->needs_shape_upload = true;
 }

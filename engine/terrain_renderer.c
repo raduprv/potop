@@ -438,6 +438,11 @@ void terrain_renderer_destroy(terrain_renderer_t *renderer)
 	SDL_free(renderer->chunk_uploaded_seconds);
 	SDL_free(renderer->chunk_far);
 	SDL_free(renderer->visible_chunks);
+	SDL_free(renderer->chunk_bounds);
+	SDL_free(renderer->block_bounds);
+	renderer->chunk_bounds = NULL;
+	renderer->block_bounds = NULL;
+	renderer->bounds_chunks_per_side = 0;
 	SDL_zerop(renderer);
 }
 
@@ -521,6 +526,11 @@ static void ensure_map_textures(terrain_renderer_t *renderer, int size, float ce
 	}
 
 	SDL_free(renderer->visible_chunks);
+	SDL_free(renderer->chunk_bounds);
+	SDL_free(renderer->block_bounds);
+	renderer->chunk_bounds = NULL;
+	renderer->block_bounds = NULL;
+	renderer->bounds_chunks_per_side = 0;
 	SDL_free(renderer->chunk_needs_soil_blur);
 	renderer->chunk_needs_soil_blur = SDL_calloc((size_t)(chunks_per_side * chunks_per_side), sizeof(bool));
 	// A new map uploads everything anyway
@@ -1011,16 +1021,20 @@ static void upload_materials(terrain_renderer_t *renderer, terrain_t *terrain, c
 
 // Is this chunk far enough that its changes can wait: beyond full detail
 // (the first level of detail starts there), or out of view?
-static bool chunk_can_wait(const terrain_t *terrain, const camera_t *camera, const frustum_t *frustum, float lod_base, int chunk_index)
+static bool update_chunk_bounds(terrain_renderer_t *renderer, const terrain_t *terrain);
+
+// (lowest, highest: the chunk's height range, as its chunk or the
+// renderer's copy of them has it)
+static bool chunk_can_wait(const terrain_t *terrain, const camera_t *camera, const frustum_t *frustum, float lod_base, int chunk_index,
+	float lowest, float highest)
 {
-	const terrain_chunk_t *chunk = &terrain->chunks[chunk_index];
 	float chunk_extent = (float)TERRAIN_CHUNK_SIZE * terrain->cell_size_meters;
 	int chunk_x = chunk_index % terrain->chunks_per_side;
 	int chunk_y = chunk_index / terrain->chunks_per_side;
-	vec3_t box_minimum = vec3_make((float)chunk_x * chunk_extent, chunk->minimum_height_meters, (float)chunk_y * chunk_extent);
+	vec3_t box_minimum = vec3_make((float)chunk_x * chunk_extent, lowest, (float)chunk_y * chunk_extent);
 	// Water stands above the ground; leave room for it, or a lake seen
 	// from below would count as out of view
-	vec3_t box_maximum = vec3_make(box_minimum.x + chunk_extent, chunk->maximum_height_meters + 20.0f, box_minimum.z + chunk_extent);
+	vec3_t box_maximum = vec3_make(box_minimum.x + chunk_extent, highest + 20.0f, box_minimum.z + chunk_extent);
 	float outside_x;
 	float outside_z;
 
@@ -1218,9 +1232,15 @@ bool terrain_renderer_upload(terrain_renderer_t *renderer, terrain_t *terrain, w
 	}
 	from_gpu = water_gpu_ground_live(water);
 	renderer->upload_frame_count++;
-	for (int chunk = 0; chunk < chunk_count; chunk++)
 	{
-		renderer->chunk_far[chunk] = chunk_can_wait(terrain, camera, &frustum, SDL_max(lod_base, settings->far_upload_meters), chunk);
+		bool bounds_kept = update_chunk_bounds(renderer, terrain);
+
+		for (int chunk = 0; chunk < chunk_count; chunk++)
+		{
+			renderer->chunk_far[chunk] = chunk_can_wait(terrain, camera, &frustum, SDL_max(lod_base, settings->far_upload_meters), chunk,
+				bounds_kept ? renderer->chunk_bounds[2 * chunk] : terrain->chunks[chunk].minimum_height_meters,
+				bounds_kept ? renderer->chunk_bounds[2 * chunk + 1] : terrain->chunks[chunk].maximum_height_meters);
+		}
 	}
 	frame_profile_end(FRAME_TERRAIN_SETUP, start_counter);
 	{
@@ -1452,6 +1472,61 @@ static float lod_eye_height(const terrain_t *terrain, const camera_t *camera)
 }
 
 #define VISIBLE_BLOCK_CHUNKS 8
+
+// The renderer's copy of the chunks' height ranges, and the blocks' (see
+// terrain_renderer_t.chunk_bounds), made again if the terrain's moved;
+// false: no memory, the chunks themselves are read
+static bool update_chunk_bounds(terrain_renderer_t *renderer, const terrain_t *terrain)
+{
+	int chunks_per_side = terrain->chunks_per_side;
+	int blocks_per_side = (chunks_per_side + VISIBLE_BLOCK_CHUNKS - 1) / VISIBLE_BLOCK_CHUNKS;
+
+	if (renderer->bounds_chunks_per_side != chunks_per_side || renderer->chunk_bounds == NULL || renderer->block_bounds == NULL)
+	{
+		float *chunks = SDL_realloc(renderer->chunk_bounds, sizeof(float) * 2 * (size_t)SDL_max(chunks_per_side * chunks_per_side, 1));
+		float *blocks;
+
+		renderer->bounds_chunks_per_side = 0;
+		if (chunks == NULL)
+		{
+			return false;
+		}
+		renderer->chunk_bounds = chunks;
+		blocks = SDL_realloc(renderer->block_bounds, sizeof(float) * 2 * (size_t)SDL_max(blocks_per_side * blocks_per_side, 1));
+		if (blocks == NULL)
+		{
+			return false;
+		}
+		renderer->block_bounds = blocks;
+		renderer->bounds_chunks_per_side = chunks_per_side;
+		renderer->bounds_terrain = NULL;
+	}
+	if (renderer->bounds_terrain == terrain->chunks && renderer->bounds_serial == terrain->chunk_bounds_serial)
+	{
+		return true;
+	}
+	for (int block = 0; block < blocks_per_side * blocks_per_side; block++)
+	{
+		renderer->block_bounds[2 * block] = 1e30f;
+		renderer->block_bounds[2 * block + 1] = -1e30f;
+	}
+	for (int chunk_y = 0; chunk_y < chunks_per_side; chunk_y++)
+	{
+		for (int chunk_x = 0; chunk_x < chunks_per_side; chunk_x++)
+		{
+			const terrain_chunk_t *chunk = &terrain->chunks[chunk_y * chunks_per_side + chunk_x];
+			float *block = &renderer->block_bounds[2 * ((chunk_y / VISIBLE_BLOCK_CHUNKS) * blocks_per_side + chunk_x / VISIBLE_BLOCK_CHUNKS)];
+
+			renderer->chunk_bounds[2 * (chunk_y * chunks_per_side + chunk_x)] = chunk->minimum_height_meters;
+			renderer->chunk_bounds[2 * (chunk_y * chunks_per_side + chunk_x) + 1] = chunk->maximum_height_meters;
+			block[0] = SDL_min(block[0], chunk->minimum_height_meters);
+			block[1] = SDL_max(block[1], chunk->maximum_height_meters);
+		}
+	}
+	renderer->bounds_terrain = terrain->chunks;
+	renderer->bounds_serial = terrain->chunk_bounds_serial;
+	return true;
+}
 #define VISIBLE_ORDER_STEPS 256        // the visible chunks are put in order by distance this coarsely: a chunk's side a step
 
 // The visible chunks by their level of detail, each level's near to far,
@@ -1515,37 +1590,35 @@ static void collect_visible_chunks(terrain_renderer_t *renderer, const terrain_t
 	// By blocks of VISIBLE_BLOCK_CHUNKS chunks a side first: one out of
 	// view is thrown out whole, its chunks not tried one by one (on a big
 	// map most of them)
+	bool bounds_kept = update_chunk_bounds(renderer, terrain);
+	int blocks_per_side = (terrain->chunks_per_side + VISIBLE_BLOCK_CHUNKS - 1) / VISIBLE_BLOCK_CHUNKS;
+
 	for (int block_y = 0; block_y < terrain->chunks_per_side; block_y += VISIBLE_BLOCK_CHUNKS)
 	{
 	for (int block_x = 0; block_x < terrain->chunks_per_side; block_x += VISIBLE_BLOCK_CHUNKS)
 	{
 	int block_last_x = SDL_min(block_x + VISIBLE_BLOCK_CHUNKS, terrain->chunks_per_side) - 1;
 	int block_last_y = SDL_min(block_y + VISIBLE_BLOCK_CHUNKS, terrain->chunks_per_side) - 1;
-	float block_lowest = 1e30f;
-	float block_highest = -1e30f;
 
-	for (int chunk_y = block_y; chunk_y <= block_last_y; chunk_y++)
+	if (bounds_kept)
 	{
-		for (int chunk_x = block_x; chunk_x <= block_last_x; chunk_x++)
-		{
-			const terrain_chunk_t *chunk = &terrain->chunks[chunk_y * terrain->chunks_per_side + chunk_x];
+		const float *block = &renderer->block_bounds[2 * ((block_y / VISIBLE_BLOCK_CHUNKS) * blocks_per_side + block_x / VISIBLE_BLOCK_CHUNKS)];
 
-			block_lowest = SDL_min(block_lowest, chunk->minimum_height_meters);
-			block_highest = SDL_max(block_highest, chunk->maximum_height_meters);
+		if (!frustum_contains_box(&frustum, vec3_make((float)block_x * chunk_extent, block[0], (float)block_y * chunk_extent),
+			vec3_make((float)(block_last_x + 1) * chunk_extent, block[1], (float)(block_last_y + 1) * chunk_extent)))
+		{
+			continue;
 		}
 	}
-	if (!frustum_contains_box(&frustum, vec3_make((float)block_x * chunk_extent, block_lowest, (float)block_y * chunk_extent),
-		vec3_make((float)(block_last_x + 1) * chunk_extent, block_highest, (float)(block_last_y + 1) * chunk_extent)))
-	{
-		continue;
-	}
 	for (int chunk_y = block_y; chunk_y <= block_last_y; chunk_y++)
 	{
 		for (int chunk_x = block_x; chunk_x <= block_last_x; chunk_x++)
 		{
-			const terrain_chunk_t *chunk = &terrain->chunks[chunk_y * terrain->chunks_per_side + chunk_x];
-			vec3_t box_minimum = vec3_make((float)chunk_x * chunk_extent, chunk->minimum_height_meters, (float)chunk_y * chunk_extent);
-			vec3_t box_maximum = vec3_make(box_minimum.x + chunk_extent, chunk->maximum_height_meters, box_minimum.z + chunk_extent);
+			int chunk_index = chunk_y * terrain->chunks_per_side + chunk_x;
+			float lowest = bounds_kept ? renderer->chunk_bounds[2 * chunk_index] : terrain->chunks[chunk_index].minimum_height_meters;
+			float highest = bounds_kept ? renderer->chunk_bounds[2 * chunk_index + 1] : terrain->chunks[chunk_index].maximum_height_meters;
+			vec3_t box_minimum = vec3_make((float)chunk_x * chunk_extent, lowest, (float)chunk_y * chunk_extent);
+			vec3_t box_maximum = vec3_make(box_minimum.x + chunk_extent, highest, box_minimum.z + chunk_extent);
 			vec3_t center;
 			vec3_t offset;
 			struct visible_chunk_s *entry;

@@ -127,6 +127,15 @@ typedef struct
 	} *visible_chunks;
 	int visible_chunk_capacity;
 	int visible_chunk_count;
+	// The chunks' height ranges side by side (lowest, highest: two floats
+	// a chunk), and those of blocks of chunks, copied from the terrain's
+	// chunks when their serial moves: the culling reads these every
+	// frame, not a line of memory per chunk out of the chunks themselves
+	float *chunk_bounds;
+	float *block_bounds;
+	int bounds_chunks_per_side;        // the terrain they were copied for (0: none)
+	uint32_t bounds_serial;
+	const void *bounds_terrain;
 	// The visible chunks' origins (cells, two int32 each), by level of
 	// detail then near to far: the per instance vertex buffer (one draw per
 	// level, instead of one per chunk), and where each level's run starts

@@ -121,6 +121,10 @@ typedef struct
 	bool materials_dirty;
 	int32_t materials_dirty_rectangle[4];
 	bool any_chunk_materials_changed;
+	// Moves whenever a chunk's height range is made again (its
+	// minimum_height_meters, maximum_height_meters): who keeps a copy of
+	// those (the renderer's, side by side for its culling) knows it is old
+	uint32_t chunk_bounds_serial;
 	// The material map's ground bytes were cleared (a restamp, a load): the
 	// objects' footprints are to be worked into it again (ground_footprints.h)
 	bool ground_footprints_stale;
