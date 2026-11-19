@@ -460,6 +460,8 @@ void console_run_command(console_t *console, potop_t *potop, const char *line, c
 			return;
 		}
 		agent = actors_agent(&potop->world.actors, type);
+		// (the cell as its surfaces have it, there again if they were let go)
+		navigation_ensure_cells(&potop->world.navigation, x, z);
 		// (the surface nearest the ground, then any above it, a meter at a time)
 		for (int up = 0; up <= 4; up++)
 		{

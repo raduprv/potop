@@ -64,6 +64,8 @@ static bool mesh_follow_level(const navigation_t *navigation, const terrain_t *t
 static bool mesh_follow_height(const navigation_t *navigation, const terrain_t *terrain, const navigation_agent_t *agent, float x, float z,
 	float near_height, float *height_out, bool *object_out);
 static int mesh_class_of(const navigation_agent_t *agent);
+static bool mesh_standable(navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
+	int32_t cell);
 static bool node_sub_height(const navigation_t *navigation, int32_t node, int32_t cell, int32_t sub_x, int32_t sub_z, uint8_t room_needed,
 	float *height_out, bool *blocked_out);
 
@@ -2999,6 +3001,8 @@ void navigation_forget(navigation_t *navigation, const terrain_t *terrain, const
 {
 	int32_t region_count = navigation->regions_per_side * navigation->regions_per_side;
 
+	// (another map: its navigation is not baked)
+	navigation->baked = false;
 	navigation->terrain = terrain;
 	navigation->objects = objects;
 	if (objects != NULL)
@@ -3340,8 +3344,13 @@ bool navigation_standable(navigation_t *navigation, const terrain_t *terrain, co
 	{
 		return false;
 	}
-	// (the cell's own surfaces are asked: there again, if they were let go)
-	ensure_region_cells(navigation, region_of_cell(navigation, cell));
+	// (by the rectangles: one of its class in the cell that it can be on,
+	// not in water to swim. The game asks this for every goal a creature
+	// picks: the cells' surfaces, let go, are not grown back for it)
+	if (navigation->follow_mesh)
+	{
+		return mesh_standable(navigation, terrain, water, agent, cell);
+	}
 	count = cell_nodes(navigation, cell, nodes);
 	for (int k = 0; k < count; k++)
 	{
@@ -6065,7 +6074,8 @@ static bool mesh_tile_current(const navigation_t *navigation, int c, int32_t reg
 }
 
 // A region's cells' surfaces let go, if nothing asks them any more
-// (navigation_shed_cells, with walkers that keep to the rectangles): it is
+// (navigation_shed_cells, with walkers that keep to the rectangles, the
+// navigation baked: every class of walker known): it is
 // built and so are the regions round it, its tiles of every class in use
 // are current, none of them has water (those are built again as the
 // water moves). Its edges hashed first, while the cells are there
@@ -6074,7 +6084,8 @@ static void mesh_shed_if_done(navigation_t *navigation, int32_t region_index)
 	navigation_region_t *region = &navigation->regions[region_index];
 	bool any = false;
 
-	if (!navigation->shed_cells || !navigation->follow_mesh || navigation->baking || region->shed || region->stale || region->dirty
+	if (!navigation->shed_cells || !navigation->follow_mesh || !navigation->baked || navigation->baking || region->shed || region->stale
+		|| region->dirty
 		|| region->surfaces == NULL)
 	{
 		return;
@@ -8714,6 +8725,40 @@ static int mesh_line_passable(navigation_t *navigation, const terrain_t *terrain
 // where it may step and how high the ground is of the rectangles of its
 // class, not of the quarter meters they were made from
 
+// Whether an agent can stand somewhere in a cell, by the rectangles: one
+// of its class there that it can be on, not in water to swim
+// (navigation_standable)
+static bool mesh_standable(navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
+	int32_t cell)
+{
+	int c = mesh_class_of(agent);
+
+	mesh_note_agent(navigation, agent);
+	navigation->mesh.search_number++;
+	if (!mesh_tile_ready(navigation, c, region_of_cell(navigation, cell), water))
+	{
+		return false;
+	}
+	for (int32_t sub = 0; sub < NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS; sub++)
+	{
+		mesh_level_t levels[MESH_LEVELS];
+		int level_count = mesh_levels_at(navigation, c, (cell % navigation->size) * NAVIGATION_SUBCELLS + sub % NAVIGATION_SUBCELLS,
+			(cell / navigation->size) * NAVIGATION_SUBCELLS + sub / NAVIGATION_SUBCELLS, levels);
+
+		for (int k = 0; k < level_count; k++)
+		{
+			node_info_t info;
+
+			mesh_rect_info(navigation, terrain, water, agent, c, levels[k].rect, &info);
+			if (info.passable && info.water_class != CLASS_SWIM)
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 // Whether a step of an agent's middle goes into a small thing (they are
 // not in the rectangles; a way is led round them, but a walker cuts its
 // corners): its end nearer the thing's capsule than the body's half
@@ -9049,6 +9094,7 @@ void navigation_bake(navigation_t *navigation, const water_t *water, const navig
 		}
 	}
 	navigation->baking = false;
+	navigation->baked = true;
 	for (int32_t r = 0; r < region_count; r++)
 	{
 		mesh_shed_if_done(navigation, r);
@@ -9521,6 +9567,17 @@ navigation_result_t navigation_find_flight_path(navigation_t *navigation, const 
 // ---------------------------------------------------------------------------
 // Debugging
 
+void navigation_ensure_cells(navigation_t *navigation, float x, float z)
+{
+	int32_t cell;
+
+	if (cell_of_point(navigation, x, z, &cell))
+	{
+		prepare_box(navigation, x, z, x, z);
+		ensure_region_cells(navigation, region_of_cell(navigation, cell));
+	}
+}
+
 bool navigation_describe(navigation_t *navigation, const terrain_t *terrain, const water_t *water, const objects_t *objects,
 	const navigation_agent_t *agent, float x, float z, float near_height, char *text_out, size_t text_size)
 {
@@ -9543,8 +9600,6 @@ bool navigation_describe(navigation_t *navigation, const terrain_t *terrain, con
 		return false;
 	}
 	prepare_box(navigation, x, z, x, z);
-	// (the cell as its surfaces have it: there again, if they were let go)
-	ensure_region_cells(navigation, region_of_cell(navigation, cell));
 	node = nearest_node(navigation, terrain, cell, near_height);
 	node_info(navigation, terrain, water, agent, node, &info);
 	if (node < cell_count(navigation))

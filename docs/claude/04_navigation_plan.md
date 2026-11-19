@@ -351,16 +351,24 @@ are joined at all), a coarse graph for ways of kilometers.
     (the game's `--take X,Z@SECONDS`): a trunk alone 0 tiles, one of
     the row 1.
   - The cells' surfaces let go (`[simulation] navigation_shed_cells`,
-    on; with follow_mesh): a region built, the eight round it built
-    too, its tiles of every class in use current and none with water:
+    on; with follow_mesh, and only once the navigation is baked: every
+    class of walker known, its tiles built): a region built, the eight
+    round it built too, its tiles of every class in use current and
+    none with water:
     `shed_region` frees its surfaces (what a cell holds for the whole
     map stays: its ground, the room over it, small_only, the flyers'
     tops; and the capsules). Looked at after a tile's build, at the end
     of a bake, and one region a frame (`navigation_set_detail`).
     Grown back whole, as it was (`ensure_region_cells`, its generation
     kept), when a tile of it is to be built (a wall new or gone, the
-    class's measure changed), for `navigation_standable` and the cell
-    report. Small things on a let-go region: the cells round them
+    class's measure changed) and for the console's `cell`.
+    `navigation_standable` (the game asks it for every goal a creature
+    picks) is answered from the rectangles; the walkers' log says what
+    a let-go cell still holds. Radu saw regions built again all the
+    time: each bear's goal grew one back (60 ms by a church), and a
+    region let go after the bears' tiles was built again for the first
+    farmer's; hence the rectangles for the one and the bake for the
+    other. chase.py flags a region built again in a baked run. Small things on a let-go region: the cells round them
     alone, let go again after. A tile's build reads the margin of a
     let-go region from that region's own tile of the class (its
     rectangles and fringe: where a body's point rests, how high, the

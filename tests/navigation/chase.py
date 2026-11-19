@@ -107,10 +107,16 @@ def chase(house, points, agent, speed, pause):
 	nowhere = text.count("nowhere to stand")
 	refused = text.count("steps refused")
 	loop = analysis["loop_degrees"] > LOOP_DEGREES
-	print("%-17s %-5s %g m/s  ended %-7s idle %-6s late %-6s aside %d | on the spot %3.0f s, most %3.0f, one way %3.0f%s, %2.0f degrees/m of %3.0f m, refused %d" % (
+	# (the navigation baked: its regions' cells are let go, and a chase
+	# (a goal picked and asked about every moment) builds none of them
+	# again; they once were, each time one asked whether a spot can be
+	# stood on, 60 ms a time)
+	again = max(text.count("region(s) of") - 1, 0)
+	again_wrong = again > 0 and len(nav_stress.BAKE) > 0
+	print("%-17s %-5s %g m/s  ended %-7s idle %-6s late %-6s aside %d | on the spot %3.0f s, most %3.0f, one way %3.0f%s, %2.0f degrees/m of %3.0f m, refused %d, regions again %d%s" % (
 		house, agent, speed, ended, idle, late.rstrip(","), aside + nowhere, analysis["turn_seconds"], analysis["most_degrees"], analysis["loop_degrees"],
-		"!" if loop else " ", degrees / max(meters, 1.0), meters, refused))
-	return 1 if loop or analysis["spins"] else 0
+		"!" if loop else " ", degrees / max(meters, 1.0), meters, refused, again, "!" if again_wrong else ""))
+	return 1 if loop or analysis["spins"] or again_wrong else 0
 
 
 def main():

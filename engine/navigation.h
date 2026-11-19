@@ -608,6 +608,11 @@ typedef struct
 	// its tiles are built (with follow_mesh: nothing asks them then)
 	bool shed_cells;
 	bool baking;                       // navigation_bake at its tiles, side by side: no region is built or let go then
+	// navigation_bake has run: the classes of every type of walker are
+	// known and their tiles built. Only then are cells let go: before,
+	// a region let go after a bear's tiles was built again whole (60 ms
+	// by a church) for the first farmer's
+	bool baked;
 	int32_t shed_regions;              // how many are let go now
 	int32_t shed_sweep;                // the region last looked at for letting go (navigation_set_detail)
 	// navigation_follow_mesh: what a walker on its way asks (may it step
@@ -804,6 +809,13 @@ bool navigation_flight_line_clear(const navigation_t *navigation, const terrain_
 navigation_result_t navigation_find_flight_path(navigation_t *navigation, const terrain_t *terrain, float from_x, float from_z,
 	float to_x, float to_z, float ceiling_height, float waypoints_out[NAVIGATION_MAX_WAYPOINTS][2], int *waypoint_count_out,
 	bool *complete_out);
+
+// The cells' surfaces at a point there again, if their region let them go
+// (navigation_shed_cells): for one who asks the cells themselves
+// (navigation_describe; a region built whole, tens of milliseconds by a
+// big house). A walker's log does not: it says what a let-go cell still
+// holds (its ground, the room over it)
+void navigation_ensure_cells(navigation_t *navigation, float x, float z);
 
 // Debugging: what the agent finds at (x, z) on the surface nearest
 // near_height, in words (room, what object takes it, water, steepness to

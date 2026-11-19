@@ -240,8 +240,9 @@ A small thing that comes, goes or moves (a trunk felled, a stone rolled
 off) builds nothing again either, unless it stood by a wall or in a row
 of them: a way is led round small things, they are not in the
 rectangles. What the rectangles are built from (the objects' tops,
-quarter meter by quarter meter) is let go once they are built
-(`navigation_shed_cells`, [simulation], on) and built again only where
+quarter meter by quarter meter) is let go once they are built, in a
+navigation that was baked (`bake paths`; `navigation_shed_cells`,
+[simulation], on) and built again only where
 a wall is new or gone; the console's `navmesh` says how much is kept.
 
 Soft things are no surface
