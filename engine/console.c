@@ -18,6 +18,7 @@ const console_command_t console_commands[] =
 	{ "water", "[x z]", "the water simulation at x z, or where the middle of the screen looks: the cell, its tile, and 5 x 5 cells round it (depth, walls)" },
 	{ "cell", "<actor type> <x> <z>", "what an actor of that type finds at x z for its ways (room, what takes it, water, steepness)" },
 	{ "bake", "paths", "all the navigation built now (every region, the rectangles for every type of actor): no search waits for a build after" },
+	{ "log", "paths", "the walkers' ways into the log, or no more: each search and its points, where one is stuck and what is there" },
 	{ "navmesh", "", "the navigation mesh: its tiles, rectangles, portals, memory, the last build and search" },
 	{ "path", "<actor type> <x> <z>", "the way an actor of that type would walk from where you stand to x z (its points)" },
 	{ "module", "[state]", "the module (a building whose parts move: a mill, a quarry's crane) nearest where you look or stand, within 40 m: its states; with one, sent to it" },

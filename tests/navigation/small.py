@@ -55,6 +55,13 @@ GOALS = [(96.0, 90.0), (66.0, 98.0), (92.0, 82.0), (80.0, 90.0), (66.0, 84.0), (
 # (a hen is slow: nearer ones)
 HEN_START = (69.0, 90.0)
 HEN_GOALS = [(80.0, 90.0), (74.0, 84.0), (78.5, 110.0), (81.5, 110.0)]
+# The pinch: a trunk and a boulder nearer one another than a body is
+# wide, the walker put down between them (pushed there, landed there:
+# within both their berths), to walk out and off (a bear stood so under a
+# bush by a stone, its every step nearer the one or the other, refused)
+PINCH = [("nav_trunk", 58.0, 100.0), ("nav_boulder", 59.3, 100.0)]
+PINCH_START = (58.55, 100.0)
+PINCH_GOALS = [(64.0, 96.0), (54.0, 104.0)]
 # A body this far inside a trunk's box: through it (the trail is its
 # middle's; a quarter meter is the grid's)
 INSIDE_METERS = 0.15
@@ -82,7 +89,7 @@ def placements():
 	while z <= ROW_Z[1] + 1e-6:
 		placed.append(("nav_trunk", ROW_X, z))
 		z += ROW_SPACING
-	return placed
+	return placed + PINCH
 
 
 # How far inside an object's box (as high as the agent) a body's circle
@@ -99,11 +106,12 @@ def inside(x, z, radius, height, name, px, pz):
 	return worst
 
 
-def walk(agent, placed):
+def walk(agent, placed, pinch=False):
 	running = agent.endswith("+run")
-	goals_of = HEN_GOALS if agent == "hen" else GOALS
 	kind = agent.split("+")[0]
-	name = "small_%s" % agent.replace("+", "_")
+	goals_of = PINCH_GOALS if pinch else HEN_GOALS if kind == "hen" else GOALS
+	start = PINCH_START if pinch else HEN_START if kind == "hen" else START
+	name = "small_%s%s" % (agent.replace("+", "_"), "_pinch" if pinch else "")
 	trace = os.path.join(ROOT, "build", name + ".trace")
 	environment = dict(os.environ)
 	environment.setdefault("VK_ICD_FILENAMES", "/usr/share/vulkan/icd.d/lvp_icd.json")
@@ -115,7 +123,7 @@ def walk(agent, placed):
 	# (--walls: everything a wall, as before the small things' rule, to compare)
 	if "--walls" in sys.argv:
 		command += ["--set", "simulation.navigation_wall_meters=0"]
-	command += ["--sim", "1500", "--trace", trace, "--walk_from", "%.2f,%.2f" % (HEN_START if kind == "hen" else START)] + (["--walk_run"] if running else [])
+	command += ["--sim", "1500", "--trace", trace, "--walk_from", "%.2f,%.2f" % start] + (["--walk_run"] if running else [])
 	command += ["--walk_test", kind, ";".join("%.2f,%.2f" % goal for goal in goals_of)]
 	os.makedirs(os.path.join(ROOT, "build"), exist_ok=True)
 	log = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, text=True).stdout
@@ -153,7 +161,7 @@ def walk(agent, placed):
 	seconds = samples[-1]["time"] - samples[0]["time"] if samples else 0.0
 	analysis = trace_analysis.summary(trace)
 	grove = sum(1 for rect in rects if rect[0] < GROVE[2] and rect[0] + rect[2] > GROVE[0] and rect[1] < GROVE[3] and rect[1] + rect[3] > GROVE[1])
-	print("%-9s %s" % (agent, " ".join("%d:%s%s" % (index, ends.get(index, "none"), "" if ends.get(index) == "there" else "!")
+	print("%-14s %s" % (agent + (" pinch" if pinch else ""), " ".join("%d:%s%s" % (index, ends.get(index, "none"), "" if ends.get(index) == "there" else "!")
 		for index in range(len(goals_of)))))
 	print("          %.0f m in %.0f s, through a trunk or boulder %d samples%s (deepest %.2f m), in a bucket %d; on the spot %.0f s, the most %.0f degrees; %d rectangles in the grove"
 		% (walked, seconds, through, "!" if through else "", deepest, soft, analysis["turn_seconds"], analysis["most_degrees"], grove))
@@ -172,6 +180,8 @@ def main():
 	wrong = 0
 	for agent in [argument for argument in sys.argv[2:] if not argument.startswith("--")] or AGENTS:
 		wrong += walk(agent, placed)
+		if not agent.startswith("hen"):
+			wrong += walk(agent, placed, True)
 	print("%d wrong (! above)" % wrong)
 	sys.exit(1 if wrong else 0)
 

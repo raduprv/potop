@@ -4281,14 +4281,23 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 				{
 					float step_length = SDL_sqrtf(step_x * step_x + step_z * step_z);
 					float side = step_x * -away_z + step_z * away_x >= 0.0f ? 1.0f : -1.0f;
-					float slide_x = (-away_z * side + away_x * SMALL_SLIDE_OFF_SHARE) * step_length;
-					float slide_z = (away_x * side + away_z * SMALL_SLIDE_OFF_SHARE) * step_length;
 
-					if (step_passable(navigation, terrain, water, &agent, actor, slide_x, slide_z, false))
+					// (the side its step leans to; that one shut too, a wall
+					// or another thing there: the other side, then straight
+					// off the thing)
+					for (int k = 0; k < 3 && !slid; k++)
 					{
-						step_x = slide_x;
-						step_z = slide_z;
-						slid = true;
+						float along = k == 0 ? side : k == 1 ? -side : 0.0f;
+						float off = k == 2 ? 1.0f : SMALL_SLIDE_OFF_SHARE;
+						float slide_x = (-away_z * along + away_x * off) * step_length;
+						float slide_z = (away_x * along + away_z * off) * step_length;
+
+						if (step_passable(navigation, terrain, water, &agent, actor, slide_x, slide_z, false))
+						{
+							step_x = slide_x;
+							step_z = slide_z;
+							slid = true;
+						}
 					}
 				}
 			}

@@ -261,6 +261,13 @@ void console_run_command(console_t *console, potop_t *potop, const char *line, c
 	{
 		potop_bake_paths(potop);
 	}
+	else if (SDL_strcmp(command, "log") == 0 && has_first && SDL_strcmp(first, "paths") == 0)
+	{
+		// (the walkers' ways into the log, as the tests have them: each
+		// search, its waypoints, where one is stuck and why)
+		potop->world.actors.log_paths = !potop->world.actors.log_paths;
+		SDL_Log("The walkers' ways are %s", potop->world.actors.log_paths ? "logged" : "not logged");
+	}
 	else if (SDL_strcmp(command, "navmesh") == 0)
 	{
 		char text[768];
