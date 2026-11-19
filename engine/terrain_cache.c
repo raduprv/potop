@@ -13,6 +13,8 @@
 //   int32    bedrock_heights[size * size]
 
 #include "terrain_cache.h"
+
+#include "file_io.h"
 #include "terrain_gen.h"
 
 #include <SDL3/SDL.h>
@@ -66,7 +68,7 @@ static uint64_t compute_key(const terrain_settings_t *settings, const soil_setti
 
 static bool build_cache_directory(char *path_out, size_t path_out_size)
 {
-	char *preference_path = SDL_GetPrefPath("potop", "potop");
+	char *preference_path = file_io_preference_directory();
 
 	if (preference_path == NULL)
 	{

@@ -82,7 +82,7 @@ are engine/ui.c; both draw with the same backend, font and colors.
   on dark nights (0: none).
 * **Projects** (the editor): every map is made in a project, a folder of
   its own in the preference directory's `projects` (on Linux
-  `~/.local/share/potop/potop/projects/NAME/`): `project.ini` (its name,
+  `~/.local/share/potop/projects/NAME/`): `project.ini` (its name,
   seed, size, when it was made), `map.potop` (the map being made),
   `baked.potop` (the last bake) and later `sketch/` (the 2D sketch the
   terrain is made from). **New** makes one (a name, a seed; the size as
@@ -95,7 +95,7 @@ are engine/ui.c; both draw with the same backend, font and colors.
   saved. N (a new map at once) and a map just loaded leave the project.
 * **Maps**: save under a name, load or delete from the list. Maps are zip
   archives (`.potop`) in the `saves` folder of the preference directory
-  (on Linux `~/.local/share/potop/potop/saves/`). A map keeps the ground
+  (on Linux `~/.local/share/potop/saves/`). A map keeps the ground
   (heights, bedrock, soils, silt), the water, mud and ground moisture,
   springs, rain and border switches, every object and the camera; the water
   starts still after loading and gets moving within a step. Maps of another

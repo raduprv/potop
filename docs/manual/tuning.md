@@ -229,5 +229,5 @@ and the upscaling, and how many terrain chunks were drawn at each level of
 detail.
 
 Generated terrains are cached in the user's preference directory
-(`~/.local/share/potop/potop/cache/` on Linux) and reused when the same seed
+(`~/.local/share/potop/cache/` on Linux) and reused when the same seed
 and settings come up again; only the newest few files are kept.

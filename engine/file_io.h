@@ -28,9 +28,14 @@ bool file_io_data_file_exists(const char *relative_path);
 // (used for screenshots). Returns false on failure.
 bool file_io_save_file(const char *path, const void *data, size_t size);
 
+// The preference directory (on Linux ~/.local/share/potop/), what an
+// older version kept in potop/potop/ moved up into it the first time; the
+// caller frees it (SDL_free); NULL if there is none
+char *file_io_preference_directory(void);
+
 // Builds "<preference directory><relative_path>": the per user directory
 // for saved maps, settings changed in the game and the like (on Linux
-// ~/.local/share/potop/potop/). Creates the directory part of the path
+// ~/.local/share/potop/). Creates the directory part of the path
 // (up to the last '/') if needed. Returns false if there is none.
 bool file_io_preference_path(const char *relative_path, char *path_out, size_t path_out_size);
 

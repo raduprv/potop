@@ -77,9 +77,64 @@ bool file_io_save_file(const char *path, const void *data, size_t size)
 	return true;
 }
 
+// Moves what an older version kept in its preference directory,
+// potop/potop/ (SDL_GetPrefPath with "potop" as the organization too),
+// up into potop/: a name already there stays where it was
+static SDL_EnumerationResult move_up_one(void *user, const char *directory, const char *file_name)
+{
+	const char *new_directory = user;
+	char old_path[1200];
+	char new_path[1200];
+
+	SDL_snprintf(old_path, sizeof(old_path), "%s%s", directory, file_name);
+	SDL_snprintf(new_path, sizeof(new_path), "%s%s", new_directory, file_name);
+	if (SDL_GetPathInfo(new_path, NULL))
+	{
+		SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Preferences: %s left where it was (there is a %s)", old_path, new_path);
+	}
+	else if (!SDL_RenamePath(old_path, new_path))
+	{
+		SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Preferences: cannot move %s to %s: %s", old_path, new_path, SDL_GetError());
+	}
+	return SDL_ENUM_CONTINUE;
+}
+
+static void move_old_preferences(const char *preference_path)
+{
+	static bool done = false;
+	char old_directory[1100];
+	SDL_PathInfo info;
+
+	if (done)
+	{
+		return;
+	}
+	done = true;
+	SDL_snprintf(old_directory, sizeof(old_directory), "%spotop/", preference_path);
+	if (SDL_GetPathInfo(old_directory, &info) && info.type == SDL_PATHTYPE_DIRECTORY)
+	{
+		SDL_Log("Preferences: moving %s up into %s", old_directory, preference_path);
+		SDL_EnumerateDirectory(old_directory, move_up_one, (void *)preference_path);
+		// (gone if it is empty now; left, with what stayed in it, if not)
+		SDL_RemovePath(old_directory);
+	}
+}
+
+char *file_io_preference_directory(void)
+{
+	// (no organization: ~/.local/share/potop/ on Linux, not potop/potop/)
+	char *preference_path = SDL_GetPrefPath("", "potop");
+
+	if (preference_path != NULL)
+	{
+		move_old_preferences(preference_path);
+	}
+	return preference_path;
+}
+
 bool file_io_preference_path(const char *relative_path, char *path_out, size_t path_out_size)
 {
-	char *preference_path = SDL_GetPrefPath("potop", "potop");
+	char *preference_path = file_io_preference_directory();
 	char *last_slash;
 
 	if (preference_path == NULL)
