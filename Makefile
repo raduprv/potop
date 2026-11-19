@@ -3,6 +3,16 @@
 #   make              optimized build with debug info
 #   make DEBUG=1      no optimization, address/undefined sanitizers
 #   make OPENMP=0     without OpenMP (terrain generation runs single threaded)
+#   make PROFILE=1    the optimized build, with frame pointers kept: perf's
+#                     call chains whole without --call-graph dwarf. After a
+#                     make clean (the objects are the same files)
+#   make profile      the running game recorded with perf for
+#                     PROFILE_SECONDS (30), then where its time went, the
+#                     first PROFILE_LINES (120) lines; the record is
+#                     build/perf.data (perf report -i build/perf.data to
+#                     walk it). Start the game first, load the map, then
+#                     run this from another terminal. perf may need
+#                     sudo sysctl kernel.perf_event_paranoid=1
 #   make tools        the desktop tools (tools/potop_convert: actors to .pact, glTF to .pact or .e3d)
 #
 # SDL3 is found through pkg-config. For a locally installed SDL3, set the
@@ -16,6 +26,9 @@ CC ?= cc
 PKG_CONFIG ?= pkg-config
 OPENMP ?= 1
 DEBUG ?= 0
+PROFILE ?= 0
+PROFILE_SECONDS ?= 30
+PROFILE_LINES ?= 120
 
 # The engine is a library (build/libpotop.a, engine/); the game (game/:
 # potop) and the editor (editor/: potop_editor) link it
@@ -37,7 +50,7 @@ SDL_CFLAGS := $(shell $(PKG_CONFIG) --cflags sdl3 2>/dev/null)
 SDL_LIBS := $(shell $(PKG_CONFIG) --libs sdl3 2>/dev/null)
 SDL_LIBRARY_DIRECTORY := $(shell $(PKG_CONFIG) --variable=libdir sdl3 2>/dev/null)
 
-ifneq ($(MAKECMDGOALS),clean)
+ifeq ($(filter clean profile,$(MAKECMDGOALS)),)
 ifeq ($(SDL_LIBS),)
 $(error SDL3 not found by pkg-config; see README.md, "Building")
 endif
@@ -67,6 +80,13 @@ else
 	# -fno-trapping-math changes no result: it only lets the compiler compute
 	# both sides of a choice, which the water's vector loops need
 	CFLAGS += -O3 -fno-trapping-math
+endif
+
+# For perf: every function keeps its frame pointer (the call chain is read
+# from them, cheaply and whole), and a call at a function's end stays a
+# call (its caller stays in the chain). A percent or two slower
+ifeq ($(PROFILE),1)
+	CFLAGS += -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -fno-optimize-sibling-calls
 endif
 
 ifeq ($(OPENMP),1)
@@ -221,6 +241,13 @@ build/cgltf_implementation.o: tools/cgltf_implementation.c third_party/cgltf.h |
 
 tools/cloud_bake: tools/cloud_bake.c tools/vdb_read.c tools/vdb_read.h data/shaders/spirv/cloud_sim.comp.spv build/miniz_implementation.o
 	$(CC) $(filter-out -MMD -MP,$(CFLAGS)) -Itools -o $@ tools/cloud_bake.c tools/vdb_read.c build/miniz_implementation.o -fopenmp $(SDL_LIBS) -lm
+
+# The running game's time, by perf (see the top of this file)
+.PHONY: profile
+profile:
+	@mkdir -p build
+	perf record -g -o build/perf.data -p $$(pidof $(TARGET)) -- sleep $(PROFILE_SECONDS)
+	perf report -i build/perf.data --no-children --stdio 2>/dev/null | grep -v '^$$' | head -$(PROFILE_LINES)
 
 build:
 	mkdir -p build
