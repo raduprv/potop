@@ -246,7 +246,13 @@ tools/cloud_bake: tools/cloud_bake.c tools/vdb_read.c tools/vdb_read.h data/shad
 .PHONY: profile
 profile:
 	@mkdir -p build
-	perf record -g -o build/perf.data -p $$(pidof $(TARGET)) -- sleep $(PROFILE_SECONDS)
+	@pids=$$(pgrep -x $(TARGET) | paste -sd, -); \
+	if [ -z "$$pids" ]; then \
+		echo "make profile: no '$(TARGET)' is running. Start the game in another terminal, load the map, then run this"; \
+		exit 1; \
+	fi; \
+	echo "perf record -g -o build/perf.data -p $$pids -- sleep $(PROFILE_SECONDS)"; \
+	perf record -g -o build/perf.data -p $$pids -- sleep $(PROFILE_SECONDS)
 	perf report -i build/perf.data --no-children --stdio 2>/dev/null | grep -v '^$$' | head -$(PROFILE_LINES)
 
 build:
