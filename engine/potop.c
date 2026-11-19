@@ -80,40 +80,55 @@ bool potop_map_find(const char *name, char *file_name_out, int file_name_size)
 	return false;
 }
 
+bool potop_map_save_file(potop_t *potop, const char *path, const char *shown_name, bool baked)
+{
+	if (potop->world.terrain.baked && !baked)
+	{
+		return false;
+	}
+	if (!world_save(&potop->world, &potop->session, path, baked, &potop->camera))
+	{
+		return false;
+	}
+	SDL_strlcpy(potop->world.map_name, shown_name, sizeof(potop->world.map_name));
+	return true;
+}
+
 bool potop_map_save(potop_t *potop, const char *name, bool baked)
 {
 	char path[1024];
 	char file_name[MAP_FILE_NAME_LENGTH + 16];
 
-	if (potop->world.terrain.baked && !baked)
-	{
-		return false;
-	}
 	map_file_kind_name(name, baked, file_name, sizeof(file_name));
-	if (!map_file_path(file_name, path, sizeof(path)) || !world_save(&potop->world, &potop->session, path, baked, &potop->camera))
-	{
-		return false;
-	}
-	SDL_strlcpy(potop->world.map_name, file_name, sizeof(potop->world.map_name));
-	return true;
+	return map_file_path(file_name, path, sizeof(path)) && potop_map_save_file(potop, path, file_name, baked);
 }
 
 potop_load_result_t potop_map_load(potop_t *potop, const char *name)
 {
 	char path[1024];
 	char file_name[MAP_FILE_NAME_LENGTH + 16];
+
+	if (potop_map_find(name, file_name, (int)sizeof(file_name)))
+	{
+		name = file_name;
+	}
+	if (!map_file_path(name, path, sizeof(path)))
+	{
+		potop->session.world_map_stale = true;
+		return POTOP_LOAD_FAILED;
+	}
+	return potop_map_load_file(potop, path, name);
+}
+
+potop_load_result_t potop_map_load_file(potop_t *potop, const char *path, const char *shown_name)
+{
 	map_file_info_t info;
 	bool complete;
 	bool on_foot = potop->camera.first_person;
 	camera_t *camera = &potop->camera;
 
 	potop->session.world_map_stale = true;
-	if (potop_map_find(name, file_name, (int)sizeof(file_name)))
-	{
-		name = file_name;
-	}
-	if (!map_file_path(name, path, sizeof(path)) || !SDL_GetPathInfo(path, NULL)
-		|| !world_load(&potop->world, &potop->session, path, &info, &complete))
+	if (!SDL_GetPathInfo(path, NULL) || !world_load(&potop->world, &potop->session, path, &info, &complete))
 	{
 		return POTOP_LOAD_FAILED;
 	}
@@ -132,7 +147,7 @@ potop_load_result_t potop_map_load(potop_t *potop, const char *name)
 	{
 		camera_enter_first_person(camera, &potop->world.terrain);
 	}
-	SDL_strlcpy(potop->world.map_name, name, sizeof(potop->world.map_name));
+	SDL_strlcpy(potop->world.map_name, shown_name, sizeof(potop->world.map_name));
 	return complete ? POTOP_LOAD_DONE : POTOP_LOAD_DAMAGED;
 }
 

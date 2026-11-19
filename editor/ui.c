@@ -10,10 +10,6 @@
 #include "season.h"
 #include "stamps.h"
 
-// (the maps window's, further down)
-static bool map_name_is_baked(const char *name);
-static void map_name_without_kind(const char *name, char *name_out, size_t name_out_size);
-
 #define UI_STATE_FILE "ui_state.ini"
 
 #define BRUSHES_WINDOW "Brushes"
@@ -1195,9 +1191,9 @@ static void icon_bar_window(ui_t *ui, const ui_view_t *view)
 	char speed_text[32];
 	icon_bar_item_t items[] = {
 		{ "settings", "Settings", "Settings" },
-		{ "save", "Save", "Save the map (F5: quick save)" },
-		{ "load", "Load", "Load a map (F9: quick load)" },
-		{ "new_map", "New", "A new map (N: with a random seed at once)" },
+		{ "save", "Save", "Save or bake the project (F5: save it at once)" },
+		{ "load", "Open", "Open a project, or bring in a saved map (F9: the project as last saved)" },
+		{ "new_map", "New", "A new project (N: a new map at once, outside any project)" },
 		{ view->paused ? "play" : "pause", view->paused ? "Run" : "Pause", "Pause / run the simulation (space)" },
 		{ "slower", "\xc2\xab", "Slower (,)" },
 		{ NULL, speed_text, "Simulation speed" },
@@ -1277,21 +1273,15 @@ static void icon_bar_window(ui_t *ui, const ui_view_t *view)
 						}
 						ui->maps_mode = mode;
 						ui->map_entry_count = map_file_list(ui->map_entries, MAP_FILE_LIST_MAX);
+						ui->project_count = project_list(ui->projects, PROJECT_LIST_MAX);
 						ui->selected_map = -1;
+						ui->selected_project = -1;
 						ui->confirm_delete = false;
-						ui->confirm_overwrite = false;
-						if (mode == UI_MAPS_SAVE)
+						ui->confirm_project_delete = false;
+						ui->project_name_input[0] = '\0';
+						if (mode == UI_MAPS_SAVE && view->project_name[0] == '\0')
 						{
-							// (the name without its kind; the kind it was, or must be)
-							ui->save_baked = view->map_baked || map_name_is_baked(ui->last_map_name);
-							if (ui->last_map_name[0] != '\0')
-							{
-								map_name_without_kind(ui->last_map_name, ui->map_name_input, sizeof(ui->map_name_input));
-							}
-							else
-							{
-								SDL_snprintf(ui->map_name_input, sizeof(ui->map_name_input), "map %u", view->seed);
-							}
+							SDL_snprintf(ui->project_name_input, sizeof(ui->project_name_input), "map %u", view->seed);
 						}
 						break;
 					}
@@ -1414,36 +1404,6 @@ static void message_window(ui_t *ui, double time_seconds)
 
 // ---------------------------------------------------------------------------
 // Settings
-
-// The maps window's new map: a seed (empty: a random one), Generate
-static void new_map_controls(ui_t *ui, const ui_view_t *view)
-{
-	struct nk_context *context = &ui->backend.context;
-	nk_flags state;
-
-	nk_layout_row(context, NK_DYNAMIC, ROW_HEIGHT, 3, (const float[]){ 0.38f, 0.32f, 0.30f });
-	tooltip_if_hovered(context, "Empty: a random seed");
-	nk_label(context, "Seed", NK_TEXT_LEFT);
-	state = nk_edit_string_zero_terminated(context, NK_EDIT_FIELD | NK_EDIT_SIG_ENTER, ui->seed_input, sizeof(ui->seed_input), nk_filter_decimal);
-	if (state & NK_EDIT_ACTIVE)
-	{
-		ui->backend.wants_text_input = true;
-	}
-	if (nk_button_label(context, "This map's"))
-	{
-		SDL_snprintf(ui->seed_input, sizeof(ui->seed_input), "%u", view->seed);
-	}
-	nk_layout_row_dynamic(context, ROW_HEIGHT + 2.0f, 1);
-	if (nk_button_label(context, "Generate a new map") || (state & NK_EDIT_COMMITED))
-	{
-		ui->requests.new_map = true;
-		ui->requests.new_map_seed = (uint32_t)SDL_strtoul(ui->seed_input, NULL, 10);
-		if (ui->maps_mode == UI_MAPS_NEW)
-		{
-			ui->maps_mode = UI_MAPS_CLOSED;
-		}
-	}
-}
 
 // The status line, under the settings' interface tab
 static void interface_extra(void *user, struct nk_context *context)
@@ -1946,44 +1906,6 @@ static void format_date(int64_t nanoseconds, char *text_out, size_t text_out_siz
 	SDL_snprintf(text_out, text_out_size, "%04d-%02d-%02d %02d:%02d", date.year, date.month, date.day, date.hour, date.minute);
 }
 
-static bool map_name_ends_with(const char *name, const char *end)
-{
-	size_t length = SDL_strlen(name);
-	size_t end_length = SDL_strlen(end);
-
-	return length >= end_length && SDL_strcmp(name + length - end_length, end) == 0;
-}
-
-static bool map_name_is_baked(const char *name)
-{
-	return map_name_ends_with(name, MAP_FILE_BAKED_SUFFIX);
-}
-
-static void map_name_without_kind(const char *name, char *name_out, size_t name_out_size)
-{
-	SDL_strlcpy(name_out, name, name_out_size);
-	if (map_name_ends_with(name, MAP_FILE_BAKED_SUFFIX))
-	{
-		name_out[SDL_min(SDL_strlen(name) - SDL_strlen(MAP_FILE_BAKED_SUFFIX), name_out_size - 1)] = '\0';
-	}
-	else if (map_name_ends_with(name, MAP_FILE_ACTIVE_SUFFIX))
-	{
-		name_out[SDL_min(SDL_strlen(name) - SDL_strlen(MAP_FILE_ACTIVE_SUFFIX), name_out_size - 1)] = '\0';
-	}
-}
-
-static bool map_exists(const ui_t *ui, const char *name)
-{
-	for (int i = 0; i < ui->map_entry_count; i++)
-	{
-		if (SDL_strcmp(ui->map_entries[i].name, name) == 0)
-		{
-			return true;
-		}
-	}
-	return false;
-}
-
 static void map_list(ui_t *ui, float height)
 {
 	struct nk_context *context = &ui->backend.context;
@@ -2010,13 +1932,8 @@ static void map_list(ui_t *ui, float height)
 			{
 				ui->selected_map = i;
 				ui->confirm_delete = false;
-				ui->confirm_overwrite = false;
-				SDL_strlcpy(ui->map_name_input, entry->shown_name, sizeof(ui->map_name_input));
-				// (saving over it: as its kind, if this map may be saved so)
-				if (!ui->save_locked)
-				{
-					ui->save_baked = entry->baked;
-				}
+				// (brought in as a project: by its name, the kind left off)
+				SDL_strlcpy(ui->project_name_input, entry->shown_name, sizeof(ui->project_name_input));
 			}
 			nk_label_colored(context, entry->baked ? "baked" : "active", NK_TEXT_LEFT,
 				entry->baked ? nk_rgb(150, 200, 255) : nk_rgb(255, 210, 140));
@@ -2027,12 +1944,298 @@ static void map_list(ui_t *ui, float height)
 	}
 }
 
+// A name typed into a field (its own row, with a label)
+static nk_flags name_field(ui_t *ui, const char *label, char *text, int size)
+{
+	struct nk_context *context = &ui->backend.context;
+	nk_flags state;
+
+	nk_layout_row(context, NK_DYNAMIC, ROW_HEIGHT, 2, (const float[]){ 0.3f, 0.7f });
+	nk_label(context, label, NK_TEXT_LEFT);
+	state = nk_edit_string_zero_terminated(context, NK_EDIT_FIELD | NK_EDIT_SIG_ENTER, text, size, nk_filter_default);
+	if (state & NK_EDIT_ACTIVE)
+	{
+		ui->backend.wants_text_input = true;
+	}
+	return state;
+}
+
+// A project's name as typed, cleaned as the map files' are (no slashes,
+// no leading dots)
+static void clean_project_name(const char *typed, char *name_out, size_t name_out_size)
+{
+	char clean[MAP_FILE_NAME_LENGTH];
+
+	map_file_clean_name(typed, clean, sizeof(clean));
+	SDL_strlcpy(name_out, clean, name_out_size);
+}
+
+static bool project_listed(const ui_t *ui, const char *name)
+{
+	for (int i = 0; i < ui->project_count; i++)
+	{
+		if (SDL_strcmp(ui->projects[i].name, name) == 0)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+static void project_list_group(ui_t *ui, float height)
+{
+	struct nk_context *context = &ui->backend.context;
+
+	nk_layout_row_dynamic(context, height, 1);
+	if (nk_group_begin(context, "projects", NK_WINDOW_BORDER))
+	{
+		if (ui->project_count == 0)
+		{
+			nk_layout_row_dynamic(context, ROW_HEIGHT, 1);
+			nk_label(context, "No projects yet", NK_TEXT_CENTERED);
+		}
+		for (int i = 0; i < ui->project_count; i++)
+		{
+			const project_info_t *info = &ui->projects[i];
+			char date[48];
+			char size[48];
+			nk_bool selected = ui->selected_project == i;
+
+			format_date(info->modified_nanoseconds, date, sizeof(date));
+			SDL_snprintf(size, sizeof(size), "%.1f km, %.1f MB", (double)((float)info->size_cells * info->cell_size_meters / 1000.0f),
+				(double)info->map_bytes / (1024.0 * 1024.0));
+			nk_layout_row(context, NK_DYNAMIC, ROW_HEIGHT - 4.0f, 3, (const float[]){ 0.36f, 0.24f, 0.40f });
+			tooltip_if_hovered(context, size);
+			if (nk_selectable_label(context, info->name, NK_TEXT_LEFT, &selected))
+			{
+				ui->selected_project = i;
+				ui->confirm_project_delete = false;
+			}
+			tooltip_if_hovered(context, info->has_bake ? "Baked for play too (Save, Bake)" : "Not baked for play yet");
+			nk_label_colored(context, info->baked ? "baked" : (info->has_bake ? "active +bake" : "active"), NK_TEXT_LEFT,
+				info->baked ? nk_rgb(150, 200, 255) : nk_rgb(255, 210, 140));
+			nk_label(context, date, NK_TEXT_RIGHT);
+		}
+		nk_group_end(context);
+	}
+}
+
+// New: a name and a seed (empty: a random one); the map made as the
+// settings say (their size), saved as the project's
+static void new_project_controls(ui_t *ui, const ui_view_t *view)
+{
+	struct nk_context *context = &ui->backend.context;
+	char clean[PROJECT_NAME_LENGTH];
+	nk_flags name_state = name_field(ui, "Name", ui->project_name_input, sizeof(ui->project_name_input));
+	nk_flags seed_state;
+	bool taken;
+
+	nk_layout_row(context, NK_DYNAMIC, ROW_HEIGHT, 3, (const float[]){ 0.3f, 0.4f, 0.3f });
+	tooltip_if_hovered(context, "Empty: a random seed");
+	nk_label(context, "Seed", NK_TEXT_LEFT);
+	seed_state = nk_edit_string_zero_terminated(context, NK_EDIT_FIELD | NK_EDIT_SIG_ENTER, ui->seed_input, sizeof(ui->seed_input),
+		nk_filter_decimal);
+	if (seed_state & NK_EDIT_ACTIVE)
+	{
+		ui->backend.wants_text_input = true;
+	}
+	if (nk_button_label(context, "This map's"))
+	{
+		SDL_snprintf(ui->seed_input, sizeof(ui->seed_input), "%u", view->seed);
+	}
+	clean_project_name(ui->project_name_input, clean, sizeof(clean));
+	taken = project_listed(ui, clean);
+	nk_layout_row_dynamic(context, ROW_HEIGHT, 1);
+	nk_label(context, clean[0] == '\0' ? "It needs a name." : (taken ? "There is a project of that name." : "The map as Settings, New map say."),
+		NK_TEXT_LEFT);
+	nk_layout_row_dynamic(context, ROW_HEIGHT + 2.0f, 2);
+	if (clean[0] == '\0' || taken)
+	{
+		nk_widget_disable_begin(context);
+	}
+	if ((nk_button_label(context, "Make the project") || ((name_state | seed_state) & NK_EDIT_COMMITED)) && clean[0] != '\0' && !taken)
+	{
+		ui->requests.project_new = true;
+		ui->requests.project_seed = (uint32_t)SDL_strtoul(ui->seed_input, NULL, 10);
+		SDL_strlcpy(ui->requests.project_name, clean, sizeof(ui->requests.project_name));
+		ui->maps_mode = UI_MAPS_CLOSED;
+	}
+	if (clean[0] == '\0' || taken)
+	{
+		nk_widget_disable_end(context);
+	}
+	if (nk_button_label(context, "Cancel"))
+	{
+		ui->maps_mode = UI_MAPS_CLOSED;
+	}
+}
+
+// Save: the project open saved (or baked); or saved as a new project
+static void save_project_controls(ui_t *ui, const ui_view_t *view, float height)
+{
+	struct nk_context *context = &ui->backend.context;
+	char clean[PROJECT_NAME_LENGTH];
+	char line[160];
+	nk_flags state;
+	bool taken;
+
+	nk_layout_row_dynamic(context, ROW_HEIGHT, 1);
+	if (view->project_name[0] != '\0')
+	{
+		SDL_snprintf(line, sizeof(line), "Project \"%s\"%s", view->project_name, view->map_baked ? " (a baked map: it saves baked)" : "");
+		nk_label(context, line, NK_TEXT_LEFT);
+		nk_layout_row_dynamic(context, ROW_HEIGHT + 2.0f, 2);
+		tooltip_if_hovered(context, "The map being made, into the project (F5)");
+		if (nk_button_label(context, "Save"))
+		{
+			ui->requests.project_save = true;
+			ui->maps_mode = UI_MAPS_CLOSED;
+		}
+		tooltip_if_hovered(context, "A baked copy for play: into the project, and into the saves for the game");
+		if (nk_button_label(context, "Bake (for play)"))
+		{
+			ui->requests.project_bake = true;
+			ui->maps_mode = UI_MAPS_CLOSED;
+		}
+		section_label(ui, "Or as a new project:");
+	}
+	else
+	{
+		nk_label(context, "No project open: save it as one.", NK_TEXT_LEFT);
+	}
+	state = name_field(ui, "Name", ui->project_name_input, sizeof(ui->project_name_input));
+	clean_project_name(ui->project_name_input, clean, sizeof(clean));
+	taken = project_listed(ui, clean);
+	project_list_group(ui, height - (view->project_name[0] != '\0' ? 6.0f : 4.0f) * (ROW_HEIGHT + 4.0f) - 56.0f);
+	if (ui->selected_project >= 0 && ui->selected_project < ui->project_count)
+	{
+		// (a project picked from the list: its name, to see it is taken)
+		SDL_strlcpy(ui->project_name_input, ui->projects[ui->selected_project].name, sizeof(ui->project_name_input));
+		ui->selected_project = -1;
+	}
+	nk_layout_row_dynamic(context, ROW_HEIGHT, 2);
+	if (clean[0] == '\0' || taken)
+	{
+		nk_widget_disable_begin(context);
+	}
+	if ((nk_button_label(context, taken ? "That name is taken" : "Save as a new project") || (state & NK_EDIT_COMMITED)) && clean[0] != '\0'
+		&& !taken)
+	{
+		ui->requests.project_save_as = true;
+		SDL_strlcpy(ui->requests.project_name, clean, sizeof(ui->requests.project_name));
+		ui->maps_mode = UI_MAPS_CLOSED;
+	}
+	if (clean[0] == '\0' || taken)
+	{
+		nk_widget_disable_end(context);
+	}
+	if (nk_button_label(context, "Cancel"))
+	{
+		ui->maps_mode = UI_MAPS_CLOSED;
+	}
+}
+
+// Open: a project; or a map saved before projects, brought in as one
+static void open_project_controls(ui_t *ui, float height)
+{
+	struct nk_context *context = &ui->backend.context;
+	bool has_selection = ui->selected_project >= 0 && ui->selected_project < ui->project_count;
+	bool has_map = ui->selected_map >= 0 && ui->selected_map < ui->map_entry_count;
+	float list_height = (height - 6.0f * (ROW_HEIGHT + 4.0f) - 56.0f) * 0.5f;
+	char clean[PROJECT_NAME_LENGTH];
+	bool taken;
+
+	project_list_group(ui, list_height);
+	if (ui->confirm_project_delete && has_selection)
+	{
+		char question[128];
+
+		SDL_snprintf(question, sizeof(question), "Delete \"%s\" and all in it?", ui->projects[ui->selected_project].name);
+		nk_layout_row_dynamic(context, ROW_HEIGHT, 3);
+		nk_label(context, question, NK_TEXT_LEFT);
+		if (nk_button_label(context, "Delete"))
+		{
+			project_delete(ui->projects[ui->selected_project].name);
+			ui->project_count = project_list(ui->projects, PROJECT_LIST_MAX);
+			ui->selected_project = -1;
+			ui->confirm_project_delete = false;
+		}
+		if (nk_button_label(context, "Keep"))
+		{
+			ui->confirm_project_delete = false;
+		}
+	}
+	else
+	{
+		nk_layout_row_dynamic(context, ROW_HEIGHT, 3);
+		if (!has_selection)
+		{
+			nk_widget_disable_begin(context);
+		}
+		if (nk_button_label(context, "Open") && has_selection)
+		{
+			ui->requests.project_open = true;
+			SDL_strlcpy(ui->requests.project_name, ui->projects[ui->selected_project].name, sizeof(ui->requests.project_name));
+			ui->maps_mode = UI_MAPS_CLOSED;
+		}
+		if (nk_button_label(context, "Delete") && has_selection)
+		{
+			ui->confirm_project_delete = true;
+		}
+		if (!has_selection)
+		{
+			nk_widget_disable_end(context);
+		}
+		if (nk_button_label(context, "Cancel"))
+		{
+			ui->maps_mode = UI_MAPS_CLOSED;
+		}
+	}
+	section_label(ui, "Maps saved before projects (or by the game):");
+	map_list(ui, list_height);
+	name_field(ui, "As project", ui->project_name_input, sizeof(ui->project_name_input));
+	clean_project_name(ui->project_name_input, clean, sizeof(clean));
+	taken = project_listed(ui, clean);
+	nk_layout_row_dynamic(context, ROW_HEIGHT, 2);
+	if (!has_map || clean[0] == '\0' || taken)
+	{
+		nk_widget_disable_begin(context);
+	}
+	if (nk_button_label(context, taken ? "That name is taken" : "Bring it in as a project") && has_map && clean[0] != '\0' && !taken)
+	{
+		ui->requests.project_import = true;
+		SDL_strlcpy(ui->requests.import_map, ui->map_entries[ui->selected_map].name, sizeof(ui->requests.import_map));
+		SDL_strlcpy(ui->requests.project_name, clean, sizeof(ui->requests.project_name));
+		ui->maps_mode = UI_MAPS_CLOSED;
+	}
+	if (!has_map || clean[0] == '\0' || taken)
+	{
+		nk_widget_disable_end(context);
+	}
+	tooltip_if_hovered(context, "Load it as it is, outside any project");
+	if (!has_map)
+	{
+		nk_widget_disable_begin(context);
+	}
+	if (nk_button_label(context, "Just load it") && has_map)
+	{
+		ui->requests.load_map = true;
+		SDL_strlcpy(ui->requests.map_name, ui->map_entries[ui->selected_map].name, sizeof(ui->requests.map_name));
+		ui->maps_mode = UI_MAPS_CLOSED;
+	}
+	if (!has_map)
+	{
+		nk_widget_disable_end(context);
+	}
+}
+
+// The projects' window: new, save (or bake), open (see project.h)
 static void maps_window(ui_t *ui, const ui_view_t *view)
 {
 	struct nk_context *context = &ui->backend.context;
 	nk_flags flags = NK_WINDOW_BORDER | NK_WINDOW_MOVABLE | NK_WINDOW_TITLE | NK_WINDOW_CLOSABLE | NK_WINDOW_NO_SCROLLBAR;
-	const char *title = ui->maps_mode == UI_MAPS_SAVE ? "Save the map" : (ui->maps_mode == UI_MAPS_LOAD ? "Load a map" : "New map");
-	float height = ui->maps_mode == UI_MAPS_NEW ? 170.0f : 420.0f;
+	const char *title = ui->maps_mode == UI_MAPS_SAVE ? "Save" : (ui->maps_mode == UI_MAPS_LOAD ? "Open a project" : "New project");
+	float height = ui->maps_mode == UI_MAPS_NEW ? 190.0f : (ui->maps_mode == UI_MAPS_SAVE ? 380.0f : 440.0f);
 
 	if (ui->maps_mode == UI_MAPS_CLOSED)
 	{
@@ -2055,152 +2258,15 @@ static void maps_window(ui_t *ui, const ui_view_t *view)
 		ui->maps_bounds = bounds;
 		if (ui->maps_mode == UI_MAPS_NEW)
 		{
-			new_map_controls(ui, view);
-			section_label(ui, "The map's shape: Settings, New map.");
+			new_project_controls(ui, view);
 		}
 		else if (ui->maps_mode == UI_MAPS_SAVE)
 		{
-			nk_flags state;
-			char clean[MAP_FILE_NAME_LENGTH];
-			char file_name[MAP_FILE_NAME_LENGTH + 16];
-			nk_bool baked;
-
-			nk_layout_row(context, NK_DYNAMIC, ROW_HEIGHT, 2, (const float[]){ 0.2f, 0.8f });
-			nk_label(context, "Name", NK_TEXT_LEFT);
-			state = nk_edit_string_zero_terminated(context, NK_EDIT_FIELD | NK_EDIT_SIG_ENTER, ui->map_name_input, sizeof(ui->map_name_input),
-				nk_filter_default);
-			if (state & NK_EDIT_ACTIVE)
-			{
-				ui->backend.wants_text_input = true;
-			}
-			// Baked (for play) or active (to go on making it); a baked map
-			// can only be saved baked
-			ui->save_locked = view->map_baked;
-			if (view->map_baked)
-			{
-				ui->save_baked = true;
-			}
-			baked = ui->save_baked;
-			nk_layout_row(context, NK_DYNAMIC, ROW_HEIGHT, 2, (const float[]){ 0.45f, 0.55f });
-			if (view->map_baked)
-			{
-				nk_widget_disable_begin(context);
-			}
-			if (nk_checkbox_label(context, "Baked (for play)", &baked))
-			{
-				ui->save_baked = baked;
-				ui->confirm_overwrite = false;
-			}
-			if (view->map_baked)
-			{
-				nk_widget_disable_end(context);
-			}
-			nk_label(context, view->map_baked ? "this map is baked" : (ui->save_baked ? "still: no water, no digging" : "everything goes on"),
-				NK_TEXT_LEFT);
-			map_list(ui, height - 3.0f * ROW_HEIGHT - 80.0f);
-			map_file_clean_name(ui->map_name_input, clean, sizeof(clean));
-			map_file_kind_name(clean, ui->save_baked, file_name, sizeof(file_name));
-			if (ui->confirm_overwrite)
-			{
-				char question[128];
-
-				SDL_snprintf(question, sizeof(question), "Replace \"%s\" (%s)?", clean, ui->save_baked ? "baked" : "active");
-				nk_layout_row_dynamic(context, ROW_HEIGHT, 3);
-				nk_label(context, question, NK_TEXT_LEFT);
-				if (nk_button_label(context, "Replace"))
-				{
-					ui->requests.save_map = true;
-					ui->requests.map_baked = ui->save_baked;
-					SDL_strlcpy(ui->requests.map_name, clean, sizeof(ui->requests.map_name));
-					ui->maps_mode = UI_MAPS_CLOSED;
-				}
-				if (nk_button_label(context, "Cancel"))
-				{
-					ui->confirm_overwrite = false;
-				}
-			}
-			else
-			{
-				nk_layout_row_dynamic(context, ROW_HEIGHT, 2);
-				if (clean[0] == '\0')
-				{
-					nk_widget_disable_begin(context);
-				}
-				if (nk_button_label(context, ui->save_baked ? "Bake" : "Save") || ((state & NK_EDIT_COMMITED) && clean[0] != '\0'))
-				{
-					if (map_exists(ui, file_name))
-					{
-						ui->confirm_overwrite = true;
-					}
-					else
-					{
-						ui->requests.save_map = true;
-						ui->requests.map_baked = ui->save_baked;
-						SDL_strlcpy(ui->requests.map_name, clean, sizeof(ui->requests.map_name));
-						ui->maps_mode = UI_MAPS_CLOSED;
-					}
-				}
-				if (clean[0] == '\0')
-				{
-					nk_widget_disable_end(context);
-				}
-				if (nk_button_label(context, "Cancel"))
-				{
-					ui->maps_mode = UI_MAPS_CLOSED;
-				}
-			}
+			save_project_controls(ui, view, height);
 		}
 		else
 		{
-			bool has_selection = ui->selected_map >= 0 && ui->selected_map < ui->map_entry_count;
-
-			map_list(ui, height - ROW_HEIGHT - 72.0f);
-			if (ui->confirm_delete && has_selection)
-			{
-				char question[128];
-
-				SDL_snprintf(question, sizeof(question), "Delete \"%s\" (%s)?", ui->map_entries[ui->selected_map].shown_name,
-					ui->map_entries[ui->selected_map].baked ? "baked" : "active");
-				nk_layout_row_dynamic(context, ROW_HEIGHT, 3);
-				nk_label(context, question, NK_TEXT_LEFT);
-				if (nk_button_label(context, "Delete"))
-				{
-					map_file_delete(ui->map_entries[ui->selected_map].name);
-					ui->map_entry_count = map_file_list(ui->map_entries, MAP_FILE_LIST_MAX);
-					ui->selected_map = -1;
-					ui->confirm_delete = false;
-				}
-				if (nk_button_label(context, "Keep"))
-				{
-					ui->confirm_delete = false;
-				}
-			}
-			else
-			{
-				nk_layout_row_dynamic(context, ROW_HEIGHT, 3);
-				if (!has_selection)
-				{
-					nk_widget_disable_begin(context);
-				}
-				if (nk_button_label(context, "Load") && has_selection)
-				{
-					ui->requests.load_map = true;
-					SDL_strlcpy(ui->requests.map_name, ui->map_entries[ui->selected_map].name, sizeof(ui->requests.map_name));
-					ui->maps_mode = UI_MAPS_CLOSED;
-				}
-				if (nk_button_label(context, "Delete") && has_selection)
-				{
-					ui->confirm_delete = true;
-				}
-				if (!has_selection)
-				{
-					nk_widget_disable_end(context);
-				}
-				if (nk_button_label(context, "Cancel"))
-				{
-					ui->maps_mode = UI_MAPS_CLOSED;
-				}
-			}
+			open_project_controls(ui, height);
 		}
 	}
 	else

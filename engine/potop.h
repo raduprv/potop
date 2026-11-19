@@ -187,6 +187,10 @@ bool potop_map_save(potop_t *potop, const char *name, bool baked);
 // Loads a map (by its name or file name) at its size and kind; the camera
 // as the map's (on foot it stays on foot)
 potop_load_result_t potop_map_load(potop_t *potop, const char *name);
+// The same at a path of its own (a map project's, the editor's), shown as
+// shown_name (potop_map_name)
+bool potop_map_save_file(potop_t *potop, const char *path, const char *shown_name, bool baked);
+potop_load_result_t potop_map_load_file(potop_t *potop, const char *path, const char *shown_name);
 // The file name the map was last loaded or saved as (empty: none)
 const char *potop_map_name(const potop_t *potop);
 // A new map as the settings make it (their size; seed 0: a random one),

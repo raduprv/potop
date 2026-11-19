@@ -17,7 +17,8 @@
 //   diagnostics  what the GPU and the simulation spend, live.
 //   inspector    everything about one cell, while the inspect tool is on
 //                or a cell is pinned (see inspector.h).
-//   maps         saving and loading maps (see map_file.h).
+//   maps         map projects: new, save or bake, open (see project.h); maps
+//                saved before projects brought in as one, or just loaded.
 //   sky          the clouds' map from above, painted with the mouse: how
 //                many clouds, how heavy, which kind (see cloud_paint.h).
 //   console      across the top while open (` or ~): the log and a
@@ -45,6 +46,7 @@
 #include "inspector.h"
 #include "layouts.h"
 #include "map_file.h"
+#include "project.h"
 #include "object_types.h"
 #include "particles.h"
 #include "lights.h"
@@ -82,6 +84,17 @@ typedef struct
 	bool map_baked;
 	bool new_map;
 	uint32_t new_map_seed;         // 0: a random one
+	// Map projects (project.h): project_name the one asked (new, open,
+	// save as, import into); the seed for a new one (0: a random one)
+	bool project_new;
+	bool project_open;
+	bool project_save;
+	bool project_save_as;
+	bool project_bake;
+	bool project_import;           // a saved map (import_map, its file name) as a new project
+	char project_name[PROJECT_NAME_LENGTH];
+	uint32_t project_seed;
+	char import_map[MAP_FILE_NAME_LENGTH];
 	bool apply_render;             // textures, shadow maps, vsync
 	bool apply_objects;            // vegetation density: grow it anew
 	bool regrow;
@@ -102,6 +115,7 @@ typedef struct
 	const layouts_t *layouts;
 	uint32_t seed;
 	bool map_baked;                // a baked map (map_file.h): it saves baked only
+	const char *project_name;      // the project open ("" none)
 	bool paused;
 	float time_scale;
 	float reached_time_scale;      // below time_scale when the machine cannot keep up
@@ -188,16 +202,17 @@ typedef struct
 	bool state_loaded;
 
 	// Maps window
-	char map_name_input[MAP_FILE_NAME_LENGTH];
-	bool save_baked;               // the save window's "Baked" box
-	bool save_locked;              // ...held on (the map is baked)
 	char seed_input[16];
 	map_file_entry_t map_entries[MAP_FILE_LIST_MAX];
 	int map_entry_count;
 	int selected_map;
-	bool confirm_overwrite;
 	bool confirm_delete;
 	char last_map_name[MAP_FILE_NAME_LENGTH];
+	project_info_t projects[PROJECT_LIST_MAX];
+	int project_count;
+	int selected_project;
+	char project_name_input[PROJECT_NAME_LENGTH];
+	bool confirm_project_delete;
 	char message[160];             // the result of the last save or load
 	double message_until_seconds;
 

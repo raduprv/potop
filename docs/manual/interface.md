@@ -16,7 +16,7 @@ are engine/ui.c; both draw with the same backend, font and colors.
   the brush size and the options of the current tool (soil, stamp type and
   height, plant category, layout, rates). Drag it by its title, fold it with
   the button there. It is see-through until the pointer is over it.
-* **Icon bar** (top right): settings, save, load, new map, pause, slower,
+* **Icon bar** (top right): settings, save, open, new (projects), pause, slower,
   the speed, faster, diagnostics, status line.
 * **Settings**: tabs for graphics, clouds, water, new map, objects, camera
   and the interface. Most sliders act at once. Texture size, anisotropy, relief,
@@ -71,6 +71,7 @@ are engine/ui.c; both draw with the same backend, font and colors.
   | `maps` | the saved maps, by the names `load` takes, and their kind |
   | `load <name>` | loads a saved map: `name`, `name.active` or `name.baked` (without the kind, the active one if there is one) |
   | `save <name>` / `bake <name>` | saves the map as its own kind / bakes it (for play), as `name.baked` |
+  | `project list \| new <name> [seed] \| open <name> \| save [name] \| bake \| import <map> <name>` | map projects (the editor's; see **Projects** below) |
   | `screenshot` | as F12 |
   | `clear` / `quit` | clears the log / leaves |
 
@@ -79,6 +80,19 @@ are engine/ui.c; both draw with the same backend, font and colors.
   are not drawn, nor their shadows and lights; they stay and go on (the
   physics, the water, the paths, saving), only unseen. Fireflies: how many
   on dark nights (0: none).
+* **Projects** (the editor): every map is made in a project, a folder of
+  its own in the preference directory's `projects` (on Linux
+  `~/.local/share/potop/potop/projects/NAME/`): `project.ini` (its name,
+  seed, size, when it was made), `map.potop` (the map being made),
+  `baked.potop` (the last bake) and later `sketch/` (the 2D sketch the
+  terrain is made from). **New** makes one (a name, a seed; the size as
+  Settings, New map say); **Save** saves the project open (F5 too) or
+  **Bake (for play)**: into the project, and a copy into the saves as
+  `NAME.baked` for the game; or saves the map as a new project. **Open**
+  opens one (or deletes it with all in it), and lists the maps saved
+  before projects (or by the game): **Bring it in as a project**, or
+  **Just load it** outside any project. F9 opens the project open as last
+  saved. N (a new map at once) and a map just loaded leave the project.
 * **Maps**: save under a name, load or delete from the list. Maps are zip
   archives (`.potop`) in the `saves` folder of the preference directory
   (on Linux `~/.local/share/potop/potop/saves/`). A map keeps the ground

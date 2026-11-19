@@ -152,6 +152,7 @@
 #include "terrain_renderer.h"
 #include "material_map.h"
 #include "tools.h"
+#include "project.h"
 #include "ui.h"
 #include "water.h"
 #include "water_renderer.h"
@@ -290,7 +291,11 @@ typedef struct
 	uint64_t startup_counter;
 	uint64_t stage_counter;
 	const char *stage_name;
-	bool first_frame_logged;} testbed_t;
+	bool first_frame_logged;
+	// The map project open (project.h; "" none): saves go into it
+	char project_name[PROJECT_NAME_LENGTH];
+	ui_requests_t console_requests;    // the console's "project" asks (as the interface does), done with the interface's
+} testbed_t;
 
 // The player changed terrain or water: the world's water runs again
 static void touch_water(testbed_t *game)
@@ -2031,6 +2036,9 @@ static void handle_requests(testbed_t *game)
 	}
 	if (input->request_regenerate)
 	{
+		// (a new map at once: no longer the project's)
+		game->project_name[0] = '\0';
+		ui_set_map_name(&game->ui, "");
 		touch_water(game);
 		regenerate_terrain(game, pick_random_seed());
 	}
@@ -2568,6 +2576,7 @@ static bool new_map(testbed_t *game, uint32_t seed)
 	}
 	cloud_paint_reset(&game->potop->world.cloud_paint);
 	game->potop->world.map_name[0] = '\0';
+	game->project_name[0] = '\0';
 	game->potop->world.simulation_accumulator_seconds = 0.0;
 	return true;
 }
@@ -2660,9 +2669,10 @@ static bool load_map(testbed_t *game, const char *name)
 		}
 		return false;
 	}
-	// The tools' strokes end
+	// The tools' strokes end; no project's map now
 	game->tools.hover_valid = false;
 	game->tools.stamp_dragging = false;
+	game->project_name[0] = '\0';
 	name = potop_map_name(game->potop);
 	ui_set_map_name(&game->ui, name);
 	SDL_Log("Load: %.0f ms in all (and the frames after it: their uploads, see the next frame's time)", milliseconds_since(&mark));
@@ -2676,6 +2686,214 @@ static bool load_map(testbed_t *game, const char *name)
 	}
 	show_message(game, message);
 	return result == POTOP_LOAD_DONE;
+}
+
+// ---------------------------------------------------------------------------
+// Map projects (project.h)
+
+// Saves the map into the project name (made if new), its project.ini kept
+// up: the project open from now on
+static bool save_project(testbed_t *game, const char *name)
+{
+	char message[192];
+	char path[1024];
+	project_info_t info;
+	const terrain_t *terrain = &game->potop->world.terrain;
+	bool baked = terrain->baked;
+	uint64_t mark = SDL_GetPerformanceCounter();
+	bool saved;
+
+	if (!project_read_info(name, &info) || info.created_seconds == 0)
+	{
+		SDL_Time now = 0;
+
+		SDL_GetCurrentTime(&now);
+		info.created_seconds = (int64_t)(now / SDL_NS_PER_SECOND);
+	}
+	info.seed = terrain->seed;
+	info.size_cells = terrain->size;
+	info.cell_size_meters = terrain->cell_size_meters;
+	info.baked = baked;
+	saved = project_path(name, PROJECT_MAP_FILE, path, sizeof(path)) && potop_map_save_file(game->potop, path, name, baked)
+		&& project_write_info(&info);
+	SDL_Log("Project save: %.0f ms", milliseconds_since(&mark));
+	if (saved)
+	{
+		SDL_strlcpy(game->project_name, name, sizeof(game->project_name));
+		ui_set_map_name(&game->ui, name);
+		SDL_snprintf(message, sizeof(message), "Saved project \"%s\"", name);
+	}
+	else
+	{
+		SDL_snprintf(message, sizeof(message), "Could not save project \"%s\" (see the log)", name);
+	}
+	show_message(game, message);
+	return saved;
+}
+
+// Bakes the project open: baked.potop in it, and a copy in the saves as
+// NAME_baked for the game
+static bool bake_project(testbed_t *game)
+{
+	char message[192];
+	char path[1024];
+	char saved_path[1024];
+	char file_name[MAP_FILE_NAME_LENGTH + 16];
+	uint64_t mark = SDL_GetPerformanceCounter();
+	bool baked;
+	bool copied = false;
+
+	if (game->project_name[0] == '\0')
+	{
+		show_message(game, "No project open to bake");
+		return false;
+	}
+	baked = project_path(game->project_name, PROJECT_BAKE_FILE, path, sizeof(path))
+		&& potop_map_save_file(game->potop, path, game->project_name, true);
+	if (baked)
+	{
+		map_file_kind_name(game->project_name, true, file_name, sizeof(file_name));
+		copied = map_file_path(file_name, saved_path, sizeof(saved_path)) && SDL_CopyFile(path, saved_path);
+	}
+	SDL_Log("Project bake: %.0f ms", milliseconds_since(&mark));
+	if (!baked)
+	{
+		SDL_snprintf(message, sizeof(message), "Could not bake \"%s\" (see the log)", game->project_name);
+	}
+	else if (!copied)
+	{
+		SDL_snprintf(message, sizeof(message), "Baked \"%s\", but not copied into the saves: %s", game->project_name, SDL_GetError());
+	}
+	else
+	{
+		SDL_snprintf(message, sizeof(message), "Baked \"%s\": in the project, and for the game as \"%s\"", game->project_name, file_name);
+	}
+	show_message(game, message);
+	return baked && copied;
+}
+
+// Opens a project: its map; the project open from now on
+static bool open_project(testbed_t *game, const char *name)
+{
+	char message[192];
+	char path[1024];
+	uint64_t mark = SDL_GetPerformanceCounter();
+	potop_load_result_t result = POTOP_LOAD_FAILED;
+
+	if (project_path(name, PROJECT_MAP_FILE, path, sizeof(path)))
+	{
+		result = potop_map_load_file(game->potop, path, name);
+	}
+	if (result == POTOP_LOAD_FAILED)
+	{
+		SDL_snprintf(message, sizeof(message), "Could not open project \"%s\" (see the log)", name);
+		show_message(game, message);
+		if (game->potop->world.terrain.heights == NULL)
+		{
+			game->input.request_quit = true;
+		}
+		return false;
+	}
+	game->tools.hover_valid = false;
+	game->tools.stamp_dragging = false;
+	SDL_strlcpy(game->project_name, name, sizeof(game->project_name));
+	ui_set_map_name(&game->ui, name);
+	SDL_Log("Project open: %.0f ms", milliseconds_since(&mark));
+	SDL_snprintf(message, sizeof(message), result == POTOP_LOAD_DONE ? "Opened project \"%s\"" : "Project \"%s\": its map is damaged, parts are missing",
+		name);
+	show_message(game, message);
+	return result == POTOP_LOAD_DONE;
+}
+
+// The projects' asks (the interface's, or the console's)
+static void handle_project_requests(testbed_t *game, const ui_requests_t *requests)
+{
+	if (requests->project_new)
+	{
+		if (!new_map(game, requests->project_seed))
+		{
+			game->input.request_quit = true;
+		}
+		else
+		{
+			save_project(game, requests->project_name);
+		}
+	}
+	if (requests->project_open)
+	{
+		open_project(game, requests->project_name);
+	}
+	if (requests->project_save && game->project_name[0] != '\0')
+	{
+		save_project(game, game->project_name);
+	}
+	if (requests->project_save_as)
+	{
+		save_project(game, requests->project_name);
+	}
+	if (requests->project_bake)
+	{
+		bake_project(game);
+	}
+	if (requests->project_import && load_map(game, requests->import_map))
+	{
+		save_project(game, requests->project_name);
+	}
+}
+
+// The console's "project": as the projects' window
+static void project_command(void *user, const char *arguments)
+{
+	testbed_t *game = user;
+	ui_requests_t *requests = &game->console_requests;
+	char verb[16] = "";
+	char first[MAP_FILE_NAME_LENGTH] = "";
+	char second[PROJECT_NAME_LENGTH] = "";
+	project_info_t infos[PROJECT_LIST_MAX];
+	int count;
+
+	SDL_sscanf(arguments, "%15s %127s %63s", verb, first, second);
+	if (SDL_strcmp(verb, "list") == 0 || verb[0] == '\0')
+	{
+		count = project_list(infos, PROJECT_LIST_MAX);
+		SDL_Log("Projects: %d (open: \"%s\")", count, game->project_name);
+		for (int i = 0; i < count; i++)
+		{
+			SDL_Log("  %s: %d cells of %.2f m, seed %u, %s%s", infos[i].name, infos[i].size_cells, (double)infos[i].cell_size_meters, infos[i].seed,
+				infos[i].baked ? "baked" : "active", infos[i].has_bake ? ", baked for play" : "");
+		}
+	}
+	else if (SDL_strcmp(verb, "new") == 0 && first[0] != '\0')
+	{
+		requests->project_new = true;
+		requests->project_seed = (uint32_t)SDL_strtoul(second, NULL, 10);
+		SDL_strlcpy(requests->project_name, first, sizeof(requests->project_name));
+	}
+	else if (SDL_strcmp(verb, "open") == 0 && first[0] != '\0')
+	{
+		requests->project_open = true;
+		SDL_strlcpy(requests->project_name, first, sizeof(requests->project_name));
+	}
+	else if (SDL_strcmp(verb, "save") == 0)
+	{
+		requests->project_save = first[0] == '\0';
+		requests->project_save_as = first[0] != '\0';
+		SDL_strlcpy(requests->project_name, first, sizeof(requests->project_name));
+	}
+	else if (SDL_strcmp(verb, "bake") == 0)
+	{
+		requests->project_bake = true;
+	}
+	else if (SDL_strcmp(verb, "import") == 0 && first[0] != '\0' && second[0] != '\0')
+	{
+		requests->project_import = true;
+		SDL_strlcpy(requests->import_map, first, sizeof(requests->import_map));
+		SDL_strlcpy(requests->project_name, second, sizeof(requests->project_name));
+	}
+	else
+	{
+		SDL_Log("project list | new <name> [seed] | open <name> | save [as name] | bake | import <saved map> <name>");
+	}
 }
 
 // What the interface asked for this frame
@@ -2698,6 +2916,9 @@ static void handle_ui_requests(testbed_t *game)
 			game->input.request_quit = true;
 		}
 	}
+	handle_project_requests(game, requests);
+	handle_project_requests(game, &game->console_requests);
+	SDL_zero(game->console_requests);
 	if (requests->restore_settings)
 	{
 		game->potop->settings = game->file_settings;
@@ -2724,9 +2945,25 @@ static void handle_ui_requests(testbed_t *game)
 	}
 	if (game->input.request_quick_save)
 	{
-		save_map(game, "quicksave", game->potop->world.terrain.baked);
+		// (into the project open; with none, the quick save as before)
+		if (game->project_name[0] != '\0')
+		{
+			save_project(game, game->project_name);
+		}
+		else
+		{
+			save_map(game, "quicksave", game->potop->world.terrain.baked);
+		}
 	}
-	if (game->input.request_quick_load)
+	if (game->input.request_quick_load && game->project_name[0] != '\0')
+	{
+		char name[PROJECT_NAME_LENGTH];
+
+		// (the project as last saved)
+		SDL_strlcpy(name, game->project_name, sizeof(name));
+		open_project(game, name);
+	}
+	else if (game->input.request_quick_load)
 	{
 		// (the kind of map there is now first)
 		char file_name[MAP_FILE_NAME_LENGTH + 16];
@@ -2855,6 +3092,7 @@ static void update_interface(testbed_t *game, double frame_seconds)
 	view.object_types = &game->potop->world.objects.types;
 	view.layouts = &game->potop->world.layouts;
 	view.seed = game->potop->world.terrain.seed;
+	view.project_name = game->project_name;
 	view.map_baked = game->potop->world.terrain.baked;
 	view.paused = game->paused;
 	view.time_scale = time_scales[game->time_scale_index];
@@ -5631,6 +5869,8 @@ int main(int argument_count, char **arguments)
 	startup_stage(&game, "Starting", 0.0f);
 	// The console keeps the log from the start
 	console_create(&game.console);
+	console_add_command(&game.console, "project", "project list | new <name> [seed] | open <name> | save [name] | bake | import <map> <name>",
+		"Map projects (the Save, Open and New windows): their folders under projects/", project_command, &game);
 	SDL_SetAppMetadata("Potop", "0.3", "potop");
 	parse_command_line(&game.command_line, argument_count, arguments);
 	headless = game.command_line.water_test || game.command_line.dam_test || game.command_line.pour_test_seconds > 0.0f;
@@ -6141,7 +6381,10 @@ int main(int argument_count, char **arguments)
 			{
 				game.ui.maps_mode = window[0] == 's' ? UI_MAPS_SAVE : (window[0] == 'l' ? UI_MAPS_LOAD : UI_MAPS_NEW);
 				game.ui.map_entry_count = map_file_list(game.ui.map_entries, MAP_FILE_LIST_MAX);
-				SDL_strlcpy(game.ui.map_name_input, "my map", sizeof(game.ui.map_name_input));
+				game.ui.project_count = project_list(game.ui.projects, PROJECT_LIST_MAX);
+				game.ui.selected_map = -1;
+				game.ui.selected_project = -1;
+				SDL_strlcpy(game.ui.project_name_input, "my map", sizeof(game.ui.project_name_input));
 			}
 		}
 	}
