@@ -116,9 +116,9 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform grass_block
 {
 	vec4 planes[6];            // the view's frustum (inside: dot(plane.xyz, p) + plane.w >= 0)
 	vec4 eye;                  // xyz; w: how far the grass goes (meters)
-	vec4 grid;                 // this level's spacing (m), its level, its spots across (its rows: control.w), full_radius (m)
+	vec4 grid;                 // this level's spacing (m), its level, its spots across (its rows: control.w), full_radius (m: the dense disc, all of the fine grid kept)
 	vec4 grid_origin;          // x, z of its first spot's cell (meters); z: the finest spacing; w: blades the buffer holds
-	vec4 map;                  // cells per side, cell size (m), the soils' blend (cells), unused
+	vec4 map;                  // cells per side, cell size (m), the soils' blend (cells), the full radius (m: the blades widen past it)
 	vec4 slopes;               // grass from, grass to, cliff from, cliff to (terrain.frag's slope_ranges)
 	vec4 terrain;              // snow line (of the highest ground), its shift with the sun, the highest ground (m), 1 / the variation's tiling (m)
 	vec4 blade;                // a blade's height (m), its width (m), the sun's x, z (towards it)
@@ -128,7 +128,7 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform grass_block
 	vec4 hiz_size;             // level 0's width and height, the level count, 1 if it is there
 	vec4 look;                 // the blades' color: the grass material's first layer, its macro repeats per meter, the variation's strength, its hue's
 	vec4 tint;                 // rgb: multiplies the ground's grass color; w: the share of dry blades
-	vec4 coarse;               // x: from how far off (m) a blade is one triangle (0: never); y: how much wider then
+	vec4 coarse;               // x: from how far off (m) a blade is one triangle (0: never); y: how much wider then; w: the falloff (the share kept: (grid.w / distance)^w)
 	vec4 mask_window;          // the grass mask's (grass_mask.h): its first texel x, z, texels per meter, its side (0: none)
 	ivec4 hiz_levels[16];      // the pyramid's levels (hiz_level_table): where each starts in hiz_depths, its width, its height
 };
@@ -522,7 +522,8 @@ void main()
 	{
 		return;
 	}
-	// Thinned out with the square of the distance, past full_radius. Each
+	// Thinned out with the distance to the power coarse.w (2 or more),
+	// past full_radius. Each
 	// blade has its own threshold and is there while the share kept is
 	// above it: farther, the share drops and blades go one by one, each
 	// shrinking into the ground first, and the same ones come back nearer;
@@ -531,7 +532,7 @@ void main()
 	// the lower thresholds (4^-(m+1) .. 4^-m), so that the coarse grid a
 	// far ring looks at holds every blade that can be there (the share there
 	// is below 4^-(level-1)), and a ring's edge changes nothing
-	float kept = min((full_radius / max(horizontal, 0.01)) * (full_radius / max(horizontal, 0.01)), 1.0);
+	float kept = min(pow(full_radius / max(horizontal, 0.01), coarse.w), 1.0);
 	float threshold;
 	{
 		int zeros_x = spot.x == 0 ? 12 : findLSB(spot.x);
@@ -591,7 +592,7 @@ void main()
 	float height = blade.x * (0.6 + 0.8 * more.x) * (0.55 + 0.45 * amount) * clump * thinning;
 	float distance = length(vec3(world_xz.x, y, world_xz.y) - eye.xyz);
 	// Wider far away, so the thinned out blades still cover the ground
-	float widen = min(pow(max(horizontal / full_radius, 1.0), 1.2), 8.0);
+	float widen = min(pow(max(horizontal / map.w, 1.0), 1.2), 8.0);
 	float width = blade.y * (0.75 + 0.5 * more.y) * widen;
 
 	// They shrink into the ground over the last fifth of the distance

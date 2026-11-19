@@ -318,6 +318,8 @@ static const setting_field_t setting_fields[] =
 	FIELD("objects", "grass", SETTING_BOOL, objects.grass),
 	FIELD("objects", "grass_distance_meters", SETTING_FLOAT, objects.grass_distance_meters),
 	FIELD("objects", "grass_density", SETTING_FLOAT, objects.grass_density),
+	FIELD("objects", "grass_near_density", SETTING_FLOAT, objects.grass_near_density),
+	FIELD("objects", "grass_falloff", SETTING_FLOAT, objects.grass_falloff),
 	FIELD("objects", "grass_height_meters", SETTING_FLOAT, objects.grass_height_meters),
 	FIELD("objects", "grass_width_meters", SETTING_FLOAT, objects.grass_width_meters),
 	FIELD("objects", "grass_tint", SETTING_COLOR, objects.grass_tint),
@@ -577,6 +579,8 @@ void settings_set_defaults(settings_t *settings)
 	settings->objects.grass = true;
 	settings->objects.grass_distance_meters = 50.0f;
 	settings->objects.grass_density = 550.0f;
+	settings->objects.grass_near_density = 2.0f;
+	settings->objects.grass_falloff = 2.5f;
 	settings->objects.grass_height_meters = 0.3f;
 	settings->objects.grass_width_meters = 0.018f;
 	settings->objects.grass_tint[0] = 1.0f;
