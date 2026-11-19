@@ -1024,17 +1024,18 @@ static bool chunk_can_wait(const terrain_t *terrain, const camera_t *camera, con
 	float outside_x;
 	float outside_z;
 
-	if (!frustum_contains_box(frustum, box_minimum, box_maximum))
+	// (too far first: most of a big map's chunks, told with a few
+	// subtractions; the frustum's six planes only for the near ones)
+	if (lod_base > 0.0f)
 	{
-		return true;
+		outside_x = SDL_max(SDL_max(box_minimum.x - camera->eye_position.x, camera->eye_position.x - box_maximum.x), 0.0f);
+		outside_z = SDL_max(SDL_max(box_minimum.z - camera->eye_position.z, camera->eye_position.z - box_maximum.z), 0.0f);
+		if (outside_x * outside_x + outside_z * outside_z >= lod_base * lod_base)
+		{
+			return true;
+		}
 	}
-	if (lod_base <= 0.0f)
-	{
-		return false;
-	}
-	outside_x = SDL_max(SDL_max(box_minimum.x - camera->eye_position.x, camera->eye_position.x - box_maximum.x), 0.0f);
-	outside_z = SDL_max(SDL_max(box_minimum.z - camera->eye_position.z, camera->eye_position.z - box_maximum.z), 0.0f);
-	return outside_x * outside_x + outside_z * outside_z >= lod_base * lod_base;
+	return !frustum_contains_box(frustum, box_minimum, box_maximum);
 }
 
 // A baked map's whole terrain at once (just loaded): the heights and the
@@ -1450,6 +1451,58 @@ static float lod_eye_height(const terrain_t *terrain, const camera_t *camera)
 	return SDL_max(camera->eye_position.y - terrain_sample_height_meters(terrain, camera->eye_position.x, camera->eye_position.z), 0.0f);
 }
 
+#define VISIBLE_BLOCK_CHUNKS 8
+#define VISIBLE_ORDER_STEPS 256        // the visible chunks are put in order by distance this coarsely: a chunk's side a step
+
+// The visible chunks by their level of detail, each level's near to far,
+// by counting them per step of distance (a chunk's side: as near to front
+// to back as the depth test needs) instead of sorting a thousand of them
+// every frame; a plain sort if there is no memory for it
+static void order_visible_chunks(terrain_renderer_t *renderer, float chunk_extent)
+{
+	static struct visible_chunk_s *ordered = NULL;
+	static int ordered_capacity = 0;
+	static uint32_t counts[TERRAIN_LOD_LEVEL_COUNT * VISIBLE_ORDER_STEPS + 1];
+	int count = renderer->visible_chunk_count;
+
+	if (ordered_capacity < count)
+	{
+		struct visible_chunk_s *grown = SDL_realloc(ordered, sizeof(renderer->visible_chunks[0]) * (size_t)count);
+
+		if (grown == NULL)
+		{
+			SDL_qsort(renderer->visible_chunks, (size_t)count, sizeof(renderer->visible_chunks[0]), compare_visible_chunks);
+			return;
+		}
+		ordered = grown;
+		ordered_capacity = count;
+	}
+	SDL_memset(counts, 0, sizeof(counts));
+	for (int pass = 0; pass < 2; pass++)
+	{
+		for (int k = 0; k < count; k++)
+		{
+			const struct visible_chunk_s *entry = &renderer->visible_chunks[k];
+			int step = SDL_clamp((int)(SDL_sqrtf(entry->distance_squared) / chunk_extent), 0, VISIBLE_ORDER_STEPS - 1);
+			int key = SDL_clamp(entry->lod_level, 0, TERRAIN_LOD_LEVEL_COUNT - 1) * VISIBLE_ORDER_STEPS + step;
+
+			if (pass == 0)
+			{
+				counts[key + 1]++;
+			}
+			else
+			{
+				ordered[counts[key]++] = *entry;
+			}
+		}
+		for (int key = 0; pass == 0 && key < TERRAIN_LOD_LEVEL_COUNT * VISIBLE_ORDER_STEPS; key++)
+		{
+			counts[key + 1] += counts[key];
+		}
+	}
+	SDL_memcpy(renderer->visible_chunks, ordered, sizeof(renderer->visible_chunks[0]) * (size_t)count);
+}
+
 static void collect_visible_chunks(terrain_renderer_t *renderer, const terrain_t *terrain, const camera_t *camera,
 	const render_settings_t *settings)
 {
@@ -1459,9 +1512,36 @@ static void collect_visible_chunks(terrain_renderer_t *renderer, const terrain_t
 	float eye_height = lod_eye_height(terrain, camera);
 
 	renderer->visible_chunk_count = 0;
-	for (int chunk_y = 0; chunk_y < terrain->chunks_per_side; chunk_y++)
+	// By blocks of VISIBLE_BLOCK_CHUNKS chunks a side first: one out of
+	// view is thrown out whole, its chunks not tried one by one (on a big
+	// map most of them)
+	for (int block_y = 0; block_y < terrain->chunks_per_side; block_y += VISIBLE_BLOCK_CHUNKS)
 	{
-		for (int chunk_x = 0; chunk_x < terrain->chunks_per_side; chunk_x++)
+	for (int block_x = 0; block_x < terrain->chunks_per_side; block_x += VISIBLE_BLOCK_CHUNKS)
+	{
+	int block_last_x = SDL_min(block_x + VISIBLE_BLOCK_CHUNKS, terrain->chunks_per_side) - 1;
+	int block_last_y = SDL_min(block_y + VISIBLE_BLOCK_CHUNKS, terrain->chunks_per_side) - 1;
+	float block_lowest = 1e30f;
+	float block_highest = -1e30f;
+
+	for (int chunk_y = block_y; chunk_y <= block_last_y; chunk_y++)
+	{
+		for (int chunk_x = block_x; chunk_x <= block_last_x; chunk_x++)
+		{
+			const terrain_chunk_t *chunk = &terrain->chunks[chunk_y * terrain->chunks_per_side + chunk_x];
+
+			block_lowest = SDL_min(block_lowest, chunk->minimum_height_meters);
+			block_highest = SDL_max(block_highest, chunk->maximum_height_meters);
+		}
+	}
+	if (!frustum_contains_box(&frustum, vec3_make((float)block_x * chunk_extent, block_lowest, (float)block_y * chunk_extent),
+		vec3_make((float)(block_last_x + 1) * chunk_extent, block_highest, (float)(block_last_y + 1) * chunk_extent)))
+	{
+		continue;
+	}
+	for (int chunk_y = block_y; chunk_y <= block_last_y; chunk_y++)
+	{
+		for (int chunk_x = block_x; chunk_x <= block_last_x; chunk_x++)
 		{
 			const terrain_chunk_t *chunk = &terrain->chunks[chunk_y * terrain->chunks_per_side + chunk_x];
 			vec3_t box_minimum = vec3_make((float)chunk_x * chunk_extent, chunk->minimum_height_meters, (float)chunk_y * chunk_extent);
@@ -1498,10 +1578,12 @@ static void collect_visible_chunks(terrain_renderer_t *renderer, const terrain_t
 			entry->lod_level = level;
 		}
 	}
+	}
+	}
 	// Front to back: near chunks fill the depth buffer first, so pixels of
 	// far chunks hidden behind hills are rejected before shading (the near
 	// levels first, each near to far)
-	SDL_qsort(renderer->visible_chunks, (size_t)renderer->visible_chunk_count, sizeof(renderer->visible_chunks[0]), compare_visible_chunks);
+	order_visible_chunks(renderer, chunk_extent);
 	frame_profile_count(FRAME_TERRAIN_CHUNKS_DRAWN, renderer->visible_chunk_count);
 }
 
