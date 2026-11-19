@@ -4568,7 +4568,8 @@ static bool mesh_level_of(const navigation_t *navigation, int c, int32_t id, int
 
 // The fringe of a class over a quarter meter (navigation_fringe_t), of a
 // built tile: the surfaces there a body's middle cannot be on
-// (stand_only: those one stands on); how many (their rect -1)
+// (stand_only: those one stands on, a foot's rest on the ground too);
+// how many (their rect -1)
 static int mesh_fringe_at(const navigation_t *navigation, int c, int32_t quarter_x, int32_t quarter_z, bool stand_only,
 	mesh_level_t levels_out[MESH_LEVELS])
 {
@@ -4596,7 +4597,8 @@ static int mesh_fringe_at(const navigation_t *navigation, int c, int32_t quarter
 	{
 		const navigation_fringe_t *run = &tile->fringe[k];
 
-		if (local_x >= (int32_t)run->x && local_x < (int32_t)run->x + (int32_t)run->count && (!stand_only || run->stand != 0))
+		if (local_x >= (int32_t)run->x && local_x < (int32_t)run->x + (int32_t)run->count
+			&& (stand_only ? run->stand != NAVIGATION_FRINGE_SURFACE : run->stand != NAVIGATION_FRINGE_POINT))
 		{
 			levels_out[count].rect = -1;
 			levels_out[count].height = run->height;
@@ -5343,9 +5345,10 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 				uint8_t flags = build.flags[level][at];
 				uint8_t ground = (flags & MESH_LEVEL_GROUND) != 0 ? 1 : 0;
 
-				uint8_t stand = (flags & MESH_LEVEL_STAND) != 0 ? 1 : 0;
+				uint8_t stand = (flags & MESH_LEVEL_STAND) != 0 ? NAVIGATION_FRINGE_STAND
+					: (flags & MESH_LEVEL_POINT) != 0 ? NAVIGATION_FRINGE_POINT : NAVIGATION_FRINGE_SURFACE;
 
-				if ((flags & MESH_LEVEL_SURFACE) == 0 || (build.fit[at] >> level & 1) != 0)
+				if ((flags & (MESH_LEVEL_SURFACE | MESH_LEVEL_POINT)) == 0 || (build.fit[at] >> level & 1) != 0)
 				{
 					run = NULL;
 					continue;
@@ -6400,6 +6403,33 @@ static bool stands_on_level(const navigation_t *navigation, const terrain_t *ter
 	float height;
 	bool ground;
 
+	// (by the rectangles: what is there is its class's rectangle or its
+	// tile's fringe, as the quarter meters had it when the tile was built;
+	// the ground's first, as quarter_stand_on looks)
+	if (navigation->follow_mesh)
+	{
+		int c = mesh_class_of(agent);
+		mesh_level_t levels[2 * MESH_LEVELS];
+		int32_t quarter_x;
+		int32_t quarter_z;
+		int count;
+
+		mesh_quarter_at(c, x, z, &quarter_x, &quarter_z);
+		count = mesh_levels_at(navigation, c, quarter_x, quarter_z, levels);
+		count += mesh_fringe_at(navigation, c, quarter_x, quarter_z, true, levels + count);
+		for (int pass = 0; pass < 2; pass++)
+		{
+			for (int k = 0; k < count; k++)
+			{
+				if (levels[k].ground == (pass == 0)
+					&& SDL_fabsf(levels[k].height - level) <= (levels[k].ground ? agent_reach(agent) : agent->step_meters + 0.05f))
+				{
+					return SDL_fabsf(levels[k].height - level) <= (levels[k].ground && level_ground ? agent_reach(agent) : MESH_JUMP_LEVEL_METERS);
+				}
+			}
+		}
+		return false;
+	}
 	return quarter_of_point(navigation, x, z, &cell, &sub_x, &sub_z)
 		&& quarter_stand_on(navigation, terrain, water, agent, cell, sub_x, sub_z, level, &height, &ground)
 		&& SDL_fabsf(height - level) <= (ground && level_ground ? agent_reach(agent) : MESH_JUMP_LEVEL_METERS);
@@ -6411,8 +6441,19 @@ static bool jump_spot(const navigation_t *navigation, const terrain_t *terrain, 
 	const float spot[2], float level, bool level_ground)
 {
 	float height;
-	int tight = quarter_tightness(navigation, terrain, water, agent, spot[0], spot[1], level, &height);
+	int tight;
 
+	// (by the rectangles: on one of its class at that level, or a hair
+	// off its edge)
+	if (navigation->follow_mesh)
+	{
+		bool ground;
+
+		return mesh_follow_level(navigation, terrain, water, agent, spot[0], spot[1], level, MESH_FOLLOW_SLACK_METERS, &height, &ground)
+			&& SDL_fabsf(height - level) <= (ground && level_ground ? agent_reach(agent) : MESH_JUMP_LEVEL_METERS)
+			&& stands_on_level(navigation, terrain, water, agent, spot[0], spot[1], level, level_ground);
+	}
+	tight = quarter_tightness(navigation, terrain, water, agent, spot[0], spot[1], level, &height);
 	return tight >= 0 && tight <= MESH_VERIFY_BRUSHES && stands_on_level(navigation, terrain, water, agent, spot[0], spot[1], level, level_ground);
 }
 

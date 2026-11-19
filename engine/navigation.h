@@ -333,12 +333,16 @@ typedef struct
 // by a wall, on a terrace's edge, at its foot (one stands there), under
 // a table (not even that). Not walked on; what a goal there is level
 // with and what an edge to jump is made of are asked of these
+#define NAVIGATION_FRINGE_SURFACE 0   // a surface with no room for the class over it (a floor under a table)
+#define NAVIGATION_FRINGE_STAND 1     // one stands there
+#define NAVIGATION_FRINGE_POINT 2     // the ground where its cell's room is taken but nothing is in the way there: a foot rests on it
+
 typedef struct
 {
 	uint8_t x;                         // its first quarter meter within its tile's row
 	uint8_t count;                     // quarter meters
 	uint8_t ground;                    // the ground's (else an object's top)
-	uint8_t stand;                     // with the class's room over it (else only a surface: a floor under a table)
+	uint8_t stand;                     // NAVIGATION_FRINGE_*
 	float height;
 } navigation_fringe_t;
 
