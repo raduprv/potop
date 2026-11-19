@@ -20,6 +20,14 @@ typedef struct system_sample_t
 	int cpu_threads;               // the processor's logical cores
 	bool cpu_temperature_known;
 	float cpu_celsius;
+	// The clock of the core the game's main thread last ran on, now, and
+	// the highest that core goes (a core that sleeps part of the time is
+	// kept slow: the game waiting for the graphics card shows here), and
+	// the fastest any core runs now
+	bool cpu_frequency_known;
+	float cpu_main_megahertz;
+	float cpu_main_most_megahertz; // 0: not known
+	float cpu_fastest_megahertz;
 	bool gpu_load_known;
 	float gpu_load_percent;
 	bool gpu_memory_known;

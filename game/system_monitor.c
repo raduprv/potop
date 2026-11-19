@@ -313,6 +313,80 @@ static void sample_amd(const monitor_paths_t *paths, system_sample_t *sample)
 }
 
 // This process's processor time so far (seconds; false: unreadable). In
+// The core the process's first thread (the game's main one) last ran on:
+// /proc/self/stat's 39th field; -1: not known
+static int main_thread_core(void)
+{
+	char text[1024];
+	FILE *file = fopen("/proc/self/stat", "r");
+	size_t length;
+	char *at;
+	int field = 2;
+
+	if (file == NULL)
+	{
+		return -1;
+	}
+	length = fread(text, 1, sizeof(text) - 1, file);
+	fclose(file);
+	text[length] = '\0';
+	at = strrchr(text, ')');
+	if (at == NULL)
+	{
+		return -1;
+	}
+	at++;
+	// (each field after the name follows a space)
+	while (*at != '\0')
+	{
+		while (*at == ' ')
+		{
+			at++;
+		}
+		field++;
+		if (field == 39)
+		{
+			return SDL_atoi(at);
+		}
+		while (*at != '\0' && *at != ' ')
+		{
+			at++;
+		}
+	}
+	return -1;
+}
+
+// The cores' clocks (the cpufreq files, kHz): the main thread's core's
+// now and at its most, the fastest of all now
+static void sample_cpu_frequency(system_sample_t *sample, int cores)
+{
+	char path[128];
+	double value;
+	int core = main_thread_core();
+	double fastest = 0.0;
+
+	for (int k = 0; k < cores && k < 512; k++)
+	{
+		SDL_snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_cur_freq", k);
+		if (!read_number(path, &value))
+		{
+			continue;
+		}
+		fastest = SDL_max(fastest, value);
+		if (k == core)
+		{
+			sample->cpu_main_megahertz = (float)(value / 1000.0);
+			sample->cpu_frequency_known = true;
+		}
+	}
+	sample->cpu_fastest_megahertz = (float)(fastest / 1000.0);
+	if (sample->cpu_frequency_known)
+	{
+		SDL_snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", core);
+		sample->cpu_main_most_megahertz = read_number(path, &value) ? (float)(value / 1000.0) : 0.0f;
+	}
+}
+
 // /proc/self/stat after the name (in parentheses, may hold spaces): the
 // user and system times are the 12th and 13th fields
 static bool process_cpu_seconds(double *seconds)
@@ -439,6 +513,7 @@ static int monitor_thread(void *data)
 				sample.cpu_temperature_known = true;
 				sample.cpu_celsius = (float)(value / 1000.0);
 			}
+			sample_cpu_frequency(&sample, sample.cpu_threads);
 			if (nvml.library != NULL)
 			{
 				sample_nvml(&nvml, &sample);

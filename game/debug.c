@@ -49,6 +49,23 @@ static void machine_lines(potop_t *potop)
 	{
 		potop_debug_line(potop, line);
 	}
+	// (the main thread's core's clock: low while the game waits for the
+	// graphics card most of a frame, the processor then far from its limit)
+	if (sample.cpu_frequency_known)
+	{
+		if (sample.cpu_main_most_megahertz > 0.0f)
+		{
+			SDL_snprintf(line, sizeof(line), "  main thread's core at %.2f GHz of %.2f; the fastest core at %.2f",
+				(double)sample.cpu_main_megahertz / 1000.0, (double)sample.cpu_main_most_megahertz / 1000.0,
+				(double)sample.cpu_fastest_megahertz / 1000.0);
+		}
+		else
+		{
+			SDL_snprintf(line, sizeof(line), "  main thread's core at %.2f GHz; the fastest core at %.2f",
+				(double)sample.cpu_main_megahertz / 1000.0, (double)sample.cpu_fastest_megahertz / 1000.0);
+		}
+		potop_debug_line(potop, line);
+	}
 	first = true;
 	SDL_strlcpy(line, "GPU:", sizeof(line));
 	if (sample.gpu_load_known)

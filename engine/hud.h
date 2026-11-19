@@ -40,7 +40,7 @@
 
 #define HUD_NAMEPLATES_MAX 16
 #define HUD_NOTICES_MAX 6
-#define HUD_DEBUG_LINES 16
+#define HUD_DEBUG_LINES 24
 #define HUD_DEBUG_LINE_LENGTH 96
 
 // A name over an actor's head, where the screen shows it
