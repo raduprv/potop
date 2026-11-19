@@ -265,8 +265,21 @@ void console_run_command(console_t *console, potop_t *potop, const char *line, c
 	{
 		// (the walkers' ways into the log, as the tests have them: each
 		// search, its waypoints, where one is stuck and why)
-		potop->world.actors.log_paths = !potop->world.actors.log_paths;
-		SDL_Log("The walkers' ways are %s", potop->world.actors.log_paths ? "logged" : "not logged");
+		// (with a number: only of those within so many meters of the eye)
+		float meters = 0.0f;
+
+		if (has_second && read_number(second, &meters) && meters > 0.0f)
+		{
+			potop->world.actors.log_paths = true;
+			potop->world.actors.log_paths_meters = meters;
+			SDL_Log("The ways of the walkers within %.0f m of you are logged", (double)meters);
+		}
+		else
+		{
+			potop->world.actors.log_paths = !potop->world.actors.log_paths;
+			potop->world.actors.log_paths_meters = 0.0f;
+			SDL_Log("The walkers' ways are %s", potop->world.actors.log_paths ? "logged" : "not logged");
+		}
 	}
 	else if (SDL_strcmp(command, "navmesh") == 0)
 	{

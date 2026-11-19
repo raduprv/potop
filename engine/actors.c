@@ -1728,6 +1728,22 @@ void actors_clear(actors_t *actors)
 // ---------------------------------------------------------------------------
 // Moving about
 
+// Whether an actor's ways go into the log (actors_t.log_paths; with
+// log_paths_meters, only of those that near where the eye last was)
+static bool path_logged(const actors_t *actors, const actor_t *actor)
+{
+	float dx;
+	float dz;
+
+	if (!actors->log_paths || actor == NULL || actors->log_paths_meters <= 0.0f || !actors->pose_eye_known)
+	{
+		return actors->log_paths;
+	}
+	dx = actor->x - actors->pose_eye.x;
+	dz = actor->z - actors->pose_eye.z;
+	return dx * dx + dz * dz <= actors->log_paths_meters * actors->log_paths_meters;
+}
+
 #define ARRIVE_METERS 0.3f            // at the goal
 #define EXACT_ARRIVE_METERS 0.04f     // at the goal of an exact walk
 #define EXACT_SHUFFLE_METERS 0.16f    // this near it, shuffled onto it
@@ -1891,7 +1907,7 @@ static void log_point(const actors_t *actors, const actor_t *actor, navigation_t
 	char text[512];
 	bool standable;
 
-	if (!actors->log_paths || actors->objects == NULL)
+	if (!path_logged(actors, actor) || actors->objects == NULL)
 	{
 		return;
 	}
@@ -1933,7 +1949,7 @@ static void path_failed(actors_t *actors, actor_t *actor, const water_t *water)
 	stop_moving(actor);
 	if (water_depth_at(water, actor->x, actor->z) > 0.05f)
 	{
-		if (!actor->waiting && actors->log_paths)
+		if (!actor->waiting && path_logged(actors, actor))
 		{
 			SDL_Log("Actor %u (%s): no way out of the water now; tries again every second", actor->id,
 				actors->types[actor->type].name);
@@ -1978,7 +1994,7 @@ static bool plan_path_logged(const actors_t *actors, actor_t *actor, const actor
 			result == NAVIGATION_PATH_FOUND ? "found" : result == NAVIGATION_PATH_PARTIAL ? "partial" : "none", SDL_sqrtf(dx * dx + dz * dz));
 	}
 
-	if (actors->log_paths && !(quiet && result == NAVIGATION_PATH_NONE))
+	if (path_logged(actors, actor) && !(quiet && result == NAVIGATION_PATH_NONE))
 	{
 		SDL_Log("Actor %u (%s), %s: from (%.1f, %.1f, height %.2f) to (%.1f, %.1f): %s, %d waypoints%s, %d surfaces searched in %.2f ms",
 			actor->id, type->name, why, (double)actor->x, (double)actor->z, (double)actor->y, (double)actor->goal_x, (double)actor->goal_z,
@@ -2444,7 +2460,7 @@ static bool look_ahead(actors_t *actors, actor_t *actor, navigation_t *navigatio
 		{
 			return true;
 		}
-		if (actors->log_paths)
+		if (path_logged(actors, actor))
 		{
 			SDL_Log("Actor %u (%s): the path ahead is blocked", actor->id, type->name);
 			log_point(actors, actor, navigation, terrain, water, "blocked at", blocked_x, blocked_z, blocked_height);
@@ -3051,7 +3067,7 @@ static void begin_gait(actors_t *actors, actor_t *actor, int gait, float meters,
 	actor->gait_turn_after = turn_after;
 	actor->speed = 0.0f;
 	start_action_now(actors, actor, type->gait_actions[gait], 0.0f);
-	if (actors->log_paths)
+	if (path_logged(actors, actor))
 	{
 		SDL_Log("Actor %u (%s): %s, %.2f m%s", actor->id, type->name, model_of(actors, actor)->actions[type->gait_actions[gait]].name, (double)meters,
 			actor->stride_scale != 1.0f ? " (its stride stretched)" : "");
@@ -3335,7 +3351,7 @@ static void plan_fine(actors_t *actors, actor_t *actor, const navigation_t *navi
 	// found one, up a stair's treads too high for it, under a beam too
 	// low; none again a little later: it gives up, move_actor)
 	actor->fine_failures = actor->fine_count > 0 ? 0 : actor->fine_failures + 1;
-	if (actors->log_paths)
+	if (path_logged(actors, actor))
 	{
 		SDL_Log("Actor %u (%s): %s at (%.2f, %.2f), a fine way to (%.2f, %.2f): %d points", actor->id, actors->types[actor->type].name, why,
 			(double)actor->x, (double)actor->z, (double)to_x, (double)to_z, actor->fine_count);
@@ -3578,7 +3594,7 @@ static void jump_move(actors_t *actors, actor_t *actor, navigation_t *navigation
 			{
 				start_action(actors, actor, type->jump_actions[1]);
 			}
-			if (actors->log_paths)
+			if (path_logged(actors, actor))
 			{
 				SDL_Log("Actor %u (%s): jumps from (%.2f, %.2f, height %.2f) to (%.2f, %.2f, height %.2f), %.2f s in the air", actor->id, type->name,
 					(double)actor->x, (double)actor->z, (double)actor->y, (double)actor->jump_to[0], (double)actor->jump_to[2], (double)actor->jump_to[1],
@@ -3731,7 +3747,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 		}
 		else if (water_depth_at(water, actor->x, actor->z) <= 0.05f)
 		{
-			if (actors->log_paths)
+			if (path_logged(actors, actor))
 			{
 				SDL_Log("Actor %u (%s): out of the water and still no way: gives up", actor->id, type->name);
 			}
@@ -3933,7 +3949,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 			&& !straight_actor_ahead(actors, actor, -SDL_sinf(actor->yaw_radians) * 0.3f, -SDL_cosf(actor->yaw_radians) * 0.3f))
 		{
 			actor->backing_meters = BACK_MOST_METERS;
-			if (actors->log_paths)
+			if (path_logged(actors, actor))
 			{
 				SDL_Log("Actor %u (%s): backing out at (%.2f, %.2f), its way %.0f degrees round", actor->id, type->name, (double)actor->x, (double)actor->z,
 					(double)(SDL_fabsf(wrap_angle(heading - actor->yaw_radians)) * 57.29578f));
@@ -3970,7 +3986,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 				actor->crowd_seconds = all_bodies ? CROWD_WAIT_SECONDS + 1.0f : actor->crowd_seconds + seconds;
 				if (near_end || actor->crowd_seconds > CROWD_WAIT_SECONDS)
 				{
-					if (actors->log_paths)
+					if (path_logged(actors, actor))
 					{
 						SDL_Log("Actor %u (%s): its straight walk stopped at (%.2f, %.2f): %s all round, %.1f m from its end", actor->id, type->name,
 							(double)actor->x, (double)actor->z, all_bodies ? "bodies" : "others", (double)SDL_sqrtf(dx * dx + dz * dz));
@@ -4416,7 +4432,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 		// not pushed at for a quarter of a minute, given up now)
 		else if (actor->fine_failures >= FINE_FAILURES_MOST && !actor->straight)
 		{
-			if (actors->log_paths)
+			if (path_logged(actors, actor))
 			{
 				SDL_Log("Actor %u (%s): no way for its body on from (%.2f, %.2f, height %.2f) to waypoint %d of %d (%.2f, %.2f): given up", actor->id,
 					type->name, (double)actor->x, (double)actor->z, (double)actor->y, actor->path_index, actor->path_count,
@@ -4430,7 +4446,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 		else if ((actor->stuck_seconds += seconds * (turning_about ? 0.25f : 1.0f)) > STUCK_SECONDS)
 		{
 			actor->stuck_seconds = 0.0f;
-			if (actors->log_paths)
+			if (path_logged(actors, actor))
 			{
 				float ahead_x = actor->x + SDL_sinf(actor->yaw_radians) * 0.8f;
 				float ahead_z = actor->z + SDL_cosf(actor->yaw_radians) * 0.8f;
@@ -4567,7 +4583,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 	}
 	// (a test's log: a big one's body caught in something, each time it
 	// gets so)
-	if (actors->log_paths && actor->straight && big_body(actors, actor))
+	if (path_logged(actors, actor) && actor->straight && big_body(actors, actor))
 	{
 		bool fits = body_fits(actors, actor, actor->x, actor->z, actor->yaw_radians);
 
@@ -4774,7 +4790,7 @@ static void begin_arrival(actors_t *actors, actor_t *actor, const navigation_t *
 		actor->moving = false;
 		actor->circle_floor_height = lowest_circle;
 	}
-	if (actors->log_paths)
+	if (path_logged(actors, actor))
 	{
 		SDL_Log("Actor %u (%s) at its goal (%.1f, %.1f): %s", actor->id, type->name, (double)actor->goal_x, (double)actor->goal_z,
 			actor->flight == ACTOR_FLIGHT_LANDING ? "no room to circle, landing" : "circling");
@@ -4808,7 +4824,7 @@ static bool plan_flight(actors_t *actors, actor_t *actor, navigation_t *navigati
 	actor->ceiling_height = SDL_max(SDL_max(start_ground, goal_ground) + type->fly_ceiling_meters, actor->y + 1.0f);
 	result = navigation_find_flight_path(navigation, terrain, actor->x, actor->z, actor->goal_x, actor->goal_z, actor->ceiling_height,
 		actor->path, &actor->path_count, &actor->path_complete);
-	if (actors->log_paths)
+	if (path_logged(actors, actor))
 	{
 		SDL_Log("Actor %u (%s), %s: flying from (%.1f, %.1f, height %.1f) to (%.1f, %.1f) under %.1f m: %s, %d waypoints%s, %d blocks searched in %.2f ms",
 			actor->id, type->name, why, (double)actor->x, (double)actor->z, (double)actor->y, (double)actor->goal_x, (double)actor->goal_z,
@@ -4900,7 +4916,7 @@ static void move_flyer(actors_t *actors, actor_t *actor, navigation_t *navigatio
 		{
 			// The water came: up, and round over where it stood (or down
 			// again on the nearest dry spot)
-			if (actors->log_paths)
+			if (path_logged(actors, actor))
 			{
 				SDL_Log("Actor %u (%s): water under it, taking off", actor->id, type->name);
 			}
@@ -5036,7 +5052,7 @@ static void move_flyer(actors_t *actors, actor_t *actor, navigation_t *navigatio
 				actor->bank_radians = 0.0f;
 				place_on_ground(actors, actor, terrain, water, navigation, seconds);
 				choose_flight_animation(actors, actor);
-				if (actors->log_paths)
+				if (path_logged(actors, actor))
 				{
 					SDL_Log("Actor %u (%s): landed at (%.1f, %.1f)", actor->id, type->name, (double)actor->x, (double)actor->z);
 				}

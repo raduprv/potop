@@ -485,6 +485,7 @@ typedef struct
 	// Path finding tells the log what it does, per actor (debugging);
 	// object type names come from here when set
 	bool log_paths;
+	float log_paths_meters;            // over 0: only of the actors this near the eye
 	const objects_t *objects;
 	// The objects as bodies (set by the world): what stops a creature
 	// walking straight (actors_walk_straight), its shapes as they are, not
