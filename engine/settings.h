@@ -517,6 +517,12 @@ typedef struct
 	// quarter meters they were made from. Off: as before, by those, with
 	// fine ways over them round what is in its way
 	bool navigation_follow_mesh;
+	// A region's cells' surfaces (what its objects' tops are, quarter meter
+	// by quarter meter: what the rectangles are built from) are let go
+	// once its rectangles are built, and built again when they are to be
+	// (a wall there new or gone; not for small things). With
+	// navigation_follow_mesh only. Off: kept, as before
+	bool navigation_shed_cells;
 	// Ways are led round small things only this near the player; further
 	// off they go straight through them (no one sees it)
 	float navigation_detail_meters;

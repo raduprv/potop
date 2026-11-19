@@ -236,6 +236,14 @@ under a blocker) are rectangles of their own, and a search asks each
 whom it stops now. Only a door or a blocker that is new, gone or moved
 has the tiles there built again.
 
+A small thing that comes, goes or moves (a trunk felled, a stone rolled
+off) builds nothing again either, unless it stood by a wall or in a row
+of them: a way is led round small things, they are not in the
+rectangles. What the rectangles are built from (the objects' tops,
+quarter meter by quarter meter) is let go once they are built
+(`navigation_shed_cells`, [simulation], on) and built again only where
+a wall is new or gone; the console's `navmesh` says how much is kept.
+
 Soft things are no surface
 and take no room: each cell keeps the height of the highest one in it,
 and each actor decides by its size. Lower than its step, it walks over

@@ -350,19 +350,29 @@ are joined at all), a coarse graph for ways of kilometers.
     a cell only small things stand in as open ground. small.py's take
     (the game's `--take X,Z@SECONDS`): a trunk alone 0 tiles, one of
     the row 1.
-  - Left of step 5: the water (a tile is still built again when its
-    water changes: wet cells are their own rectangles; dry maps never
-    do); letting a region's surfaces go once its tiles are built (see
-    below); `navigation_standable` (where a thing is put down), the
-    stuck report, F4's cell overlay and the flyers' `object_top` still
-    read the cells; the follower over the quarter meters
-    (follow_mesh off: fine ways, body points) is still in the code.
-  - Letting the surfaces go needs deciding: a tile's build reads its
-    region's cells and a cell's margin of the eight round it. Gone, a
-    felled tree builds its region whole (not the cells round the tree)
-    and, for the margins, the eight round it too, unless the margins
-    are read from the neighbors' tiles (rectangles + fringe hold what
-    a body's point needs: where it rests, how high, the ground or not).
+  - The cells' surfaces let go (`[simulation] navigation_shed_cells`,
+    on; with follow_mesh): a region built, the eight round it built
+    too, its tiles of every class in use current and none with water:
+    `shed_region` frees its surfaces (what a cell holds for the whole
+    map stays: its ground, the room over it, small_only, the flyers'
+    tops; and the capsules). Looked at after a tile's build, at the end
+    of a bake, and one region a frame (`navigation_set_detail`).
+    Grown back whole, as it was (`ensure_region_cells`, its generation
+    kept), when a tile of it is to be built (a wall new or gone, the
+    class's measure changed), for `navigation_standable` and the cell
+    report. Small things on a let-go region: the cells round them
+    alone, let go again after. A tile's build reads the margin of a
+    let-go region from that region's own tile of the class (its
+    rectangles and fringe: where a body's point rests, how high, the
+    ground or not); only with no current tile there is the region
+    grown back. The console's `navmesh` says how many regions are let
+    go and what the surfaces take.
+  - Left of step 5: the water (a tile with water is built again when
+    the water changes, and its region keeps its cells); F4's cell
+    overlay shows a let-go region as open ground; the flyers read
+    `object_top`; the follower over the quarter meters (follow_mesh
+    off: fine ways, body points) is still in the code, to be taken
+    out.
 
 ## Known and left
 

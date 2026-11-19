@@ -2174,6 +2174,56 @@ static void build_box(navigation_t *navigation, const terrain_t *terrain, const 
 	SDL_free(soft_cells.items);
 }
 
+// A region's cells' surfaces let go (navigation_region_t.shed): what its
+// cells hold for the whole map stays, and its capsules
+static void shed_region(navigation_t *navigation, int32_t region_index)
+{
+	navigation_region_t *region = &navigation->regions[region_index];
+	int32_t box[4];
+
+	if (region->shed)
+	{
+		return;
+	}
+	region_box(navigation, region_index, box);
+	for (int32_t cell_z = box[1]; cell_z <= box[3]; cell_z++)
+	{
+		SDL_memset(&navigation->extra_count[cell_z * navigation->size + box[0]], 0, (size_t)(box[2] - box[0] + 1));
+		SDL_memset(&navigation->extra_first[cell_z * navigation->size + box[0]], 0, (size_t)(box[2] - box[0] + 1) * sizeof(uint16_t));
+	}
+	SDL_free(region->surfaces);
+	region->surfaces = NULL;
+	region->surface_count = 0;
+	region->surface_capacity = 0;
+	region->shed = true;
+	navigation->shed_regions++;
+}
+
+static void build_regions(navigation_t *navigation, const terrain_t *terrain, const objects_t *objects, const int32_t *region_list,
+	int32_t list_count);
+
+// A region's cells there again, if they were let go: built whole, as
+// they were (a tile of it is to be built, or something asks the cells)
+static void ensure_region_cells(navigation_t *navigation, int32_t region_index)
+{
+	navigation_region_t *region = &navigation->regions[region_index];
+
+	if (!region->shed || navigation->terrain == NULL)
+	{
+		return;
+	}
+	region->shed = false;
+	navigation->shed_regions--;
+	if (region->stale)
+	{
+		// (to be built again anyway, for what changed)
+		return;
+	}
+	region->regrow = true;
+	region->partial = false;
+	build_regions(navigation, navigation->terrain, navigation->objects, &region_index, 1);
+}
+
 // Builds the given regions again (marked dirty while it runs), from the
 // objects near each, and stamps them with a new generation
 static void build_regions(navigation_t *navigation, const terrain_t *terrain, const objects_t *objects, const int32_t *region_list,
@@ -2189,8 +2239,21 @@ static void build_regions(navigation_t *navigation, const terrain_t *terrain, co
 	}
 	for (int32_t k = 0; k < list_count; k++)
 	{
-		const navigation_region_t *region = &navigation->regions[region_list[k]];
+		navigation_region_t *region = &navigation->regions[region_list[k]];
 
+		// (its cells let go: all of it built, there for its tiles to be
+		// built from; for small things alone the cells round them, and
+		// let go again after)
+		if (region->shed)
+		{
+			region->shed = false;
+			navigation->shed_regions--;
+			region->partial = region->partial && region->shed_again;
+		}
+		else
+		{
+			region->shed_again = false;
+		}
 		if (region->partial)
 		{
 			partial_count++;
@@ -2232,6 +2295,14 @@ static void build_regions(navigation_t *navigation, const terrain_t *terrain, co
 		region->stale = false;
 		region->partial = false;
 		region->terrain_touched = false;
+		// (its cells let go, built again as they were: nothing changed)
+		if (region->regrow)
+		{
+			region->regrow = false;
+			region->small_change = false;
+			SDL_free(scratch.items);
+			continue;
+		}
 		navigation->region_generation[r] = navigation->generation;
 		// (only small things changed: its tiles that were current still
 		// are; the walkers' ways through it are looked at again)
@@ -2244,12 +2315,26 @@ static void build_regions(navigation_t *navigation, const terrain_t *terrain, co
 				tiles[r].generation = navigation->generation;
 			}
 		}
+		// (and its edges are as the tiles round it know them: not hashed
+		// again from cells that are only partly there)
+		if (region->small_change && region->shed_again)
+		{
+			region->edge_checked_generation = navigation->generation;
+		}
+		region->shed_again = region->shed_again && region->small_change;
 		region->small_change = false;
 		SDL_free(scratch.items);
 	}
 	for (int32_t k = 0; k < list_count; k++)
 	{
-		navigation->regions[region_list[k]].dirty = false;
+		navigation_region_t *region = &navigation->regions[region_list[k]];
+
+		region->dirty = false;
+		if (region->shed_again)
+		{
+			region->shed_again = false;
+			shed_region(navigation, region_list[k]);
+		}
 	}
 	navigation->last_rebuilt_regions = list_count;
 	frame_profile_count(FRAME_NAVIGATION_REGIONS, list_count);
@@ -2374,6 +2459,10 @@ static void prepare_regions(navigation_t *navigation, int32_t first_x, int32_t f
 					// rectangles stay)
 					region->small_change = region->stale && navigation->region_generation[r] != 0 && changes_are_small(navigation, r, &now);
 					region->small_change_from = navigation->region_generation[r];
+					// (its cells let go: for small things the cells round
+					// them alone and let go again; else all of it, there
+					// for its tiles to be built from)
+					region->shed_again = region->stale && region->shed && region->small_change;
 					// A few objects changed (a boulder washed away, a crate
 					// moved): only the cells round them, if that is less than
 					// half the region
@@ -2384,6 +2473,7 @@ static void prepare_regions(navigation_t *navigation, int32_t first_x, int32_t f
 						region->partial = true;
 						SDL_memcpy(region->partial_box, box, sizeof(box));
 					}
+
 				}
 				navigation->object_scratch = scratch.items;
 				navigation->object_scratch_capacity = scratch.capacity;
@@ -2851,6 +2941,7 @@ bool navigation_create(navigation_t *navigation, const terrain_t *terrain)
 	navigation->soft_kilograms = 20.0f;
 	navigation->small_out = true;
 	navigation->follow_mesh = true;
+	navigation->shed_cells = true;
 	navigation->small_detour_meters = 10.0f;
 	navigation_set_slope_cost(navigation, 40.0f, 1.5f);
 	return resize(navigation, terrain);
@@ -3249,6 +3340,8 @@ bool navigation_standable(navigation_t *navigation, const terrain_t *terrain, co
 	{
 		return false;
 	}
+	// (the cell's own surfaces are asked: there again, if they were let go)
+	ensure_region_cells(navigation, region_of_cell(navigation, cell));
 	count = cell_nodes(navigation, cell, nodes);
 	for (int k = 0; k < count; k++)
 	{
@@ -4202,11 +4295,22 @@ bool navigation_path_small(const navigation_t *navigation, int waypoint)
 	return waypoint >= 0 && waypoint < NAVIGATION_MAX_WAYPOINTS && navigation->path_small[waypoint] != 0;
 }
 
+static void mesh_shed_if_done(navigation_t *navigation, int32_t region_index);
+
 void navigation_set_detail(navigation_t *navigation, float x, float z, float meters)
 {
 	navigation->detail_x = x;
 	navigation->detail_z = z;
 	navigation->detail_meters = meters;
+	// (each frame: one region looked at, whether its cells can be let go;
+	// one grown back because a thing was put down there, or asked about)
+	if (navigation->regions != NULL && navigation->shed_cells)
+	{
+		int32_t region_count = navigation->regions_per_side * navigation->regions_per_side;
+
+		navigation->shed_sweep = (navigation->shed_sweep + 1) % SDL_max(region_count, 1);
+		mesh_shed_if_done(navigation, navigation->shed_sweep);
+	}
 }
 
 bool navigation_path_jump(const navigation_t *navigation, int waypoint, float *height_out)
@@ -4473,6 +4577,16 @@ typedef struct
 	int16_t rect[MESH_LEVELS][MESH_SPAN_MOST * MESH_SPAN_MOST];     // the rectangle it is in (-1: none yet)
 } mesh_build_t;
 
+// A quarter meter's level that is in a rectangle
+typedef struct
+{
+	int32_t rect;                      // (global id)
+	float height;
+	bool ground;                       // the ground's (not an object's top)
+} mesh_level_t;
+
+static int mesh_levels_at(const navigation_t *navigation, int c, int32_t quarter_x, int32_t quarter_z, mesh_level_t levels_out[MESH_LEVELS]);
+
 // A cell's quarter meters' levels to a class, into the working state
 // (the cell inside the map, and within the tile or its margin; the
 // state's flags cleared before): as quarter_stand has them for an agent
@@ -4490,6 +4604,66 @@ static void mesh_build_cell(const navigation_t *navigation, const navigation_mes
 	int32_t first = ((cell_z - build->first_z) * NAVIGATION_SUBCELLS + MESH_MARGIN_QUARTERS) * build->span
 		+ (cell_x - build->first_x) * NAVIGATION_SUBCELLS + MESH_MARGIN_QUARTERS;
 
+	// (the margin's, in a region whose cells were let go: as its own tile
+	// of this class has them, its rectangles and its fringe; what a body's
+	// point asks of the margin is all there: where it rests, how high, on
+	// the ground or not)
+	if (navigation->regions[region_of_cell(navigation, cell)].shed)
+	{
+		int c = (int)(class - navigation->mesh.classes);
+		int32_t region = region_of_cell(navigation, cell);
+		const navigation_mesh_tile_t *tile = &class->tiles[region];
+		int32_t tile_x = (region % navigation->regions_per_side) * navigation->region_size * NAVIGATION_SUBCELLS;
+		int32_t tile_z = (region / navigation->regions_per_side) * navigation->region_size * NAVIGATION_SUBCELLS;
+
+		for (int32_t sub = 0; sub < NAVIGATION_SUBCELLS * NAVIGATION_SUBCELLS; sub++)
+		{
+			int32_t at = first + (sub / NAVIGATION_SUBCELLS) * build->span + sub % NAVIGATION_SUBCELLS;
+			int32_t quarter_x = cell_x * NAVIGATION_SUBCELLS + sub % NAVIGATION_SUBCELLS;
+			int32_t quarter_z = cell_z * NAVIGATION_SUBCELLS + sub / NAVIGATION_SUBCELLS;
+			mesh_level_t levels[MESH_LEVELS];
+			int level_count = tile->built ? mesh_levels_at(navigation, c, quarter_x, quarter_z, levels) : 0;
+			int next = 1;
+
+			build->height[0][at] = ground;
+			build->room[0][at] = NAVIGATION_CLEARANCE_OPEN;
+			build->flags[0][at] = MESH_LEVEL_GROUND;
+			for (int k = 0; k < level_count; k++)
+			{
+				int level = levels[k].ground ? 0 : next < MESH_LEVELS ? next++ : -1;
+
+				if (level < 0)
+				{
+					continue;
+				}
+				build->height[level][at] = levels[k].height;
+				build->room[level][at] = NAVIGATION_CLEARANCE_OPEN;
+				build->flags[level][at] = (uint8_t)(MESH_LEVEL_STAND | MESH_LEVEL_POINT | MESH_LEVEL_SURFACE | (levels[k].ground ? MESH_LEVEL_GROUND : 0));
+			}
+			for (uint32_t k = tile->built && tile->fringe_row_first != NULL ? tile->fringe_row_first[quarter_z - tile_z] : 0;
+				tile->built && tile->fringe_row_first != NULL && k < tile->fringe_row_first[quarter_z - tile_z + 1]; k++)
+			{
+				const navigation_fringe_t *run = &tile->fringe[k];
+				int level;
+
+				if (quarter_x - tile_x < (int32_t)run->x || quarter_x - tile_x >= (int32_t)run->x + (int32_t)run->count)
+				{
+					continue;
+				}
+				level = run->ground != 0 ? 0 : next < MESH_LEVELS ? next++ : -1;
+				if (level < 0)
+				{
+					continue;
+				}
+				build->height[level][at] = run->height;
+				build->room[level][at] = NAVIGATION_CLEARANCE_OPEN;
+				build->flags[level][at] = (uint8_t)((run->ground != 0 ? MESH_LEVEL_GROUND : 0)
+					| (run->stand == NAVIGATION_FRINGE_STAND ? MESH_LEVEL_STAND | MESH_LEVEL_POINT | MESH_LEVEL_SURFACE
+						: run->stand == NAVIGATION_FRINGE_POINT ? MESH_LEVEL_POINT : MESH_LEVEL_SURFACE));
+			}
+		}
+		return;
+	}
 	// (the margin's, in a region not built yet: open ground as the terrain
 	// lies; the tile is built again when the region is, mesh_margin_signature)
 	if (navigation->regions[region_of_cell(navigation, cell)].stale)
@@ -4584,7 +4758,10 @@ static bool mesh_cell_plain(const navigation_t *navigation, int32_t cell_x, int3
 		return false;
 	}
 	cell = cell_z * navigation->size + cell_x;
-	return ((navigation->extra_count[cell] == 0 && navigation->terrain_clearance[cell] == NAVIGATION_CLEARANCE_OPEN)
+	// (its region's cells let go: whether it had surfaces is not known;
+	// nothing over it at all then)
+	return ((navigation->extra_count[cell] == 0 && navigation->terrain_clearance[cell] == NAVIGATION_CLEARANCE_OPEN
+		&& (!navigation->regions[region_of_cell(navigation, cell)].shed || navigation->object_top[cell] == 0))
 		|| navigation->small_only[cell] != 0) && !navigation->regions[region_of_cell(navigation, cell)].stale;
 }
 
@@ -4619,13 +4796,6 @@ static int mesh_match(const mesh_build_t *build, int level, int32_t at, int32_t 
 	return best;
 }
 
-// A quarter meter's level that is in a rectangle
-typedef struct
-{
-	int32_t rect;                      // (global id)
-	float height;
-	bool ground;                       // the ground's (not an object's top)
-} mesh_level_t;
 
 // How far low of the quarter meters a class's rectangles lie: half a
 // quarter for a width of an even number of them (see above)
@@ -5259,6 +5429,29 @@ static uint64_t region_edge_hash(const navigation_t *navigation, int32_t region_
 // region built again for something in its middle changes nothing here
 // (each of the eight used to build all the tiles round it again: nine
 // tiles for a felled tree)
+// A region's edges hashed again, if it was built since they last were
+// (its cells let go: they are as they were hashed)
+static void mesh_refresh_edges(navigation_t *navigation, int32_t region_index)
+{
+	navigation_region_t *region = &navigation->regions[region_index];
+
+	if (region->edge_checked_generation == navigation->region_generation[region_index] || region->shed || region->stale)
+	{
+		return;
+	}
+	for (int edge = 0; edge < 4; edge++)
+	{
+		uint64_t hash = region_edge_hash(navigation, region_index, edge);
+
+		if (hash != region->edge_hash[edge] || region->edge_generation[edge] == 0)
+		{
+			region->edge_hash[edge] = hash;
+			region->edge_generation[edge] = navigation->region_generation[region_index];
+		}
+	}
+	region->edge_checked_generation = navigation->region_generation[region_index];
+}
+
 static uint32_t mesh_margin_signature(navigation_t *navigation, int32_t region)
 {
 	int32_t region_x = region % navigation->regions_per_side;
@@ -5285,20 +5478,7 @@ static uint32_t mesh_margin_signature(navigation_t *navigation, int32_t region)
 				signature = signature * 31u;
 				continue;
 			}
-			if (neighbor->edge_checked_generation != navigation->region_generation[near])
-			{
-				for (int edge = 0; edge < 4; edge++)
-				{
-					uint64_t hash = region_edge_hash(navigation, near, edge);
-
-					if (hash != neighbor->edge_hash[edge] || neighbor->edge_generation[edge] == 0)
-					{
-						neighbor->edge_hash[edge] = hash;
-						neighbor->edge_generation[edge] = navigation->region_generation[near];
-					}
-				}
-				neighbor->edge_checked_generation = navigation->region_generation[near];
-			}
+			mesh_refresh_edges(navigation, near);
 			// (its edges toward this one: x high of the one at x low, ...)
 			signature = signature * 31u + (dx < 0 ? neighbor->edge_generation[1] : dx > 0 ? neighbor->edge_generation[0] : 0u);
 			signature = signature * 31u + (dz < 0 ? neighbor->edge_generation[3] : dz > 0 ? neighbor->edge_generation[2] : 0u);
@@ -5459,6 +5639,7 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 	tile->neighbor_count = 0;
 	tile->uneven_count = 0;
 	tile->uneven_height_count = 0;
+	tile->wet_count = 0;
 	tile->fringe_count = 0;
 	if (build.width > REGION_CELLS || build.depth > REGION_CELLS)
 	{
@@ -5721,6 +5902,7 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 				rect->depth = (uint8_t)depth;
 				rect->flags = (uint8_t)(((key & MESH_KEY_TOP) != 0 ? 0 : NAVIGATION_RECT_GROUND) | ((key & MESH_KEY_WET) != 0 ? NAVIGATION_RECT_WET : 0)
 					| ((key & MESH_KEY_ZONE) != 0 ? NAVIGATION_RECT_ZONE : 0));
+				tile->wet_count += (key & MESH_KEY_WET) != 0 ? 1 : 0;
 				rect->small = 0;
 				rect->clearance = NAVIGATION_CLEARANCE_OPEN;
 				for (int32_t j = 0; j < depth; j++)
@@ -5873,6 +6055,91 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 	return true;
 }
 
+// Whether a region's tile of a class is as its region and class are now
+static bool mesh_tile_current(const navigation_t *navigation, int c, int32_t region)
+{
+	const navigation_mesh_class_t *class = &navigation->mesh.classes[c];
+
+	return class->tiles != NULL && class->tiles[region].built && class->tiles[region].generation == navigation->region_generation[region]
+		&& class->tiles[region].class_epoch == class->epoch;
+}
+
+// A region's cells' surfaces let go, if nothing asks them any more
+// (navigation_shed_cells, with walkers that keep to the rectangles): it is
+// built and so are the regions round it, its tiles of every class in use
+// are current, none of them has water (those are built again as the
+// water moves). Its edges hashed first, while the cells are there
+static void mesh_shed_if_done(navigation_t *navigation, int32_t region_index)
+{
+	navigation_region_t *region = &navigation->regions[region_index];
+	bool any = false;
+
+	if (!navigation->shed_cells || !navigation->follow_mesh || navigation->baking || region->shed || region->stale || region->dirty
+		|| region->surfaces == NULL)
+	{
+		return;
+	}
+	for (int c = 0; c < NAVIGATION_MESH_CLASSES; c++)
+	{
+		if (!navigation_mesh_class_used(navigation, c))
+		{
+			continue;
+		}
+		if (!mesh_tile_current(navigation, c, region_index) || navigation->mesh.classes[c].tiles[region_index].wet_count > 0)
+		{
+			return;
+		}
+		any = true;
+	}
+	if (!any)
+	{
+		return;
+	}
+	// (and the regions round it built: one built later has its tiles
+	// built again, for their margins, from cells that would be gone)
+	for (int32_t near = 0; near < 9; near++)
+	{
+		int32_t near_x = region_index % navigation->regions_per_side + near % 3 - 1;
+		int32_t near_z = region_index / navigation->regions_per_side + near / 3 - 1;
+
+		if (near_x >= 0 && near_z >= 0 && near_x < navigation->regions_per_side && near_z < navigation->regions_per_side
+			&& navigation->regions[near_z * navigation->regions_per_side + near_x].stale)
+		{
+			return;
+		}
+	}
+	mesh_refresh_edges(navigation, region_index);
+	shed_region(navigation, region_index);
+}
+
+// The cells a tile's build reads, there: its own region's (grown back if
+// they were let go) and, of the regions round it whose cells were let go,
+// those with no current tile of the class to read their margin from
+static void mesh_ensure_cells(navigation_t *navigation, int c, int32_t region)
+{
+	int32_t region_x = region % navigation->regions_per_side;
+	int32_t region_z = region / navigation->regions_per_side;
+
+	ensure_region_cells(navigation, region);
+	for (int32_t dz = -1; dz <= 1; dz++)
+	{
+		for (int32_t dx = -1; dx <= 1; dx++)
+		{
+			int32_t near = (region_z + dz) * navigation->regions_per_side + region_x + dx;
+
+			if ((dx == 0 && dz == 0) || region_x + dx < 0 || region_z + dz < 0 || region_x + dx >= navigation->regions_per_side
+				|| region_z + dz >= navigation->regions_per_side)
+			{
+				continue;
+			}
+			if (navigation->regions[near].shed && !mesh_tile_current(navigation, c, near))
+			{
+				ensure_region_cells(navigation, near);
+			}
+		}
+	}
+}
+
 // The tile of a class over a region, current (its region built first if
 // stale; built again if the region, the class or its water changed): false
 // if it could not be
@@ -5902,10 +6169,29 @@ static bool mesh_tile_ready(navigation_t *navigation, int c, int32_t region, con
 	// (the regions round it changed, or built since: a body's points by
 	// its edge reach into them)
 	needed = needed || tile->margin_signature != mesh_margin_signature(navigation, region);
+	if (needed)
+	{
+		mesh_ensure_cells(navigation, c, region);
+	}
 	if (needed && !mesh_build_tile(navigation, c, region, water))
 	{
 		tile->built = false;
 		return false;
+	}
+	// (built: its region's cells, and those round it that waited for this
+	// tile, may be let go now)
+	if (needed && navigation->shed_cells)
+	{
+		for (int32_t near = 0; near < 9; near++)
+		{
+			int32_t near_x = region % navigation->regions_per_side + near % 3 - 1;
+			int32_t near_z = region / navigation->regions_per_side + near / 3 - 1;
+
+			if (near_x >= 0 && near_z >= 0 && near_x < navigation->regions_per_side && near_z < navigation->regions_per_side)
+			{
+				mesh_shed_if_done(navigation, near_z * navigation->regions_per_side + near_x);
+			}
+		}
 	}
 	tile->checked_search = navigation->mesh.search_number;
 	return true;
@@ -8712,6 +8998,21 @@ void navigation_bake(navigation_t *navigation, const water_t *water, const navig
 	{
 		mesh_margin_signature(navigation, r);
 	}
+	// (the cells the tiles to be built read, grown back here if they were
+	// let go: no region is built while tiles are, side by side)
+	for (int c = 0; c < NAVIGATION_MESH_CLASSES; c++)
+	{
+		for (int32_t r = 0; r < region_count && navigation_mesh_class_used(navigation, c); r++)
+		{
+			const navigation_mesh_tile_t *tile = &navigation->mesh.classes[c].tiles[r];
+
+			if (!navigation->regions[r].stale && !(mesh_tile_current(navigation, c, r) && tile->margin_signature == mesh_margin_signature(navigation, r)))
+			{
+				mesh_ensure_cells(navigation, c, r);
+			}
+		}
+	}
+	navigation->baking = true;
 	for (int c = 0; c < NAVIGATION_MESH_CLASSES; c++)
 	{
 		navigation_mesh_class_t *class = &navigation->mesh.classes[c];
@@ -8746,6 +9047,11 @@ void navigation_bake(navigation_t *navigation, const water_t *water, const navig
 			}
 			tiles += built;
 		}
+	}
+	navigation->baking = false;
+	for (int32_t r = 0; r < region_count; r++)
+	{
+		mesh_shed_if_done(navigation, r);
 	}
 	if (regions_out != NULL)
 	{
@@ -8907,6 +9213,19 @@ void navigation_mesh_describe(const navigation_t *navigation, char *text_out, si
 				(long long)navigation->mesh.searches, (long long)navigation->mesh.search_fallbacks, (long long)navigation->mesh.ways_refused,
 				(long long)navigation->mesh.ways_cut,
 				(long long)navigation->mesh.lines);
+			used = SDL_strlen(text_out);
+		}
+		if (used < text_size)
+		{
+			int32_t region_count = navigation->regions_per_side * navigation->regions_per_side;
+			size_t surface_bytes = 0;
+
+			for (int32_t r = 0; r < region_count; r++)
+			{
+				surface_bytes += (size_t)navigation->regions[r].surface_capacity * sizeof(navigation_surface_t);
+			}
+			SDL_snprintf(text_out + used, text_size - used, "; the cells' surfaces %.1f MB, let go in %d of %d regions",
+				(double)surface_bytes / (1024.0 * 1024.0), navigation->shed_regions, region_count);
 		}
 	}
 }
@@ -9224,6 +9543,8 @@ bool navigation_describe(navigation_t *navigation, const terrain_t *terrain, con
 		return false;
 	}
 	prepare_box(navigation, x, z, x, z);
+	// (the cell as its surfaces have it: there again, if they were let go)
+	ensure_region_cells(navigation, region_of_cell(navigation, cell));
 	node = nearest_node(navigation, terrain, cell, near_height);
 	node_info(navigation, terrain, water, agent, node, &info);
 	if (node < cell_count(navigation))

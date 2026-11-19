@@ -391,6 +391,7 @@ typedef struct
 	// Where one stands but a body does not fit (navigation_fringe_t), row
 	// by row of quarter meters: a row's from fringe_row_first[z] to
 	// fringe_row_first[z + 1] (NULL: the tile has none)
+	int32_t wet_count;                 // its rectangles with water at the build (their tile is built again as the water moves)
 	navigation_fringe_t *fringe;
 	int32_t fringe_count;
 	int32_t fringe_capacity;
@@ -541,6 +542,15 @@ typedef struct
 	// generation then) still are
 	bool small_change;
 	uint32_t small_change_from;
+	// Its cells' surfaces let go (navigation_shed_cells): its tiles are
+	// built, nothing asks the cells any more; what a cell holds for the
+	// whole map stays (its ground, the room over it, the flyers' tops),
+	// and the capsules. Built again whole when a tile of it is to be
+	// (regrow: as it was, its generation kept); the tiles round it read
+	// its margin from its own tile
+	bool shed;
+	bool regrow;
+	bool shed_again;                   // built again for small things only: let go again after
 } navigation_region_t;
 
 typedef struct
@@ -594,6 +604,12 @@ typedef struct
 	float wall_reach_meters;           // [simulation] navigation_wall_meters
 	float soft_kilograms;              // and navigation_soft_kilograms
 	bool small_out;                    // navigation_small_out: small things gone round are not in the rectangles
+	// navigation_shed_cells: a region's cells' surfaces are let go once
+	// its tiles are built (with follow_mesh: nothing asks them then)
+	bool shed_cells;
+	bool baking;                       // navigation_bake at its tiles, side by side: no region is built or let go then
+	int32_t shed_regions;              // how many are let go now
+	int32_t shed_sweep;                // the region last looked at for letting go (navigation_set_detail)
 	// navigation_follow_mesh: what a walker on its way asks (may it step
 	// there, has its body the room on this line, how high is the ground)
 	// is answered from the rectangles, not from the quarter meters they
