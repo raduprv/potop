@@ -281,6 +281,7 @@ typedef struct
 // (navigation_mesh_visit_t)
 #define NAVIGATION_RECT_GROUND 1                // the ground (its heights the terrain's); else an object's top
 #define NAVIGATION_RECT_WET 2                   // a cell with water at the build: looked at with the water as it is
+#define NAVIGATION_RECT_ZONE 4                  // a cell under a blocker or in a doorway: whom it stops is asked of the cell as it is
 #define NAVIGATION_RECT_SPAN_UNIT_METERS 0.05f
 #define NAVIGATION_MESH_TILE_RECTS_MOST 0x3FFF  // (a neighbor is 14 bits of index and its side)
 
@@ -295,7 +296,7 @@ typedef struct
 	uint8_t clearance;                 // the least room above (NAVIGATION_CLEARANCE_UNIT_METERS each, or OPEN)
 	uint8_t flags;                     // NAVIGATION_RECT_*
 	uint8_t cost;                      // what a meter on it costs over 1 (its slope), in 32nds
-	uint8_t blocked;                   // the blockers' groups over it
+	uint8_t unused;
 	uint8_t small;                     // small or soft things stand in it: a way through it looks out for them
 	uint16_t neighbor_count;
 	uint32_t first_neighbor;           // in its tile's neighbors
@@ -500,7 +501,7 @@ typedef struct
 
 typedef struct
 {
-	navigation_surface_t *surfaces;    // NAVIGATION_REGION_EXTRA_SLOTS of them
+	navigation_surface_t *surfaces;    // surface_capacity of them (NAVIGATION_REGION_EXTRA_SLOTS at most), grown as they come
 	// Of the small and soft things that reach into it, in the order of
 	// the squares (NAVIGATION_CAPSULE_SQUARES a side) their first ends are
 	// in or nearest: capsule_first[square] is a square's first, its next
@@ -521,6 +522,7 @@ typedef struct
 	int32_t print_count;
 	int32_t print_capacity;
 	int32_t surface_count;
+	int32_t surface_capacity;
 	uint64_t objects_signature;        // of the standing objects in it, to notice changes
 	uint32_t objects_generation_checked; // objects_t.generation when the signature was last compared
 	bool objects_touched;              // an object in it (or near) added, gone, come loose since (objects_changes_since): compared again
@@ -567,6 +569,11 @@ typedef struct
 	int model_shape_count;
 	// Per cell: the groups the blockers there stop (navigation_set_blockers)
 	uint8_t *blocked;
+	// Per cell: under a blocker or in a door's doorway (open or shut). The
+	// rectangles there are a cell's own (NAVIGATION_RECT_ZONE), asked of
+	// blocked as it is at each search: a door opened or shut builds no
+	// tile again; only a blocker or a door that is new, gone or moved does
+	uint8_t *blocker_zone;
 	navigation_blocker_t blockers[NAVIGATION_BLOCKERS_MAX];
 	int blocker_count;
 	// The doors (navigation_set_links): their ends' cells, how far apart

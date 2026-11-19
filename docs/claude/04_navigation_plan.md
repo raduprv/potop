@@ -315,6 +315,42 @@ are joined at all), a coarse graph for ways of kilometers.
   (step 5): an uneven surface's height (`mesh_height_at`), the check of
   a found way (`mesh_way_holds`), jumps, building a tile.
 
+- Step 5 so far (Nov 19 2026), with follow_mesh on:
+  - 5a. An uneven top's heights are kept in its tile, a quarter each
+    (`uneven_heights`); a wet rectangle is asked with the water over
+    its cell (`info_water`), no grid node; a found way is not checked
+    over the quarter meters (`mesh_way_holds`: follow_mesh off only);
+    the goal's own levels come from the tile. For that and the jumps a
+    tile keeps its **fringe** (`navigation_fringe_t`, runs along x):
+    the surfaces by its rectangles a body's middle does not fit on,
+    each one stood on, a foot's rest, or only a surface (a floor under
+    a table).
+  - 5b. An edge to jump: what is between the two rectangles and the
+    spots are asked of the rectangles and the fringe.
+  - 5c, part. Doors and blockers: `blocker_zone` per cell (under a
+    blocker, in a doorway, open or shut); the rectangles there are a
+    cell's own (`NAVIGATION_RECT_ZONE`) and ask `blocked` of the cell
+    at each search. A door opened or shut stamps its region newer for
+    the walkers' ways and leaves its tiles current
+    (`region_state_changed`); a door or blocker new, gone or moved
+    builds them again. `navigation_objects_near` asks `object_top`;
+    the height underfoot with no tile built there is the terrain's
+    (and the physics' rays where anyone looks). A region's surfaces are
+    allocated as they come (64, doubling), not 4096 at the first.
+  - Left of step 5: the water (a tile is still built again when its
+    water changes: wet cells are their own rectangles; dry maps never
+    do); letting a region's surfaces go once its tiles are built (see
+    below); `navigation_standable` (where a thing is put down), the
+    stuck report, F4's cell overlay and the flyers' `object_top` still
+    read the cells; the follower over the quarter meters
+    (follow_mesh off: fine ways, body points) is still in the code.
+  - Letting the surfaces go needs deciding: a tile's build reads its
+    region's cells and a cell's margin of the eight round it. Gone, a
+    felled tree builds its region whole (not the cells round the tree)
+    and, for the margins, the eight round it too, unless the margins
+    are read from the neighbors' tiles (rectangles + fringe hold what
+    a body's point needs: where it rests, how high, the ground or not).
+
 ## Known and left
 
 - A memory regression of Nov 18: a cell partly under something gets a

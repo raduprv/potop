@@ -231,6 +231,11 @@ where it stands. The height under its feet is the terrain's, or the
 rectangle's on an object. With the setting off it follows over the
 quarter meters, as before (fine ways, body points).
 
+A door opened or shut builds nothing again: the cells of a doorway (and
+under a blocker) are rectangles of their own, and a search asks each
+whom it stops now. Only a door or a blocker that is new, gone or moved
+has the tiles there built again.
+
 Soft things are no surface
 and take no room: each cell keeps the height of the highest one in it,
 and each actor decides by its size. Lower than its step, it walks over

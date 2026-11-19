@@ -1563,13 +1563,19 @@ static void finish_region(navigation_t *navigation, const terrain_t *terrain, in
 						region_index, NAVIGATION_REGION_EXTRA_SLOTS);
 					break;
 				}
-				if (region->surfaces == NULL)
+				// (as many as it has, not the whole block at its first: a
+				// region with one tree took 180 KB)
+				if (region->surface_count == region->surface_capacity)
 				{
-					region->surfaces = SDL_malloc(sizeof(navigation_surface_t) * NAVIGATION_REGION_EXTRA_SLOTS);
-					if (region->surfaces == NULL)
+					int32_t capacity = SDL_min(SDL_max(64, region->surface_capacity * 2), NAVIGATION_REGION_EXTRA_SLOTS);
+					navigation_surface_t *grown = SDL_realloc(region->surfaces, sizeof(navigation_surface_t) * (size_t)capacity);
+
+					if (grown == NULL)
 					{
 						break;
 					}
+					region->surfaces = grown;
+					region->surface_capacity = capacity;
 				}
 				SDL_qsort(clearances, (size_t)covered, 1, compare_clearances);
 				surface = &region->surfaces[region->surface_count];
@@ -2291,6 +2297,7 @@ static void stamp_blocker(navigation_t *navigation, const navigation_blocker_t *
 				&& SDL_fabsf(along_depth) <= blocker->half_depth_meters + 0.5f * NAVIGATION_CELL_METERS)
 			{
 				navigation->blocked[z * navigation->size + x] |= blocker->groups;
+				navigation->blocker_zone[z * navigation->size + x] = 1;
 			}
 		}
 	}
@@ -2315,10 +2322,34 @@ static void touch_blocker(navigation_t *navigation, const navigation_blocker_t *
 
 static bool cell_of_point(const navigation_t *navigation, float x, float z, int32_t *cell_out);
 
-// The doorways of the shut doors: the cells between each link's two ends
-// (not their own) stamped with NAVIGATION_GROUP_SHUT_DOOR (set) or cleared,
-// their regions stamped newer when anything changed
-static void stamp_doors(navigation_t *navigation, bool set)
+// A region whose blockers' groups changed and nothing else (a door
+// opened or shut: what its doorway stops; the doorway is where it was):
+// stamped newer (the paths through it are looked at again), its tiles
+// that were current still are (their rectangles ask the cells as they
+// are: NAVIGATION_RECT_ZONE)
+static void region_state_changed(navigation_t *navigation, int32_t region)
+{
+	uint32_t before = navigation->region_generation[region];
+
+	navigation->generation++;
+	navigation->region_generation[region] = navigation->generation;
+	for (int c = 0; c < NAVIGATION_MESH_CLASSES; c++)
+	{
+		navigation_mesh_tile_t *tiles = navigation->mesh.classes[c].tiles;
+
+		if (tiles != NULL && tiles[region].built && tiles[region].generation == before)
+		{
+			tiles[region].generation = navigation->generation;
+		}
+	}
+}
+
+// The doorways of the doors: the cells between each link's two ends (not
+// their own). Of the shut ones stamped with NAVIGATION_GROUP_SHUT_DOOR
+// (set) or cleared, their regions stamped newer when anything changed
+// (state_only: the doorways are where they were, the tiles stay);
+// zone: all the doors' doorways marked in blocker_zone instead
+static void stamp_doors(navigation_t *navigation, bool set, bool state_only, bool zone)
 {
 	for (int k = 0; k < navigation->link_count && navigation->blocked != NULL; k++)
 	{
@@ -2328,7 +2359,7 @@ static void stamp_doors(navigation_t *navigation, bool set)
 		float length = SDL_sqrtf(dx * dx + dz * dz);
 		int steps = SDL_max(1, (int)SDL_ceilf(length / 0.25f));
 
-		if (link->open && set)
+		if (link->open && set && !zone)
 		{
 			continue;
 		}
@@ -2336,21 +2367,34 @@ static void stamp_doors(navigation_t *navigation, bool set)
 		{
 			int32_t cell;
 			float amount = (float)step / (float)steps;
+			bool changed = false;
 
 			if (!cell_of_point(navigation, link->a[0] + dx * amount, link->a[1] + dz * amount, &cell) || cell == navigation->link_cells[k][0]
 				|| cell == navigation->link_cells[k][1])
 			{
 				continue;
 			}
+			if (zone)
+			{
+				navigation->blocker_zone[cell] = 1;
+				continue;
+			}
 			if (set && (navigation->blocked[cell] & NAVIGATION_GROUP_SHUT_DOOR) == 0)
 			{
 				navigation->blocked[cell] |= NAVIGATION_GROUP_SHUT_DOOR;
-				navigation->generation++;
-				navigation->region_generation[region_of_cell(navigation, cell)] = navigation->generation;
+				changed = true;
 			}
 			else if (!set && (navigation->blocked[cell] & NAVIGATION_GROUP_SHUT_DOOR) != 0)
 			{
 				navigation->blocked[cell] &= (uint8_t)~NAVIGATION_GROUP_SHUT_DOOR;
+				changed = true;
+			}
+			if (changed && state_only)
+			{
+				region_state_changed(navigation, region_of_cell(navigation, cell));
+			}
+			else if (changed)
+			{
 				navigation->generation++;
 				navigation->region_generation[region_of_cell(navigation, cell)] = navigation->generation;
 			}
@@ -2358,18 +2402,66 @@ static void stamp_doors(navigation_t *navigation, bool set)
 	}
 }
 
+// The doorways' regions stamped newer (a door new, gone or moved: their
+// tiles are built again)
+static void touch_doors(navigation_t *navigation)
+{
+	for (int k = 0; k < navigation->link_count; k++)
+	{
+		const navigation_link_t *link = &navigation->links[k];
+		float dx = link->b[0] - link->a[0];
+		float dz = link->b[1] - link->a[1];
+		int steps = SDL_max(1, (int)SDL_ceilf(SDL_sqrtf(dx * dx + dz * dz) / 0.25f));
+
+		for (int step = 1; step < steps; step++)
+		{
+			int32_t cell;
+			float amount = (float)step / (float)steps;
+
+			if (cell_of_point(navigation, link->a[0] + dx * amount, link->a[1] + dz * amount, &cell))
+			{
+				navigation->generation++;
+				navigation->region_generation[region_of_cell(navigation, cell)] = navigation->generation;
+			}
+		}
+	}
+}
+
+// blocker_zone made again: under the blockers, in the doors' doorways
+static void stamp_zone(navigation_t *navigation)
+{
+	SDL_memset(navigation->blocker_zone, 0, (size_t)navigation->size * (size_t)navigation->size);
+	for (int i = 0; i < navigation->blocker_count; i++)
+	{
+		navigation_blocker_t zone = navigation->blockers[i];
+
+		// (its cells marked; its groups are blocked's)
+		zone.groups = 0;
+		stamp_blocker(navigation, &zone);
+	}
+	stamp_doors(navigation, true, false, true);
+}
+
 void navigation_set_links(navigation_t *navigation, const navigation_link_t *links, int count)
 {
+	// (the doorways where they were, only doors opened or shut: no tile
+	// is built again)
+	bool same_doorways;
+
 	// (the doors as they were: their doorways cleared, the new ones stamped
 	// after; nothing changed, nothing done)
 	{
 		bool same = count == navigation->links_given_count;
 
 		count = SDL_clamp(count, 0, NAVIGATION_LINKS_MAX);
-		for (int k = 0; k < count && same; k++)
+		same_doorways = same;
+		for (int k = 0; k < count && same_doorways; k++)
 		{
-			same = SDL_memcmp(&links[k], &navigation->links_given[k], sizeof(navigation_link_t)) == 0;
+			same_doorways = SDL_memcmp(links[k].a, navigation->links_given[k].a, sizeof(links[k].a)) == 0
+				&& SDL_memcmp(links[k].b, navigation->links_given[k].b, sizeof(links[k].b)) == 0;
+			same = same && links[k].open == navigation->links_given[k].open;
 		}
+		same = same && same_doorways;
 		if (same)
 		{
 			return;
@@ -2380,7 +2472,11 @@ void navigation_set_links(navigation_t *navigation, const navigation_link_t *lin
 		}
 		navigation->links_given_count = count;
 	}
-	stamp_doors(navigation, false);
+	stamp_doors(navigation, false, same_doorways, false);
+	if (!same_doorways)
+	{
+		touch_doors(navigation);
+	}
 	navigation->link_count = 0;
 	for (int k = 0; k < count && navigation->link_count < NAVIGATION_LINKS_MAX; k++)
 	{
@@ -2401,7 +2497,12 @@ void navigation_set_links(navigation_t *navigation, const navigation_link_t *lin
 		navigation->link_meters[navigation->link_count] = SDL_sqrtf(dx * dx + dz * dz);
 		navigation->link_count++;
 	}
-	stamp_doors(navigation, true);
+	stamp_doors(navigation, true, same_doorways, false);
+	if (!same_doorways)
+	{
+		touch_doors(navigation);
+		stamp_zone(navigation);
+	}
 }
 
 void navigation_set_blockers(navigation_t *navigation, const navigation_blocker_t *blockers, int count)
@@ -2440,7 +2541,8 @@ void navigation_set_blockers(navigation_t *navigation, const navigation_blocker_
 	{
 		stamp_blocker(navigation, &navigation->blockers[i]);
 	}
-	stamp_doors(navigation, true);
+	stamp_doors(navigation, true, false, false);
+	stamp_zone(navigation);
 }
 
 void navigation_prepare_around(navigation_t *navigation, float x, float z)
@@ -2528,6 +2630,8 @@ static void free_map(navigation_t *navigation)
 	SDL_free(navigation->small_height);
 	SDL_free(navigation->blocked);
 	navigation->blocked = NULL;
+	SDL_free(navigation->blocker_zone);
+	navigation->blocker_zone = NULL;
 	navigation->blocker_count = 0;
 	SDL_free(navigation->extra_count);
 	SDL_free(navigation->extra_first);
@@ -2573,6 +2677,7 @@ static bool resize(navigation_t *navigation, const terrain_t *terrain)
 	navigation->small_only = SDL_calloc(cells, 1);
 	navigation->small_height = SDL_calloc(cells, 1);
 	navigation->blocked = SDL_calloc(cells, 1);
+	navigation->blocker_zone = SDL_calloc(cells, 1);
 	navigation->blocker_count = 0;
 	navigation->extra_count = SDL_calloc(cells, 1);
 	navigation->extra_first = SDL_calloc(cells, sizeof(uint16_t));
@@ -2580,6 +2685,7 @@ static bool resize(navigation_t *navigation, const terrain_t *terrain)
 	navigation->build_list = SDL_calloc((size_t)region_count, sizeof(int32_t));
 	if (navigation->build_list == NULL || navigation->regions == NULL || navigation->ground_height == NULL || navigation->terrain_clearance == NULL
 		|| navigation->terrain_blocker == NULL || navigation->object_top == NULL || navigation->ground_slope == NULL || navigation->small_height == NULL || navigation->small_only == NULL || navigation->blocked == NULL
+		|| navigation->blocker_zone == NULL
 		|| navigation->extra_count == NULL
 		|| navigation->extra_first == NULL || navigation->region_generation == NULL)
 	{
@@ -2905,8 +3011,12 @@ float navigation_surface_height_on(const navigation_t *navigation, const terrain
 	// The best so far: standable and within reach first, then the nearest
 	float best = terrain_sample_height_meters(terrain, x, z);
 
-	if (navigation->follow_mesh && mesh_follow_height(navigation, terrain, agent, x, z, near_height, &best, &on_object))
+	// (by the rectangles: the level there, or the nearest by it; none
+	// built there (a wanderer where no way was ever searched): the
+	// terrain, and the physics' rays where anyone looks)
+	if (navigation->follow_mesh)
 	{
+		mesh_follow_height(navigation, terrain, agent, x, z, near_height, &best, &on_object);
 		if (object_out != NULL)
 		{
 			*object_out = on_object;
@@ -3931,8 +4041,9 @@ bool navigation_objects_near(const navigation_t *navigation, float x, float z)
 		{
 			int32_t cell = (cell_z + dz) * navigation->size + cell_x + dx;
 
-			if (navigation->extra_count[cell] != 0 || navigation->terrain_clearance[cell] != NAVIGATION_CLEARANCE_OPEN
-				|| navigation->regions[region_of_cell(navigation, cell)].stale)
+			// (the cells' highest object: kept for the whole map, whatever
+			// becomes of the cells' surfaces)
+			if (navigation->object_top[cell] != 0 || navigation->regions[region_of_cell(navigation, cell)].stale)
 			{
 				return true;
 			}
@@ -4202,6 +4313,7 @@ static uint8_t mesh_room_needed(const navigation_mesh_class_t *class)
 #define MESH_KEY_FIT 0x80000000u       // a rectangle's (a key of 0: not)
 #define MESH_KEY_WET 0x40000000u
 #define MESH_KEY_TOP 0x20000000u
+#define MESH_KEY_ZONE 0x100u           // a cell under a blocker or in a doorway: its own rectangles
 #define MESH_JUMP_GAP_QUARTERS 4       // an edge to jump: this far across what is neither rectangle's, at most
 
 // The build's working state for one tile: its quarter meters and the
@@ -4966,7 +5078,7 @@ static uint64_t region_edge_hash(const navigation_t *navigation, int32_t region_
 			int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
 			int count = cell_nodes(navigation, cell, nodes);
 			uint8_t bytes[6] = { navigation->terrain_clearance[cell], navigation->small_height[cell], navigation->small_only[cell],
-				navigation->blocked != NULL ? navigation->blocked[cell] : 0, navigation->ground_slope[cell], (uint8_t)count };
+				navigation->blocker_zone[cell], navigation->ground_slope[cell], (uint8_t)count };
 
 			hash = hash_bytes(hash, &navigation->ground_height[cell], sizeof(float));
 			hash = hash_bytes(hash, bytes, sizeof(bytes));
@@ -5277,7 +5389,7 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 			int32_t first = (local_z * NAVIGATION_SUBCELLS + MESH_MARGIN_QUARTERS) * build.span + local_x * NAVIGATION_SUBCELLS + MESH_MARGIN_QUARTERS;
 			float cost = navigation->walk_factors[navigation->ground_slope[cell]];
 			uint32_t cell_key = MESH_KEY_FIT | (build.wet[local_z * build.width + local_x] ? MESH_KEY_WET : 0)
-				| ((uint32_t)(navigation->blocked != NULL ? navigation->blocked[cell] : 0) << 8);
+				| (navigation->blocker_zone[cell] != 0 ? MESH_KEY_ZONE : 0);
 			uint32_t ground_key = cell_key | ((uint32_t)SDL_clamp((int)((cost - 1.0f) * 4.0f), 0, 31) << 24);
 			bool plain = true;
 
@@ -5400,7 +5512,8 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 			for (int level = 0; build.fit[at] >> level != 0; level++)
 			{
 				uint32_t key = build.key[level][at];
-				bool wet = (key & MESH_KEY_WET) != 0;
+				// (the water's and the blockers': within their cell)
+				bool wet = (key & (MESH_KEY_WET | MESH_KEY_ZONE)) != 0;
 				int32_t width = 1;
 				int32_t depth = 1;
 				navigation_rect_t *rect;
@@ -5464,8 +5577,8 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 				rect->z = (uint8_t)quarter_z;
 				rect->width = (uint8_t)width;
 				rect->depth = (uint8_t)depth;
-				rect->flags = (uint8_t)(((key & MESH_KEY_TOP) != 0 ? 0 : NAVIGATION_RECT_GROUND) | (wet ? NAVIGATION_RECT_WET : 0));
-				rect->blocked = (uint8_t)(key >> 8);
+				rect->flags = (uint8_t)(((key & MESH_KEY_TOP) != 0 ? 0 : NAVIGATION_RECT_GROUND) | ((key & MESH_KEY_WET) != 0 ? NAVIGATION_RECT_WET : 0)
+					| ((key & MESH_KEY_ZONE) != 0 ? NAVIGATION_RECT_ZONE : 0));
 				rect->small = 0;
 				rect->clearance = NAVIGATION_CLEARANCE_OPEN;
 				for (int32_t j = 0; j < depth; j++)
@@ -5664,7 +5777,15 @@ static void mesh_rect_info(const navigation_t *navigation, const terrain_t *terr
 {
 	const navigation_rect_t *rect = mesh_rect(navigation, c, id);
 
-	info->passable = roomy(rect->clearance, agent) && (rect->blocked & agent->groups) == 0;
+	info->passable = roomy(rect->clearance, agent);
+	// (under a blocker, in a doorway: whom its cell stops now)
+	if ((rect->flags & NAVIGATION_RECT_ZONE) != 0 && info->passable)
+	{
+		mesh_box_t box = mesh_box(navigation, c, id);
+
+		info->passable = (navigation->blocked[SDL_clamp(box.z >> 2, 0, navigation->size - 1) * navigation->size
+			+ SDL_clamp(box.x >> 2, 0, navigation->size - 1)] & agent->groups) == 0;
+	}
 	info->water_class = CLASS_DRY;
 	info->cost_factor = 1.0f + (float)rect->cost / 32.0f;
 	info->height = rect->height;
