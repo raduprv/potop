@@ -328,6 +328,20 @@ typedef struct
 
 #define NAVIGATION_MESH_BUCKETS 16              // a side: a tile's rectangles are found by the bucket of 4 m they reach into
 
+// A run of quarter meters along x by a tile's rectangles where there is
+// a surface but a body of the class does not fit with its middle there:
+// by a wall, on a terrace's edge, at its foot (one stands there), under
+// a table (not even that). Not walked on; what a goal there is level
+// with and what an edge to jump is made of are asked of these
+typedef struct
+{
+	uint8_t x;                         // its first quarter meter within its tile's row
+	uint8_t count;                     // quarter meters
+	uint8_t ground;                    // the ground's (else an object's top)
+	uint8_t stand;                     // with the class's room over it (else only a surface: a floor under a table)
+	float height;
+} navigation_fringe_t;
+
 typedef struct
 {
 	bool built;
@@ -357,6 +371,25 @@ typedef struct
 	uint32_t bucket_first[NAVIGATION_MESH_BUCKETS * NAVIGATION_MESH_BUCKETS + 1];
 	uint16_t *bucket_rects;
 	int32_t bucket_capacity;
+	// The heights of its uneven tops (a ramp, treads taken in a stride:
+	// height_span over 0, not the ground), a quarter meter each, row by
+	// row: uneven_rects are those rectangles, in their order, each one's
+	// heights from uneven_first on
+	uint16_t *uneven_rects;
+	uint32_t *uneven_first;
+	int32_t uneven_count;
+	int32_t uneven_capacity;
+	int32_t uneven_first_capacity;
+	float *uneven_heights;
+	int32_t uneven_height_count;
+	int32_t uneven_height_capacity;
+	// Where one stands but a body does not fit (navigation_fringe_t), row
+	// by row of quarter meters: a row's from fringe_row_first[z] to
+	// fringe_row_first[z + 1] (NULL: the tile has none)
+	navigation_fringe_t *fringe;
+	int32_t fringe_count;
+	int32_t fringe_capacity;
+	uint32_t *fringe_row_first;
 } navigation_mesh_tile_t;
 
 typedef struct

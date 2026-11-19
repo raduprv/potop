@@ -172,17 +172,59 @@ static bool water_dry_at(const navigation_t *navigation, const water_t *water, i
 
 // What a node is to the agent, its cell and the cell's coordinates known
 // (the search's inner loop: no divisions)
-static void node_info_at(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
-	int32_t node, int32_t cell, int32_t cell_x, int32_t cell_z, node_info_t *info)
+// The water over a cell as it is now, onto what a surface there is to an
+// agent (info: its height, passable, its cost): ice bears, deep water is
+// swum (if it swims, and the flow lets it), shallower waded
+static void info_water(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
+	int32_t cell_x, int32_t cell_z, float terrain_height, node_info_t *info)
 {
 	float x = ((float)cell_x + 0.5f) * NAVIGATION_CELL_METERS;
 	float z = ((float)cell_z + 0.5f) * NAVIGATION_CELL_METERS;
-	float terrain_height = navigation->ground_height[cell];
-	uint8_t clearance;
 	float depth = 0.0f;
 	float velocity_x = 0.0f;
 	float velocity_z = 0.0f;
 
+	if (!info->passable || water == NULL || (!water->iced && water_dry_at(navigation, water, cell_x, cell_z, x, z)) || !water_sample(water, x, z, &depth, &velocity_x, &velocity_z))
+	{
+		return;
+	}
+	// The ice bears: its surface, dry
+	if (water->iced)
+	{
+		float ice;
+
+		if (water_ice_surface(water, terrain, x, z, &ice))
+		{
+			info->height = SDL_max(info->height, ice);
+		}
+		return;
+	}
+	// The water's surface over this one (a deck above the water is dry)
+	depth = terrain_height + depth - info->height;
+	if (depth > agent->swim_depth_meters)
+	{
+		float speed_squared = velocity_x * velocity_x + velocity_z * velocity_z;
+
+		info->water_class = CLASS_SWIM;
+		// Swimming is slow and tiring: taken when there is no better way
+		info->cost_factor = 4.0f;
+		if (!agent->can_swim || speed_squared > agent->swim_meters_per_second * agent->swim_meters_per_second)
+		{
+			info->passable = false;
+		}
+	}
+	else if (depth > agent->wade_depth_meters)
+	{
+		info->water_class = CLASS_WADE;
+		info->cost_factor *= 1.5f + 2.0f * depth;
+	}
+}
+
+static void node_info_at(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
+	int32_t node, int32_t cell, int32_t cell_x, int32_t cell_z, node_info_t *info)
+{
+	float terrain_height = navigation->ground_height[cell];
+	uint8_t clearance;
 	int32_t cells = navigation->size * navigation->size;
 
 	if (node < cells)
@@ -225,42 +267,8 @@ static void node_info_at(const navigation_t *navigation, const terrain_t *terrai
 			info->extra_cost = navigation->small_detour_meters;
 		}
 	}
-	if (!info->passable || water == NULL || (!water->iced && water_dry_at(navigation, water, cell_x, cell_z, x, z)) || !water_sample(water, x, z, &depth, &velocity_x, &velocity_z))
-	{
-		return;
-	}
-	// The ice bears: its surface, dry
-	if (water->iced)
-	{
-		float ice;
-
-		if (water_ice_surface(water, terrain, x, z, &ice))
-		{
-			info->height = SDL_max(info->height, ice);
-		}
-		return;
-	}
-	// The water's surface over this one (a deck above the water is dry)
-	depth = terrain_height + depth - info->height;
-	if (depth > agent->swim_depth_meters)
-	{
-		float speed_squared = velocity_x * velocity_x + velocity_z * velocity_z;
-
-		info->water_class = CLASS_SWIM;
-		// Swimming is slow and tiring: taken when there is no better way
-		info->cost_factor = 4.0f;
-		if (!agent->can_swim || speed_squared > agent->swim_meters_per_second * agent->swim_meters_per_second)
-		{
-			info->passable = false;
-		}
-	}
-	else if (depth > agent->wade_depth_meters)
-	{
-		info->water_class = CLASS_WADE;
-		info->cost_factor *= 1.5f + 2.0f * depth;
-	}
+	info_water(navigation, terrain, water, agent, cell_x, cell_z, terrain_height, info);
 }
-
 static void node_info(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
 	int32_t node, node_info_t *info)
 {
@@ -4046,6 +4054,11 @@ static void mesh_free_tile(navigation_mesh_tile_t *tile)
 		SDL_free(tile->border[side]);
 	}
 	SDL_free(tile->bucket_rects);
+	SDL_free(tile->uneven_rects);
+	SDL_free(tile->uneven_first);
+	SDL_free(tile->uneven_heights);
+	SDL_free(tile->fringe);
+	SDL_free(tile->fringe_row_first);
 	SDL_zerop(tile);
 }
 
@@ -4185,6 +4198,7 @@ static uint8_t mesh_room_needed(const navigation_mesh_class_t *class)
 #define MESH_LEVEL_STAND 1             // a body's middle stands here
 #define MESH_LEVEL_POINT 2             // a point of a body does (also the ground where its cell's is taken but nothing is in the way there)
 #define MESH_LEVEL_GROUND 4            // the ground (a slope's reach from the next; an object's top: a step)
+#define MESH_LEVEL_SURFACE 8           // a surface is there, with the class's room over it or not
 #define MESH_KEY_FIT 0x80000000u       // a rectangle's (a key of 0: not)
 #define MESH_KEY_WET 0x40000000u
 #define MESH_KEY_TOP 0x20000000u
@@ -4262,7 +4276,8 @@ static void mesh_build_cell(const navigation_t *navigation, const navigation_mes
 
 				build->height[k][at] = height;
 				build->room[k][at] = surface->room[sub];
-				build->flags[k][at] = MESH_LEVEL_STAND | MESH_LEVEL_POINT | (below == surface->ground_below ? MESH_LEVEL_GROUND : 0);
+				build->flags[k][at] = MESH_LEVEL_STAND | MESH_LEVEL_POINT | MESH_LEVEL_SURFACE
+					| (below == surface->ground_below ? MESH_LEVEL_GROUND : 0);
 				// (over the ground, not far: its side is in the ground's way)
 				in_the_way = in_the_way || (height > ground + SDL_min(class->step, 50.0f) + 0.05f
 					&& height - ground < reach + NAVIGATION_OBJECT_HEIGHT_METERS);
@@ -4274,13 +4289,20 @@ static void mesh_build_cell(const navigation_t *navigation, const navigation_mes
 				// (something stands there at its height, or it has no room)
 				in_the_way = true;
 			}
+			// (a surface with no room for the class: only that it is there)
+			if (build->flags[k][at] == 0 && below < NAVIGATION_SUBCELL_BLOCKED)
+			{
+				build->height[k][at] = surface->height - (float)below * NAVIGATION_SUBCELL_UNIT_METERS;
+				build->flags[k][at] = MESH_LEVEL_SURFACE | (below == surface->ground_below ? MESH_LEVEL_GROUND : 0);
+			}
 		}
 		// (the ground: its cell's, where that has the room; where it is
 		// taken, a body's point still rests on it if nothing is in the way
 		// there: quarter_stand's last resort)
 		build->height[0][at] = ground;
 		build->room[0][at] = ground_room;
-		build->flags[0][at] = (uint8_t)(MESH_LEVEL_GROUND | (ground_roomy ? MESH_LEVEL_STAND | MESH_LEVEL_POINT : in_the_way ? 0 : MESH_LEVEL_POINT));
+		build->flags[0][at] = (uint8_t)(MESH_LEVEL_GROUND | (ground_room != 0 ? MESH_LEVEL_SURFACE : 0)
+			| (ground_roomy ? MESH_LEVEL_STAND | MESH_LEVEL_POINT : in_the_way ? 0 : MESH_LEVEL_POINT));
 	}
 }
 
@@ -4442,50 +4464,50 @@ static float rect_height_high(const navigation_rect_t *rect)
 
 // The height of a rectangle's surface at one of its quarter meters: the
 // ground's is its cell's; a flat top's its own; an uneven top's (a ramp,
-// treads the class takes in its stride) the cell's surface there that is
-// within the rectangle's heights
+// treads the class takes in its stride) the one kept for that quarter
+// when its tile was built (navigation_mesh_tile_t.uneven_heights)
 static float mesh_height_at(const navigation_t *navigation, int c, int32_t id, int32_t quarter_x, int32_t quarter_z)
 {
 	const navigation_rect_t *rect = mesh_rect(navigation, c, id);
-	int32_t cell_x = SDL_clamp(quarter_x >> 2, 0, navigation->size - 1);
-	int32_t cell_z = SDL_clamp(quarter_z >> 2, 0, navigation->size - 1);
-	int32_t cell = cell_z * navigation->size + cell_x;
-	int32_t sub = (quarter_z & 3) * NAVIGATION_SUBCELLS + (quarter_x & 3);
-	int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
-	int count;
-	float high = rect_height_high(rect);
-	float best = rect->height + 0.5f * (high - rect->height);
-	float best_off = 1e30f;
+	const navigation_mesh_tile_t *tile;
+	mesh_box_t box;
+	int32_t index = id & 0xFFFF;
+	int32_t low = 0;
+	int32_t high;
 
 	if ((rect->flags & NAVIGATION_RECT_GROUND) != 0)
 	{
-		return navigation->ground_height[cell];
+		int32_t cell_x = SDL_clamp(quarter_x >> 2, 0, navigation->size - 1);
+		int32_t cell_z = SDL_clamp(quarter_z >> 2, 0, navigation->size - 1);
+
+		return navigation->ground_height[cell_z * navigation->size + cell_x];
 	}
 	if (rect->height_span == 0)
 	{
 		return rect->height;
 	}
-	count = cell_nodes(navigation, cell, nodes);
-	for (int k = 1; k < count; k++)
+	tile = &navigation->mesh.classes[c].tiles[id >> 16];
+	high = tile->uneven_count - 1;
+	while (low < high)
 	{
-		const navigation_surface_t *surface = extra_surface(navigation, nodes[k]);
-		uint8_t below = surface->below[sub];
-		float height;
-		float off;
+		int32_t middle = (low + high) / 2;
 
-		if (below >= NAVIGATION_SUBCELL_BLOCKED)
+		if ((int32_t)tile->uneven_rects[middle] < index)
 		{
-			continue;
+			low = middle + 1;
 		}
-		height = surface->height - (float)below * NAVIGATION_SUBCELL_UNIT_METERS;
-		off = height < rect->height ? rect->height - height : height > high ? height - high : 0.0f;
-		if (off < best_off)
+		else
 		{
-			best_off = off;
-			best = height;
+			high = middle;
 		}
 	}
-	return best;
+	if (low >= tile->uneven_count || (int32_t)tile->uneven_rects[low] != index)
+	{
+		return rect->height + 0.5f * (rect_height_high(rect) - rect->height);
+	}
+	box = mesh_box(navigation, c, id);
+	return tile->uneven_heights[tile->uneven_first[low] + (uint32_t)(clamp_int(quarter_z - box.z, 0, box.depth - 1) * box.width
+		+ clamp_int(quarter_x - box.x, 0, box.width - 1))];
 }
 
 // The rectangles of a class over a quarter meter (x, z in quarters over
@@ -4542,6 +4564,47 @@ static bool mesh_level_of(const navigation_t *navigation, int c, int32_t id, int
 	level_out->height = mesh_height_at(navigation, c, id, quarter_x, quarter_z);
 	level_out->ground = (mesh_rect(navigation, c, id)->flags & NAVIGATION_RECT_GROUND) != 0;
 	return true;
+}
+
+// The fringe of a class over a quarter meter (navigation_fringe_t), of a
+// built tile: the surfaces there a body's middle cannot be on
+// (stand_only: those one stands on); how many (their rect -1)
+static int mesh_fringe_at(const navigation_t *navigation, int c, int32_t quarter_x, int32_t quarter_z, bool stand_only,
+	mesh_level_t levels_out[MESH_LEVELS])
+{
+	int32_t cell_x = quarter_x >> 2;
+	int32_t cell_z = quarter_z >> 2;
+	int32_t region;
+	const navigation_mesh_tile_t *tile;
+	int32_t local_x;
+	int32_t local_z;
+	int count = 0;
+
+	if (quarter_x < 0 || quarter_z < 0 || cell_x >= navigation->size || cell_z >= navigation->size)
+	{
+		return 0;
+	}
+	region = region_of_cell(navigation, cell_z * navigation->size + cell_x);
+	tile = &navigation->mesh.classes[c].tiles[region];
+	if (!tile->built || tile->fringe_row_first == NULL)
+	{
+		return 0;
+	}
+	local_x = quarter_x - (region % navigation->regions_per_side) * navigation->region_size * NAVIGATION_SUBCELLS;
+	local_z = quarter_z - (region / navigation->regions_per_side) * navigation->region_size * NAVIGATION_SUBCELLS;
+	for (uint32_t k = tile->fringe_row_first[local_z]; k < tile->fringe_row_first[local_z + 1] && count < MESH_LEVELS; k++)
+	{
+		const navigation_fringe_t *run = &tile->fringe[k];
+
+		if (local_x >= (int32_t)run->x && local_x < (int32_t)run->x + (int32_t)run->count && (!stand_only || run->stand != 0))
+		{
+			levels_out[count].rect = -1;
+			levels_out[count].height = run->height;
+			levels_out[count].ground = run->ground != 0;
+			count++;
+		}
+	}
+	return count;
 }
 
 // A tile's buckets made from its rectangles: which of them reach into
@@ -5138,6 +5201,9 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 	tile->built = false;
 	tile->rect_count = 0;
 	tile->neighbor_count = 0;
+	tile->uneven_count = 0;
+	tile->uneven_height_count = 0;
+	tile->fringe_count = 0;
 	if (build.width > REGION_CELLS || build.depth > REGION_CELLS)
 	{
 		return false;
@@ -5259,6 +5325,66 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 			}
 		}
 	}
+	// The fringe: the surfaces that are no rectangle's (a body's middle
+	// does not fit there), in runs along x of one height
+	for (int32_t quarter_z = 0; quarter_z < quarters_deep; quarter_z++)
+	{
+		if (tile->fringe_row_first != NULL)
+		{
+			tile->fringe_row_first[quarter_z] = (uint32_t)tile->fringe_count;
+		}
+		for (int level = 0; level < MESH_LEVELS; level++)
+		{
+			navigation_fringe_t *run = NULL;
+
+			for (int32_t quarter_x = 0; quarter_x < quarters_wide; quarter_x++)
+			{
+				int32_t at = (quarter_z + MESH_MARGIN_QUARTERS) * build.span + quarter_x + MESH_MARGIN_QUARTERS;
+				uint8_t flags = build.flags[level][at];
+				uint8_t ground = (flags & MESH_LEVEL_GROUND) != 0 ? 1 : 0;
+
+				uint8_t stand = (flags & MESH_LEVEL_STAND) != 0 ? 1 : 0;
+
+				if ((flags & MESH_LEVEL_SURFACE) == 0 || (build.fit[at] >> level & 1) != 0)
+				{
+					run = NULL;
+					continue;
+				}
+				if (run != NULL && run->count < 255 && run->ground == ground && run->stand == stand
+					&& SDL_fabsf(run->height - build.height[level][at]) < 0.005f)
+				{
+					run->count++;
+					continue;
+				}
+				if (tile->fringe_row_first == NULL)
+				{
+					// (its first: the rows before have none)
+					tile->fringe_row_first = SDL_calloc((size_t)MESH_TILE_QUARTERS_MOST + 1, sizeof(uint32_t));
+					if (tile->fringe_row_first == NULL)
+					{
+						return false;
+					}
+				}
+				if (!mesh_grow((void **)&tile->fringe, &tile->fringe_capacity, tile->fringe_count + 1, sizeof(navigation_fringe_t)))
+				{
+					return false;
+				}
+				run = &tile->fringe[tile->fringe_count++];
+				run->x = (uint8_t)quarter_x;
+				run->count = 1;
+				run->ground = ground;
+				run->stand = stand;
+				run->height = build.height[level][at];
+			}
+		}
+	}
+	if (tile->fringe_row_first != NULL)
+	{
+		for (int32_t quarter_z = quarters_deep; quarter_z <= MESH_TILE_QUARTERS_MOST; quarter_z++)
+		{
+			tile->fringe_row_first[quarter_z] = (uint32_t)tile->fringe_count;
+		}
+	}
 	// The rectangles: from each quarter's level not yet in one, as wide as
 	// its row goes on alike, then as deep as whole rows go on alike (the
 	// water's: within their cell, looked at with the water as it is)
@@ -5367,6 +5493,27 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 				rect->height_span = height_high - height_low < 0.005f ? 0
 					: (uint8_t)SDL_clamp(SDL_ceilf((height_high - height_low) / NAVIGATION_RECT_SPAN_UNIT_METERS), 1.0f, 255.0f);
 				rect->cost = (uint8_t)SDL_clamp((cost_sum / (float)(width * depth) - 1.0f) * 32.0f + 0.5f, 0.0f, 255.0f);
+				// (an uneven top: its heights kept, a quarter each; the
+				// ground's are the terrain's)
+				if (rect->height_span != 0 && (key & MESH_KEY_TOP) != 0)
+				{
+					if (!mesh_grow((void **)&tile->uneven_rects, &tile->uneven_capacity, tile->uneven_count + 1, sizeof(uint16_t))
+						|| !mesh_grow((void **)&tile->uneven_first, &tile->uneven_first_capacity, tile->uneven_count + 1, sizeof(uint32_t))
+						|| !mesh_grow((void **)&tile->uneven_heights, &tile->uneven_height_capacity, tile->uneven_height_count + width * depth,
+							sizeof(float)))
+					{
+						return false;
+					}
+					tile->uneven_rects[tile->uneven_count] = (uint16_t)index;
+					tile->uneven_first[tile->uneven_count++] = (uint32_t)tile->uneven_height_count;
+					for (int32_t j = 0; j < depth; j++)
+					{
+						for (int32_t i = 0; i < width; i++)
+						{
+							tile->uneven_heights[tile->uneven_height_count++] = build.height[grid[j][i]][at + j * build.span + i];
+						}
+					}
+				}
 			}
 		}
 	}
@@ -5506,54 +5653,14 @@ static bool mesh_tile_ready(navigation_t *navigation, int c, int32_t region, con
 	return true;
 }
 
-// The node a rectangle with water on it at the build is of (its cell's
-// ground, or the cell's surface within its heights): what the water is
-// asked about
-static int32_t mesh_wet_node(const navigation_t *navigation, int c, int32_t id)
-{
-	const navigation_rect_t *rect = mesh_rect(navigation, c, id);
-	mesh_box_t box = mesh_box(navigation, c, id);
-	int32_t cell = (box.z >> 2) * navigation->size + (box.x >> 2);
-	int32_t sub = (box.z & 3) * NAVIGATION_SUBCELLS + (box.x & 3);
-	int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
-	int count = cell_nodes(navigation, cell, nodes);
-	bool ground = (rect->flags & NAVIGATION_RECT_GROUND) != 0;
-
-	if (ground && navigation->terrain_clearance[cell] != 0)
-	{
-		return cell;
-	}
-	for (int k = 1; k < count; k++)
-	{
-		const navigation_surface_t *surface = extra_surface(navigation, nodes[k]);
-		uint8_t below = surface->below[sub];
-		float height;
-
-		if (below >= NAVIGATION_SUBCELL_BLOCKED || (below == surface->ground_below) != ground)
-		{
-			continue;
-		}
-		height = surface->height - (float)below * NAVIGATION_SUBCELL_UNIT_METERS;
-		if (height >= rect->height - 0.03f && height <= rect_height_high(rect) + 0.03f)
-		{
-			return nodes[k];
-		}
-	}
-	return cell;
-}
-
-// What a rectangle is to an agent now: as node_info's (a wet one's its
-// cell's, the water as it is)
+// What a rectangle is to an agent now: as node_info's; one with water
+// on it at the build (a cell's own: they are not joined) with the water
+// over that cell as it is
 static void mesh_rect_info(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
 	int c, int32_t id, node_info_t *info)
 {
 	const navigation_rect_t *rect = mesh_rect(navigation, c, id);
 
-	if ((rect->flags & NAVIGATION_RECT_WET) != 0)
-	{
-		node_info(navigation, terrain, water, agent, mesh_wet_node(navigation, c, id), info);
-		return;
-	}
 	info->passable = roomy(rect->clearance, agent) && (rect->blocked & agent->groups) == 0;
 	info->water_class = CLASS_DRY;
 	info->cost_factor = 1.0f + (float)rect->cost / 32.0f;
@@ -5561,6 +5668,19 @@ static void mesh_rect_info(const navigation_t *navigation, const terrain_t *terr
 	info->small = false;
 	info->surface = (rect->flags & NAVIGATION_RECT_GROUND) == 0;
 	info->extra_cost = 0.0f;
+	if ((rect->flags & NAVIGATION_RECT_WET) != 0)
+	{
+		mesh_box_t box = mesh_box(navigation, c, id);
+		int32_t cell_x = SDL_clamp(box.x >> 2, 0, navigation->size - 1);
+		int32_t cell_z = SDL_clamp(box.z >> 2, 0, navigation->size - 1);
+		float terrain_height = navigation->ground_height[cell_z * navigation->size + cell_x];
+
+		if (!info->surface)
+		{
+			info->height = terrain_height;
+		}
+		info_water(navigation, terrain, water, agent, cell_x, cell_z, terrain_height, info);
+	}
 }
 
 // The rectangle of a class at a point, on the level nearest the height
@@ -6972,8 +7092,11 @@ static int mesh_find_path(navigation_t *navigation, const terrain_t *terrain, co
 			*waypoint_count_out = cut;
 			*complete_out = false;
 		}
-		if (result <= 0 || *waypoint_count_out <= 0 || mesh_way_holds(navigation, terrain, water, agent, from_x, from_z, from_height, waypoints_out,
-			*waypoint_count_out, failed, &failed_height, &failed_leg))
+		// (a walker that keeps to the rectangles goes the way as it is
+		// found: nothing of it is asked of the quarter meters)
+		if (result <= 0 || *waypoint_count_out <= 0 || navigation->follow_mesh
+			|| mesh_way_holds(navigation, terrain, water, agent, from_x, from_z, from_height, waypoints_out, *waypoint_count_out, failed,
+				&failed_height, &failed_leg))
 		{
 			return result;
 		}
@@ -7136,30 +7259,57 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 	// further from its wall, not the ground beside the porch)
 	mesh_quarter_at(c, to_x, to_z, &goal_x, &goal_z);
 	goal_near_count = 0;
+	// (what is at the goal itself: the rectangles' levels there, and the
+	// surfaces there a body does not fit on: a goal by a wall, under a
+	// table; none: the levels nearest it)
+	if (goal_x >= 0 && goal_z >= 0 && (goal_x >> 2) < navigation->size && (goal_z >> 2) < navigation->size
+		&& mesh_tile_ready(navigation, c, region_of_cell(navigation, (goal_z >> 2) * navigation->size + (goal_x >> 2)), water))
 	{
-		int32_t cell;
-		int32_t sub_x;
-		int32_t sub_z;
+		mesh_level_t levels[2 * MESH_LEVELS];
+		int count = mesh_levels_at(navigation, c, goal_x, goal_z, levels);
 
-		if (quarter_of_point(navigation, to_x, to_z, &cell, &sub_x, &sub_z))
+		count += mesh_fringe_at(navigation, c, goal_x, goal_z, false, levels + count);
+		for (int k = 0; k < count && goal_height_count < MESH_LEVELS; k++)
 		{
-			int32_t nodes[1 + NAVIGATION_MAX_EXTRA_SURFACES];
-			int count = cell_nodes(navigation, cell, nodes);
+			goal_heights[goal_height_count] = levels[k].height;
+			goal_grounds[goal_height_count++] = levels[k].ground;
+		}
+	}
+	if (goal_height_count == 0)
+	{
+		float least = 1e30f;
 
-			if (navigation->terrain_clearance[cell] != 0)
+		for (int pass = 0; pass < 2; pass++)
+		{
+			for (int32_t dz = -MESH_GOAL_NEAR_QUARTERS; dz <= MESH_GOAL_NEAR_QUARTERS; dz++)
 			{
-				goal_heights[goal_height_count] = navigation->ground_height[cell];
-				goal_grounds[goal_height_count++] = true;
-			}
-			for (int k = 1; k < count; k++)
-			{
-				const navigation_surface_t *surface = extra_surface(navigation, nodes[k]);
-				uint8_t below = surface->below[sub_z * NAVIGATION_SUBCELLS + sub_x];
-
-				if (below < NAVIGATION_SUBCELL_BLOCKED)
+				for (int32_t dx = -MESH_GOAL_NEAR_QUARTERS; dx <= MESH_GOAL_NEAR_QUARTERS; dx++)
 				{
-					goal_heights[goal_height_count] = surface->height - (float)below * NAVIGATION_SUBCELL_UNIT_METERS;
-					goal_grounds[goal_height_count++] = below == surface->ground_below;
+					int32_t here_x = goal_x + dx;
+					int32_t here_z = goal_z + dz;
+					mesh_level_t levels[MESH_LEVELS];
+					float off_x = mesh_quarter_middle(c, here_x) - to_x;
+					float off_z = mesh_quarter_middle(c, here_z) - to_z;
+					float off = off_x * off_x + off_z * off_z;
+					int count;
+
+					if (here_x < 0 || here_z < 0 || (here_x >> 2) >= navigation->size || (here_z >> 2) >= navigation->size
+						|| (pass == 1 && off > least + 1e-4f)
+						|| !mesh_tile_ready(navigation, c, region_of_cell(navigation, (here_z >> 2) * navigation->size + (here_x >> 2)), water))
+					{
+						continue;
+					}
+					count = mesh_levels_at(navigation, c, here_x, here_z, levels);
+					if (pass == 0)
+					{
+						least = count > 0 ? SDL_min(least, off) : least;
+						continue;
+					}
+					for (int k = 0; k < count && goal_height_count < MESH_LEVELS; k++)
+					{
+						goal_heights[goal_height_count] = levels[k].height;
+						goal_grounds[goal_height_count++] = levels[k].ground;
+					}
 				}
 			}
 		}
