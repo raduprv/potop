@@ -7,6 +7,7 @@
 #include "water.h"
 
 #include <SDL3/SDL.h>
+#include <string.h>
 
 #define TILE_CELLS (WATER_TILE_SIZE * WATER_TILE_SIZE)
 
@@ -240,6 +241,11 @@ typedef struct water_gpu_s
 	// The CPU's copy: tiles it is behind on, and its newest change of each
 	// (a copy asked for before that change must not overwrite it)
 	uint8_t *tile_needs_download;
+	// Each tile's words of the last statistics taken in (TILE_WORDS a
+	// tile): one whose words come the same again has nothing new, its
+	// dozen numbers not copied out again (most tiles of a map with little
+	// water, every time). NULL: none kept, every tile taken in
+	uint32_t *tile_words_last;
 	uint64_t *tile_downloaded_ticks;   // when each was last asked for (SDL_GetTicks)
 	uint64_t *tile_terrain_downloaded_ticks;
 	uint32_t *tile_edit_serial;
@@ -379,6 +385,12 @@ bool water_gpu_init(water_t *water)
 	state->cell_count = (uint32_t)water->size * (uint32_t)water->size;
 	state->tile_edited = SDL_calloc((size_t)tile_count, 1);
 	state->tile_needs_download = SDL_calloc((size_t)tile_count, 1);
+	// (all ones: no tile's first words are the same as these)
+	state->tile_words_last = SDL_malloc(sizeof(uint32_t) * TILE_WORDS * (size_t)tile_count);
+	if (state->tile_words_last != NULL)
+	{
+		SDL_memset(state->tile_words_last, 0xFF, sizeof(uint32_t) * TILE_WORDS * (size_t)tile_count);
+	}
 	state->tile_downloaded_ticks = SDL_calloc((size_t)tile_count, sizeof(uint64_t));
 	state->ground_requested = SDL_calloc((size_t)tile_count, 1);
 	state->tile_terrain_downloaded_ticks = SDL_calloc((size_t)tile_count, sizeof(uint64_t));
@@ -476,6 +488,7 @@ void water_gpu_release(water_t *water)
 	}
 	SDL_free(state->tile_edited);
 	SDL_free(state->tile_needs_download);
+	SDL_free(state->tile_words_last);
 	SDL_free(state->tile_downloaded_ticks);
 	SDL_free(state->ground_requested);
 	SDL_free(state->tile_terrain_downloaded_ticks);
@@ -1577,6 +1590,18 @@ static void apply_statistics(water_t *water, const uint32_t *words)
 	{
 		const uint32_t *tile_words = &words[HEADER_WORDS + tile * TILE_WORDS];
 
+		// (the same words as last time, and no flag in them asking for
+		// anything: what was copied out of them then still stands)
+		if (state->tile_words_last != NULL)
+		{
+			uint32_t *last = &state->tile_words_last[(size_t)tile * TILE_WORDS];
+
+			if (tile_words[TILE_FLAGS] == 0 && SDL_memcmp(tile_words, last, sizeof(uint32_t) * TILE_WORDS) == 0)
+			{
+				continue;
+			}
+			SDL_memcpy(last, tile_words, sizeof(uint32_t) * TILE_WORDS);
+		}
 		water->tile_state[tile] = (uint8_t)tile_words[TILE_STATE];
 		water->tile_idle_steps[tile] = (uint8_t)SDL_min(tile_words[TILE_IDLE_STEPS], 255u);
 		water->tile_total_depth[tile] = (int64_t)wide(&tile_words[TILE_TOTAL_DEPTH]);
@@ -1872,7 +1897,10 @@ static int32_t choose_tiles(water_t *water, float focus_x, float focus_z, int32_
 			}
 		}
 	}
-	for (int32_t i = 0; i < state->tile_count && count < budget; i++)
+	// (no tile asking: none looked at, every frame of a map with no water moving)
+	bool asking = memchr(state->tile_needs_download, 1, (size_t)state->tile_count) != NULL;
+
+	for (int32_t i = 0; asking && i < state->tile_count && count < budget; i++)
 	{
 		int32_t tile = (state->download_cursor + i) % state->tile_count;
 
@@ -1982,7 +2010,10 @@ void water_gpu_end_frame(water_t *water, const terrain_t *terrain, float focus_x
 		// The ground erosion changed, in turn (it changes slowly)
 		uint64_t now = SDL_GetTicks();
 
-		for (int32_t i = 0; i < state->tile_count && slot->tile_count < DOWNLOAD_BUDGET_TILES + DOWNLOAD_TERRAIN_TILES; i++)
+		// (no tile's ground waiting: none looked at)
+		bool ground_waiting = memchr(state->tile_terrain_needs_download, 1, (size_t)state->tile_count) != NULL;
+
+		for (int32_t i = 0; ground_waiting && i < state->tile_count && slot->tile_count < DOWNLOAD_BUDGET_TILES + DOWNLOAD_TERRAIN_TILES; i++)
 		{
 			int32_t tile = (state->terrain_cursor + i) % state->tile_count;
 
