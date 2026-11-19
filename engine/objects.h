@@ -38,6 +38,7 @@
 
 // Side of the grid cells objects are sorted into
 #define OBJECTS_GRID_CELL_METERS 32.0f
+#define OBJECTS_GRID_BLOCK_CELLS 8
 #define OBJECTS_ADDED_BEFORE_SORT 4096 // added since the last sort (objects_sort): more, sorted again
 #define OBJECTS_STRAYS_BEFORE_SORT 65536 // come loose or turned since: more, sorted again
 #define OBJECTS_WINDOWS_PER_FRAME 100000 // the windows' pass (objects_light_windows): objects looked at a frame
@@ -223,6 +224,15 @@ typedef struct
 	float *grid_minimum_y;
 	float *grid_maximum_y;
 	float *grid_draw_distance;
+	// The same of blocks of OBJECTS_GRID_BLOCK_CELLS cells a side (a block
+	// with no objects: its distance 0): a pass throws out a block too
+	// far or out of view without walking its cells. Made again when a
+	// cell's change (block_stale)
+	float *block_minimum_y;
+	float *block_maximum_y;
+	float *block_draw_distance;
+	int block_grid_size;               // the grid they were made for
+	bool block_stale;
 	bool grid_dirty;               // instances were removed (or a module added): sort again before use
 	// Not all of them where the sort put them (the game changes the list
 	// a little and does not sort it all again for that, see

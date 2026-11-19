@@ -963,6 +963,9 @@ void objects_destroy(objects_t *objects)
 	SDL_free(objects->run_type);
 	SDL_free(objects->model_distance);
 	SDL_free(objects->type_marked_distance);
+	SDL_free(objects->block_minimum_y);
+	SDL_free(objects->block_maximum_y);
+	SDL_free(objects->block_draw_distance);
 	SDL_free(objects->near_cell_counts);
 	SDL_free(objects->near_cell_order);
 	SDL_free(objects->draw_order);
@@ -2246,6 +2249,77 @@ static void update_cell_bounds(objects_t *objects, int cell)
 	objects->grid_minimum_y[cell] = minimum;
 	objects->grid_maximum_y[cell] = maximum;
 	objects->grid_draw_distance[cell] = distance;
+	objects->block_stale = true;
+}
+
+// The blocks' bounds from their cells' (objects_t.block_draw_distance);
+// false: no memory, the passes walk every cell
+static bool update_block_bounds(objects_t *objects)
+{
+	int blocks_per_side = (objects->grid_size + OBJECTS_GRID_BLOCK_CELLS - 1) / OBJECTS_GRID_BLOCK_CELLS;
+
+	if (objects->block_grid_size != objects->grid_size || objects->block_draw_distance == NULL)
+	{
+		size_t bytes = sizeof(float) * (size_t)blocks_per_side * (size_t)blocks_per_side;
+		float *minimum = SDL_realloc(objects->block_minimum_y, SDL_max(bytes, 1));
+		float *maximum;
+		float *distance;
+
+		objects->block_grid_size = 0;
+		if (minimum == NULL)
+		{
+			return false;
+		}
+		objects->block_minimum_y = minimum;
+		maximum = SDL_realloc(objects->block_maximum_y, SDL_max(bytes, 1));
+		if (maximum == NULL)
+		{
+			return false;
+		}
+		objects->block_maximum_y = maximum;
+		distance = SDL_realloc(objects->block_draw_distance, SDL_max(bytes, 1));
+		if (distance == NULL)
+		{
+			return false;
+		}
+		objects->block_draw_distance = distance;
+		objects->block_grid_size = objects->grid_size;
+		objects->block_stale = true;
+	}
+	if (!objects->block_stale)
+	{
+		return true;
+	}
+	for (int block_j = 0; block_j < blocks_per_side; block_j++)
+	{
+		for (int block_i = 0; block_i < blocks_per_side; block_i++)
+		{
+			float minimum = 1e30f;
+			float maximum = -1e30f;
+			float distance = 0.0f;
+
+			for (int j = block_j * OBJECTS_GRID_BLOCK_CELLS; j < SDL_min((block_j + 1) * OBJECTS_GRID_BLOCK_CELLS, objects->grid_size); j++)
+			{
+				for (int i = block_i * OBJECTS_GRID_BLOCK_CELLS; i < SDL_min((block_i + 1) * OBJECTS_GRID_BLOCK_CELLS, objects->grid_size); i++)
+				{
+					int cell = j * objects->grid_size + i;
+
+					if (objects->grid_first[cell] == objects->grid_first[cell + 1])
+					{
+						continue;
+					}
+					minimum = SDL_min(minimum, objects->grid_minimum_y[cell]);
+					maximum = SDL_max(maximum, objects->grid_maximum_y[cell]);
+					distance = SDL_max(distance, objects->grid_draw_distance[cell]);
+				}
+			}
+			objects->block_minimum_y[block_j * blocks_per_side + block_i] = minimum;
+			objects->block_maximum_y[block_j * blocks_per_side + block_i] = maximum;
+			objects->block_draw_distance[block_j * blocks_per_side + block_i] = distance;
+		}
+	}
+	objects->block_stale = false;
+	return true;
 }
 
 // The grid cell an object is sorted into; free objects go after the cells
@@ -3809,9 +3883,35 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 		last_i = SDL_clamp((int)SDL_floorf((eye.x + farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
 		last_j = SDL_clamp((int)SDL_floorf((eye.z + farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
 	}
-	for (int j = first_j; j <= last_j; j++)
+	// By blocks of cells first: one with nothing in it, too far for
+	// anything of its to be drawn, or out of view is thrown out whole (on
+	// a big map walking every cell, for every pass, was most of this)
+	bool by_blocks = update_block_bounds(objects);
+	int blocks_per_side = (objects->grid_size + OBJECTS_GRID_BLOCK_CELLS - 1) / OBJECTS_GRID_BLOCK_CELLS;
+
+	for (int block_j = first_j / OBJECTS_GRID_BLOCK_CELLS; block_j <= last_j / OBJECTS_GRID_BLOCK_CELLS; block_j++)
 	{
-		for (int i = first_i; i <= last_i; i++)
+	for (int block_i = first_i / OBJECTS_GRID_BLOCK_CELLS; block_i <= last_i / OBJECTS_GRID_BLOCK_CELLS; block_i++)
+	{
+	if (by_blocks)
+	{
+		int block = block_j * blocks_per_side + block_i;
+		float block_distance = objects->block_draw_distance[block];
+		vec3_t block_minimum = vec3_make((float)(block_i * OBJECTS_GRID_BLOCK_CELLS) * OBJECTS_GRID_CELL_METERS - 12.0f,
+			objects->block_minimum_y[block], (float)(block_j * OBJECTS_GRID_BLOCK_CELLS) * OBJECTS_GRID_CELL_METERS - 12.0f);
+		vec3_t block_maximum = vec3_make((float)((block_i + 1) * OBJECTS_GRID_BLOCK_CELLS) * OBJECTS_GRID_CELL_METERS + 12.0f,
+			objects->block_maximum_y[block], (float)((block_j + 1) * OBJECTS_GRID_BLOCK_CELLS) * OBJECTS_GRID_CELL_METERS + 12.0f);
+
+		if (block_distance <= 0.0f
+			|| (pass != PASS_FAR_SHADOW && distance_to_box(eye, block_minimum, block_maximum) > block_distance * objects->draw_distance_scale)
+			|| (frustum != NULL && !frustum_contains_box(frustum, block_minimum, block_maximum)))
+		{
+			continue;
+		}
+	}
+	for (int j = SDL_max(first_j, block_j * OBJECTS_GRID_BLOCK_CELLS); j <= SDL_min(last_j, (block_j + 1) * OBJECTS_GRID_BLOCK_CELLS - 1); j++)
+	{
+		for (int i = SDL_max(first_i, block_i * OBJECTS_GRID_BLOCK_CELLS); i <= SDL_min(last_i, (block_i + 1) * OBJECTS_GRID_BLOCK_CELLS - 1); i++)
 		{
 			int cell = j * objects->grid_size + i;
 			int first = objects->grid_first[cell];
@@ -3954,6 +4054,8 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 				}
 			}
 		}
+	}
+	}
 	}
 	if (near_count > 0)
 	{
