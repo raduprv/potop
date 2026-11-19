@@ -556,8 +556,11 @@ void main()
 			return;
 		}
 	}
-	// Coming or going: smaller the nearer the share is to its threshold
-	float thinning = clamp((kept - threshold) / max(0.4 * threshold, 1e-6), 0.0, 1.0);
+	// Coming or going: smaller the nearer the share is to its threshold,
+	// grown whole by the time the share is all (inside full_radius every
+	// blade whole: a high threshold's ramp is short, at the disc's edge; a
+	// few with the highest stay a little short)
+	float thinning = clamp((kept - threshold) / max(min(0.4 * threshold, max(1.0 - threshold, 0.03)), 1e-6), 0.0, 1.0);
 	float y = ground_height(world_xz);
 
 	// Out of view (as tall as a blade gets): the cheap test before the
