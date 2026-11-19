@@ -448,6 +448,8 @@ typedef struct
 	uint8_t padding;
 } navigation_capsule_t;
 
+#define NAVIGATION_CAPSULE_SQUARES 16
+
 // A model's capsules (its own axes, at size 1) and how much room it takes
 #define NAVIGATION_MODEL_CAPSULES_MOST 4
 
@@ -462,7 +464,12 @@ typedef struct
 typedef struct
 {
 	navigation_surface_t *surfaces;    // NAVIGATION_REGION_EXTRA_SLOTS of them
-	navigation_capsule_t *capsules;    // of the small and soft things that reach into it
+	// Of the small and soft things that reach into it, in the order of
+	// the squares (NAVIGATION_CAPSULE_SQUARES a side) their first ends are
+	// in or nearest: capsule_first[square] is a square's first, its next
+	// one's is its end (a line asks for the few by it, many times a frame)
+	navigation_capsule_t *capsules;
+	uint16_t *capsule_first;           // NAVIGATION_CAPSULE_SQUARES squared + 1 of them; NULL: no capsules
 	int32_t capsule_count;
 	int32_t capsule_capacity;
 	navigation_object_print_t *prints; // its objects as its signature last saw them (by id)

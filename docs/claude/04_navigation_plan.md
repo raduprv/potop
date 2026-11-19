@@ -200,7 +200,7 @@ are joined at all), a coarse graph for ways of kilometers.
   berth are pushed out of it; then, per stretch, the first circle
   crossed (the capsule cut to the agent's height, laid on the ground,
   a circle round it, swollen by the agent's radius + 2 cm) is gone
-  round 10 cm further out, on the side with less of a turn, a point per
+  round 20 cm further out, on the side with less of a turn, a point per
   quarter turn, each on the lines touching the circle; the new
   stretches must lie on the rectangles (else the other side, else the
   thing is left to the guard), and are looked at again. At most 24 new
@@ -221,6 +221,17 @@ are joined at all), a coarse graph for ways of kilometers.
   with where the player is; further off the ways are not led round.
   Not done: looking at a far walker's way again when the player comes
   near (it is stopped by the guard and takes a fine way, as before).
+- Cost (Radu: the game stuttered in a forest, the fan on): each line
+  asked about and each look at a stretch went over all the capsules of
+  its regions (thousands in a forest, many times a frame). Now a
+  region's capsules are in the order of 4 m squares (`capsule_first`)
+  and only the squares a line passes are read; a way's stretch gathers
+  its things once (not again for each piece it is cut into); the weld
+  is a sweep along x, not every pair. A chase through 1500 trunks:
+  leading a way round 0.37 -> 0.08 ms, a search as a whole about as
+  with everything a wall. The berth is 20 cm now (10: the walker's
+  guard found no straight way by the trunk and took a fine way, 14
+  times against 6; the chase 32 s late against 22, 21 as walls).
 - Soft things are not gone round at planning (the walker's own
   business as it goes: the height per cell, as before).
 - tests/navigation/small.py passes: every goal, no body in a trunk or a

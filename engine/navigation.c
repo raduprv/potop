@@ -763,6 +763,64 @@ static int object_kind(navigation_t *navigation, const objects_t *objects, const
 	return kind;
 }
 
+// The square of a region's capsules a point is in, or nearest
+static int capsule_square(const navigation_t *navigation, int32_t region_index, float x, float z)
+{
+	float square_meters = NAVIGATION_REGION_METERS / (float)NAVIGATION_CAPSULE_SQUARES;
+	int square_x = (int)SDL_floorf((x - (float)(region_index % navigation->regions_per_side) * NAVIGATION_REGION_METERS) / square_meters);
+	int square_z = (int)SDL_floorf((z - (float)(region_index / navigation->regions_per_side) * NAVIGATION_REGION_METERS) / square_meters);
+
+	return SDL_clamp(square_z, 0, NAVIGATION_CAPSULE_SQUARES - 1) * NAVIGATION_CAPSULE_SQUARES
+		+ SDL_clamp(square_x, 0, NAVIGATION_CAPSULE_SQUARES - 1);
+}
+
+// A region's capsules put in the order of their squares
+static void sort_region_capsules(const navigation_t *navigation, int32_t region_index)
+{
+	navigation_region_t *region = &navigation->regions[region_index];
+	const int squares = NAVIGATION_CAPSULE_SQUARES * NAVIGATION_CAPSULE_SQUARES;
+	navigation_capsule_t *sorted;
+	uint16_t next[NAVIGATION_CAPSULE_SQUARES * NAVIGATION_CAPSULE_SQUARES];
+
+	if (region->capsule_count == 0)
+	{
+		SDL_free(region->capsule_first);
+		region->capsule_first = NULL;
+		return;
+	}
+	// (the squares' firsts are 16 bits)
+	region->capsule_count = SDL_min(region->capsule_count, 65535);
+	sorted = SDL_malloc(sizeof(navigation_capsule_t) * (size_t)region->capsule_count);
+	if (region->capsule_first == NULL)
+	{
+		region->capsule_first = SDL_malloc(sizeof(uint16_t) * (size_t)(squares + 1));
+	}
+	if (sorted == NULL || region->capsule_first == NULL)
+	{
+		SDL_free(sorted);
+		SDL_free(region->capsule_first);
+		region->capsule_first = NULL;
+		region->capsule_count = 0;
+		return;
+	}
+	SDL_memset(region->capsule_first, 0, sizeof(uint16_t) * (size_t)(squares + 1));
+	for (int32_t k = 0; k < region->capsule_count; k++)
+	{
+		region->capsule_first[capsule_square(navigation, region_index, region->capsules[k].a[0], region->capsules[k].a[2]) + 1]++;
+	}
+	for (int square = 0; square < squares; square++)
+	{
+		region->capsule_first[square + 1] = (uint16_t)(region->capsule_first[square + 1] + region->capsule_first[square]);
+		next[square] = region->capsule_first[square];
+	}
+	for (int32_t k = 0; k < region->capsule_count; k++)
+	{
+		sorted[next[capsule_square(navigation, region_index, region->capsules[k].a[0], region->capsules[k].a[2])]++] = region->capsules[k];
+	}
+	SDL_memcpy(region->capsules, sorted, sizeof(navigation_capsule_t) * (size_t)region->capsule_count);
+	SDL_free(sorted);
+}
+
 // A small thing's capsule kept with a region
 static void append_region_capsule(navigation_region_t *region, const navigation_capsule_t *capsule)
 {
@@ -1945,6 +2003,7 @@ static void build_box(navigation_t *navigation, const terrain_t *terrain, const 
 			soft_cells.count = 0;
 		}
 	}
+	sort_region_capsules(navigation, region_index);
 	// The cells only small things stand in: open ground to the rectangles,
 	// if they are to be left out of those (small_out); a wall there too,
 	// a barrel on a porch: as the surfaces have it. The surfaces keep
@@ -2433,6 +2492,7 @@ static void free_map(navigation_t *navigation)
 		SDL_free(navigation->regions[r].surfaces);
 		SDL_free(navigation->regions[r].prints);
 		SDL_free(navigation->regions[r].capsules);
+		SDL_free(navigation->regions[r].capsule_first);
 	}
 	SDL_free(navigation->regions);
 	SDL_free(navigation->ground_height);
@@ -4705,13 +4765,23 @@ typedef struct
 	float capsule_radius;
 } small_circle_t;
 
-static int small_circles(const navigation_t *navigation, float height, bool near_only, float minimum_x, float minimum_z, float maximum_x,
-	float maximum_z, small_circle_t *circles_out, int most);
+static int small_circles(const navigation_t *navigation, float height, bool near_only, float margin, float minimum_x, float minimum_z,
+	float maximum_x, float maximum_z, const float *along_from, const float *along_to, small_circle_t *circles_out, int most);
 static void mesh_quarter_at(int c, float x, float z, int32_t *quarter_x_out, int32_t *quarter_z_out);
 
+#define SMALL_MARGIN_METERS 2.0f       // things this far round a stretch are gathered for it (its ways round them stay within that)
+#define SMALL_LINE_MARGIN_METERS 1.0f  // and this far round a line only asked about, or a point
 #define MESH_WELD_CIRCLES_MOST 2048
 #define MESH_WELD_CLEAR_METERS 0.0f    // two small things with less than a body's width and this between them: no way between
 #define MESH_WELD_STEP_METERS 0.1f
+
+static int compare_small_circles(const void *a, const void *b)
+{
+	float first = ((const small_circle_t *)a)->x;
+	float second = ((const small_circle_t *)b)->x;
+
+	return first < second ? -1 : first > second ? 1 : 0;
+}
 
 // Small things too near one another for a body of the class to pass
 // between (a row of trunks, a palisade): no body's middle on the line
@@ -4723,12 +4793,20 @@ static void mesh_weld_small(const navigation_t *navigation, const navigation_mes
 	static small_circle_t circles[MESH_WELD_CIRCLES_MOST];
 	float first_x = (float)build->first_x * NAVIGATION_CELL_METERS;
 	float first_z = (float)build->first_z * NAVIGATION_CELL_METERS;
-	int count = small_circles(navigation, class->height, false, first_x, first_z, first_x + (float)build->width * NAVIGATION_CELL_METERS,
-		first_z + (float)build->depth * NAVIGATION_CELL_METERS, circles, MESH_WELD_CIRCLES_MOST);
+	int count = small_circles(navigation, class->height, false, SMALL_MARGIN_METERS, first_x, first_z, first_x + (float)build->width * NAVIGATION_CELL_METERS,
+		first_z + (float)build->depth * NAVIGATION_CELL_METERS, NULL, NULL, circles, MESH_WELD_CIRCLES_MOST);
 
+	float widest = 0.0f;
+
+	// (in the order of their x: each one against the few just after it)
+	SDL_qsort(circles, (size_t)count, sizeof(small_circle_t), compare_small_circles);
 	for (int i = 0; i < count; i++)
 	{
-		for (int j = i + 1; j < count; j++)
+		widest = SDL_max(widest, circles[i].radius);
+	}
+	for (int i = 0; i < count; i++)
+	{
+		for (int j = i + 1; j < count && circles[j].x - circles[i].x < 2.0f * widest + 2.0f * class->radius + MESH_WELD_CLEAR_METERS; j++)
 		{
 			float dx = circles[j].x - circles[i].x;
 			float dz = circles[j].z - circles[i].z;
@@ -6104,8 +6182,9 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 // Small things on a way: led round them
 
 #define SMALL_CIRCLES_MOST 512
+#define SMALL_SAMPLE_REACH_METERS 3.0f // of the stretches to and from a thing gone round, this much by it is looked at
 #define SMALL_CLEAR_METERS 0.02f       // a body passes a small thing by this much at least
-#define SMALL_ROUND_METERS 0.1f        // and is led round it this much further out
+#define SMALL_ROUND_METERS 0.2f        // and is led round it this much further out
 #define SMALL_LINE_METERS 0.1f         // a straight line (navigation_line_passable) may come this much nearer than a body's half width
 #define SMALL_ROUND_POINTS_MOST 24     // new points in one way
 #define SMALL_ARC_RADIANS (0.5f * SDL_PI_F) // round a thing: a point for every quarter turn
@@ -6113,13 +6192,15 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 
 // The small things round a box, for one so high (those out of the
 // rectangles: small_out; near_only: none if the box is further than
-// detail_meters from where anyone looks)
-static int small_circles(const navigation_t *navigation, float height, bool near_only, float minimum_x, float minimum_z, float maximum_x,
-	float maximum_z, small_circle_t *circles_out, int most)
+// detail_meters from where anyone looks); along_from, along_to: only
+// those within margin of the line from one to the other (a long way's
+// box holds a forest)
+static int small_circles(const navigation_t *navigation, float height, bool near_only, float margin, float minimum_x, float minimum_z,
+	float maximum_x, float maximum_z, const float *along_from, const float *along_to, small_circle_t *circles_out, int most)
 {
 	// (a thing's capsule is kept by every region it reaches into; told by
-	// the one its first end is in: 2 m further round than asked)
-	const float margin = 2.0f;
+	// the one its first end is in: margin further round than asked, which
+	// is to be more than a thing's reach from its first end)
 	int32_t first_x = SDL_clamp((int32_t)SDL_floorf((minimum_x - margin) / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
 	int32_t first_z = SDL_clamp((int32_t)SDL_floorf((minimum_z - margin) / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
 	int32_t last_x = SDL_clamp((int32_t)SDL_floorf((maximum_x + margin) / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
@@ -6144,34 +6225,106 @@ static int small_circles(const navigation_t *navigation, float height, bool near
 	{
 		for (int32_t region_x = first_x; region_x <= last_x; region_x++)
 		{
-			const navigation_region_t *region = &navigation->regions[region_z * navigation->regions_per_side + region_x];
+			int32_t region_index = region_z * navigation->regions_per_side + region_x;
+			const navigation_region_t *region = &navigation->regions[region_index];
+			int first_square;
+			int last_square;
 
-			for (int32_t k = 0; k < region->capsule_count && !region->stale && count < most; k++)
+			if (region->capsule_first == NULL || region->stale)
 			{
-				const navigation_capsule_t *capsule = &region->capsules[k];
-				int32_t own_x = SDL_clamp((int32_t)SDL_floorf(capsule->a[0] / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
-				int32_t own_z = SDL_clamp((int32_t)SDL_floorf(capsule->a[2] / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
-				float foot = SDL_min(capsule->a[1], capsule->b[1]);
-				float a[2];
-				float b[2];
-				small_circle_t *circle = &circles_out[count];
+				continue;
+			}
+			first_square = capsule_square(navigation, region_index, minimum_x - margin, minimum_z - margin);
+			last_square = capsule_square(navigation, region_index, maximum_x + margin, maximum_z + margin);
+			for (int square_z = first_square / NAVIGATION_CAPSULE_SQUARES; square_z <= last_square / NAVIGATION_CAPSULE_SQUARES; square_z++)
+			{
+				int first_column = first_square % NAVIGATION_CAPSULE_SQUARES;
+				int last_column = last_square % NAVIGATION_CAPSULE_SQUARES;
 
-				// (a soft thing: the walker's own business, as it goes)
-				if (own_x != region_x || own_z != region_z || capsule->soft != 0
-					|| !capsule_between(capsule, foot, foot + height, a, b))
+				// (by a line: of this row of squares, only those the line
+				// passes, margin to either side)
+				if (along_from != NULL && along_to != NULL)
 				{
-					continue;
+					const float square_meters = NAVIGATION_REGION_METERS / (float)NAVIGATION_CAPSULE_SQUARES;
+					float row_low = ((float)region_z * (float)NAVIGATION_CAPSULE_SQUARES + (float)square_z) * square_meters - margin;
+					float row_high = row_low + square_meters + 2.0f * margin;
+					float dz = along_to[1] - along_from[1];
+					float from_share = 0.0f;
+					float to_share = 1.0f;
+					float x_from;
+					float x_to;
+
+					if (SDL_fabsf(dz) > 1e-5f)
+					{
+						float low_share = (row_low - along_from[1]) / dz;
+						float high_share = (row_high - along_from[1]) / dz;
+
+						from_share = SDL_max(from_share, SDL_min(low_share, high_share));
+						to_share = SDL_min(to_share, SDL_max(low_share, high_share));
+					}
+					else if (along_from[1] < row_low || along_from[1] > row_high)
+					{
+						continue;
+					}
+					if (from_share > to_share)
+					{
+						continue;
+					}
+					x_from = along_from[0] + (along_to[0] - along_from[0]) * from_share;
+					x_to = along_from[0] + (along_to[0] - along_from[0]) * to_share;
+					first_column = SDL_max(first_column, capsule_square(navigation, region_index, SDL_min(x_from, x_to) - margin,
+						0.0f) % NAVIGATION_CAPSULE_SQUARES);
+					last_column = SDL_min(last_column, capsule_square(navigation, region_index, SDL_max(x_from, x_to) + margin,
+						0.0f) % NAVIGATION_CAPSULE_SQUARES);
 				}
-				circle->x = 0.5f * (a[0] + b[0]);
-				circle->z = 0.5f * (a[1] + b[1]);
-				SDL_memcpy(circle->a, a, sizeof(a));
-				SDL_memcpy(circle->b, b, sizeof(b));
-				circle->capsule_radius = capsule->radius;
-				circle->radius = capsule->radius + 0.5f * SDL_sqrtf((b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1]));
-				if (circle->x + circle->radius + margin >= minimum_x && circle->x - circle->radius - margin <= maximum_x
-					&& circle->z + circle->radius + margin >= minimum_z && circle->z - circle->radius - margin <= maximum_z)
+				for (int square_x = first_column; square_x <= last_column; square_x++)
 				{
-					count++;
+					int square = square_z * NAVIGATION_CAPSULE_SQUARES + square_x;
+
+					for (int32_t k = region->capsule_first[square]; k < region->capsule_first[square + 1] && count < most; k++)
+					{
+						const navigation_capsule_t *capsule = &region->capsules[k];
+						int32_t own_x = SDL_clamp((int32_t)SDL_floorf(capsule->a[0] / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+						int32_t own_z = SDL_clamp((int32_t)SDL_floorf(capsule->a[2] / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+						float foot = SDL_min(capsule->a[1], capsule->b[1]);
+						float a[2];
+						float b[2];
+						small_circle_t *circle = &circles_out[count];
+
+						// (a soft thing: the walker's own business, as it goes)
+						if (own_x != region_x || own_z != region_z || capsule->soft != 0
+							|| !capsule_between(capsule, foot, foot + height, a, b))
+						{
+							continue;
+						}
+						circle->x = 0.5f * (a[0] + b[0]);
+						circle->z = 0.5f * (a[1] + b[1]);
+						SDL_memcpy(circle->a, a, sizeof(a));
+						SDL_memcpy(circle->b, b, sizeof(b));
+						circle->capsule_radius = capsule->radius;
+						circle->radius = capsule->radius + 0.5f * SDL_sqrtf((b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1]));
+						if (circle->x + circle->radius + margin < minimum_x || circle->x - circle->radius - margin > maximum_x
+							|| circle->z + circle->radius + margin < minimum_z || circle->z - circle->radius - margin > maximum_z)
+						{
+							continue;
+						}
+						if (along_from != NULL && along_to != NULL)
+						{
+							float dx = along_to[0] - along_from[0];
+							float dz = along_to[1] - along_from[1];
+							float length_squared = dx * dx + dz * dz;
+							float share = length_squared > 1e-8f
+								? SDL_clamp(((circle->x - along_from[0]) * dx + (circle->z - along_from[1]) * dz) / length_squared, 0.0f, 1.0f) : 0.0f;
+							float off_x = along_from[0] + dx * share - circle->x;
+							float off_z = along_from[1] + dz * share - circle->z;
+
+							if (off_x * off_x + off_z * off_z > (circle->radius + margin) * (circle->radius + margin))
+							{
+								continue;
+							}
+						}
+						count++;
+					}
 				}
 			}
 		}
@@ -6242,6 +6395,20 @@ static bool stretch_on_mesh(const navigation_t *navigation, int c, const float f
 	return true;
 }
 
+// A stretch's far end brought to within reach of its near end
+static void stretch_end_near(const float near[2], float far[2], float reach)
+{
+	float dx = far[0] - near[0];
+	float dz = far[1] - near[1];
+	float length = SDL_sqrtf(dx * dx + dz * dz);
+
+	if (length > reach)
+	{
+		far[0] = near[0] + dx * reach / length;
+		far[1] = near[1] + dz * reach / length;
+	}
+}
+
 // The points that lead a stretch round a circle on one side (side 1:
 // the angles growing): from where the line from its start touches the
 // circle to where the line to its end does, a point for every quarter
@@ -6295,33 +6462,30 @@ static bool mesh_lead_round(navigation_t *navigation, const navigation_agent_t *
 {
 	static small_circle_t circles[SMALL_CIRCLES_MOST];
 	int c = mesh_class_of(agent);
-	float low[2] = { from_x, from_z };
-	float high[2] = { from_x, from_z };
 	float reach = agent->radius_meters + SMALL_CLEAR_METERS;
-	int circle_count;
+	int circle_count = 0;
 	int added = 0;
 	int skip[8];
 	int skip_count = 0;
 	int leg = 0;
+	int gathered_for = 0;              // stretches from here on that the circles gathered are for
 
 	SDL_memset(navigation->path_small, 0, sizeof(navigation->path_small));
-	for (int k = 0; k < *count; k++)
+	if (!navigation->small_out)
 	{
-		low[0] = SDL_min(low[0], waypoints[k][0]);
-		low[1] = SDL_min(low[1], waypoints[k][1]);
-		high[0] = SDL_max(high[0], waypoints[k][0]);
-		high[1] = SDL_max(high[1], waypoints[k][1]);
+		return true;
 	}
-	circle_count = small_circles(navigation, agent->height_meters, true, low[0], low[1], high[0], high[1], circles, SMALL_CIRCLES_MOST);
 	// A corner of the way inside a thing's berth (the end of a row of
 	// them, turned round as close as the rectangles let it): out of it
 	// first, straight away from the thing
-	for (int k = 0; k + 1 < *count && circle_count > 0; k++)
+	for (int k = 0; k + 1 < *count; k++)
 	{
 		if (navigation->path_jumps[k] != 0 || navigation->path_jumps[k + 1] != 0)
 		{
 			continue;
 		}
+		circle_count = small_circles(navigation, agent->height_meters, true, SMALL_LINE_MARGIN_METERS, waypoints[k][0], waypoints[k][1],
+			waypoints[k][0], waypoints[k][1], NULL, NULL, circles, SMALL_CIRCLES_MOST);
 		for (int n = 0; n < circle_count; n++)
 		{
 			float radius = circles[n].radius + reach + SMALL_ROUND_METERS;
@@ -6349,12 +6513,25 @@ static bool mesh_lead_round(navigation_t *navigation, const navigation_agent_t *
 			break;
 		}
 	}
-	while (leg < *count && circle_count > 0)
+	while (leg < *count)
 	{
-		const float *from = leg > 0 ? waypoints[leg - 1] : low;
-		float start[2] = { leg > 0 ? from[0] : from_x, leg > 0 ? from[1] : from_z };
-		int crossed = navigation->path_jumps[leg] != 0 ? -1
-			: small_first_crossed(circles, circle_count, start, waypoints[leg], reach, skip, skip_count);
+		float start[2] = { leg > 0 ? waypoints[leg - 1][0] : from_x, leg > 0 ? waypoints[leg - 1][1] : from_z };
+		int crossed = -1;
+
+		// (the things by this stretch of the way as it was found: once,
+		// for it and for the stretches it is cut into round them, which
+		// stay by it)
+		if (gathered_for == 0)
+		{
+			circle_count = navigation->path_jumps[leg] != 0 ? 0 : small_circles(navigation, agent->height_meters, true, SMALL_MARGIN_METERS,
+				SDL_min(start[0], waypoints[leg][0]), SDL_min(start[1], waypoints[leg][1]), SDL_max(start[0], waypoints[leg][0]),
+				SDL_max(start[1], waypoints[leg][1]), start, waypoints[leg], circles, SMALL_CIRCLES_MOST);
+			gathered_for = 1;
+		}
+		if (navigation->path_jumps[leg] == 0)
+		{
+			crossed = small_first_crossed(circles, circle_count, start, waypoints[leg], reach, skip, skip_count);
+		}
 		float points[2][4][2];
 		float turns[2];
 		int point_counts[2];
@@ -6363,6 +6540,7 @@ static bool mesh_lead_round(navigation_t *navigation, const navigation_agent_t *
 		if (crossed < 0)
 		{
 			leg++;
+			gathered_for--;
 			skip_count = 0;
 			continue;
 		}
@@ -6378,8 +6556,23 @@ static bool mesh_lead_round(navigation_t *navigation, const navigation_agent_t *
 
 			for (int k = 0; k <= point_counts[side] && on_mesh; k++)
 			{
-				on_mesh = stretch_on_mesh(navigation, c, k == 0 ? start : points[side][k - 1],
-					k == point_counts[side] ? waypoints[leg] : points[side][k]);
+				float near_from[2];
+				float near_to[2];
+
+				// (of the stretches to and from the thing, the part by it:
+				// further off they lie along the old one, which was on
+				// the rectangles)
+				SDL_memcpy(near_from, k == 0 ? start : points[side][k - 1], sizeof(near_from));
+				SDL_memcpy(near_to, k == point_counts[side] ? waypoints[leg] : points[side][k], sizeof(near_to));
+				if (k == 0)
+				{
+					stretch_end_near(near_to, near_from, SMALL_SAMPLE_REACH_METERS);
+				}
+				if (k == point_counts[side])
+				{
+					stretch_end_near(near_from, near_to, SMALL_SAMPLE_REACH_METERS);
+				}
+				on_mesh = stretch_on_mesh(navigation, c, near_from, near_to);
 			}
 			taken = on_mesh ? side : -1;
 		}
@@ -6393,6 +6586,7 @@ static bool mesh_lead_round(navigation_t *navigation, const navigation_agent_t *
 			else
 			{
 				leg++;
+				gathered_for--;
 				skip_count = 0;
 			}
 			continue;
@@ -6417,6 +6611,7 @@ static bool mesh_lead_round(navigation_t *navigation, const navigation_agent_t *
 		}
 		*count += point_counts[taken];
 		added += point_counts[taken];
+		gathered_for += point_counts[taken];
 		navigation->mesh.led_round++;
 		// (the first new stretch looked at again; what was skipped on the
 		// old one may be in the way of the new)
@@ -7423,8 +7618,8 @@ static int mesh_line_passable(navigation_t *navigation, const terrain_t *terrain
 	}
 	// A small thing on it (they are not in the rectangles): not passable,
 	// a way is to be found and led round it
-	circle_count = small_circles(navigation, agent->height_meters, true, SDL_min(from_x, to_x), SDL_min(from_z, to_z), SDL_max(from_x, to_x),
-		SDL_max(from_z, to_z), circles, (int)SDL_arraysize(circles));
+	circle_count = small_circles(navigation, agent->height_meters, true, SMALL_LINE_MARGIN_METERS, SDL_min(from_x, to_x), SDL_min(from_z, to_z),
+		SDL_max(from_x, to_x), SDL_max(from_z, to_z), from, to, circles, (int)SDL_arraysize(circles));
 	crossed = small_first_crossed(circles, circle_count, from, to, SDL_max(agent->radius_meters - SMALL_LINE_METERS, 0.0f), NULL, 0);
 	if (crossed < 0)
 	{
