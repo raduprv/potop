@@ -463,7 +463,7 @@ static void fit_model_shape(const object_model_t *model, navigation_model_shape_
 	{
 		return;
 	}
-	slice_count = SDL_clamp((int)SDL_ceilf((high - low) / SHAPE_SLICE_METERS), 1, SHAPE_SLICES_MOST);
+	slice_count = clamp_int((int)SDL_ceilf((high - low) / SHAPE_SLICE_METERS), 1, SHAPE_SLICES_MOST);
 	for (int slice = 0; slice < slice_count; slice++)
 	{
 		boxes[slice][0] = boxes[slice][1] = 1e30f;
@@ -1058,7 +1058,7 @@ static void rasterize_object(const navigation_t *navigation, const objects_t *ob
 		facing |= normal[1] > 0.5f * normal_length ? FACE_UP : 0;
 		longest = SDL_max(SDL_sqrtf(edge_a[0] * edge_a[0] + edge_a[1] * edge_a[1] + edge_a[2] * edge_a[2]),
 			SDL_sqrtf(edge_b[0] * edge_b[0] + edge_b[1] * edge_b[1] + edge_b[2] * edge_b[2]));
-		steps = SDL_clamp((int)SDL_ceilf(longest / SAMPLE_METERS), 1, 256);
+		steps = clamp_int((int)SDL_ceilf(longest / SAMPLE_METERS), 1, 256);
 		// Points of the triangle on a grid of barycentric steps, edges included
 		for (int i = 0; i <= steps; i++)
 		{
@@ -1086,7 +1086,7 @@ static void rasterize_object(const navigation_t *navigation, const objects_t *ob
 				inside_z = z / NAVIGATION_CELL_METERS - SDL_floorf(z / NAVIGATION_CELL_METERS);
 				sub_x = SDL_clamp((int32_t)(inside_x * NAVIGATION_SUBCELLS), 0, NAVIGATION_SUBCELLS - 1);
 				sub_z = SDL_clamp((int32_t)(inside_z * NAVIGATION_SUBCELLS), 0, NAVIGATION_SUBCELLS - 1);
-				band = SDL_clamp((int32_t)SDL_floorf((y - base_y) / BAND_METERS), 0, BANDS - 1);
+				band = clamp_int((int32_t)SDL_floorf((y - base_y) / BAND_METERS), 0, BANDS - 1);
 				local = ((((size_t)cell_z * (size_t)width + (size_t)cell_x) * (size_t)subcells + (size_t)(sub_z * NAVIGATION_SUBCELLS + sub_x))
 					* BANDS) + (size_t)band;
 				bottom[local] = SDL_min(bottom[local], y);
@@ -1711,13 +1711,13 @@ static int32_t gather_region_objects(const navigation_t *navigation, const objec
 	if (use_grid)
 	{
 		float margin = navigation->object_margin_meters;
-		int32_t grid_first_x = SDL_clamp((int32_t)SDL_floorf(((float)first_x * NAVIGATION_CELL_METERS - margin) / OBJECTS_GRID_CELL_METERS), 0,
+		int32_t grid_first_x = clamp_int((int32_t)SDL_floorf(((float)first_x * NAVIGATION_CELL_METERS - margin) / OBJECTS_GRID_CELL_METERS), 0,
 			objects->grid_size - 1);
-		int32_t grid_first_z = SDL_clamp((int32_t)SDL_floorf(((float)first_z * NAVIGATION_CELL_METERS - margin) / OBJECTS_GRID_CELL_METERS), 0,
+		int32_t grid_first_z = clamp_int((int32_t)SDL_floorf(((float)first_z * NAVIGATION_CELL_METERS - margin) / OBJECTS_GRID_CELL_METERS), 0,
 			objects->grid_size - 1);
-		int32_t grid_last_x = SDL_clamp((int32_t)SDL_floorf(((float)(last_x + 1) * NAVIGATION_CELL_METERS + margin) / OBJECTS_GRID_CELL_METERS), 0,
+		int32_t grid_last_x = clamp_int((int32_t)SDL_floorf(((float)(last_x + 1) * NAVIGATION_CELL_METERS + margin) / OBJECTS_GRID_CELL_METERS), 0,
 			objects->grid_size - 1);
-		int32_t grid_last_z = SDL_clamp((int32_t)SDL_floorf(((float)(last_z + 1) * NAVIGATION_CELL_METERS + margin) / OBJECTS_GRID_CELL_METERS), 0,
+		int32_t grid_last_z = clamp_int((int32_t)SDL_floorf(((float)(last_z + 1) * NAVIGATION_CELL_METERS + margin) / OBJECTS_GRID_CELL_METERS), 0,
 			objects->grid_size - 1);
 
 		for (int32_t grid_z = grid_first_z; grid_z <= grid_last_z; grid_z++)
@@ -2243,10 +2243,10 @@ static void blocker_box(const navigation_t *navigation, const navigation_blocker
 	float reach_x = blocker->half_width_meters * c + blocker->half_depth_meters * s;
 	float reach_z = blocker->half_width_meters * s + blocker->half_depth_meters * c;
 
-	box_out[0] = SDL_clamp((int32_t)SDL_floorf((blocker->x - reach_x) / NAVIGATION_CELL_METERS), 0, navigation->size - 1);
-	box_out[1] = SDL_clamp((int32_t)SDL_floorf((blocker->z - reach_z) / NAVIGATION_CELL_METERS), 0, navigation->size - 1);
-	box_out[2] = SDL_clamp((int32_t)SDL_floorf((blocker->x + reach_x) / NAVIGATION_CELL_METERS), 0, navigation->size - 1);
-	box_out[3] = SDL_clamp((int32_t)SDL_floorf((blocker->z + reach_z) / NAVIGATION_CELL_METERS), 0, navigation->size - 1);
+	box_out[0] = clamp_int((int32_t)SDL_floorf((blocker->x - reach_x) / NAVIGATION_CELL_METERS), 0, navigation->size - 1);
+	box_out[1] = clamp_int((int32_t)SDL_floorf((blocker->z - reach_z) / NAVIGATION_CELL_METERS), 0, navigation->size - 1);
+	box_out[2] = clamp_int((int32_t)SDL_floorf((blocker->x + reach_x) / NAVIGATION_CELL_METERS), 0, navigation->size - 1);
+	box_out[3] = clamp_int((int32_t)SDL_floorf((blocker->z + reach_z) / NAVIGATION_CELL_METERS), 0, navigation->size - 1);
 }
 
 static void stamp_blocker(navigation_t *navigation, const navigation_blocker_t *blocker)
@@ -5300,10 +5300,10 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 		float tile_x = (float)(region % navigation->regions_per_side) * NAVIGATION_REGION_METERS;
 		float tile_z = (float)(region / navigation->regions_per_side) * NAVIGATION_REGION_METERS;
 		float bucket_meters = NAVIGATION_REGION_METERS / (float)NAVIGATION_MESH_BUCKETS;
-		int first_bucket_x = SDL_clamp((int)SDL_floorf((capsule_low[0] - tile_x) / bucket_meters) - 1, 0, NAVIGATION_MESH_BUCKETS - 1);
-		int first_bucket_z = SDL_clamp((int)SDL_floorf((capsule_low[1] - tile_z) / bucket_meters) - 1, 0, NAVIGATION_MESH_BUCKETS - 1);
-		int last_bucket_x = SDL_clamp((int)SDL_floorf((capsule_high[0] - tile_x) / bucket_meters) + 1, 0, NAVIGATION_MESH_BUCKETS - 1);
-		int last_bucket_z = SDL_clamp((int)SDL_floorf((capsule_high[1] - tile_z) / bucket_meters) + 1, 0, NAVIGATION_MESH_BUCKETS - 1);
+		int first_bucket_x = clamp_int((int)SDL_floorf((capsule_low[0] - tile_x) / bucket_meters) - 1, 0, NAVIGATION_MESH_BUCKETS - 1);
+		int first_bucket_z = clamp_int((int)SDL_floorf((capsule_low[1] - tile_z) / bucket_meters) - 1, 0, NAVIGATION_MESH_BUCKETS - 1);
+		int last_bucket_x = clamp_int((int)SDL_floorf((capsule_high[0] - tile_x) / bucket_meters) + 1, 0, NAVIGATION_MESH_BUCKETS - 1);
+		int last_bucket_z = clamp_int((int)SDL_floorf((capsule_high[1] - tile_z) / bucket_meters) + 1, 0, NAVIGATION_MESH_BUCKETS - 1);
 
 		if (capsule_high[0] < tile_x || capsule_high[1] < tile_z || capsule_low[0] > tile_x + NAVIGATION_REGION_METERS
 			|| capsule_low[1] > tile_z + NAVIGATION_REGION_METERS)
@@ -5745,7 +5745,7 @@ static bool mesh_crossing(const navigation_t *navigation, int c, const navigatio
 	segment_nearest(portal_out->a, portal_out->b, near_b, toward_b);
 	wanted[0] = 0.5f * (toward_a[0] + toward_b[0]);
 	wanted[1] = 0.5f * (toward_a[1] + toward_b[1]);
-	at = SDL_clamp((int32_t)SDL_floorf((wanted[side < 2 ? 1 : 0] + mesh_offset(c)) / quarter), shared.first, shared.last - 1);
+	at = clamp_int((int32_t)SDL_floorf((wanted[side < 2 ? 1 : 0] + mesh_offset(c)) / quarter), shared.first, shared.last - 1);
 	run_first = shared.first;
 	run_last = shared.last;
 	rise = mesh_step_at(navigation, c, from, to, &shared, at);
@@ -6395,10 +6395,10 @@ static int small_circles(const navigation_t *navigation, float height, bool near
 	// (a thing's capsule is kept by every region it reaches into; told by
 	// the one its first end is in: margin further round than asked, which
 	// is to be more than a thing's reach from its first end)
-	int32_t first_x = SDL_clamp((int32_t)SDL_floorf((minimum_x - margin) / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
-	int32_t first_z = SDL_clamp((int32_t)SDL_floorf((minimum_z - margin) / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
-	int32_t last_x = SDL_clamp((int32_t)SDL_floorf((maximum_x + margin) / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
-	int32_t last_z = SDL_clamp((int32_t)SDL_floorf((maximum_z + margin) / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+	int32_t first_x = clamp_int((int32_t)SDL_floorf((minimum_x - margin) / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+	int32_t first_z = clamp_int((int32_t)SDL_floorf((minimum_z - margin) / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+	int32_t last_x = clamp_int((int32_t)SDL_floorf((maximum_x + margin) / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+	int32_t last_z = clamp_int((int32_t)SDL_floorf((maximum_z + margin) / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
 	int count = 0;
 
 	if (!navigation->small_out)
@@ -6478,8 +6478,8 @@ static int small_circles(const navigation_t *navigation, float height, bool near
 					for (int32_t k = region->capsule_first[square]; k < region->capsule_first[square + 1] && count < most; k++)
 					{
 						const navigation_capsule_t *capsule = &region->capsules[k];
-						int32_t own_x = SDL_clamp((int32_t)SDL_floorf(capsule->a[0] / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
-						int32_t own_z = SDL_clamp((int32_t)SDL_floorf(capsule->a[2] / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+						int32_t own_x = clamp_int((int32_t)SDL_floorf(capsule->a[0] / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+						int32_t own_z = clamp_int((int32_t)SDL_floorf(capsule->a[2] / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
 						float foot = SDL_min(capsule->a[1], capsule->b[1]);
 						float a[2];
 						float b[2];
@@ -6629,7 +6629,7 @@ static int round_points(const small_circle_t *circle, float radius, const float 
 	{
 		return 0;
 	}
-	pieces = SDL_clamp((int)SDL_ceilf(turn / SMALL_ARC_RADIANS), 1, 4);
+	pieces = clamp_int((int)SDL_ceilf(turn / SMALL_ARC_RADIANS), 1, 4);
 	piece = turn / (float)pieces;
 	out = radius / SDL_cosf(0.5f * piece);
 	for (int k = 0; k < pieces; k++)
@@ -7865,10 +7865,10 @@ static int mesh_line_passable(navigation_t *navigation, const terrain_t *terrain
 int navigation_capsules(const navigation_t *navigation, float minimum_x, float minimum_z, float maximum_x, float maximum_z,
 	navigation_capsule_t *capsules_out, int most)
 {
-	int32_t first_x = SDL_clamp((int32_t)SDL_floorf(minimum_x / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
-	int32_t first_z = SDL_clamp((int32_t)SDL_floorf(minimum_z / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
-	int32_t last_x = SDL_clamp((int32_t)SDL_floorf(maximum_x / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
-	int32_t last_z = SDL_clamp((int32_t)SDL_floorf(maximum_z / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+	int32_t first_x = clamp_int((int32_t)SDL_floorf(minimum_x / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+	int32_t first_z = clamp_int((int32_t)SDL_floorf(minimum_z / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+	int32_t last_x = clamp_int((int32_t)SDL_floorf(maximum_x / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+	int32_t last_z = clamp_int((int32_t)SDL_floorf(maximum_z / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
 	int count = 0;
 
 	for (int32_t region_z = first_z; region_z <= last_z; region_z++)
@@ -7881,8 +7881,8 @@ int navigation_capsules(const navigation_t *navigation, float minimum_x, float m
 			{
 				const navigation_capsule_t *capsule = &region->capsules[k];
 				// (one that reaches into a few regions: the one its first end is in tells it)
-				int32_t own_x = SDL_clamp((int32_t)SDL_floorf(capsule->a[0] / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
-				int32_t own_z = SDL_clamp((int32_t)SDL_floorf(capsule->a[2] / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+				int32_t own_x = clamp_int((int32_t)SDL_floorf(capsule->a[0] / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
+				int32_t own_z = clamp_int((int32_t)SDL_floorf(capsule->a[2] / NAVIGATION_REGION_METERS), 0, navigation->regions_per_side - 1);
 
 				if (own_x == region_x && own_z == region_z && capsule->a[0] >= minimum_x && capsule->a[0] <= maximum_x
 					&& capsule->a[2] >= minimum_z && capsule->a[2] <= maximum_z)
@@ -8014,10 +8014,10 @@ void navigation_mesh_debug(navigation_t *navigation, const water_t *water, int c
 	int portals_most, int *portal_count_out)
 {
 	float region_meters = (float)navigation->region_size * NAVIGATION_CELL_METERS;
-	int32_t first_x = SDL_clamp((int32_t)SDL_floorf(minimum_x / region_meters), 0, navigation->regions_per_side - 1);
-	int32_t first_z = SDL_clamp((int32_t)SDL_floorf(minimum_z / region_meters), 0, navigation->regions_per_side - 1);
-	int32_t last_x = SDL_clamp((int32_t)SDL_floorf(maximum_x / region_meters), 0, navigation->regions_per_side - 1);
-	int32_t last_z = SDL_clamp((int32_t)SDL_floorf(maximum_z / region_meters), 0, navigation->regions_per_side - 1);
+	int32_t first_x = clamp_int((int32_t)SDL_floorf(minimum_x / region_meters), 0, navigation->regions_per_side - 1);
+	int32_t first_z = clamp_int((int32_t)SDL_floorf(minimum_z / region_meters), 0, navigation->regions_per_side - 1);
+	int32_t last_x = clamp_int((int32_t)SDL_floorf(maximum_x / region_meters), 0, navigation->regions_per_side - 1);
+	int32_t last_z = clamp_int((int32_t)SDL_floorf(maximum_z / region_meters), 0, navigation->regions_per_side - 1);
 	int c = class_index;
 
 	*rect_count_out = 0;

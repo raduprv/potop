@@ -201,7 +201,7 @@ static void make_directions(sky_occlusion_t *occlusion, int count, float lowest_
 static bool start_working(sky_occlusion_t *occlusion, const terrain_t *terrain, const render_settings_t *settings)
 {
 	float extent = (float)terrain->size * terrain->cell_size_meters;
-	int view_size = SDL_clamp((int)SDL_ceilf(extent / SDL_max(settings->sky_occlusion_texel_meters, 0.05f)), 256, LARGEST_VIEW);
+	int view_size = clamp_int((int)SDL_ceilf(extent / SDL_max(settings->sky_occlusion_texel_meters, 0.05f)), 256, LARGEST_VIEW);
 
 	stop_working(occlusion);
 	occlusion->sum_texture = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREFORMAT_R32_FLOAT, (uint32_t)terrain->size,
@@ -797,10 +797,10 @@ float sky_occlusion_open_around(const sky_occlusion_t *occlusion, float cell_siz
 	{
 		return sky_occlusion_open_at(occlusion, cell_size_meters, x, z);
 	}
-	first_x = SDL_clamp((int)SDL_floorf((x - radius_meters) / cell_size_meters + 0.5f), 0, size - 1);
-	first_z = SDL_clamp((int)SDL_floorf((z - radius_meters) / cell_size_meters + 0.5f), 0, size - 1);
-	last_x = SDL_clamp((int)SDL_floorf((x + radius_meters) / cell_size_meters + 0.5f), 0, size - 1);
-	last_z = SDL_clamp((int)SDL_floorf((z + radius_meters) / cell_size_meters + 0.5f), 0, size - 1);
+	first_x = clamp_int((int)SDL_floorf((x - radius_meters) / cell_size_meters + 0.5f), 0, size - 1);
+	first_z = clamp_int((int)SDL_floorf((z - radius_meters) / cell_size_meters + 0.5f), 0, size - 1);
+	last_x = clamp_int((int)SDL_floorf((x + radius_meters) / cell_size_meters + 0.5f), 0, size - 1);
+	last_z = clamp_int((int)SDL_floorf((z + radius_meters) / cell_size_meters + 0.5f), 0, size - 1);
 	// (the cells first..last both ways: four corners of the table)
 	total = sums[(last_z + 1) * stride + last_x + 1] - sums[first_z * stride + last_x + 1] - sums[(last_z + 1) * stride + first_x]
 		+ sums[first_z * stride + first_x];

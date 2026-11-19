@@ -3878,10 +3878,10 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 			farthest = SDL_max(farthest, objects->types.types[t].draw_distance_meters);
 		}
 		farthest = farthest * objects->draw_distance_scale + 12.0f;
-		first_i = SDL_clamp((int)SDL_floorf((eye.x - farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
-		first_j = SDL_clamp((int)SDL_floorf((eye.z - farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
-		last_i = SDL_clamp((int)SDL_floorf((eye.x + farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
-		last_j = SDL_clamp((int)SDL_floorf((eye.z + farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
+		first_i = clamp_int((int)SDL_floorf((eye.x - farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
+		first_j = clamp_int((int)SDL_floorf((eye.z - farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
+		last_i = clamp_int((int)SDL_floorf((eye.x + farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
+		last_j = clamp_int((int)SDL_floorf((eye.z + farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
 	}
 	// By blocks of cells first: one with nothing in it, too far for
 	// anything of its to be drawn, or out of view is thrown out whole (on

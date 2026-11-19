@@ -484,7 +484,7 @@ int map_file_sky_layer_size(int map_size, float cell_size_meters)
 {
 	float extent = (float)map_size * cell_size_meters;
 
-	return SDL_clamp((int)SDL_ceilf(extent), 16, 4096);
+	return clamp_int((int)SDL_ceilf(extent), 16, 4096);
 }
 
 // rows of width bytes as each less the one stride before it in its row

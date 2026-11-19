@@ -1558,7 +1558,7 @@ static void order_visible_chunks(terrain_renderer_t *renderer, float chunk_exten
 		for (int k = 0; k < count; k++)
 		{
 			const struct visible_chunk_s *entry = &renderer->visible_chunks[k];
-			int step = SDL_clamp((int)(SDL_sqrtf(entry->distance_squared) / chunk_extent), 0, VISIBLE_ORDER_STEPS - 1);
+			int step = clamp_int((int)(SDL_sqrtf(entry->distance_squared) / chunk_extent), 0, VISIBLE_ORDER_STEPS - 1);
 			int key = SDL_clamp(entry->lod_level, 0, TERRAIN_LOD_LEVEL_COUNT - 1) * VISIBLE_ORDER_STEPS + step;
 
 			if (pass == 0)
