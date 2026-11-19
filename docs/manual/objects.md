@@ -178,9 +178,9 @@ behind; it takes the shadows and casts none. The settings (Grass, in the
 objects' tab; `[objects]` in settings.ini): `grass` (on), `grass_distance_meters`
 (50: how far from the eye), `grass_density` (550 blades a square meter near
 the eye; below some 300 it looks thin), `grass_near_density` (2: nearest the eye
-that many times as dense, back to `grass_density` at the full disc's edge,
-6 to 20 m off), `grass_falloff` (2.5: past it the share kept falls with the
-distance to this power; 2 keeps the ground covered alike as the blades widen,
+that many times as dense, back to `grass_density` by `grass_near_meters`, 1),
+`grass_falloff` (2.5: past the full disc, 6 to 20 m off, the share kept falls
+with the distance to this power; 2 keeps the ground covered alike as the blades widen,
 more is sparser far away), `grass_height_meters` (0.3), `grass_width_meters` (0.018),
 `grass_tint` (multiplies the ground's color) and `grass_dry_share` (0.12).
 The grass objects (the `tuft`s of objects.ini) are still planted as they

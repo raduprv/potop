@@ -45,10 +45,11 @@ typedef struct
 	float tint[4];                         // rgb: multiplies the ground's grass color; w: the share of dry blades
 	float coarse[4];                       // from how far off a blade is one triangle (the far list), how much wider then
 	float mask_window[4];                  // the grass mask's (grass_mask_window)
+	float density[4];                      // the full radius (m), how much denser nearest the eye, out to how far (m), the falloff past the full radius
 	int32_t hiz_levels[HIZ_MAX_LEVELS][4]; // the pyramid's levels (hiz_level_table)
 } grass_scatter_uniforms_t;
 
-SDL_COMPILE_TIME_ASSERT(grass_scatter_uniforms_size, sizeof(grass_scatter_uniforms_t) == 224 + 16 * MATERIAL_COUNT + 144 + 16 * HIZ_MAX_LEVELS);
+SDL_COMPILE_TIME_ASSERT(grass_scatter_uniforms_size, sizeof(grass_scatter_uniforms_t) == 224 + 16 * MATERIAL_COUNT + 160 + 16 * HIZ_MAX_LEVELS);
 
 // grass.vert's block (std140, vertex slot 1)
 typedef struct
@@ -234,14 +235,16 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 	float density = SDL_clamp(settings->grass_density, 1.0f, 2000.0f);
 	float near_density = SDL_clamp(settings->grass_near_density, 1.0f, 8.0f);
 	float falloff = SDL_clamp(settings->grass_falloff, 2.0f, 4.0f);
-	// The fine grid as dense as nearest the eye; all of it kept out to the
-	// dense disc, which is as much smaller as that is denser (the share
-	// kept falling from there, density again at the full radius: past it
-	// as it would be without, with the falloff of 2). The blades widen by
-	// the full radius
+	float near_meters = SDL_clamp(settings->grass_near_meters, 0.1f, 10.0f);
+	// The fine grid as dense as nearest the eye (density times
+	// near_density, out to near_meters, then density alone out to the full
+	// radius, thinning past it with the falloff); the rings round the eye
+	// from the full radius over the square root of near_density, so that
+	// the fine grid holds the share kept (it is 1 / near_density at most
+	// past near_meters) and each coarser ring its own share (grass_body.glsl)
 	float spacing = 1.0f / SDL_sqrtf(density * near_density);
 	float full_radius = full_radius_of(distance);
-	float dense_radius = full_radius / SDL_sqrtf(near_density);
+	float ring_radius = full_radius / SDL_sqrtf(near_density);
 	grass_scatter_uniforms_t uniforms;
 	frustum_t frustum = frustum_from_matrix(camera->view_projection);
 	SDL_GPUCommandBuffer *command_buffer;
@@ -271,12 +274,14 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 	// The blades out to the distance, at most (before the view and the
 	// ground leave most out): the full disc near, then thinning with the
 	// square of the distance, its integral a logarithm
+	// (the disc, the more near the eye, the falloff past the full radius:
+	// a logarithm at 2)
 	{
-		float out_to = SDL_max(distance / dense_radius, 1.0f);
+		float out_to = SDL_max(distance / full_radius, 1.0f);
 		float beyond = falloff - 2.0f < 1e-3f ? 2.0f * SDL_logf(out_to)
 			: 2.0f / (falloff - 2.0f) * (1.0f - SDL_powf(out_to, 2.0f - falloff));
 
-		estimate = density * near_density * SDL_PI_F * dense_radius * dense_radius * (1.0f + beyond);
+		estimate = density * SDL_PI_F * (full_radius * full_radius * (1.0f + beyond) + 0.5f * (near_density - 1.0f) * near_meters * near_meters);
 	}
 	capacity = (uint32_t)SDL_min(estimate + 4096.0f, (float)GRASS_MAXIMUM_BLADES);
 	if (grass->blade_buffer == NULL || grass->blade_capacity < capacity)
@@ -314,7 +319,6 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 	uniforms.map[0] = (float)world->map_size;
 	uniforms.map[1] = world->cell_size_meters;
 	uniforms.map[2] = world->soil_blend_cells;
-	uniforms.map[3] = full_radius;
 	SDL_memcpy(uniforms.material_patches, world->material_patches, sizeof(uniforms.material_patches));
 	uniforms.control[1] = world->material_map ? 1 : 0;
 	uniforms.control[2] = world->material_map && world->overlay_texture != NULL ? 1 : 0;
@@ -340,7 +344,10 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 	uniforms.tint[3] = SDL_clamp(settings->grass_dry_share, 0.0f, 1.0f);
 	uniforms.coarse[0] = SDL_max(settings->grass_coarse_meters, 0.0f);
 	uniforms.coarse[1] = SDL_clamp(settings->grass_coarse_width, 0.5f, 3.0f);
-	uniforms.coarse[3] = falloff;
+	uniforms.density[0] = full_radius;
+	uniforms.density[1] = near_density;
+	uniforms.density[2] = near_meters;
+	uniforms.density[3] = falloff;
 	SDL_memcpy(uniforms.mask_window, world->mask_window, sizeof(uniforms.mask_window));
 	if (world->mask_buffer == NULL)
 	{
@@ -404,7 +411,7 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 	// L >= 1 from full_radius * 2^(L-1) to twice that, on a grid 2^(L-1)
 	// times as coarse
 	level_count = 1;
-	while (level_count < GRASS_MAXIMUM_LEVELS && dense_radius * SDL_powf(2.0f, (float)level_count - 1.0f) < distance)
+	while (level_count < GRASS_MAXIMUM_LEVELS && ring_radius * SDL_powf(2.0f, (float)level_count - 1.0f) < distance)
 	{
 		level_count++;
 	}
@@ -412,7 +419,7 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 	for (int level = 0; level < level_count; level++)
 	{
 		float level_spacing = level == 0 ? spacing : spacing * SDL_powf(2.0f, (float)level - 1.0f);
-		float outer = SDL_min(level == 0 ? dense_radius : dense_radius * SDL_powf(2.0f, (float)level), distance);
+		float outer = SDL_min(level == 0 ? ring_radius : ring_radius * SDL_powf(2.0f, (float)level), distance);
 		// Its square round the eye, cut to what the view can reach
 		float first_x = SDL_max(camera->eye_position.x - outer, view_minimum_x);
 		float first_z = SDL_max(camera->eye_position.z - outer, view_minimum_z);
@@ -437,7 +444,7 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 		uniforms.grid[0] = level_spacing;
 		uniforms.grid[1] = (float)level;
 		uniforms.grid[2] = (float)columns;
-		uniforms.grid[3] = dense_radius;
+		uniforms.grid[3] = ring_radius;
 		uniforms.grid_origin[0] = first_x;
 		uniforms.grid_origin[1] = first_z;
 		uniforms.control[3] = (int32_t)rows;

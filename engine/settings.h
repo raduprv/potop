@@ -570,12 +570,12 @@ typedef struct
 	bool grass;
 	float grass_distance_meters;
 	float grass_density;
-	// Nearest the eye grass_near_density times as dense (out to the full
-	// disc over its square root, then thinning back to grass_density at the
-	// disc's edge); past the disc the share kept falls with the distance to
-	// the power grass_falloff (2: as the blades widen, covering the ground
-	// alike; more: sparser far away)
+	// Nearest the eye grass_near_density times as dense, back to
+	// grass_density by grass_near_meters; past the full disc (6 to 20 m)
+	// the share kept falls with the distance to the power grass_falloff (2:
+	// as the blades widen, covering the ground alike; more: sparser far)
 	float grass_near_density;
+	float grass_near_meters;
 	float grass_falloff;
 	float grass_height_meters;
 	float grass_width_meters;
