@@ -508,10 +508,13 @@ typedef struct
 	float navigation_wall_meters;
 	float navigation_soft_kilograms;
 	// Small things gone round are left out of the navigation's rectangles
-	// (a forest: a few rectangles, not one per tree). Off till the ways
-	// are led round them when planned (docs/claude/04_navigation_plan.md,
-	// step 3): with it on, wide animals walk into the trunks on their way
+	// (a forest: a few rectangles, not one per tree); the ways found are
+	// led round them (navigation.c: mesh_lead_round). Off: they are in
+	// the rectangles, as walls are
 	bool navigation_small_out;
+	// Ways are led round small things only this near the player; further
+	// off they go straight through them (no one sees it)
+	float navigation_detail_meters;
 	float small_object_detour_meters;
 	// What walking on a slope costs (paths go round hills): a meter of
 	// ground path_slope_degrees steep or steeper costs 1 + path_slope_cost

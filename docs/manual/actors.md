@@ -207,12 +207,19 @@ round: a trunk, a boulder. A small thing that is a body lighter than
 `navigation_soft_kilograms` (20 kg), a bucket, is soft. Small and soft
 things are also kept as capsules (two ends and a radius, fitted to the
 model's collision shape: one for a straight trunk, a few for a crooked
-one); F4 draws them, orange and blue. With `navigation_small_out`
-([simulation], off for now) the small things are left out of the mesh's
-rectangles, so a forest is a few big rectangles instead of one round
-every tree; the ways are not yet led round the capsules when they are
-planned, so with it on wide animals walk into the trunks on their way
-(their guard and the fine way are all that stops them).
+one); F4 draws them, orange and blue. The small things are left out of
+the mesh's rectangles (`navigation_small_out`, [simulation], on), so a
+forest is a few big rectangles instead of one round every tree, and a
+way found over them is then led round each thing it crosses: the
+capsule cut to the walker's height (a leaning trunk is over a hen's head
+by its root, not over a man's), laid on the ground, a circle round it
+swollen by the walker's half width; the way touches the circle on the
+side with less of a turn, a point per quarter turn. Things nearer one
+another than the walker is wide (a row of trunks) are a wall to its
+width in the mesh: the search goes round the row. Further than
+`navigation_detail_meters` (250) from the player the ways are not led
+round small things. A straight line (a chase) that crosses a small
+thing is not passable: a way is looked for.
 
 Soft things are no surface
 and take no room: each cell keeps the height of the highest one in it,

@@ -100,11 +100,10 @@ from an older version get their terrain difference baked in once).
 - Church porch: the farmer (1.85) under its 1.65 m beam (see below).
 - Stress test (tests/navigation/nav_stress.py run): each new failure a
   station for it.
-- Small things (trunks, boulders, buckets: docs/claude/04_navigation_plan.md):
-  the rule and the capsules are in; out of the rectangles only with
-  [simulation] navigation_small_out (off) till the ways are led round
-  the capsules (step 3; tests/navigation/small.py fails for bear and cow
-  till then).
+- Small things (trunks, boulders, buckets: docs/claude/04_navigation_plan.md,
+  steps 2 and 3 in): to try in real forests (the tests have box trunks
+  only); soft things (buckets) are still the walker's own business; a
+  far walker's way is not led round again when the player comes near.
 - Church porch: a beam 1.65 m over the top of its stair: the farmer (1.85,
   his model's height) no longer goes up. A height_meters for people
   (stooping) or the model's beam higher: Radu's call.

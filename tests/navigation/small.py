@@ -115,8 +115,6 @@ def walk(agent, placed):
 	# (--walls: everything a wall, as before the small things' rule, to compare)
 	if "--walls" in sys.argv:
 		command += ["--set", "simulation.navigation_wall_meters=0"]
-	else:
-		command += ["--set", "simulation.navigation_small_out=true"]
 	command += ["--sim", "1500", "--trace", trace, "--walk_from", "%.2f,%.2f" % (HEN_START if kind == "hen" else START)] + (["--walk_run"] if running else [])
 	command += ["--walk_test", kind, ";".join("%.2f,%.2f" % goal for goal in goals_of)]
 	os.makedirs(os.path.join(ROOT, "build"), exist_ok=True)

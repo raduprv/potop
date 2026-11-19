@@ -194,16 +194,38 @@ are joined at all), a coarse graph for ways of kilometers.
   soft things, in the world (32 bytes each: the type and "soft" with
   them). A rectangle's `small` says a capsule reaches into it. F4 draws
   the capsules.
-- **The small things are out of the rectangles only with [simulation]
-  navigation_small_out = true, off by default**, till step 3: the
-  surfaces (the grid) still have them, so the guard and the fine way
-  keep the walkers off them, but a way planned straight through a trunk
-  is not good enough for a wide body. tests/navigation/small.py (a grove
-  of 96 things in 20 x 20 m and a row of trunks): with it on, 4
-  rectangles in the grove instead of about 250, hen and farmer clean,
-  bear and cow 10 samples up to 0.31 m inside a trunk (33 running), on
-  the spot 24 s instead of 10. Step 3 is to make that test pass and
-  turn the setting on.
+- Step 3 is in (Nov 19 2026), and [simulation] navigation_small_out
+  is on. `mesh_lead_round` (after the search, before the way is checked
+  over the quarter meters): the corners of the way that lie in a thing's
+  berth are pushed out of it; then, per stretch, the first circle
+  crossed (the capsule cut to the agent's height, laid on the ground,
+  a circle round it, swollen by the agent's radius + 2 cm) is gone
+  round 10 cm further out, on the side with less of a turn, a point per
+  quarter turn, each on the lines touching the circle; the new
+  stretches must lie on the rectangles (else the other side, else the
+  thing is left to the guard), and are looked at again. At most 24 new
+  points; a way with no room for them (32 waypoints) is cut there and
+  told as partial. `path_small` / `navigation_path_small`: the
+  stretches by small things (no one reads it yet: step 4's guard).
+- Not in the plan, needed: **`mesh_weld_small`**. A row of trunks 0.75 m
+  apart was no wall to anyone, and no tangent goes round a thing whose
+  neighbor's circle is where the point would be. When a tile is built,
+  two small things with less than the class's width between their
+  capsules take the quarters on the line between them out of the
+  rectangles: a row is a wall, a gap wide enough is not. The grove of
+  small.py: 4 rectangles for the hen, 10 for the farmer, about 50 for
+  bear and cow (about 250 with everything a wall).
+- `navigation_line_passable` says no where the line crosses a small
+  thing (10 cm nearer than a way is let): a chase looks for a way.
+- `navigation_detail_meters` (250): `navigation_set_detail` each frame
+  with where the player is; further off the ways are not led round.
+  Not done: looking at a far walker's way again when the player comes
+  near (it is stopped by the guard and takes a fine way, as before).
+- Soft things are not gone round at planning (the walker's own
+  business as it goes: the height per cell, as before).
+- tests/navigation/small.py passes: every goal, no body in a trunk or a
+  boulder; bear running 94 s (96 with everything a wall), on the spot
+  11 s (7).
 
 ## Known and left
 

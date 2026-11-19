@@ -24,9 +24,10 @@
 // boulder): in the surfaces still, for the walker's guard and its fine
 // way, and, with [simulation] navigation_small_out, not in the rectangles,
 // which lie through it (the cells only small things stand in are open
-// ground to them: a forest is a few rectangles, not one per tree; off
-// till the ways are led round the capsules: a wide body walks into the
-// trunks its way crosses); or a soft one (a body lighter than
+// ground to them: a forest is a few rectangles, not one per tree): a way
+// found is led round the things it crosses (mesh_lead_round), and things
+// too near one another for a body to pass between are a wall to its
+// class (mesh_weld_small); or a soft one (a body lighter than
 // navigation_soft_kilograms, a bucket): neither surface nor room taken,
 // only a height per cell: each actor steps over, goes around (at a price,
 // through when it must) or is stopped by it, by its own size. Small and
@@ -402,6 +403,7 @@ typedef struct
 	uint32_t visit_search;             // its number
 	int64_t ways_refused;              // statistics: ways found that did not hold, a portal shut for each
 	int64_t ways_cut;                  // and those kept as far as they held
+	int64_t led_round;                 // small things ways were led round
 	uint32_t search_number;
 	float last_build_milliseconds;     // statistics: the last tile's
 	int64_t tiles_built;
@@ -568,6 +570,12 @@ typedef struct
 	// by a jump, and their heights (navigation_path_jump)
 	uint8_t path_jumps[NAVIGATION_MAX_WAYPOINTS];
 	float path_jump_heights[NAVIGATION_MAX_WAYPOINTS];
+	uint8_t path_small[NAVIGATION_MAX_WAYPOINTS]; // the stretch to it passes small things (navigation_path_small)
+	// Small things are looked at only this near a point (where the player
+	// is: navigation_set_detail); 0 meters: everywhere
+	float detail_x;
+	float detail_z;
+	float detail_meters;
 } navigation_t;
 
 bool navigation_create(navigation_t *navigation, const terrain_t *terrain);
@@ -651,6 +659,15 @@ navigation_result_t navigation_find_path(navigation_t *navigation, const terrain
 // for the first): up onto or down off an edge the agent does not step
 // (navigation_agent_t.jump_up_meters, jump_down_meters), straight across
 // it; and the height it lands at
+// Whether the stretch to a waypoint of the last path found passes small
+// things it was led round, or could not be (a walker keeps its eyes open
+// there)
+bool navigation_path_small(const navigation_t *navigation, int waypoint);
+
+// Where small things matter: within meters of (x, z), the player. Further
+// off the ways are not led round them (0: everywhere)
+void navigation_set_detail(navigation_t *navigation, float x, float z, float meters);
+
 bool navigation_path_jump(const navigation_t *navigation, int waypoint, float *height_out);
 
 // Flying. The highest thing at (x, z): the terrain, or the top of any
