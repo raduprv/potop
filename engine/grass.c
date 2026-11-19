@@ -44,10 +44,11 @@ typedef struct
 	float look[4];                         // the blades' color: the grass material's first layer, its macro repeats per meter, the variation's strength, its hue's
 	float tint[4];                         // rgb: multiplies the ground's grass color; w: the share of dry blades
 	float coarse[4];                       // from how far off a blade is one triangle (the far list), how much wider then
+	float mask_window[4];                  // the grass mask's (grass_mask_window)
 	int32_t hiz_levels[HIZ_MAX_LEVELS][4]; // the pyramid's levels (hiz_level_table)
 } grass_scatter_uniforms_t;
 
-SDL_COMPILE_TIME_ASSERT(grass_scatter_uniforms_size, sizeof(grass_scatter_uniforms_t) == 224 + 16 * MATERIAL_COUNT + 128 + 16 * HIZ_MAX_LEVELS);
+SDL_COMPILE_TIME_ASSERT(grass_scatter_uniforms_size, sizeof(grass_scatter_uniforms_t) == 224 + 16 * MATERIAL_COUNT + 144 + 16 * HIZ_MAX_LEVELS);
 
 // grass.vert's block (std140, vertex slot 1)
 typedef struct
@@ -74,7 +75,7 @@ bool grass_create(grass_t *grass)
 	SDL_zerop(grass);
 	SDL_zero(layout);
 	layout.samplers = 16;
-	layout.readonly_storage_buffers = 1;
+	layout.readonly_storage_buffers = 2;
 	layout.readwrite_storage_buffers = 2;
 	layout.uniform_buffers = 2;
 	layout.threads_x = GRASS_THREADS;
@@ -210,9 +211,14 @@ static void dispatch(grass_t *grass, SDL_GPUCommandBuffer *command_buffer, const
 	}
 	SDL_BindGPUComputeSamplers(compute, 0, samplers, 16);
 	{
-		SDL_GPUBuffer *pyramid = world->occlusion != NULL && uniforms->hiz_size[3] > 0.5f ? hiz_buffer(world->occlusion) : grass->no_occlusion_buffer;
+		// (the pyramid, the mask: the placeholder where there is none)
+		SDL_GPUBuffer *read_only[2] =
+		{
+			world->occlusion != NULL && uniforms->hiz_size[3] > 0.5f ? hiz_buffer(world->occlusion) : grass->no_occlusion_buffer,
+			world->mask_buffer != NULL && uniforms->mask_window[3] > 0.5f ? world->mask_buffer : grass->no_occlusion_buffer,
+		};
 
-		SDL_BindGPUComputeStorageBuffers(compute, 0, &pyramid, 1);
+		SDL_BindGPUComputeStorageBuffers(compute, 0, read_only, 2);
 	}
 	uniforms->control[0] = mode;
 	SDL_PushGPUComputeUniformData(command_buffer, 0, world->scene, sizeof(*world->scene));
@@ -319,6 +325,11 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 	uniforms.tint[3] = SDL_clamp(settings->grass_dry_share, 0.0f, 1.0f);
 	uniforms.coarse[0] = SDL_max(settings->grass_coarse_meters, 0.0f);
 	uniforms.coarse[1] = SDL_clamp(settings->grass_coarse_width, 0.5f, 3.0f);
+	SDL_memcpy(uniforms.mask_window, world->mask_window, sizeof(uniforms.mask_window));
+	if (world->mask_buffer == NULL)
+	{
+		uniforms.mask_window[3] = 0.0f;
+	}
 	if (world->occlusion != NULL && world->occlusion->ready && hiz_buffer(world->occlusion) != NULL)
 	{
 		gpu_clip_matrix(world->occlusion->view_projection, uniforms.view_projection);

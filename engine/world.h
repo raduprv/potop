@@ -28,6 +28,7 @@
 #include "fog.h"
 #include "gpu_timer.h"
 #include "grass.h"
+#include "grass_mask.h"
 #include "ground_items.h"
 #include "ground_overlay.h"
 #include "hiz.h"
@@ -106,6 +107,7 @@ typedef struct
 	puddles_t puddles;                   // what the puddles mirror (puddles.h)
 	ambient_occlusion_t ambient_occlusion; // the small scale ambient occlusion from the scene's depth (ambient_occlusion.h)
 	grass_t grass;                 // blades made on the GPU every frame (grass.h)
+	grass_mask_t grass_mask;       // where they thin away round the things that stand (grass_mask.h)
 	ground_overlay_t ground_overlay; // snow and petals on the ground (ground_overlay.h)
 	water_ice_t ice;               // the ice on the water (water_ice.h)
 	int frames_since_load;         // the first frames after a map was loaded: their times logged (what the GPU took up)

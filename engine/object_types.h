@@ -63,6 +63,10 @@ typedef enum
 // of where they can go, a small thing they go round (a trunk, a boulder),
 // or a soft one (a bucket: gone round at a walk, run through); auto: by
 // its footprint's longest reach and its mass
+// object_type_t.grass_clear_meters: by its physics; never
+#define OBJECT_GRASS_CLEAR_AUTO (-1.0f)
+#define OBJECT_GRASS_CLEAR_NONE (-2.0f)
+
 typedef enum
 {
 	OBJECT_NAVIGATION_AUTO,
@@ -88,6 +92,11 @@ typedef struct
 	float lod_distance_scale;      // its levels of detail that much farther off (times the settings' objects.lod_distance_scale; 1: as they are)
 	object_shadow_t shadow;
 	float footprint_meters;        // radius nothing else solid may grow in (0 = none)
+	// The grass round it (grass_mask.h): how far out from where it meets
+	// the ground the blades thin away (meters); OBJECT_GRASS_CLEAR_AUTO: as
+	// its physics says (solid things clear it, plants do not),
+	// OBJECT_GRASS_CLEAR_NONE: the grass grows through it
+	float grass_clear_meters;
 	// A building's (its OBJECT_MATERIAL_AGED materials, building.frag): how
 	// weathered (0 new .. 1 very old), how much that differs from one to the
 	// next (by where it stands), how high the dirt splashes up its walls

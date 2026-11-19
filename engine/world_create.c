@@ -73,6 +73,7 @@ bool world_create(world_t *world)
 		SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Rain: the drops and the rainbow cannot be drawn");
 	}
 	grass_create(&world->grass);
+	grass_mask_create(&world->grass_mask);
 	ground_overlay_create(&world->ground_overlay);
 	water_ice_create(&world->ice);
 	if (!water_renderer_create(&world->water_renderer))
@@ -188,6 +189,7 @@ void world_destroy(world_t *world)
 		ambient_occlusion_destroy(&world->ambient_occlusion);
 		puddles_destroy(&world->puddles);
 		grass_destroy(&world->grass);
+		grass_mask_destroy(&world->grass_mask);
 		ground_overlay_destroy(&world->ground_overlay);
 		water_ice_destroy(&world->ice);
 		gpu_timer_destroy(&world->gpu_timer);

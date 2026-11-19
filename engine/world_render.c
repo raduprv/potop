@@ -197,6 +197,8 @@ static void grass_world_of(const world_t *world, const scene_uniforms_t *scene, 
 	grass->max_height_meters = world->terrain.max_height_meters;
 	SDL_memcpy(grass->sun_direction, scene->sun_direction, sizeof(grass->sun_direction));
 	grass->wind_uniform = world->objects.wind_uniform;
+	grass->mask_buffer = world->grass_mask.buffer;
+	grass_mask_window(&world->grass_mask, grass->mask_window);
 }
 
 // Snow and petals on the ground (ground_overlay.h): the weather, the season
@@ -308,6 +310,13 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 	}
 	frame_profile_end(FRAME_OBJECTS_FOLLOW, section_start);
 	trace_mark("objects follow the ground and the water");
+	// Where the grass thins away round what stands (before the moved
+	// objects' marks are taken by the shadows)
+	if (world->settings->objects.grass)
+	{
+		grass_mask_update(&world->grass_mask, &world->objects, camera->eye_position.x, camera->eye_position.z);
+		trace_mark("the grass's mask");
+	}
 	section_start = SDL_GetPerformanceCounter();
 	// The areas that block paths (a locked gate), as they are now
 	{

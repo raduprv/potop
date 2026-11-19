@@ -77,6 +77,11 @@ typedef struct
 	float sun_direction[3];                // towards the sun
 	float material_patches[MATERIAL_COUNT][4]; // terrain.frag's (repeats per meter, strength, edge meters, -)
 	const float *wind_uniform;             // objects_t.wind_uniform (8 floats: the plants' wind)
+	// Where the blades thin away round what stands (grass_mask.h): its
+	// buffer, its window (grass_mask_window; side 0: none, the material
+	// map's no grass bit instead)
+	SDL_GPUBuffer *mask_buffer;
+	float mask_window[4];
 	// The depth pyramid of the frame before (hiz.h; NULL: none): a blade
 	// behind what was drawn then (a house, a hill) is left out
 	const hiz_t *occlusion;

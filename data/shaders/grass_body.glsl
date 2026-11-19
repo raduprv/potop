@@ -105,6 +105,9 @@ layout(std430, set = READWRITE_SET, binding = 0) buffer blade_buffer { uint blad
 // samplers: binding 16, the sixteen above before it; at 0 it read the
 // first sampler's slot, and every blade came out hidden)
 layout(std430, set = READONLY_SET, binding = 16) readonly buffer hiz_buffer { float hiz_depths[]; };
+// Where the blades thin away round what stands (grass_mask.h): a byte a
+// texel, four to a word, the window wrapped round (0: they grow, 255: none)
+layout(std430, set = READONLY_SET, binding = 17) readonly buffer grass_mask_buffer { uint mask_words[]; };
 // The count of blades written, then the draw's arguments (vertices,
 // instances, first vertex, first instance)
 layout(std430, set = READWRITE_SET, binding = 1) buffer count_buffer { uint counts[]; };
@@ -126,6 +129,7 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform grass_block
 	vec4 look;                 // the blades' color: the grass material's first layer, its macro repeats per meter, the variation's strength, its hue's
 	vec4 tint;                 // rgb: multiplies the ground's grass color; w: the share of dry blades
 	vec4 coarse;               // x: from how far off (m) a blade is one triangle (0: never); y: how much wider then
+	vec4 mask_window;          // the grass mask's (grass_mask.h): its first texel x, z, texels per meter, its side (0: none)
 	ivec4 hiz_levels[16];      // the pyramid's levels (hiz_level_table): where each starts in hiz_depths, its width, its height
 };
 
@@ -202,10 +206,31 @@ float ground_height(vec2 world_xz)
 	return mix(mix(corners.w, corners.z, fraction.x), mix(corners.x, corners.y, fraction.x), fraction.y);
 }
 
+// The grass mask there (0: the blades grow .. 1: none); false outside its
+// window (or with none)
+bool grass_mask_at(vec2 world_xz, out float cleared)
+{
+	int side = int(mask_window.w);
+	ivec2 texel = ivec2(floor(world_xz * mask_window.z));
+	ivec2 local = texel - ivec2(mask_window.xy);
+
+	cleared = 0.0;
+	if (side == 0 || any(lessThan(local, ivec2(0))) || any(greaterThanEqual(local, ivec2(side))))
+	{
+		return false;
+	}
+	ivec2 wrapped = texel & ivec2(side - 1);
+	uint index = uint(wrapped.y * side + wrapped.x);
+
+	cleared = float((mask_words[index >> 2u] >> ((index & 3u) * 8u)) & 255u) / 255.0;
+	return true;
+}
+
 // How much grass grows here (0..1; y: the ground's height), and the silt
 // over it: as much as the terrain shows the grass material there
-// (terrain_materials.glsl, as terrain.frag works it out)
-float grass_amount(vec2 world_xz, float y, out float silt)
+// (terrain_materials.glsl, as terrain.frag works it out); and how much of
+// it the grass mask clears (0..1: thinned away towards what stands)
+float grass_amount(vec2 world_xz, float y, out float silt, out float cleared)
 {
 	vec2 grid_position = world_xz / map.y;
 	vec2 uv = (grid_position + 0.5) / map.x;
@@ -219,9 +244,18 @@ float grass_amount(vec2 world_xz, float y, out float silt)
 	float amount = 0.0;
 
 	silt = clamp(surface.r * (0.8 + 0.6 * detail_noise), 0.0, 1.0);
-	// Under a building none (the material map's ground byte, worked out from
-	// the objects' footprints: ground_footprints.h; its own cell, not moved)
-	if ((int(texelFetch(material_map_texture, cell_of(world_xz), 0).a * 255.0 + 0.5) & MATERIAL_GROUND_NO_GRASS) != 0)
+	// Round what stands they thin away, none inside (the grass mask, near
+	// the eye); farther, under a building none (the material map's ground
+	// byte, worked out from the objects' footprints: ground_footprints.h;
+	// its own cell, not moved)
+	if (grass_mask_at(world_xz, cleared))
+	{
+		if (cleared >= 0.999)
+		{
+			return 0.0;
+		}
+	}
+	else if ((int(texelFetch(material_map_texture, cell_of(world_xz), 0).a * 255.0 + 0.5) & MATERIAL_GROUND_NO_GRASS) != 0)
 	{
 		return 0.0;
 	}
@@ -539,18 +573,19 @@ void main()
 		return;
 	}
 	float silt;
-	float amount = grass_amount(world_xz, y, silt);
+	float cleared;
+	float amount = grass_amount(world_xz, y, silt, cleared);
 
 	// Fewer where less grows (none where the ground hardly shows grass),
-	// the edges ragged
-	if (random.w >= smoothstep(0.45, 0.85, amount))
+	// the edges ragged; fewer towards what stands (the mask)
+	if (random.w >= smoothstep(0.45, 0.85, amount) * (1.0 - cleared))
 	{
 		return;
 	}
 	vec4 more = random4(spot, 101u);
 	// Clumps: taller and shorter patches
 	float clump = 0.65 + 0.7 * value_noise(world_xz * 0.9);
-	float height = blade.x * (0.6 + 0.8 * more.x) * (0.55 + 0.45 * amount) * clump * thinning;
+	float height = blade.x * (0.6 + 0.8 * more.x) * (0.55 + 0.45 * amount) * clump * thinning * (1.0 - 0.5 * cleared);
 	float distance = length(vec3(world_xz.x, y, world_xz.y) - eye.xyz);
 	// Wider far away, so the thinned out blades still cover the ground
 	float widen = min(pow(max(horizontal / full_radius, 1.0), 1.2), 8.0);

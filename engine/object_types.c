@@ -32,6 +32,7 @@ static void set_compiled_defaults(object_types_t *types)
 	defaults->light.switched = true;
 	defaults->shadow = OBJECT_SHADOW_ALL;
 	defaults->impostor = true;
+	defaults->grass_clear_meters = OBJECT_GRASS_CLEAR_AUTO;
 	defaults->cover_material = 255;
 	defaults->physics = OBJECT_PHYSICS_NONE;
 	defaults->density_kilograms_per_cubic_meter = 1000.0f;
@@ -264,6 +265,25 @@ static bool apply_key(object_types_t *types, object_type_t *type, bool in_defaul
 	if (SDL_strcmp(key, "footprint_meters") == 0)
 	{
 		return parse_float(value, &type->footprint_meters);
+	}
+	if (SDL_strcmp(key, "grass_clear_meters") == 0)
+	{
+		if (SDL_strcasecmp(value, "auto") == 0)
+		{
+			type->grass_clear_meters = OBJECT_GRASS_CLEAR_AUTO;
+			return true;
+		}
+		if (SDL_strcasecmp(value, "none") == 0)
+		{
+			type->grass_clear_meters = OBJECT_GRASS_CLEAR_NONE;
+			return true;
+		}
+		if (!parse_float(value, &type->grass_clear_meters))
+		{
+			return false;
+		}
+		type->grass_clear_meters = SDL_max(type->grass_clear_meters, 0.0f);
+		return true;
 	}
 	if (SDL_strcmp(key, "age") == 0)
 	{
@@ -609,6 +629,7 @@ static bool load_key(void *user_data, const char *section, const char *key, cons
 			types->defaults.cover_meters = 0.0f;
 			types->defaults.shelter = 0.0f;
 			types->defaults.shelter_meters = 0.0f;
+			types->defaults.grass_clear_meters = OBJECT_GRASS_CLEAR_AUTO;
 		}
 		if (!state->in_defaults)
 		{
