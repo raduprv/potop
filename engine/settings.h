@@ -672,6 +672,12 @@ bool settings_set_text(settings_t *settings, const char *section, const char *ke
 // value differs from file_settings (the values from settings.ini) are
 // written. Loading applies them on top of whatever is in *settings.
 void settings_load_overrides(settings_t *settings);
+// Another file for them (the editor's: editor_settings_changed.ini, so
+// what it changes, the fog off, stays out of the game), before loading
+void settings_set_override_file(const char *file_name);
+// A file of the data directory read on top of *settings (the editor's
+// own layer over settings.ini: editor_settings.ini); false if missing
+bool settings_load_data_file(settings_t *settings, const char *relative_path);
 // One setting set from "section.key=value" (the command line's --set);
 // false if it is not one
 bool settings_set_from_text(settings_t *settings, const char *assignment);

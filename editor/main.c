@@ -5893,6 +5893,11 @@ int main(int argument_count, char **arguments)
 	file_io_initialize();
 	settings_set_defaults(&game.potop->settings);
 	settings_load(&game.potop->settings);
+	// The editor's own: data/editor_settings.ini over settings.ini (no fog:
+	// a map seen from above), and what is changed in it kept apart from
+	// the game's
+	settings_load_data_file(&game.potop->settings, "editor_settings.ini");
+	settings_set_override_file("editor_settings_changed.ini");
 	game.file_settings = game.potop->settings;
 	settings_load_overrides(&game.potop->settings);
 	if (headless)

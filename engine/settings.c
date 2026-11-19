@@ -807,11 +807,24 @@ static void after_parse(settings_t *settings)
 
 void settings_load(settings_t *settings)
 {
-	ini_parse_data_file("settings.ini", settings_key_callback, settings);
-	after_parse(settings);
+	settings_load_data_file(settings, "settings.ini");
 }
 
-#define SETTINGS_OVERRIDE_FILE "settings_changed.ini"
+bool settings_load_data_file(settings_t *settings, const char *relative_path)
+{
+	bool found = ini_parse_data_file(relative_path, settings_key_callback, settings);
+
+	after_parse(settings);
+	return found;
+}
+
+// Where the settings changed are kept (settings_set_override_file)
+static char override_file[64] = "settings_changed.ini";
+
+void settings_set_override_file(const char *file_name)
+{
+	SDL_strlcpy(override_file, file_name, sizeof(override_file));
+}
 
 void *settings_find(settings_t *settings, const char *section, const char *key, setting_type_t *type_out)
 {
@@ -836,7 +849,7 @@ void settings_load_overrides(settings_t *settings)
 	char path[1024];
 	char *text;
 
-	if (!file_io_preference_path(SETTINGS_OVERRIDE_FILE, path, sizeof(path)))
+	if (!file_io_preference_path(override_file, path, sizeof(path)))
 	{
 		return;
 	}
@@ -846,7 +859,7 @@ void settings_load_overrides(settings_t *settings)
 		return;
 	}
 	SDL_Log("Settings changed in the game: %s", path);
-	ini_parse_buffer(text, SETTINGS_OVERRIDE_FILE, settings_key_callback, settings);
+	ini_parse_buffer(text, override_file, settings_key_callback, settings);
 	after_parse(settings);
 	SDL_free(text);
 }
@@ -963,7 +976,7 @@ bool settings_save_overrides(const settings_t *settings, const settings_t *file_
 	int written = 0;
 	bool saved;
 
-	if (!file_io_preference_path(SETTINGS_OVERRIDE_FILE, path, sizeof(path)))
+	if (!file_io_preference_path(override_file, path, sizeof(path)))
 	{
 		return false;
 	}

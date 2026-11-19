@@ -23,9 +23,12 @@ are engine/ui.c; both draw with the same backend, font and colors.
   shadow map sizes, vsync (graphics) and the vegetation density wait for
   **Apply**, since they rebuild something. The new map tab shapes the next
   generated map (size and cell size included), with a seed field and
-  Generate. **Save** keeps the changed values in `settings_changed.ini` in
-  the preference directory (only what differs from `data/settings.ini`);
-  **Restore** goes back to `settings.ini`.
+  Generate. **Save** keeps the changed values in the preference directory
+  (only what differs from the data's): the editor's in
+  `editor_settings_changed.ini`, the game's in `settings_changed.ini`, so
+  neither changes the other. The editor reads `data/editor_settings.ini`
+  over `data/settings.ini` (no fog: a map seen from above); **Restore**
+  goes back to those.
 * **Diagnostics**: GPU time per pass (reads 0 for now: SDL_GPU has no timer
   queries yet), terrain detail levels and uploads,
   objects drawn, water tiles and what the simulation costs per step, live.

@@ -795,7 +795,7 @@ void settings_window_draw(settings_window_t *window, ui_backend_t *backend, ui_s
 			{
 				nk_widget_disable_end(context);
 			}
-			ui_widget_tooltip(context, "Keep these settings for the next start (settings_changed.ini)");
+			ui_widget_tooltip(context, "Keep these settings for the next start (settings_changed.ini; the editor's apart)");
 			if (nk_button_label(context, "Save"))
 			{
 				window->requests.save_settings = true;
