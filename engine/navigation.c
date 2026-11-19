@@ -4772,7 +4772,7 @@ static void mesh_quarter_at(int c, float x, float z, int32_t *quarter_x_out, int
 #define SMALL_MARGIN_METERS 2.0f       // things this far round a stretch are gathered for it (its ways round them stay within that)
 #define SMALL_LINE_MARGIN_METERS 1.0f  // and this far round a line only asked about, or a point
 #define MESH_WELD_CIRCLES_MOST 2048
-#define MESH_WELD_CLEAR_METERS 0.0f    // two small things with less than a body's width and this between them: no way between
+#define MESH_WELD_SHARE 0.9f           // two small things with less than this much of a body's width between them: no way between
 #define MESH_WELD_STEP_METERS 0.1f
 
 static int compare_small_circles(const void *a, const void *b)
@@ -4785,7 +4785,12 @@ static int compare_small_circles(const void *a, const void *b)
 
 // Small things too near one another for a body of the class to pass
 // between (a row of trunks, a palisade): no body's middle on the line
-// from one to the other. Each alone is not in the rectangles (a way is
+// from one to the other. Too near: less than MESH_WELD_SHARE of its
+// width between them (bodies squeeze through what is a little narrower
+// than they are, as the rectangles themselves let them: BODY_REACH; by
+// the whole width and the circles round the capsules a forest was a
+// maze of walls, and a search through it went over two thousand
+// rectangles for 14 m). Each alone is not in the rectangles (a way is
 // led round it, mesh_lead_round); a row of them is a wall, and the
 // search is to know it
 static void mesh_weld_small(const navigation_t *navigation, const navigation_mesh_class_t *class, int c, mesh_build_t *build)
@@ -4806,7 +4811,7 @@ static void mesh_weld_small(const navigation_t *navigation, const navigation_mes
 	}
 	for (int i = 0; i < count; i++)
 	{
-		for (int j = i + 1; j < count && circles[j].x - circles[i].x < 2.0f * widest + 2.0f * class->radius + MESH_WELD_CLEAR_METERS; j++)
+		for (int j = i + 1; j < count && circles[j].x - circles[i].x < 2.0f * widest + 2.0f * MESH_WELD_SHARE * class->radius; j++)
 		{
 			float dx = circles[j].x - circles[i].x;
 			float dz = circles[j].z - circles[i].z;
@@ -4816,7 +4821,7 @@ static void mesh_weld_small(const navigation_t *navigation, const navigation_mes
 			float to[2] = { circles[j].x, circles[j].z };
 			int steps;
 
-			if (distance >= circles[i].radius + circles[j].radius + 2.0f * class->radius + MESH_WELD_CLEAR_METERS)
+			if (distance >= circles[i].radius + circles[j].radius + 2.0f * MESH_WELD_SHARE * class->radius)
 			{
 				continue;
 			}
@@ -4840,7 +4845,7 @@ static void mesh_weld_small(const navigation_t *navigation, const navigation_mes
 					}
 				}
 			}
-			if (least >= circles[i].capsule_radius + circles[j].capsule_radius + 2.0f * class->radius + MESH_WELD_CLEAR_METERS)
+			if (least >= circles[i].capsule_radius + circles[j].capsule_radius + 2.0f * MESH_WELD_SHARE * class->radius)
 			{
 				continue;
 			}
@@ -5144,17 +5149,42 @@ static bool mesh_build_tile(navigation_t *navigation, int c, int32_t region, con
 		float capsule_low[2] = { SDL_min(capsule->a[0], capsule->b[0]) - reach, SDL_min(capsule->a[2], capsule->b[2]) - reach };
 		float capsule_high[2] = { SDL_max(capsule->a[0], capsule->b[0]) + reach, SDL_max(capsule->a[2], capsule->b[2]) + reach };
 
-		for (int32_t r = 0; r < tile->rect_count; r++)
-		{
-			navigation_rect_t *rect = &tile->rects[r];
-			float low[2];
-			float high[2];
+		// (the rectangles of the squares it reaches into: a forest's tile
+		// has a thousand of each)
+		float tile_x = (float)(region % navigation->regions_per_side) * NAVIGATION_REGION_METERS;
+		float tile_z = (float)(region / navigation->regions_per_side) * NAVIGATION_REGION_METERS;
+		float bucket_meters = NAVIGATION_REGION_METERS / (float)NAVIGATION_MESH_BUCKETS;
+		int first_bucket_x = SDL_clamp((int)SDL_floorf((capsule_low[0] - tile_x) / bucket_meters) - 1, 0, NAVIGATION_MESH_BUCKETS - 1);
+		int first_bucket_z = SDL_clamp((int)SDL_floorf((capsule_low[1] - tile_z) / bucket_meters) - 1, 0, NAVIGATION_MESH_BUCKETS - 1);
+		int last_bucket_x = SDL_clamp((int)SDL_floorf((capsule_high[0] - tile_x) / bucket_meters) + 1, 0, NAVIGATION_MESH_BUCKETS - 1);
+		int last_bucket_z = SDL_clamp((int)SDL_floorf((capsule_high[1] - tile_z) / bucket_meters) + 1, 0, NAVIGATION_MESH_BUCKETS - 1);
 
-			mesh_rect_box(navigation, c, (region << 16) | r, low, high);
-			if (low[0] <= capsule_high[0] && high[0] >= capsule_low[0] && low[1] <= capsule_high[1] && high[1] >= capsule_low[1]
-				&& rect->height <= SDL_max(capsule->a[1], capsule->b[1]) && rect_height_high(rect) + class->height >= SDL_min(capsule->a[1], capsule->b[1]))
+		if (capsule_high[0] < tile_x || capsule_high[1] < tile_z || capsule_low[0] > tile_x + NAVIGATION_REGION_METERS
+			|| capsule_low[1] > tile_z + NAVIGATION_REGION_METERS)
+		{
+			continue;
+		}
+		for (int bucket_z = first_bucket_z; bucket_z <= last_bucket_z; bucket_z++)
+		{
+			for (int bucket_x = first_bucket_x; bucket_x <= last_bucket_x; bucket_x++)
 			{
-				rect->small = 1;
+				int bucket = bucket_z * NAVIGATION_MESH_BUCKETS + bucket_x;
+
+				for (uint32_t at = tile->bucket_first[bucket]; at < tile->bucket_first[bucket + 1]; at++)
+				{
+					int32_t r = tile->bucket_rects[at];
+					navigation_rect_t *rect = &tile->rects[r];
+					float low[2];
+					float high[2];
+
+					mesh_rect_box(navigation, c, (region << 16) | r, low, high);
+					if (low[0] <= capsule_high[0] && high[0] >= capsule_low[0] && low[1] <= capsule_high[1] && high[1] >= capsule_low[1]
+						&& rect->height <= SDL_max(capsule->a[1], capsule->b[1])
+						&& rect_height_high(rect) + class->height >= SDL_min(capsule->a[1], capsule->b[1]))
+					{
+						rect->small = 1;
+					}
+				}
 			}
 		}
 	}
@@ -5920,6 +5950,18 @@ static bool mesh_way_holds(const navigation_t *navigation, const terrain_t *terr
 			leg += share >= 1.0f ? 1 : 0;
 			continue;
 		}
+		// (by small things, which the rectangles do not have: the way was
+		// led round them as well as it goes, mesh_lead_round; what is left
+		// is the walker's own, as it comes to them. No fine way looked for
+		// here at every trunk of a forest: that was most of a search's time)
+		if (navigation->path_small[leg] != 0)
+		{
+			x += dx * share;
+			z += dz * share;
+			height = reached > 0.0f ? reached_height : height;
+			leg += share >= 1.0f ? 1 : 0;
+			continue;
+		}
 		fine_count = fine_path_search(navigation, terrain, water, agent, x, z, height, x + dx * fine_share, z + dz * fine_share, fine,
 			(int)SDL_arraysize(fine), &fine_height);
 		if (fine_count > 0)
@@ -6186,7 +6228,8 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 #define SMALL_CLEAR_METERS 0.02f       // a body passes a small thing by this much at least
 #define SMALL_ROUND_METERS 0.2f        // and is led round it this much further out
 #define SMALL_LINE_METERS 0.1f         // a straight line (navigation_line_passable) may come this much nearer than a body's half width
-#define SMALL_ROUND_POINTS_MOST 24     // new points in one way
+#define SMALL_BY_METERS 0.5f           // a stretch passing a small thing this near is by it (path_small)
+#define SMALL_ROUND_POINTS_MOST 64     // new points in one way
 #define SMALL_ARC_RADIANS (0.5f * SDL_PI_F) // round a thing: a point for every quarter turn
 #define SMALL_SAMPLE_METERS 0.25f      // the new stretches are looked at this often: on the rectangles?
 
@@ -6531,6 +6574,11 @@ static bool mesh_lead_round(navigation_t *navigation, const navigation_agent_t *
 		if (navigation->path_jumps[leg] == 0)
 		{
 			crossed = small_first_crossed(circles, circle_count, start, waypoints[leg], reach, skip, skip_count);
+			// (by a small thing, if not through it: eyes open there too)
+			if (crossed < 0 && small_first_crossed(circles, circle_count, start, waypoints[leg], reach + SMALL_BY_METERS, NULL, 0) >= 0)
+			{
+				navigation->path_small[leg] = 1;
+			}
 		}
 		float points[2][4][2];
 		float turns[2];
@@ -6549,6 +6597,33 @@ static bool mesh_lead_round(navigation_t *navigation, const navigation_agent_t *
 			points[0], &turns[0]);
 		point_counts[1] = round_points(&circles[crossed], circles[crossed].radius + reach + SMALL_ROUND_METERS, start, waypoints[leg], -1.0f,
 			points[1], &turns[1]);
+		// (a point in the berth of the next thing over, a gap narrower
+		// than two berths but wide enough for a body: through the middle
+		// of the gap, as far from the one as from the other)
+		for (int side = 0; side < 2; side++)
+		{
+			for (int k = 0; k < point_counts[side]; k++)
+			{
+				for (int n = 0; n < circle_count; n++)
+				{
+					float dx = circles[n].x - circles[crossed].x;
+					float dz = circles[n].z - circles[crossed].z;
+					float apart = SDL_sqrtf(dx * dx + dz * dz);
+					float off_x = points[side][k][0] - circles[n].x;
+					float off_z = points[side][k][1] - circles[n].z;
+					float along;
+
+					if (n == crossed || apart < 1e-3f || off_x * off_x + off_z * off_z >= (circles[n].radius + reach) * (circles[n].radius + reach))
+					{
+						continue;
+					}
+					along = circles[crossed].radius + 0.5f * (apart - circles[crossed].radius - circles[n].radius);
+					points[side][k][0] = circles[crossed].x + dx * along / apart;
+					points[side][k][1] = circles[crossed].z + dz * along / apart;
+					break;
+				}
+			}
+		}
 		for (int choice = 0; choice < 2 && taken < 0; choice++)
 		{
 			int side = (turns[0] <= turns[1]) == (choice == 0) ? 0 : 1;
@@ -6652,10 +6727,9 @@ static int mesh_find_path(navigation_t *navigation, const terrain_t *terrain, co
 			&& !mesh_lead_round(navigation, agent, from_x, from_z, waypoints_out, waypoint_count_out, &cut) && cut > 0)
 		{
 			// (no room in it for all the points round the small things on
-			// it: as far as it is led round them, the rest from there)
+			// it: as far as it is led round them, more after its last)
 			*waypoint_count_out = cut;
-			*complete_out = true;
-			result = NAVIGATION_PATH_PARTIAL;
+			*complete_out = false;
 		}
 		if (result <= 0 || *waypoint_count_out <= 0 || mesh_way_holds(navigation, terrain, water, agent, from_x, from_z, from_height, waypoints_out,
 			*waypoint_count_out, failed, &failed_height, &failed_leg))

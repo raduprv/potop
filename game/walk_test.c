@@ -96,13 +96,13 @@ static void send_on(game_t *game, potop_t *potop)
 	// was told, not what it walks)
 	{
 		potop_actor_info_t actor;
-		float points[64][2];
+		float points[512][2];
 		bool complete = false;
 		int count;
 
 		if (potop_actor_get(potop, game->walk_test_actor, &actor))
 		{
-			count = potop_find_path(potop, game->walk_test_type, actor.x, actor.z, goal[0], goal[1], points, 64, &complete);
+			count = potop_find_path(potop, game->walk_test_type, actor.x, actor.z, goal[0], goal[1], points, 512, &complete);
 			SDL_Log("Walk test: its way, %d points%s", count, complete ? "" : " (not all the way)");
 			for (int k = 0; k < count; k++)
 			{
@@ -127,9 +127,9 @@ static void chase_route_build(game_t *game, potop_t *potop)
 	{
 		const float *from = game->walk_chase_route[game->walk_chase_route_count - 1];
 		const float *to = game->walk_test_goals[k];
-		float points[64][2];
+		float points[512][2];
 		bool complete = false;
-		int count = potop_find_path(potop, "farmer", from[0], from[1], to[0], to[1], points, 64, &complete);
+		int count = potop_find_path(potop, "farmer", from[0], from[1], to[0], to[1], points, 512, &complete);
 
 		// (nowhere a farmer gets, a table's top, a floor behind a shut
 		// door: left out; or, asked for ("X,Z!"), the runner there all the

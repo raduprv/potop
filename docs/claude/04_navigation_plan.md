@@ -203,9 +203,9 @@ are joined at all), a coarse graph for ways of kilometers.
   round 20 cm further out, on the side with less of a turn, a point per
   quarter turn, each on the lines touching the circle; the new
   stretches must lie on the rectangles (else the other side, else the
-  thing is left to the guard), and are looked at again. At most 24 new
-  points; a way with no room for them (32 waypoints) is cut there and
-  told as partial. `path_small` / `navigation_path_small`: the
+  thing is left to the guard), and are looked at again. At most 64 new
+  points; a way with no room for them (96 waypoints) is cut there, more
+  after its last. `path_small` / `navigation_path_small`: the
   stretches by small things (no one reads it yet: step 4's guard).
 - Not in the plan, needed: **`mesh_weld_small`**. A row of trunks 0.75 m
   apart was no wall to anyone, and no tangent goes round a thing whose
@@ -232,6 +232,24 @@ are joined at all), a coarse graph for ways of kilometers.
   with everything a wall. The berth is 20 cm now (10: the walker's
   guard found no straight way by the trunk and took a fine way, 14
   times against 6; the chase 32 s late against 22, 21 as walls).
+- More of the cost, found with a chase through 2500 trunks a meter
+  apart (Radu's stutter: one search of a bear 14 m off, 1982
+  rectangles, 6.5 ms): (1) a way with no room for its points round the
+  trunks was told as partial: the walker searched again every dozen
+  meters, a farmer's route was "no way". Now it is cut and "more after
+  the last" (as a long way's corners always were), and a way holds 96
+  points (32). (2) The check of a found way over the quarter meters
+  (mesh_way_holds) looked for a fine way at every trunk the way passed
+  (the body's line brushes them on the grid): most of a search's time.
+  Not on stretches by small things now (path_small: crossed or within
+  half a meter). (3) Flagging a tile's rectangles with small things
+  tried every capsule against every rectangle (16 ms a tile there):
+  through the tile's squares now. (4) The weld took the body's whole
+  width between the circles: 0.9 of it (MESH_WELD_SHARE). (5) A point
+  round a thing that fell in the next thing's berth (a gap narrower
+  than two berths): moved to the middle of the gap. In that forest a
+  search is 1.2 ms on average (1.0 with everything a wall); the tiles
+  take 6 to 16 ms each either way (a thousand rectangles: as before).
 - Soft things are not gone round at planning (the walker's own
   business as it goes: the height per cell, as before).
 - tests/navigation/small.py passes: every goal, no body in a trunk or a
