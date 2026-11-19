@@ -3788,9 +3788,30 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 	// what is behind; the shadows' as they come)
 	bool sorting_cells = pass == PASS_CAMERA;
 	int near_count = 0;
-	for (int j = 0; j < objects->grid_size; j++)
+	// (only the cells within the farthest any type is drawn, where the
+	// pass has a distance: the rest of a big map not walked at all)
+	int first_i = 0;
+	int first_j = 0;
+	int last_i = objects->grid_size - 1;
+	int last_j = objects->grid_size - 1;
+
+	if (pass != PASS_FAR_SHADOW)
 	{
-		for (int i = 0; i < objects->grid_size; i++)
+		float farthest = 0.0f;
+
+		for (int t = 0; t < objects->types.type_count; t++)
+		{
+			farthest = SDL_max(farthest, objects->types.types[t].draw_distance_meters);
+		}
+		farthest = farthest * objects->draw_distance_scale + 12.0f;
+		first_i = SDL_clamp((int)SDL_floorf((eye.x - farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
+		first_j = SDL_clamp((int)SDL_floorf((eye.z - farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
+		last_i = SDL_clamp((int)SDL_floorf((eye.x + farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
+		last_j = SDL_clamp((int)SDL_floorf((eye.z + farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
+	}
+	for (int j = first_j; j <= last_j; j++)
+	{
+		for (int i = first_i; i <= last_i; i++)
 		{
 			int cell = j * objects->grid_size + i;
 			int first = objects->grid_first[cell];
@@ -3827,7 +3848,23 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 				int low = first;
 				int high = last;
 
-				// The first object drawn less far than the cell is
+				// The first object drawn less far than the cell is: by the
+				// cell's runs of one type where they are made (a few
+				// numbers side by side; the objects themselves are big and
+				// far apart in memory, each one looked at a miss)
+				if (objects->run_cells == cell_count)
+				{
+					low = last;
+					for (int r = objects->run_first[cell]; r < objects->run_first[cell + 1]; r++)
+					{
+						if (objects->types.types[objects->run_type[r]].draw_distance_meters * objects->draw_distance_scale < cell_distance)
+						{
+							low = objects->run_start[r];
+							break;
+						}
+					}
+					high = low;
+				}
 				while (low < high)
 				{
 					int middle = (low + high) / 2;
