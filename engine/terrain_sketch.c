@@ -128,7 +128,19 @@ void terrain_sketch_paint(terrain_sketch_t *sketch, const terrain_sketch_brush_t
 				water[index] = towards(water[index], 0.0f, here);
 				continue;
 			}
-			if (brush->height >= 0.0f)
+			if (brush->height >= 0.0f && brush->peaked)
+			{
+				// (as the height is: the painted or the unpainted one)
+				float now = lerp_float(TERRAIN_SKETCH_UNPAINTED_HEIGHT, (float)height[index] / 255.0f, (float)height_weight[index] / 255.0f);
+				float peak = lerp_float(TERRAIN_SKETCH_UNPAINTED_HEIGHT, brush->height, 1.0f - SDL_sqrtf(distance_squared));
+
+				if (peak > now + 0.5f / 255.0f)
+				{
+					height[index] = (uint8_t)clamp_float(SDL_roundf((now + (peak - now) * SDL_max(here, 0.02f)) * 255.0f), 0.0f, 255.0f);
+					height_weight[index] = 255;
+				}
+			}
+			else if (brush->height >= 0.0f)
 			{
 				height[index] = towards(height[index], brush->height, here);
 				height_weight[index] = towards(height_weight[index], 1.0f, here);

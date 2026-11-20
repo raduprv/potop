@@ -4,11 +4,12 @@
 //   1. domain warped fBm for rolling hills, plus ridged noise for
 //      mountains, mixed by a low frequency "where are the mountains" mask;
 //   2. a power curve that flattens the lowlands (good places for water);
-//      then, where a sketch is painted (terrain_sketch.h), its land over the
-//      seed's (the seed's broad shape towards the sketch's height, the
-//      seed's detail more or less as its relief says, its lakes sunk in);
+//      then, if a sketch is painted (terrain_sketch.h), the land's shape
+//      the sketch's (unpainted: low land), the seed's detail over it more
+//      or less as its relief says;
 //      then the rain's erosion (droplets running downhill: gullies, valleys,
-//      hollows filled), worked out on a grid of at most 1024 a side;
+//      hollows filled), worked out on a grid of at most 1024 a side; then
+//      the sketch's lakes sunk in;
 //   3. thermal erosion: material slides down slopes steeper than the talus
 //      angle, which removes noise spikes and gives natural scree slopes;
 //   4. soil classification from height, slope and noise;

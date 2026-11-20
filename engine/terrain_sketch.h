@@ -1,20 +1,23 @@
 // A new map's sketch: what the maker wants where, painted roughly over the
 // whole map from above (the editor's sketch window) before the terrain is
-// made from it (terrain_gen.h). Where nothing is painted the seed alone
-// decides, as without a sketch.
+// made from it (terrain_gen.h).
 //
 // TERRAIN_SKETCH_SIZE texels a side over the whole map, whatever its size,
 // five planes of a byte each:
 //
 //   height          how high the land is there: 0 the lowest .. 255 the
 //                   map's highest (a share of max_height_meters)
-//   height weight   how much of that is the sketch's: 0 the seed's own
-//                   height alone .. 255 the sketch's alone
+//   height weight   how much is painted: 0 none (the unpainted height) ..
+//                   255 the height above
 //   relief          how rough: 0 smooth (a plain) .. 128 as the seed makes it
 //                   .. 255 crags (more of the seed's detail, ridges besides)
 //   relief weight   as the height's
 //   water           a lake: 0 none .. 255 a deep one (the land under it
 //                   sunk, filled to below its lowest shore)
+//
+// Painted on a blank sheet: once anything is painted the land's shape is
+// the sketch's alone (the seed gives only its detail), the unpainted
+// height TERRAIN_SKETCH_UNPAINTED_HEIGHT; nothing painted, the seed's land.
 //
 // The brushes paint several planes at once (a mountain: high and rough; a
 // plain: low and smooth); erasing takes the weights back to the seed's.
@@ -33,6 +36,10 @@
 #define TERRAIN_SKETCH_LAKES_MAX 256
 // Painted this much (of 255) or more, a texel is in a lake
 #define TERRAIN_SKETCH_LAKE_THRESHOLD 90
+// Where nothing is painted (of the highest ground): low land
+#define TERRAIN_SKETCH_UNPAINTED_HEIGHT 0.12f
+// ...and its relief (under the middle: the seed's detail gentler there)
+#define TERRAIN_SKETCH_UNPAINTED_RELIEF 0.35f
 
 typedef enum
 {
@@ -50,7 +57,11 @@ typedef struct
 	float height;
 	float relief;
 	float water;
-	bool erase;                    // back to the seed's (the weights and the water towards 0)
+	bool erase;                    // back to the blank sheet (the weights and the water towards 0)
+	// The height a peak: highest at the brush's middle, down to the
+	// unpainted towards its edge, and only raising (a mountain, a hill;
+	// else flat, either way: a plain, a valley)
+	bool peaked;
 } terrain_sketch_brush_t;
 
 typedef struct

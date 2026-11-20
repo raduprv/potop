@@ -2375,9 +2375,14 @@ void ui_open_new_map(ui_t *ui, const ui_view_t *view)
 		}
 	}
 	SDL_strlcpy(ui->sketch_name_input, name, sizeof(ui->sketch_name_input));
-	if (view->sketch != NULL && view->project_name[0] != '\0')
+	// (a blank sheet, the picture showing it)
+	if (view->sketch != NULL)
 	{
 		terrain_sketch_clear(view->sketch);
+	}
+	if (view->sketch_view != NULL)
+	{
+		view->sketch_view->show_result = false;
 	}
 	ui->sketch_confirm_replace = false;
 	ui->maps_mode = UI_MAPS_CLOSED;
@@ -2387,7 +2392,7 @@ void ui_open_new_map(ui_t *ui, const ui_view_t *view)
 // What the brush chosen paints
 static terrain_sketch_brush_t sketch_brush_of(const ui_t *ui)
 {
-	terrain_sketch_brush_t brush = { -1.0f, -1.0f, -1.0f, false };
+	terrain_sketch_brush_t brush = { -1.0f, -1.0f, -1.0f, false, false };
 
 	if (ui->sketch_brush < SKETCH_PRESET_COUNT)
 	{
@@ -2434,7 +2439,7 @@ static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
 	{
 		ui->backend.wants_text_input = true;
 	}
-	tooltip_if_hovered(context, "Another seed: the land where nothing is painted");
+	tooltip_if_hovered(context, "Another seed: the land's detail over what you paint (nothing painted: all of the land)");
 	if (nk_button_label(context, "Random"))
 	{
 		SDL_snprintf(ui->sketch_seed_input, sizeof(ui->sketch_seed_input), "%u", (uint32_t)SDL_rand_bits() % 1000000u + 1u);
@@ -2455,13 +2460,13 @@ static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
 	SDL_snprintf(line, sizeof(line), "%.1f x %.1f km", (double)(map_meters * 0.001f), (double)(map_meters * 0.001f));
 	nk_label(context, line, NK_TEXT_LEFT);
 
-	section_label(ui, "Brushes (left: paint, right: back to the seed)");
+	section_label(ui, "Brushes (left: paint, right: erase)");
 	nk_layout_row_dynamic(context, ROW_HEIGHT, 2);
 	for (int i = 0; i <= SKETCH_PRESET_COUNT + 1; i++)
 	{
 		const char *name = i < SKETCH_PRESET_COUNT ? sketch_presets[i].name : (i == SKETCH_PRESET_COUNT ? "Custom" : "Erase");
 		const char *tooltip = i < SKETCH_PRESET_COUNT ? sketch_presets[i].tooltip
-			: (i == SKETCH_PRESET_COUNT ? "One thing at the value below" : "Back to what the seed makes");
+			: (i == SKETCH_PRESET_COUNT ? "One thing at the value below" : "Back to the blank sheet");
 		nk_bool selected = ui->sketch_brush == i;
 
 		tooltip_if_hovered(context, tooltip);
@@ -2488,6 +2493,18 @@ static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
 	if (view->sketch_view != NULL)
 	{
 		bool tint = view->sketch_view->tint_painted;
+
+		nk_layout_row_dynamic(context, ROW_HEIGHT, 2);
+		tooltip_if_hovered(context, "What you painted, on its blank sheet");
+		if (nk_option_label(context, "The sketch", !view->sketch_view->show_result))
+		{
+			view->sketch_view->show_result = false;
+		}
+		tooltip_if_hovered(context, "The land the generator makes from it (worked out small; the rain's erosion once you stop)");
+		if (nk_option_label(context, "What it makes", view->sketch_view->show_result))
+		{
+			view->sketch_view->show_result = true;
+		}
 
 		if (checkbox_row(ui, "Show what is painted", &tint, "Orange: height, purple: relief, blue: water"))
 		{
@@ -2532,6 +2549,11 @@ static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
 	{
 		nk_layout_row_dynamic(context, SMALL_ROW_HEIGHT, 1);
 		nk_label(context, clean[0] == '\0' ? "The project needs a name." : "A new project.", NK_TEXT_LEFT);
+	}
+	if (view->sketch_view != NULL && !view->sketch_view->painted)
+	{
+		nk_layout_row_dynamic(context, SMALL_ROW_HEIGHT, 1);
+		nk_label(context, "Nothing painted: the map is the seed's.", NK_TEXT_LEFT);
 	}
 	nk_layout_row_dynamic(context, ROW_HEIGHT, 2);
 	if (nk_button_label(context, "Clear the sketch") && view->sketch != NULL)

@@ -444,10 +444,11 @@ static void find_lakes(const float *heights, int32_t size, terrain_sketch_t *ske
 	SDL_free(stack);
 }
 
-// Where the sketch is painted its land instead of the seed's: the seed's
-// broad shape (its heights blurred over a fraction of a feature) towards
-// the sketch's height, the seed's detail over it more or less as the relief
-// says (and ridges besides where it is rough), lakes sunk into it
+// A sketch painted: the land's shape the sketch's alone (painted on a blank
+// sheet: where nothing is painted low land, TERRAIN_SKETCH_UNPAINTED_HEIGHT),
+// the seed giving only its detail (its heights less their broad shape,
+// blurred over a fraction of a feature), more or less as the relief says
+// (and ridges besides where it is rough)
 static void apply_sketch(float *heights, int32_t size, const terrain_settings_t *settings, const generation_noise_t *noise, int octave_count,
 	terrain_sketch_t *sketch)
 {
@@ -485,15 +486,14 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 			float relief;
 			float rough;
 
-			if (height_weight <= 0.0f && relief_weight <= 0.0f)
-			{
-				continue;
-			}
 			broad = grid_sample(macro, side, u, v);
 			detail = heights[index] - broad;
-			relief = lerp_float(0.5f, terrain_sketch_sample(sketch, TERRAIN_SKETCH_RELIEF, u, v), relief_weight);
-			// (smooth below the middle, the seed's own at it, twice as rough at the top)
-			heights[index] = lerp_float(broad, terrain_sketch_sample(sketch, TERRAIN_SKETCH_HEIGHT, u, v) * most, height_weight)
+			relief = lerp_float(TERRAIN_SKETCH_UNPAINTED_RELIEF, terrain_sketch_sample(sketch, TERRAIN_SKETCH_RELIEF, u, v), relief_weight);
+			// The shape the sketch's alone (unpainted: low land); the seed's
+			// detail over it, smooth below the relief's middle, its own at
+			// it, twice as rough at the top
+			heights[index] = lerp_float(TERRAIN_SKETCH_UNPAINTED_HEIGHT, terrain_sketch_sample(sketch, TERRAIN_SKETCH_HEIGHT, u, v), height_weight)
+					* most
 				+ detail * relief * 2.0f;
 			// Crags: ridges where it is to be rougher than the seed made it
 			rough = SDL_max(relief - 0.55f, 0.0f) / 0.45f;

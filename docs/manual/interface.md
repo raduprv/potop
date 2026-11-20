@@ -97,21 +97,24 @@ are engine/ui.c; both draw with the same backend, font and colors.
   **Just load it** outside any project. F9 opens the project open as last
   saved. N (a new map at once) and a map just loaded leave the project.
 * **New** (top bar): a new map, its land sketched: the **Sketch** window,
-  afresh (a new name and seed; the open project's sketch cleared). Not
-  painting anything is fine: the map is then the seed's. **Sketch** (top
+  afresh (a new name and seed, a blank sheet). Once anything is painted the
+  land's shape is the sketch's alone (where nothing is painted, low land),
+  the seed giving only its detail over it; nothing painted, the map is the
+  seed's. **Sketch** (top
   bar) opens it again as it was (to paint some more and make the map
   again, or after a preview).
 * **Sketch**: a new map's land painted roughly from above, over the whole
   screen. At the
   left the map (the project's name, the seed, its size, cell, highest
   ground and how much the rain erodes it when it is made), the brushes and
-  what to do; at the right the land as it will come out, worked out small
-  as you paint (shaded from the north west, colored by height, lakes
-  blue; what is painted tinted over it: orange the height, purple the
-  relief, blue the water). Where nothing is painted the seed alone decides,
-  as without a sketch: try seeds until one is close, then paint what you
-  want different. Left button paints, right takes it back to the seed's.
-  The brushes: **Mountains** (high and rough: crests, crags), **Hills**,
+  what to do; at the right **The sketch** (what is painted, on its sheet)
+  or **What it makes** (the land the generator makes from it, worked out
+  small, the rain's erosion once you stop), shaded from the north west,
+  colored by height, lakes blue (what is painted can be tinted over it:
+  orange the height, purple the relief, blue the water). Left button
+  paints, right takes it back to the blank sheet.
+  The brushes: **Mountains** (high and rough: crests, crags; a peak, highest at the
+  brush's middle, only raising), **Hills** (the same, lower),
   **Plain** (low and smooth), **Valley** (low: the rain cuts a bed down
   it), **Lake** (the land sunk under it and filled to a little below its
   lowest shore), **Custom** (one thing at a value: the height, the relief,

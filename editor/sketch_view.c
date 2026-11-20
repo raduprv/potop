@@ -11,11 +11,11 @@
 
 const sketch_preset_t sketch_presets[SKETCH_PRESET_COUNT] =
 {
-	{ "Mountains", "High and rough: crests and crags", { 0.85f, 0.92f, -1.0f, false } },
-	{ "Hills", "Middling and rolling", { 0.42f, 0.55f, -1.0f, false } },
-	{ "Plain", "Low and smooth", { 0.10f, 0.12f, -1.0f, false } },
-	{ "Valley", "Low, a little rough: the rain cuts a river bed down it", { 0.03f, 0.35f, -1.0f, false } },
-	{ "Lake", "Water: the land under it sunk, filled to a little below its lowest shore", { -1.0f, -1.0f, 1.0f, false } },
+	{ "Mountains", "High and rough: crests and crags, highest in the brush's middle", { 0.9f, 0.92f, -1.0f, false, true } },
+	{ "Hills", "Middling and rolling, highest in the brush's middle", { 0.4f, 0.55f, -1.0f, false, true } },
+	{ "Plain", "Low and smooth: flattens what is there", { 0.10f, 0.12f, -1.0f, false, false } },
+	{ "Valley", "Low, a little rough: the rain cuts a river bed down it", { 0.03f, 0.35f, -1.0f, false, false } },
+	{ "Lake", "Water: the land under it sunk, filled to a little below its lowest shore", { -1.0f, -1.0f, 1.0f, false, false } },
 };
 
 int sketch_preset_find(const char *name)
@@ -35,9 +35,10 @@ bool sketch_view_create(sketch_view_t *view)
 	SDL_zerop(view);
 	view->land = SDL_malloc(VIEW_TEXELS * sizeof(float));
 	view->heights = SDL_malloc(VIEW_TEXELS * sizeof(float));
+	view->paper = SDL_malloc(VIEW_TEXELS * sizeof(float));
 	view->pixels = SDL_calloc(VIEW_TEXELS, 4);
-	view->tint_painted = true;
-	if (view->land == NULL || view->heights == NULL || view->pixels == NULL)
+	view->tint_painted = false;
+	if (view->land == NULL || view->heights == NULL || view->paper == NULL || view->pixels == NULL)
 	{
 		sketch_view_destroy(view);
 		return false;
@@ -53,6 +54,7 @@ void sketch_view_destroy(sketch_view_t *view)
 	}
 	SDL_free(view->land);
 	SDL_free(view->heights);
+	SDL_free(view->paper);
 	SDL_free(view->pixels);
 	SDL_zerop(view);
 }
@@ -85,7 +87,9 @@ static void height_color(float share, float color_out[3])
 	}
 }
 
-static void compose_picture(sketch_view_t *view, const terrain_sketch_t *sketch, float most, float texel_meters)
+// The picture from heights (the land as it will come out, or the sheet as
+// painted: paper, its lakes where the water is painted)
+static void compose_picture(sketch_view_t *view, const terrain_sketch_t *sketch, const float *heights, float most, float texel_meters, bool paper)
 {
 	const uint8_t *height_weight = terrain_sketch_plane(sketch, TERRAIN_SKETCH_HEIGHT_WEIGHT);
 	const uint8_t *relief_weight = terrain_sketch_plane(sketch, TERRAIN_SKETCH_RELIEF_WEIGHT);
@@ -101,18 +105,18 @@ static void compose_picture(sketch_view_t *view, const terrain_sketch_t *sketch,
 		for (int32_t x = 0; x < SKETCH_VIEW_SIZE; x++)
 		{
 			size_t index = (size_t)y * SKETCH_VIEW_SIZE + (size_t)x;
-			float height = view->heights[index];
-			float left = view->heights[(size_t)y * SKETCH_VIEW_SIZE + (size_t)SDL_max(x - 1, 0)];
-			float right = view->heights[(size_t)y * SKETCH_VIEW_SIZE + (size_t)SDL_min(x + 1, SKETCH_VIEW_SIZE - 1)];
-			float back = view->heights[(size_t)SDL_max(y - 1, 0) * SKETCH_VIEW_SIZE + (size_t)x];
-			float front = view->heights[(size_t)SDL_min(y + 1, SKETCH_VIEW_SIZE - 1) * SKETCH_VIEW_SIZE + (size_t)x];
+			float height = heights[index];
+			float left = heights[(size_t)y * SKETCH_VIEW_SIZE + (size_t)SDL_max(x - 1, 0)];
+			float right = heights[(size_t)y * SKETCH_VIEW_SIZE + (size_t)SDL_min(x + 1, SKETCH_VIEW_SIZE - 1)];
+			float back = heights[(size_t)SDL_max(y - 1, 0) * SKETCH_VIEW_SIZE + (size_t)x];
+			float front = heights[(size_t)SDL_min(y + 1, SKETCH_VIEW_SIZE - 1) * SKETCH_VIEW_SIZE + (size_t)x];
 			float normal[3] = { -(right - left) * 1.5f, 2.0f * texel_meters, -(front - back) * 1.5f };
 			float length = SDL_sqrtf(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
 			float shade = clamp_float((normal[0] * light[0] + normal[1] * light[1] + normal[2] * light[2]) / SDL_max(length, 1e-6f), 0.0f, 1.0f);
 			float color[3];
 			float u = ((float)x + 0.5f) / (float)SKETCH_VIEW_SIZE;
 			float v = ((float)y + 0.5f) / (float)SKETCH_VIEW_SIZE;
-			int lake = terrain_sketch_lake_at(sketch, u, v);
+			int lake = paper ? -1 : terrain_sketch_lake_at(sketch, u, v);
 			size_t texel = (size_t)(y * step) * TERRAIN_SKETCH_SIZE + (size_t)(x * step);
 			uint8_t *pixel = &view->pixels[index * 4];
 
@@ -121,7 +125,15 @@ static void compose_picture(sketch_view_t *view, const terrain_sketch_t *sketch,
 			{
 				color[c] *= 0.3f + 0.85f * shade;
 			}
-			if (lake >= 0 && height < sketch->lake_surfaces[lake])
+			if (paper && water[texel] >= TERRAIN_SKETCH_LAKE_THRESHOLD)
+			{
+				float deep = clamp_float(((float)water[texel] - TERRAIN_SKETCH_LAKE_THRESHOLD) / 120.0f, 0.0f, 1.0f);
+
+				color[0] = lerp_float(70.0f, 30.0f, deep);
+				color[1] = lerp_float(120.0f, 70.0f, deep);
+				color[2] = lerp_float(170.0f, 140.0f, deep);
+			}
+			else if (lake >= 0 && height < sketch->lake_surfaces[lake])
 			{
 				float deep = clamp_float((sketch->lake_surfaces[lake] - height) / 6.0f, 0.0f, 1.0f);
 
@@ -151,6 +163,20 @@ static void compose_picture(sketch_view_t *view, const terrain_sketch_t *sketch,
 	}
 }
 
+static void upload_picture(sketch_view_t *view)
+{
+	if (view->texture == NULL && gpu.device != NULL)
+	{
+		view->texture = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SKETCH_VIEW_SIZE, SKETCH_VIEW_SIZE, 1, 1,
+			SDL_GPU_TEXTUREUSAGE_SAMPLER);
+	}
+	if (view->texture != NULL)
+	{
+		gpu_upload_texture(view->texture, 0, 0, 0, 0, SKETCH_VIEW_SIZE, SKETCH_VIEW_SIZE, view->pixels, VIEW_TEXELS * 4);
+	}
+	view->picture_dirty = false;
+}
+
 void sketch_view_update(sketch_view_t *view, terrain_sketch_t *sketch, const terrain_settings_t *settings, uint32_t seed, int32_t map_size,
 	float cell_size_meters, uint64_t now_ticks)
 {
@@ -161,6 +187,42 @@ void sketch_view_update(sketch_view_t *view, terrain_sketch_t *sketch, const ter
 
 	if (view->land == NULL || sketch == NULL || sketch->planes == NULL)
 	{
+		return;
+	}
+	if (sketch->revision != view->painted_revision)
+	{
+		view->painted = terrain_sketch_painted(sketch);
+		view->painted_revision = sketch->revision;
+	}
+	if (view->show_result != view->shown_result)
+	{
+		view->shown_result = view->show_result;
+		view->picture_dirty = true;
+	}
+	// The sheet as painted: its height alone (unpainted: low land), shaded
+	if (!view->show_result)
+	{
+		if (sketch->revision == view->paper_revision && !view->picture_dirty && view->paper_valid)
+		{
+			return;
+		}
+#pragma omp parallel for schedule(static)
+		for (int32_t y = 0; y < SKETCH_VIEW_SIZE; y++)
+		{
+			for (int32_t x = 0; x < SKETCH_VIEW_SIZE; x++)
+			{
+				float u = ((float)x + 0.5f) / (float)SKETCH_VIEW_SIZE;
+				float v = ((float)y + 0.5f) / (float)SKETCH_VIEW_SIZE;
+
+				view->paper[(size_t)y * SKETCH_VIEW_SIZE + (size_t)x] = lerp_float(TERRAIN_SKETCH_UNPAINTED_HEIGHT,
+					terrain_sketch_sample(sketch, TERRAIN_SKETCH_HEIGHT, u, v), terrain_sketch_sample(sketch, TERRAIN_SKETCH_HEIGHT_WEIGHT, u, v))
+					* settings->max_height_meters;
+			}
+		}
+		view->paper_revision = sketch->revision;
+		view->paper_valid = true;
+		compose_picture(view, sketch, view->paper, settings->max_height_meters, texel_meters, true);
+		upload_picture(view);
 		return;
 	}
 	land_changed = !view->land_valid || view->land_seed != seed || view->land_map_meters != map_meters
@@ -204,17 +266,8 @@ void sketch_view_update(sketch_view_t *view, terrain_sketch_t *sketch, const ter
 	{
 		return;
 	}
-	compose_picture(view, sketch, settings->max_height_meters, texel_meters);
-	if (view->texture == NULL && gpu.device != NULL)
-	{
-		view->texture = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, SKETCH_VIEW_SIZE, SKETCH_VIEW_SIZE, 1, 1,
-			SDL_GPU_TEXTUREUSAGE_SAMPLER);
-	}
-	if (view->texture != NULL)
-	{
-		gpu_upload_texture(view->texture, 0, 0, 0, 0, SKETCH_VIEW_SIZE, SKETCH_VIEW_SIZE, view->pixels, VIEW_TEXELS * 4);
-	}
-	view->picture_dirty = false;
+	compose_picture(view, sketch, view->heights, settings->max_height_meters, texel_meters, false);
+	upload_picture(view);
 }
 
 bool sketch_view_save_picture(const sketch_view_t *view, const char *path)

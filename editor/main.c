@@ -3015,7 +3015,7 @@ static void sketch_command(void *user, const char *arguments)
 	else if (SDL_strcmp(verb, "paint") == 0)
 	{
 		int preset = sketch_preset_find(first);
-		terrain_sketch_brush_t brush = { -1.0f, -1.0f, -1.0f, true };
+		terrain_sketch_brush_t brush = { -1.0f, -1.0f, -1.0f, true, false };
 
 		if (preset < 0)
 		{
@@ -3040,6 +3040,10 @@ static void sketch_command(void *user, const char *arguments)
 
 		game->ui.sketch_size_index = cells <= 1024 ? 0 : (cells <= 2048 ? 1 : (cells <= 4096 ? 2 : 3));
 		game->ui.sketch_brush_meters *= (float)ui_sketch_size(&game->ui) / (float)SDL_max(old_size, 1);
+	}
+	else if (SDL_strcmp(verb, "show") == 0)
+	{
+		game->sketch_view.show_result = SDL_strcmp(first, "result") == 0;
 	}
 	else if (SDL_strcmp(verb, "preview") == 0)
 	{
@@ -6104,7 +6108,7 @@ int main(int argument_count, char **arguments)
 	console_add_command(&game.console, "project", "project list | new <name> [seed] | open <name> | save [name] | bake | import <map> <name>",
 		"Map projects (the Save, Open and New windows): their folders under projects/", project_command, &game);
 	console_add_command(&game.console, "sketch",
-		"sketch open | clear | paint <brush> <u> <v> <radius> [amount] | seed <n> | size <cells> | preview | make <project> | picture <file.png>",
+		"sketch open | clear | paint <brush> <u> <v> <radius> [amount] | seed <n> | size <cells> | show sketch|result | preview | make <project> | picture <file.png>",
 		"The new map's sketch (the Sketch window): brushes mountains, hills, plain, valley, lake, erase; u, v and radius shares of the map", sketch_command,
 		&game);
 	if (!terrain_sketch_create(&game.sketch) || !sketch_view_create(&game.sketch_view))

@@ -281,8 +281,8 @@ void ui_show_message(ui_t *ui, const char *message, double time_seconds);
 // if none was open
 bool ui_close_windows(ui_t *ui);
 
-// New: the sketch window, its fields afresh (a new name and seed; the open
-// project's sketch cleared, kept if none is open)
+// New: the sketch window, its fields afresh (a new name and seed, a blank
+// sheet)
 void ui_open_new_map(ui_t *ui, const ui_view_t *view);
 
 // The sketch window's map: cells a side (its size choice)

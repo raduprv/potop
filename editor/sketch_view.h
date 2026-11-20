@@ -1,7 +1,8 @@
-// The sketch window's picture (terrain_sketch.h): the land as it will come
-// out, worked out small (SKETCH_VIEW_SIZE a side) from the seed and the
-// sketch, shaded from the north west, colored by height, its lakes blue,
-// and what is painted tinted over it if asked. The seed's land is kept and
+// The sketch window's picture (terrain_sketch.h): the sheet as painted (its
+// height alone, the unpainted low; lakes where the water is painted) or the
+// land as it will come out, worked out small (SKETCH_VIEW_SIZE a side) from
+// the seed and the sketch; shaded from the north west, colored by height,
+// lakes blue, and what is painted tinted over it if asked. The seed's land is kept and
 // worked out again only when the seed or the land's settings change; the
 // sketch over it whenever it changes (a little while after, while it is
 // being painted, every tenth of a second); the rain's erosion only once it
@@ -26,6 +27,7 @@ typedef struct
 {
 	float *land;                   // the seed's land (meters), as terrain_gen.c makes it at this size
 	float *heights;                // with the sketch (and the erosion) over it
+	float *paper;                  // the sheet as painted (its height alone, meters)
 	uint8_t *pixels;               // RGBA
 	SDL_GPUTexture *texture;
 	// What the land and the picture were made for
@@ -37,6 +39,12 @@ typedef struct
 	bool heights_eroded;
 	bool heights_valid;
 	bool tint_painted;             // what is painted shown over it
+	bool show_result;              // the land as it will come out (else the sheet as painted)
+	bool shown_result;             // ...as the picture was last made
+	uint32_t paper_revision;
+	bool painted;                  // anything painted (else the map is the seed's)
+	uint32_t painted_revision;
+	bool paper_valid;
 	bool picture_dirty;
 	uint64_t changed_ticks;        // when the sketch was seen to change (ms)
 	uint64_t computed_ticks;       // when the sketch was last laid over the land
