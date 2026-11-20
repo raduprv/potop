@@ -192,7 +192,8 @@ ivec2 cell_of(vec2 world_xz)
 	return clamp(ivec2(floor(world_xz / map.y + 0.5)), ivec2(0), ivec2(size - 1));
 }
 
-// The ground's height, between the cells (R32F is not filtered everywhere)
+// The ground's height, between the cells, as the terrain draws it (R32F is
+// not filtered everywhere)
 float ground_height(vec2 world_xz)
 {
 	int size = int(map.x);
@@ -204,7 +205,15 @@ float ground_height(vec2 world_xz)
 	// x (low, high), y (high, high), z (high, low), w (low, low)
 	vec4 corners = textureGather(height_texture, (vec2(low) + 1.0) / float(size), 0);
 
-	return mix(mix(corners.w, corners.z, fraction.x), mix(corners.x, corners.y, fraction.x), fraction.y);
+	// On the terrain's own two triangles, not the bilinear patch: the quad
+	// split from corner 10 to corner 01 (terrain_renderer.c). On a twisted
+	// cell the two differ by a quarter of h00 + h11 - h10 - h01, enough for
+	// the blades to stand in the ground (or over it) over a whole hollow
+	if (fraction.x + fraction.y <= 1.0)
+	{
+		return corners.w + fraction.x * (corners.z - corners.w) + fraction.y * (corners.x - corners.w);
+	}
+	return corners.y + (1.0 - fraction.x) * (corners.x - corners.y) + (1.0 - fraction.y) * (corners.z - corners.y);
 }
 
 // The grass mask there (0: the blades grow .. 1: none); false outside its
