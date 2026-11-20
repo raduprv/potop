@@ -180,9 +180,12 @@ void sketch_view_update(sketch_view_t *view, terrain_sketch_t *sketch, const ter
 		view->changed_ticks = now_ticks;
 	}
 	quiet = (double)(now_ticks - view->changed_ticks) * 0.001;
-	// The sketch over it: soon after it changes; the erosion once it is left alone
-	if ((!view->heights_valid || view->heights_revision != sketch->revision) && (quiet >= SKETCH_VIEW_QUIET_SECONDS || !view->heights_valid))
+	// The sketch over it: as it is painted, every so often; the erosion once
+	// it is left alone
+	if ((!view->heights_valid || view->heights_revision != sketch->revision)
+		&& ((double)(now_ticks - view->computed_ticks) * 0.001 >= SKETCH_VIEW_QUIET_SECONDS || !view->heights_valid))
 	{
+		view->computed_ticks = now_ticks;
 		SDL_memcpy(view->heights, view->land, VIEW_TEXELS * sizeof(float));
 		terrain_generate_heights(view->heights, SKETCH_VIEW_SIZE, texel_meters, settings, seed, sketch, 0);
 		view->heights_revision = sketch->revision;

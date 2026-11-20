@@ -2990,7 +2990,7 @@ static void sketch_command(void *user, const char *arguments)
 		game->ui.sketch_max_height = game->potop->settings.terrain.max_height_meters;
 		game->ui.sketch_erosion = game->potop->settings.terrain.erosion_droplets;
 		SDL_snprintf(game->ui.sketch_seed_input, sizeof(game->ui.sketch_seed_input), "%u", terrain->seed);
-		game->ui.sketch_brush_meters = SDL_max((float)terrain->size * terrain->cell_size_meters * 0.06f, 20.0f);
+		game->ui.sketch_brush_meters = SDL_max((float)ui_sketch_size(&game->ui) * terrain->cell_size_meters * 0.06f, 20.0f);
 		game->ui.sketch_brush_strength = 2.5f;
 		game->ui.sketch_custom_value = 0.5f;
 		if (game->project_name[0] != '\0')
@@ -6622,7 +6622,12 @@ int main(int argument_count, char **arguments)
 			{
 				console_set_open(&game.console, true);
 			}
-			if (SDL_strcmp(window, "save") == 0 || SDL_strcmp(window, "load") == 0 || SDL_strcmp(window, "new") == 0)
+			if (SDL_strcmp(window, "new") == 0)
+			{
+				game.ui.sketch_open = true;
+				game.ui.sketch_new_pending = true;
+			}
+			else if (SDL_strcmp(window, "save") == 0 || SDL_strcmp(window, "load") == 0)
 			{
 				game.ui.maps_mode = window[0] == 's' ? UI_MAPS_SAVE : (window[0] == 'l' ? UI_MAPS_LOAD : UI_MAPS_NEW);
 				game.ui.map_entry_count = map_file_list(game.ui.map_entries, MAP_FILE_LIST_MAX);

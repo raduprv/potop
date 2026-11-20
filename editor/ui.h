@@ -230,6 +230,7 @@ typedef struct
 	float sketch_max_height;       // meters
 	float sketch_erosion;          // droplets a texel (terrain_settings_t.erosion_droplets)
 	bool sketch_confirm_replace;
+	bool sketch_new_pending;       // opened as New (the command line's): its fields afresh when it opens
 	bool state_loaded;
 
 	// Maps window
@@ -279,6 +280,10 @@ void ui_show_message(ui_t *ui, const char *message, double time_seconds);
 // Escape: closes the topmost open window (hud_close_windows first); false
 // if none was open
 bool ui_close_windows(ui_t *ui);
+
+// New: the sketch window, its fields afresh (a new name and seed; the open
+// project's sketch cleared, kept if none is open)
+void ui_open_new_map(ui_t *ui, const ui_view_t *view);
 
 // The sketch window's map: cells a side (its size choice)
 int32_t ui_sketch_size(const ui_t *ui);

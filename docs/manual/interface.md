@@ -89,16 +89,20 @@ are engine/ui.c; both draw with the same backend, font and colors.
   `~/.local/share/potop/projects/NAME/`): `project.ini` (its name,
   seed, size, when it was made), `map.potop` (the map being made),
   `baked.potop` (the last bake) and `sketch/` (the sketch its land was
-  made from, if one was painted: see **Sketch**). **New** makes one (a name, a seed; the size as
-  Settings, New map say); **Save** saves the project open (F5 too) or
+  made from, if one was painted: see **Sketch**). **New** makes one (see **New** below); **Save** saves the project open (F5 too) or
   **Bake (for play)**: into the project, and a copy into the saves as
   `NAME.baked` for the game; or saves the map as a new project. **Open**
   opens one (or deletes it with all in it), and lists the maps saved
   before projects (or by the game): **Bring it in as a project**, or
   **Just load it** outside any project. F9 opens the project open as last
   saved. N (a new map at once) and a map just loaded leave the project.
-* **Sketch** (top bar, or **Sketch it first...** in **New**): a new
-  map's land painted roughly from above, over the whole screen. At the
+* **New** (top bar): a new map, its land sketched: the **Sketch** window,
+  afresh (a new name and seed; the open project's sketch cleared). Not
+  painting anything is fine: the map is then the seed's. **Sketch** (top
+  bar) opens it again as it was (to paint some more and make the map
+  again, or after a preview).
+* **Sketch**: a new map's land painted roughly from above, over the whole
+  screen. At the
   left the map (the project's name, the seed, its size, cell, highest
   ground and how much the rain erodes it when it is made), the brushes and
   what to do; at the right the land as it will come out, worked out small

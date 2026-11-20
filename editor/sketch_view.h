@@ -4,8 +4,8 @@
 // and what is painted tinted over it if asked. The seed's land is kept and
 // worked out again only when the seed or the land's settings change; the
 // sketch over it whenever it changes (a little while after, while it is
-// being painted); the rain's erosion only once it has been left alone a
-// moment (it takes longer).
+// being painted, every tenth of a second); the rain's erosion only once it
+// has been left alone a moment (it takes longer).
 
 #ifndef SKETCH_VIEW_H
 #define SKETCH_VIEW_H
@@ -19,7 +19,7 @@
 #include "terrain_sketch.h"
 
 #define SKETCH_VIEW_SIZE 512
-#define SKETCH_VIEW_QUIET_SECONDS 0.12  // the sketch changed: worked out again this long after
+#define SKETCH_VIEW_QUIET_SECONDS 0.1   // the sketch changing: worked out again at most this often
 #define SKETCH_VIEW_EROSION_SECONDS 0.8 // ...and with the erosion once left alone this long
 
 typedef struct
@@ -39,6 +39,7 @@ typedef struct
 	bool tint_painted;             // what is painted shown over it
 	bool picture_dirty;
 	uint64_t changed_ticks;        // when the sketch was seen to change (ms)
+	uint64_t computed_ticks;       // when the sketch was last laid over the land
 	uint32_t seen_revision;
 } sketch_view_t;
 

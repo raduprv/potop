@@ -1194,13 +1194,13 @@ static void icon_bar_window(ui_t *ui, const ui_view_t *view)
 		{ "settings", "Settings", "Settings" },
 		{ "save", "Save", "Save or bake the project (F5: save it at once)" },
 		{ "load", "Open", "Open a project, or bring in a saved map (F9: the project as last saved)" },
-		{ "new_map", "New", "A new project (N: a new map at once, outside any project)" },
+		{ "new_map", "New", "A new map: its land sketched (or left to the seed), made into a project (N: a new map at once, outside any project)" },
 		{ view->paused ? "play" : "pause", view->paused ? "Run" : "Pause", "Pause / run the simulation (space)" },
 		{ "slower", "\xc2\xab", "Slower (,)" },
 		{ NULL, speed_text, "Simulation speed" },
 		{ "faster", "\xc2\xbb", "Faster (.)" },
 		{ "sky", "Sky", "Paint the clouds on their map" },
-		{ "sketch", "Sketch", "Paint a new map's land roughly (mountains, plains, lakes) and make it" },
+		{ "sketch", "Sketch", "The sketch again: paint the land some more and make the map again" },
 		{ "world", "World", "What is shown of the world (objects...)" },
 		{ "diagnostics", "Diagnostics", "What the frame and the simulation cost" },
 		{ "status", "Status", "Show or hide the status line" },
@@ -1262,11 +1262,15 @@ static void icon_bar_window(ui_t *ui, const ui_view_t *view)
 					case 0:
 						ui->settings.open = !ui->settings.open;
 						break;
+					case 3:
+						// A new map: the sketch, its fields afresh (a new name,
+						// a new seed; the open project's sketch is its own)
+						ui_open_new_map(ui, view);
+						break;
 					case 1:
 					case 2:
-					case 3:
 					{
-						ui_maps_mode_t mode = i == 1 ? UI_MAPS_SAVE : (i == 2 ? UI_MAPS_LOAD : UI_MAPS_NEW);
+						ui_maps_mode_t mode = i == 1 ? UI_MAPS_SAVE : UI_MAPS_LOAD;
 
 						if (ui->maps_mode == mode)
 						{
@@ -2350,10 +2354,34 @@ static void sketch_fill_fields(ui_t *ui, const ui_view_t *view)
 	}
 	ui->sketch_brush = 0;
 	ui->sketch_custom_value = 0.5f;
-	ui->sketch_brush_meters = SDL_max((float)size * ui->sketch_cell_meters * 0.06f, 20.0f);
+	ui->sketch_brush_meters = SDL_max((float)ui_sketch_size(ui) * ui->sketch_cell_meters * 0.06f, 20.0f);
 	ui->sketch_brush_strength = 2.5f;
 	ui->project_count = project_list(ui->projects, PROJECT_LIST_MAX);
 	ui->sketch_known = true;
+}
+
+void ui_open_new_map(ui_t *ui, const ui_view_t *view)
+{
+	char name[PROJECT_NAME_LENGTH];
+
+	sketch_fill_fields(ui, view);
+	SDL_snprintf(ui->sketch_seed_input, sizeof(ui->sketch_seed_input), "%u", (uint32_t)SDL_rand_bits() % 1000000u + 1u);
+	for (int number = 1; number < 10000; number++)
+	{
+		SDL_snprintf(name, sizeof(name), "map %d", number);
+		if (!project_listed(ui, name))
+		{
+			break;
+		}
+	}
+	SDL_strlcpy(ui->sketch_name_input, name, sizeof(ui->sketch_name_input));
+	if (view->sketch != NULL && view->project_name[0] != '\0')
+	{
+		terrain_sketch_clear(view->sketch);
+	}
+	ui->sketch_confirm_replace = false;
+	ui->maps_mode = UI_MAPS_CLOSED;
+	ui->sketch_open = true;
 }
 
 // What the brush chosen paints
@@ -2521,13 +2549,18 @@ static void sketch_window(ui_t *ui, const ui_view_t *view)
 	struct nk_context *context = &ui->backend.context;
 	nk_flags flags = NK_WINDOW_BORDER | NK_WINDOW_TITLE | NK_WINDOW_CLOSABLE | NK_WINDOW_NO_SCROLLBAR;
 	uint64_t now = SDL_GetTicks();
-	float elapsed = ui->sketch_last_ticks != 0 ? SDL_min((float)(now - ui->sketch_last_ticks) * 0.001f, 0.1f) : 0.0f;
+	float elapsed = ui->sketch_last_ticks != 0 ? SDL_min((float)(now - ui->sketch_last_ticks) * 0.001f, 0.25f) : 0.0f;
 	struct nk_rect bounds = nk_rect(0.0f, 0.0f, ui->backend.width, ui->backend.height);
 
 	ui->sketch_last_ticks = now;
 	if (!ui->sketch_open || view->sketch == NULL)
 	{
 		return;
+	}
+	if (ui->sketch_new_pending)
+	{
+		ui->sketch_new_pending = false;
+		ui_open_new_map(ui, view);
 	}
 	if (!ui->sketch_known)
 	{
@@ -2569,7 +2602,8 @@ static void sketch_window(ui_t *ui, const ui_view_t *view)
 			bool paint = nk_input_is_mouse_down(input, NK_BUTTON_LEFT);
 			bool erase = nk_input_is_mouse_down(input, NK_BUTTON_RIGHT);
 			struct nk_rect square = nk_rect(picture_bounds.x, picture_bounds.y, side, side);
-			bool over = nk_input_is_mouse_hovering_rect(input, square) && !nk_item_is_any_active(context);
+			// (not while a slider at the left is dragged over it)
+			bool over = nk_input_is_mouse_hovering_rect(input, square) && !(context->last_widget_state & NK_WIDGET_STATE_MODIFIED);
 			float u = (input->mouse.pos.x - square.x) / SDL_max(square.w, 1.0f);
 			float v = (input->mouse.pos.y - square.y) / SDL_max(square.h, 1.0f);
 			float radius = ui->sketch_brush_meters / SDL_max(map_meters, 1.0f);
