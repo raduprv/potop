@@ -39,7 +39,6 @@ static const setting_field_t setting_fields[] =
 	FIELD("terrain", "rock_height_fraction", SETTING_FLOAT, terrain.rock_height_fraction),
 	FIELD("terrain", "sand_height_fraction", SETTING_FLOAT, terrain.sand_height_fraction),
 	FIELD("terrain", "clay_height_fraction", SETTING_FLOAT, terrain.clay_height_fraction),
-	FIELD("terrain", "erosion_droplets", SETTING_FLOAT, terrain.erosion_droplets),
 
 	FIELD("cache", "use_cache", SETTING_BOOL, cache.use_cache),
 	FIELD("cache", "maximum_files", SETTING_INT, cache.cache_maximum_files),
@@ -442,7 +441,7 @@ void settings_set_defaults(settings_t *settings)
 	settings->terrain.mountain_amount = 0.7f;
 	settings->terrain.mountain_coverage = 0.45f;
 	settings->terrain.thermal_iterations = 60;
-	settings->terrain.erosion_droplets = 1.0f;
+	settings->terrain.erosion_droplets = 0.0f;
 	settings->terrain.talus_slope = 0.8f;
 	settings->terrain.gully_depth_meters = 3.0f;
 	settings->terrain.mountain_soil_pockets = 0.5f;

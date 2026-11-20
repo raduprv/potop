@@ -28,7 +28,7 @@
 
 // Bump whenever the generator's output for the same settings changes, so
 // cached terrains from older versions are not reused
-#define TERRAIN_GENERATOR_VERSION 7
+#define TERRAIN_GENERATOR_VERSION 8
 
 // terrain_generate_heights' steps besides the land and the sketch
 #define TERRAIN_HEIGHTS_LAND 4u        // the seed's land (without: heights holds it already, as this made it)

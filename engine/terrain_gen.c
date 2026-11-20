@@ -935,8 +935,9 @@ bool terrain_generate_heights(float *heights, int32_t size, float cell_size_mete
 		sketch->lake_count = 0;
 	}
 
-	// 4. The rain's erosion
-	if ((steps & TERRAIN_HEIGHTS_EROSION) != 0 && settings->erosion_droplets > 0.0f)
+	// 4. The rain's erosion: on a new map made from the sketch only, as
+	// much as asked (a seed's map comes out as it always has)
+	if ((steps & TERRAIN_HEIGHTS_EROSION) != 0 && sketch != NULL && settings->erosion_droplets > 0.0f)
 	{
 		apply_droplet_erosion(heights, size, settings, seed);
 	}

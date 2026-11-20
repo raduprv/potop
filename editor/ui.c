@@ -2325,6 +2325,9 @@ uint32_t ui_sketch_seed(const ui_t *ui)
 	return (uint32_t)SDL_strtoul(ui->sketch_seed_input, NULL, 10);
 }
 
+// The rain's erosion a new map starts with (droplets a texel; 0: none)
+static const float SKETCH_NEW_MAP_EROSION = 1.0f;
+
 // Its fields from the map and the settings, when first opened
 static void sketch_fill_fields(ui_t *ui, const ui_view_t *view)
 {
@@ -2366,6 +2369,8 @@ void ui_open_new_map(ui_t *ui, const ui_view_t *view)
 	char name[PROJECT_NAME_LENGTH];
 
 	sketch_fill_fields(ui, view);
+	// (the rain's erosion, a new map's: as much as it starts with, set there)
+	ui->sketch_erosion = SKETCH_NEW_MAP_EROSION;
 	SDL_snprintf(ui->sketch_seed_input, sizeof(ui->sketch_seed_input), "%u", (uint32_t)SDL_rand_bits() % 1000000u + 1u);
 	for (int number = 1; number < 10000; number++)
 	{

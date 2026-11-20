@@ -127,9 +127,12 @@ are engine/ui.c; both draw with the same backend, font and colors.
   (`sketch/regions.png`, gray: the region times 40, 0 unpainted, then
   plain, hills, mountains, valley, lake), so it can be painted in an image
   editor too, and comes back when the project opens. The erosion
-  (`[terrain] erosion_droplets`, 1: droplets of rain a texel run downhill,
-  wearing gullies and valleys and filling hollows) is worked out on a grid
-  of at most 1024 a side, so the preview gets the same.
+  (the window's Erosion, 1 to start with: droplets of rain a texel run
+  downhill, wearing gullies and valleys and filling hollows; 0: none) is
+  worked out on a grid of at most 1024 a side, so the preview gets the
+  same. Only a new map made here gets it, kept in its project
+  (`erosion_droplets` in `project.ini`); a map made from a seed comes out
+  as it always has.
 * **Maps**: save under a name, load or delete from the list. Maps are zip
   archives (`.potop`) in the `saves` folder of the preference directory
   (on Linux `~/.local/share/potop/saves/`). A map keeps the ground

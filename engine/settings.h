@@ -66,8 +66,10 @@ typedef struct
 	float rock_height_fraction;   // above this fraction of max height becomes rock
 	float sand_height_fraction;   // below this fraction of max height becomes sand
 	float clay_height_fraction;   // between sand and this, in flat areas, becomes clay
-	// The rain's erosion when the map is made (terrain_gen.h): droplets a
-	// texel of its grid (at most 1024 a side); 0: none
+	// The rain's erosion when a new map is made from the editor's sketch
+	// (terrain_gen.h): droplets a texel of its grid (at most 1024 a side);
+	// 0: none. Not in settings.ini: the sketch window's, kept with the
+	// project; the maps made from a seed never get it
 	float erosion_droplets;
 } terrain_settings_t;
 
