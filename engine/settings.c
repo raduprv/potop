@@ -318,6 +318,7 @@ static const setting_field_t setting_fields[] =
 	FIELD("objects", "prop_lod_pixels", SETTING_FLOAT, objects.prop_lod_pixels),
 	FIELD("objects", "grass", SETTING_BOOL, objects.grass),
 	FIELD("objects", "grass_mask", SETTING_BOOL, objects.grass_mask),
+	FIELD("objects", "grass_debug", SETTING_INT, objects.grass_debug),
 	FIELD("objects", "grass_distance_meters", SETTING_FLOAT, objects.grass_distance_meters),
 	FIELD("objects", "grass_density", SETTING_FLOAT, objects.grass_density),
 	FIELD("objects", "grass_near_density", SETTING_FLOAT, objects.grass_near_density),

@@ -571,7 +571,12 @@ typedef struct
 	// or take); the ground's grass color times grass_tint; the share of
 	// dry, yellowed blades
 	bool grass;
-	bool grass_mask;              // the blades kept off what stands (grass_mask.h); off: the material map's no grass bit only
+	bool grass_mask;
+	// Leaving out what decides whether a blade is there, to find what thins
+	// it (a sum): 1 the pyramid's (what the frame before drew), 2 the ground
+	// (material, snow: all of it grass), 4 the mask (and the no grass bit),
+	// 8 the thinning by distance (every blade kept, whole), 16 the water
+	int grass_debug;              // the blades kept off what stands (grass_mask.h); off: the material map's no grass bit only
 	float grass_distance_meters;
 	float grass_density;
 	// Nearest the eye grass_near_density times as dense, back to

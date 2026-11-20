@@ -1697,6 +1697,8 @@ static const ui_setting_t ui_settings[] = {
 		"Blades a square meter near the eye" },
 	{ TAB_OBJECTS, "objects", "grass_mask", "Grass off what stands", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
 		"The blades kept off rocks, trunks, walls (where each meets the ground); off: only off the buildings, a cell at a time" },
+	{ TAB_OBJECTS, "objects", "grass_debug", "Grass debug", 0, 31, 1, EFFECT_LIVE, NULL, NULL,
+		"Leave out (a sum): 1 the occlusion, 2 the ground (material, snow), 4 the mask, 8 the thinning by distance, 16 the water" },
 	{ TAB_OBJECTS, "objects", "grass_near_density", "Denser near", 1, 8, 0.1f, EFFECT_LIVE, "%.1fx", NULL,
 		"Nearest the eye the grass is this many times as dense, back to the density above by the distance below" },
 	{ TAB_OBJECTS, "objects", "grass_near_meters", "Denser out to", 0.1f, 10, 0.1f, EFFECT_LIVE, "%.1f m", NULL,

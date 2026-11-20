@@ -128,7 +128,7 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform grass_block
 	vec4 hiz_size;             // level 0's width and height, the level count, 1 if it is there
 	vec4 look;                 // the blades' color: the grass material's first layer, its macro repeats per meter, the variation's strength, its hue's
 	vec4 tint;                 // rgb: multiplies the ground's grass color; w: the share of dry blades
-	vec4 coarse;               // x: from how far off (m) a blade is one triangle (0: never); y: how much wider then
+	vec4 coarse;               // x: from how far off (m) a blade is one triangle (0: never); y: how much wider then; z: what is left out (settings.h, grass_debug)
 	vec4 mask_window;          // the grass mask's (grass_mask.h): its first texel x, z, texels per meter, its side (0: none)
 	vec4 density;              // the full radius (m), how many times denser nearest the eye, out to how far (m), the falloff past the full radius
 	ivec4 hiz_levels[16];      // the pyramid's levels (hiz_level_table): where each starts in hiz_depths, its width, its height
@@ -539,7 +539,8 @@ void main()
 	// is below 4^-(level-1)), and a ring's edge changes nothing
 	// (of the fine grid, as dense as nearest the eye: all of it there,
 	// 1 / near_density of it out to the full radius, then falling off)
-	float kept = horizontal < density.x
+	int debug_flags = int(coarse.z + 0.5);
+	float kept = (debug_flags & 8) != 0 ? 1.0 : horizontal < density.x
 		? (1.0 + (density.y - 1.0) * (1.0 - smoothstep(0.0, density.z, horizontal))) / density.y
 		: pow(density.x / horizontal, density.w) / density.y;
 	float threshold;
@@ -572,7 +573,7 @@ void main()
 	// for the rest): no stubs where the share stays put (a high threshold's
 	// ramp is short, at the disc's edge or near the eye)
 	float top = threshold < 1.0 / density.y ? 1.0 / density.y : 1.0;
-	float thinning = clamp((kept - threshold) / max(min(0.4 * threshold, max(top - threshold, 0.03 * top)), 1e-6), 0.0, 1.0);
+	float thinning = (debug_flags & 8) != 0 ? 1.0 : clamp((kept - threshold) / max(min(0.4 * threshold, max(top - threshold, 0.03 * top)), 1e-6), 0.0, 1.0);
 	float y = ground_height(world_xz);
 
 	// Out of view (as tall as a blade gets): the cheap test before the
@@ -583,13 +584,22 @@ void main()
 	}
 	// Behind a house, a hill (what the frame before drew), as tall as a
 	// blade gets and as far as it leans
-	if (hidden_by_pyramid(vec3(world_xz.x, y, world_xz.y), vec3(world_xz.x, y + 1.6 * blade.x, world_xz.y), blade.x + 0.1))
+	if ((debug_flags & 1) == 0 && hidden_by_pyramid(vec3(world_xz.x, y, world_xz.y), vec3(world_xz.x, y + 1.6 * blade.x, world_xz.y), blade.x + 0.1))
 	{
 		return;
 	}
 	float silt;
 	float cleared;
 	float amount = grass_amount(world_xz, y, silt, cleared);
+
+	if ((debug_flags & 2) != 0)
+	{
+		amount = 1.0;
+	}
+	if ((debug_flags & 4) != 0)
+	{
+		cleared = 0.0;
+	}
 
 	// Fewer where less grows (none where the ground hardly shows grass),
 	// the edges ragged; fewer towards what stands (the mask)
@@ -623,7 +633,7 @@ void main()
 		float speed = length(flow);
 		vec2 random_direction = vec2(cos(more.z * 6.2831853), sin(more.z * 6.2831853));
 
-		if (depth > height + 0.4)
+		if (depth > height + 0.4 && (debug_flags & 16) == 0)
 		{
 			return;
 		}
