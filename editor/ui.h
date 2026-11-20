@@ -217,12 +217,11 @@ typedef struct
 	// Sketch window (terrain_sketch.h): open over everything else
 	bool sketch_open;
 	bool sketch_known;             // its fields filled in (when first opened)
-	int sketch_brush;              // a preset (sketch_presets), SKETCH_PRESET_COUNT custom, + 1 erase
-	int sketch_custom_plane;       // custom: 0 height, 1 relief, 2 water
-	float sketch_custom_value;     // ...to this (0..1)
+	int sketch_brush;              // a region (sketch_presets), SKETCH_PRESET_COUNT erase
 	float sketch_brush_meters;     // the brush's radius
-	float sketch_brush_strength;   // how fast it paints (all the way in 1 / this seconds, at its middle)
-	uint64_t sketch_last_ticks;
+	bool sketch_stroke;            // painting: the mouse held since the frame before, there
+	float sketch_last_u;
+	float sketch_last_v;
 	char sketch_name_input[PROJECT_NAME_LENGTH];
 	char sketch_seed_input[16];
 	int sketch_size_index;         // 1024, 2048, 4096, 8192 cells a side

@@ -75,7 +75,7 @@ are engine/ui.c; both draw with the same backend, font and colors.
   | `load <name>` | loads a saved map: `name`, `name.active` or `name.baked` (without the kind, the active one if there is one) |
   | `save <name>` / `bake <name>` | saves the map as its own kind / bakes it (for play), as `name.baked` |
   | `project list \| new <name> [seed] \| open <name> \| save [name] \| bake \| import <map> <name>` | map projects (the editor's; see **Projects** below) |
-  | `sketch open \| clear \| paint <brush> <u> <v> <radius> [amount] \| seed <n> \| size <cells> \| preview \| make <project> \| picture <file.png>` | the new map's sketch (see **Sketch** below): brushes `mountains`, `hills`, `plain`, `valley`, `lake`, `erase`; u, v (0..1 across the map, from its north west corner) and the radius are shares of the map's side; `picture` writes the window's picture |
+  | `sketch open \| clear \| paint <region> <u> <v> <radius> \| seed <n> \| size <cells> \| show sketch\|result \| preview \| make <project> \| picture <file.png>` | the new map's sketch (see **Sketch** below): regions `plain`, `hills`, `mountains`, `valley`, `lake`, `erase`; u, v (0..1 across the map, from its north west corner) and the radius are shares of the map's side; `picture` writes the window's picture |
   | `screenshot` | as F12 |
   | `clear` / `quit` | clears the log / leaves |
 
@@ -97,38 +97,32 @@ are engine/ui.c; both draw with the same backend, font and colors.
   **Just load it** outside any project. F9 opens the project open as last
   saved. N (a new map at once) and a map just loaded leave the project.
 * **New** (top bar): a new map, its land sketched: the **Sketch** window,
-  afresh (a new name and seed, a blank sheet). Once anything is painted the
-  land's shape is the sketch's alone (where nothing is painted, low land),
-  the seed giving only its detail over it; nothing painted, the map is the
-  seed's. **Sketch** (top
-  bar) opens it again as it was (to paint some more and make the map
-  again, or after a preview).
+  afresh (a new name and seed, a blank sheet). **Sketch** (top bar) opens
+  it again as it was (to paint some more and make the map again, or after
+  a preview).
 * **Sketch**: a new map's land painted roughly from above, over the whole
-  screen. At the
-  left the map (the project's name, the seed, its size, cell, highest
-  ground and how much the rain erodes it when it is made), the brushes and
-  what to do; at the right **The sketch** (what is painted, on its sheet)
-  or **What it makes** (the land the generator makes from it, worked out
-  small, the rain's erosion once you stop), shaded from the north west,
-  colored by height, lakes blue (what is painted can be tinted over it:
-  orange the height, purple the relief, blue the water). Left button
-  paints, right takes it back to the blank sheet.
-  The brushes: **Mountains** (high and rough: crests, crags; a peak, highest at the
-  brush's middle, only raising), **Hills** (the same, lower),
-  **Plain** (low and smooth), **Valley** (low: the rain cuts a bed down
-  it), **Lake** (the land sunk under it and filled to a little below its
-  lowest shore), **Custom** (one thing at a value: the height, the relief,
-  0 smooth, 0.5 as the seed, 1 crags, or a lake's depth) and **Erase**.
-  **Preview** makes the land in 3D a quarter as big, nothing grown on it,
-  outside any project, to look at (reopen the sketch to go on); **Make the
-  map** makes it at its size into the project named (a new one, or the
-  one open: everything on its map is lost, so it asks), grown as a new map
-  is. The sketch is saved with the project (`sketch/height.png` and
-  `relief.png`, gray with the weight in alpha; `water.png`), so it can be
-  painted in an image editor too, and comes back when the project opens.
-  The erosion (`[terrain] erosion_droplets`, 1: droplets of rain a texel
-  run downhill, wearing gullies and valleys and filling hollows) is worked
-  out on a grid of at most 1024 a side, so the preview gets the same.
+  screen, in flat regions like a map's legend: **Plain**, **Hills**,
+  **Mountains**, **Valley**, **Lake** (**Erase**, or the right button,
+  back to the blank sheet). The generator turns them into land: each kind
+  its height and roughness, the seed's noise the shapes within (the
+  mountains' crests, the hills' rolls), the kinds blended over a little
+  across their borders; the unpainted is low, gently rolling land; a lake
+  is sunk and filled to a little below its lowest shore. Nothing painted,
+  the map is the seed's. At the left the map (the project's name, the
+  seed, its size, cell, highest ground, how much the rain erodes it when it
+  is made), the regions and what to do; at the right **The sketch** (the
+  sheet as painted) or **What it makes** (the land, worked out small, the
+  rain's erosion once you stop painting). **Preview** makes the land in 3D
+  a quarter as big, nothing grown on it, outside any project (reopen the
+  sketch to go on); **Make the map** makes it at its size into the project
+  named (a new one, or the one open: everything on its map is lost, so it
+  asks), grown as a new map is. The sketch is saved with the project
+  (`sketch/regions.png`, gray: the region times 40, 0 unpainted, then
+  plain, hills, mountains, valley, lake), so it can be painted in an image
+  editor too, and comes back when the project opens. The erosion
+  (`[terrain] erosion_droplets`, 1: droplets of rain a texel run downhill,
+  wearing gullies and valleys and filling hollows) is worked out on a grid
+  of at most 1024 a side, so the preview gets the same.
 * **Maps**: save under a name, load or delete from the list. Maps are zip
   archives (`.potop`) in the `saves` folder of the preference directory
   (on Linux `~/.local/share/potop/saves/`). A map keeps the ground

@@ -2991,8 +2991,6 @@ static void sketch_command(void *user, const char *arguments)
 		game->ui.sketch_erosion = game->potop->settings.terrain.erosion_droplets;
 		SDL_snprintf(game->ui.sketch_seed_input, sizeof(game->ui.sketch_seed_input), "%u", terrain->seed);
 		game->ui.sketch_brush_meters = SDL_max((float)ui_sketch_size(&game->ui) * terrain->cell_size_meters * 0.06f, 20.0f);
-		game->ui.sketch_brush_strength = 2.5f;
-		game->ui.sketch_custom_value = 0.5f;
 		if (game->project_name[0] != '\0')
 		{
 			SDL_strlcpy(game->ui.sketch_name_input, game->project_name, sizeof(game->ui.sketch_name_input));
@@ -3015,18 +3013,13 @@ static void sketch_command(void *user, const char *arguments)
 	else if (SDL_strcmp(verb, "paint") == 0)
 	{
 		int preset = sketch_preset_find(first);
-		terrain_sketch_brush_t brush = { -1.0f, -1.0f, -1.0f, true, false };
 
 		if (preset < 0)
 		{
-			SDL_Log("sketch paint: no brush \"%s\" (mountains, hills, plain, valley, lake, erase)", first);
+			SDL_Log("sketch paint: no region \"%s\" (plain, hills, mountains, valley, lake, erase)", first);
 			return;
 		}
-		if (preset < SKETCH_PRESET_COUNT)
-		{
-			brush = sketch_presets[preset].brush;
-		}
-		terrain_sketch_paint(&game->sketch, &brush, u, v, radius, amount);
+		terrain_sketch_paint(&game->sketch, preset < SKETCH_PRESET_COUNT ? sketch_presets[preset].region : TERRAIN_SKETCH_NONE, u, v, radius);
 	}
 	else if (SDL_strcmp(verb, "seed") == 0)
 	{
@@ -3066,7 +3059,7 @@ static void sketch_command(void *user, const char *arguments)
 	}
 	else
 	{
-		SDL_Log("sketch open | clear | paint <brush> <u> <v> <radius> [amount] | seed <n> | size <cells> | preview | make <project> | picture <file>");
+		SDL_Log("sketch open | clear | paint <region> <u> <v> <radius> | seed <n> | size <cells> | preview | make <project> | picture <file>");
 	}
 }
 
@@ -6108,8 +6101,8 @@ int main(int argument_count, char **arguments)
 	console_add_command(&game.console, "project", "project list | new <name> [seed] | open <name> | save [name] | bake | import <map> <name>",
 		"Map projects (the Save, Open and New windows): their folders under projects/", project_command, &game);
 	console_add_command(&game.console, "sketch",
-		"sketch open | clear | paint <brush> <u> <v> <radius> [amount] | seed <n> | size <cells> | show sketch|result | preview | make <project> | picture <file.png>",
-		"The new map's sketch (the Sketch window): brushes mountains, hills, plain, valley, lake, erase; u, v and radius shares of the map", sketch_command,
+		"sketch open | clear | paint <region> <u> <v> <radius> | seed <n> | size <cells> | show sketch|result | preview | make <project> | picture <file.png>",
+		"The new map's sketch (the Sketch window): regions plain, hills, mountains, valley, lake, erase; u, v and radius shares of the map", sketch_command,
 		&game);
 	if (!terrain_sketch_create(&game.sketch) || !sketch_view_create(&game.sketch_view))
 	{

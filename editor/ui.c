@@ -2353,9 +2353,7 @@ static void sketch_fill_fields(ui_t *ui, const ui_view_t *view)
 		SDL_snprintf(ui->sketch_name_input, sizeof(ui->sketch_name_input), "map %u", view->seed);
 	}
 	ui->sketch_brush = 0;
-	ui->sketch_custom_value = 0.5f;
 	ui->sketch_brush_meters = SDL_max((float)ui_sketch_size(ui) * ui->sketch_cell_meters * 0.06f, 20.0f);
-	ui->sketch_brush_strength = 2.5f;
 	ui->project_count = project_list(ui->projects, PROJECT_LIST_MAX);
 	ui->sketch_known = true;
 }
@@ -2389,33 +2387,10 @@ void ui_open_new_map(ui_t *ui, const ui_view_t *view)
 	ui->sketch_open = true;
 }
 
-// What the brush chosen paints
-static terrain_sketch_brush_t sketch_brush_of(const ui_t *ui)
+// The region the brush chosen paints (erase: none)
+static terrain_sketch_region_t sketch_region_of(const ui_t *ui)
 {
-	terrain_sketch_brush_t brush = { -1.0f, -1.0f, -1.0f, false, false };
-
-	if (ui->sketch_brush < SKETCH_PRESET_COUNT)
-	{
-		return sketch_presets[ui->sketch_brush].brush;
-	}
-	if (ui->sketch_brush > SKETCH_PRESET_COUNT)
-	{
-		brush.erase = true;
-		return brush;
-	}
-	if (ui->sketch_custom_plane == 0)
-	{
-		brush.height = ui->sketch_custom_value;
-	}
-	else if (ui->sketch_custom_plane == 1)
-	{
-		brush.relief = ui->sketch_custom_value;
-	}
-	else
-	{
-		brush.water = ui->sketch_custom_value;
-	}
-	return brush;
+	return ui->sketch_brush < SKETCH_PRESET_COUNT ? sketch_presets[ui->sketch_brush].region : TERRAIN_SKETCH_NONE;
 }
 
 // The tools, at the left
@@ -2423,7 +2398,6 @@ static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
 {
 	struct nk_context *context = &ui->backend.context;
 	static const char *const size_names[4] = { "1024", "2048", "4096", "8192" };
-	static const char *const plane_names[3] = { "Height", "Relief", "Water" };
 	char clean[PROJECT_NAME_LENGTH];
 	char line[160];
 	bool taken;
@@ -2461,39 +2435,28 @@ static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
 	nk_label(context, line, NK_TEXT_LEFT);
 
 	section_label(ui, "Brushes (left: paint, right: erase)");
-	nk_layout_row_dynamic(context, ROW_HEIGHT, 2);
-	for (int i = 0; i <= SKETCH_PRESET_COUNT + 1; i++)
+	// (each a swatch of its color on the sheet, then its name)
+	nk_layout_row(context, NK_DYNAMIC, ROW_HEIGHT, 4, (const float[]){ 0.08f, 0.42f, 0.08f, 0.42f });
+	for (int i = 0; i <= SKETCH_PRESET_COUNT; i++)
 	{
-		const char *name = i < SKETCH_PRESET_COUNT ? sketch_presets[i].name : (i == SKETCH_PRESET_COUNT ? "Custom" : "Erase");
-		const char *tooltip = i < SKETCH_PRESET_COUNT ? sketch_presets[i].tooltip
-			: (i == SKETCH_PRESET_COUNT ? "One thing at the value below" : "Back to the blank sheet");
+		const char *name = i < SKETCH_PRESET_COUNT ? sketch_presets[i].name : "Erase";
+		const char *tooltip = i < SKETCH_PRESET_COUNT ? sketch_presets[i].tooltip : "Back to the blank sheet";
+		const uint8_t *color = sketch_region_color(i < SKETCH_PRESET_COUNT ? sketch_presets[i].region : TERRAIN_SKETCH_NONE);
 		nk_bool selected = ui->sketch_brush == i;
 
+		if (nk_button_color(context, nk_rgb(color[0], color[1], color[2])))
+		{
+			ui->sketch_brush = i;
+		}
 		tooltip_if_hovered(context, tooltip);
 		if (nk_selectable_label(context, name, NK_TEXT_CENTERED, &selected))
 		{
 			ui->sketch_brush = i;
 		}
 	}
-	if (ui->sketch_brush == SKETCH_PRESET_COUNT)
-	{
-		nk_layout_row_dynamic(context, ROW_HEIGHT, 3);
-		for (int p = 0; p < 3; p++)
-		{
-			if (nk_option_label(context, plane_names[p], ui->sketch_custom_plane == p))
-			{
-				ui->sketch_custom_plane = p;
-			}
-		}
-		slider_row(ui, "Value", &ui->sketch_custom_value, 0.0f, 1.0f, 0.01f, "%.2f",
-			"Height: of the highest ground; relief: 0 smooth, 0.5 as the seed, 1 crags; water: how deep a lake");
-	}
 	slider_row(ui, "Brush", &ui->sketch_brush_meters, 10.0f, SDL_max(map_meters * 0.3f, 20.0f), 10.0f, "%.0f m", "How far the brush reaches");
-	slider_row(ui, "Strength", &ui->sketch_brush_strength, 0.2f, 10.0f, 0.1f, "%.1f", "How fast it paints");
 	if (view->sketch_view != NULL)
 	{
-		bool tint = view->sketch_view->tint_painted;
-
 		nk_layout_row_dynamic(context, ROW_HEIGHT, 2);
 		tooltip_if_hovered(context, "What you painted, on its blank sheet");
 		if (nk_option_label(context, "The sketch", !view->sketch_view->show_result))
@@ -2504,12 +2467,6 @@ static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
 		if (nk_option_label(context, "What it makes", view->sketch_view->show_result))
 		{
 			view->sketch_view->show_result = true;
-		}
-
-		if (checkbox_row(ui, "Show what is painted", &tint, "Orange: height, purple: relief, blue: water"))
-		{
-			view->sketch_view->tint_painted = tint;
-			view->sketch_view->picture_dirty = true;
 		}
 	}
 
@@ -2570,11 +2527,8 @@ static void sketch_window(ui_t *ui, const ui_view_t *view)
 {
 	struct nk_context *context = &ui->backend.context;
 	nk_flags flags = NK_WINDOW_BORDER | NK_WINDOW_TITLE | NK_WINDOW_CLOSABLE | NK_WINDOW_NO_SCROLLBAR;
-	uint64_t now = SDL_GetTicks();
-	float elapsed = ui->sketch_last_ticks != 0 ? SDL_min((float)(now - ui->sketch_last_ticks) * 0.001f, 0.25f) : 0.0f;
 	struct nk_rect bounds = nk_rect(0.0f, 0.0f, ui->backend.width, ui->backend.height);
 
-	ui->sketch_last_ticks = now;
 	if (!ui->sketch_open || view->sketch == NULL)
 	{
 		return;
@@ -2631,15 +2585,26 @@ static void sketch_window(ui_t *ui, const ui_view_t *view)
 			float radius = ui->sketch_brush_meters / SDL_max(map_meters, 1.0f);
 			struct nk_command_buffer *canvas = nk_window_get_canvas(context);
 
-			if (over && (paint || erase) && elapsed > 0.0f)
+			// A stroke: from where the mouse was the frame before, no gaps
+			if (over && (paint || erase))
 			{
-				terrain_sketch_brush_t brush = sketch_brush_of(ui);
+				terrain_sketch_region_t region = erase ? TERRAIN_SKETCH_NONE : sketch_region_of(ui);
 
-				if (erase)
+				if (ui->sketch_stroke)
 				{
-					brush.erase = true;
+					terrain_sketch_paint_line(view->sketch, region, ui->sketch_last_u, ui->sketch_last_v, u, v, radius);
 				}
-				terrain_sketch_paint(view->sketch, &brush, u, v, radius, ui->sketch_brush_strength * elapsed);
+				else
+				{
+					terrain_sketch_paint(view->sketch, region, u, v, radius);
+				}
+				ui->sketch_last_u = u;
+				ui->sketch_last_v = v;
+				ui->sketch_stroke = true;
+			}
+			else
+			{
+				ui->sketch_stroke = false;
 			}
 			if (over)
 			{

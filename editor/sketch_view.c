@@ -11,12 +11,15 @@
 
 const sketch_preset_t sketch_presets[SKETCH_PRESET_COUNT] =
 {
-	{ "Mountains", "High and rough: crests and crags, highest in the brush's middle", { 0.9f, 0.92f, -1.0f, false, true } },
-	{ "Hills", "Middling and rolling, highest in the brush's middle", { 0.4f, 0.55f, -1.0f, false, true } },
-	{ "Plain", "Low and smooth: flattens what is there", { 0.10f, 0.12f, -1.0f, false, false } },
-	{ "Valley", "Low, a little rough: the rain cuts a river bed down it", { 0.03f, 0.35f, -1.0f, false, false } },
-	{ "Lake", "Water: the land under it sunk, filled to a little below its lowest shore", { -1.0f, -1.0f, 1.0f, false, false } },
+	{ "Plain", "Low, flat land", TERRAIN_SKETCH_PLAIN, { 176, 204, 122 } },
+	{ "Hills", "Rolling hills", TERRAIN_SKETCH_HILLS, { 118, 158, 78 } },
+	{ "Mountains", "Mountains: crests and peaks", TERRAIN_SKETCH_MOUNTAINS, { 146, 112, 88 } },
+	{ "Valley", "A low valley: the rain cuts a river bed down it", TERRAIN_SKETCH_VALLEY, { 86, 156, 146 } },
+	{ "Lake", "A lake: the land sunk under it, filled to a little below its lowest shore", TERRAIN_SKETCH_LAKE, { 62, 112, 196 } },
 };
+
+// The blank sheet's color
+static const uint8_t paper_color[3] = { 228, 222, 204 };
 
 int sketch_preset_find(const char *name)
 {
@@ -30,15 +33,25 @@ int sketch_preset_find(const char *name)
 	return SDL_strcasecmp(name, "erase") == 0 ? SKETCH_PRESET_COUNT : -1;
 }
 
+const uint8_t *sketch_region_color(terrain_sketch_region_t region)
+{
+	for (int i = 0; i < SKETCH_PRESET_COUNT; i++)
+	{
+		if (sketch_presets[i].region == region)
+		{
+			return sketch_presets[i].color;
+		}
+	}
+	return paper_color;
+}
+
 bool sketch_view_create(sketch_view_t *view)
 {
 	SDL_zerop(view);
 	view->land = SDL_malloc(VIEW_TEXELS * sizeof(float));
 	view->heights = SDL_malloc(VIEW_TEXELS * sizeof(float));
-	view->paper = SDL_malloc(VIEW_TEXELS * sizeof(float));
 	view->pixels = SDL_calloc(VIEW_TEXELS, 4);
-	view->tint_painted = false;
-	if (view->land == NULL || view->heights == NULL || view->paper == NULL || view->pixels == NULL)
+	if (view->land == NULL || view->heights == NULL || view->pixels == NULL)
 	{
 		sketch_view_destroy(view);
 		return false;
@@ -54,7 +67,6 @@ void sketch_view_destroy(sketch_view_t *view)
 	}
 	SDL_free(view->land);
 	SDL_free(view->heights);
-	SDL_free(view->paper);
 	SDL_free(view->pixels);
 	SDL_zerop(view);
 }
@@ -87,17 +99,12 @@ static void height_color(float share, float color_out[3])
 	}
 }
 
-// The picture from heights (the land as it will come out, or the sheet as
-// painted: paper, its lakes where the water is painted)
-static void compose_picture(sketch_view_t *view, const terrain_sketch_t *sketch, const float *heights, float most, float texel_meters, bool paper)
+// The picture of the land as it will come out
+static void compose_picture(sketch_view_t *view, const terrain_sketch_t *sketch, const float *heights, float most, float texel_meters)
 {
-	const uint8_t *height_weight = terrain_sketch_plane(sketch, TERRAIN_SKETCH_HEIGHT_WEIGHT);
-	const uint8_t *relief_weight = terrain_sketch_plane(sketch, TERRAIN_SKETCH_RELIEF_WEIGHT);
-	const uint8_t *water = terrain_sketch_plane(sketch, TERRAIN_SKETCH_WATER);
 	// (the light from the north west, up high; the relief a little taller
 	// than it is, to read from above)
 	float light[3] = { -0.55f, 0.65f, -0.52f };
-	int32_t step = TERRAIN_SKETCH_SIZE / SKETCH_VIEW_SIZE;
 
 #pragma omp parallel for schedule(static)
 	for (int32_t y = 0; y < SKETCH_VIEW_SIZE; y++)
@@ -116,8 +123,7 @@ static void compose_picture(sketch_view_t *view, const terrain_sketch_t *sketch,
 			float color[3];
 			float u = ((float)x + 0.5f) / (float)SKETCH_VIEW_SIZE;
 			float v = ((float)y + 0.5f) / (float)SKETCH_VIEW_SIZE;
-			int lake = paper ? -1 : terrain_sketch_lake_at(sketch, u, v);
-			size_t texel = (size_t)(y * step) * TERRAIN_SKETCH_SIZE + (size_t)(x * step);
+			int lake = terrain_sketch_lake_at(sketch, u, v);
 			uint8_t *pixel = &view->pixels[index * 4];
 
 			height_color(height / SDL_max(most, 1.0f), color);
@@ -125,15 +131,7 @@ static void compose_picture(sketch_view_t *view, const terrain_sketch_t *sketch,
 			{
 				color[c] *= 0.3f + 0.85f * shade;
 			}
-			if (paper && water[texel] >= TERRAIN_SKETCH_LAKE_THRESHOLD)
-			{
-				float deep = clamp_float(((float)water[texel] - TERRAIN_SKETCH_LAKE_THRESHOLD) / 120.0f, 0.0f, 1.0f);
-
-				color[0] = lerp_float(70.0f, 30.0f, deep);
-				color[1] = lerp_float(120.0f, 70.0f, deep);
-				color[2] = lerp_float(170.0f, 140.0f, deep);
-			}
-			else if (lake >= 0 && height < sketch->lake_surfaces[lake])
+			if (lake >= 0 && height < sketch->lake_surfaces[lake])
 			{
 				float deep = clamp_float((sketch->lake_surfaces[lake] - height) / 6.0f, 0.0f, 1.0f);
 
@@ -141,23 +139,44 @@ static void compose_picture(sketch_view_t *view, const terrain_sketch_t *sketch,
 				color[1] = lerp_float(120.0f, 70.0f, deep);
 				color[2] = lerp_float(170.0f, 140.0f, deep);
 			}
-			if (view->tint_painted)
-			{
-				static const float tints[3][3] = { { 235.0f, 140.0f, 40.0f }, { 160.0f, 80.0f, 210.0f }, { 40.0f, 110.0f, 235.0f } };
-				float amounts[3] = { 0.30f * (float)height_weight[texel] / 255.0f, 0.25f * (float)relief_weight[texel] / 255.0f,
-					0.35f * (float)water[texel] / 255.0f };
-
-				for (int t = 0; t < 3; t++)
-				{
-					for (int c = 0; c < 3; c++)
-					{
-						color[c] = lerp_float(color[c], tints[t][c], amounts[t]);
-					}
-				}
-			}
 			pixel[0] = (uint8_t)clamp_float(color[0], 0.0f, 255.0f);
 			pixel[1] = (uint8_t)clamp_float(color[1], 0.0f, 255.0f);
 			pixel[2] = (uint8_t)clamp_float(color[2], 0.0f, 255.0f);
+			pixel[3] = 255;
+		}
+	}
+}
+
+// The sheet as painted: each region its flat color, a darker line where
+// two meet
+static void compose_paper(sketch_view_t *view, const terrain_sketch_t *sketch)
+{
+	const uint8_t *regions = terrain_sketch_plane(sketch, TERRAIN_SKETCH_REGION);
+	int32_t step = TERRAIN_SKETCH_SIZE / SKETCH_VIEW_SIZE;
+
+#pragma omp parallel for schedule(static)
+	for (int32_t y = 0; y < SKETCH_VIEW_SIZE; y++)
+	{
+		for (int32_t x = 0; x < SKETCH_VIEW_SIZE; x++)
+		{
+			int32_t texel_x = x * step;
+			int32_t texel_y = y * step;
+			uint8_t region = regions[(size_t)texel_y * TERRAIN_SKETCH_SIZE + (size_t)texel_x];
+			const uint8_t *color = sketch_region_color((terrain_sketch_region_t)region);
+			uint8_t *pixel = &view->pixels[((size_t)y * SKETCH_VIEW_SIZE + (size_t)x) * 4];
+			bool border = false;
+
+			for (int k = 0; k < 4 && !border; k++)
+			{
+				int32_t nx = clamp_int(texel_x + (k == 0 ? step : k == 1 ? -step : 0), 0, TERRAIN_SKETCH_SIZE - 1);
+				int32_t ny = clamp_int(texel_y + (k == 2 ? step : k == 3 ? -step : 0), 0, TERRAIN_SKETCH_SIZE - 1);
+
+				border = regions[(size_t)ny * TERRAIN_SKETCH_SIZE + (size_t)nx] != region;
+			}
+			for (int c = 0; c < 3; c++)
+			{
+				pixel[c] = border ? (uint8_t)(color[c] * 0.6f) : color[c];
+			}
 			pixel[3] = 255;
 		}
 	}
@@ -199,29 +218,16 @@ void sketch_view_update(sketch_view_t *view, terrain_sketch_t *sketch, const ter
 		view->shown_result = view->show_result;
 		view->picture_dirty = true;
 	}
-	// The sheet as painted: its height alone (unpainted: low land), shaded
+	// The sheet as painted
 	if (!view->show_result)
 	{
 		if (sketch->revision == view->paper_revision && !view->picture_dirty && view->paper_valid)
 		{
 			return;
 		}
-#pragma omp parallel for schedule(static)
-		for (int32_t y = 0; y < SKETCH_VIEW_SIZE; y++)
-		{
-			for (int32_t x = 0; x < SKETCH_VIEW_SIZE; x++)
-			{
-				float u = ((float)x + 0.5f) / (float)SKETCH_VIEW_SIZE;
-				float v = ((float)y + 0.5f) / (float)SKETCH_VIEW_SIZE;
-
-				view->paper[(size_t)y * SKETCH_VIEW_SIZE + (size_t)x] = lerp_float(TERRAIN_SKETCH_UNPAINTED_HEIGHT,
-					terrain_sketch_sample(sketch, TERRAIN_SKETCH_HEIGHT, u, v), terrain_sketch_sample(sketch, TERRAIN_SKETCH_HEIGHT_WEIGHT, u, v))
-					* settings->max_height_meters;
-			}
-		}
 		view->paper_revision = sketch->revision;
 		view->paper_valid = true;
-		compose_picture(view, sketch, view->paper, settings->max_height_meters, texel_meters, true);
+		compose_paper(view, sketch);
 		upload_picture(view);
 		return;
 	}
@@ -266,7 +272,7 @@ void sketch_view_update(sketch_view_t *view, terrain_sketch_t *sketch, const ter
 	{
 		return;
 	}
-	compose_picture(view, sketch, view->heights, settings->max_height_meters, texel_meters, false);
+	compose_picture(view, sketch, view->heights, settings->max_height_meters, texel_meters);
 	upload_picture(view);
 }
 

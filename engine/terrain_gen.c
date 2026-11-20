@@ -444,32 +444,118 @@ static void find_lakes(const float *heights, int32_t size, terrain_sketch_t *ske
 	SDL_free(stack);
 }
 
-// A sketch painted: the land's shape the sketch's alone (painted on a blank
-// sheet: where nothing is painted low land, TERRAIN_SKETCH_UNPAINTED_HEIGHT),
-// the seed giving only its detail (its heights less their broad shape,
-// blurred over a fraction of a feature), more or less as the relief says
-// (and ridges besides where it is rough)
+// What each of the sketch's regions makes (terrain_sketch.h): its height
+// (of the highest ground), how much rolling land over it (the seed's hills'
+// noise: 1 some 8% of the highest ground either way), how high the crests
+// rise out of it (its ridged noise: the peaks and ridges)
+typedef struct
+{
+	float height;
+	float detail;
+	float crests;
+} sketch_region_land_t;
+
+static const sketch_region_land_t sketch_region_lands[TERRAIN_SKETCH_REGION_COUNT] =
+{
+	[TERRAIN_SKETCH_NONE] = { 0.14f, 0.5f, 0.0f },
+	[TERRAIN_SKETCH_PLAIN] = { 0.08f, 0.15f, 0.0f },
+	[TERRAIN_SKETCH_HILLS] = { 0.26f, 1.6f, 0.10f },
+	[TERRAIN_SKETCH_MOUNTAINS] = { 0.22f, 1.0f, 0.95f },
+	[TERRAIN_SKETCH_VALLEY] = { 0.0f, 0.3f, 0.0f },
+	[TERRAIN_SKETCH_LAKE] = { 0.08f, 0.1f, 0.0f },
+};
+
+// The regions blend over this share of the map's side
+#define SKETCH_BLEND_SHARE 0.015f
+#define SKETCH_GRID 512
+
+// A running box blur (sum over 2 reach + 1, the edges held), a row at a time
+static void running_blur_rows(const float *source, float *target, int32_t side, int32_t reach)
+{
+#pragma omp parallel for schedule(static)
+	for (int32_t y = 0; y < side; y++)
+	{
+		const float *row = &source[(size_t)y * (size_t)side];
+		float *out = &target[(size_t)y * (size_t)side];
+		float sum = 0.0f;
+		float scale = 1.0f / (float)(2 * reach + 1);
+
+		for (int32_t k = -reach; k <= reach; k++)
+		{
+			sum += row[clamp_int(k, 0, side - 1)];
+		}
+		for (int32_t x = 0; x < side; x++)
+		{
+			out[x] = sum * scale;
+			sum += row[clamp_int(x + reach + 1, 0, side - 1)] - row[clamp_int(x - reach, 0, side - 1)];
+		}
+	}
+}
+
+// Rows and columns swapped (so the rows' blur does the columns)
+static void transpose(const float *source, float *target, int32_t side)
+{
+#pragma omp parallel for schedule(static)
+	for (int32_t y = 0; y < side; y++)
+	{
+		for (int32_t x = 0; x < side; x++)
+		{
+			target[(size_t)x * (size_t)side + (size_t)y] = source[(size_t)y * (size_t)side + (size_t)x];
+		}
+	}
+}
+
+// A sketch painted: the land the regions make (each its height, rolling
+// land more or less over it, crests out of the mountains), blended across
+// their borders; the seed giving only the shapes within (its noises)
 static void apply_sketch(float *heights, int32_t size, const terrain_settings_t *settings, const generation_noise_t *noise, int octave_count,
 	terrain_sketch_t *sketch)
 {
-	int32_t side = SDL_min(size, 512);
-	float *macro = SDL_malloc((size_t)side * (size_t)side * sizeof(float));
-	float *scratch = SDL_malloc((size_t)side * (size_t)side * sizeof(float));
-	int32_t reach = SDL_max(1, (int32_t)SDL_lroundf((float)side / (SDL_max(settings->feature_count, 0.5f) * 8.0f)));
+	size_t grid_texels = (size_t)SKETCH_GRID * SKETCH_GRID;
+	float *scratch = SDL_malloc(grid_texels * sizeof(float));
+	// (what the regions make, blended: the height, the detail, the crests)
+	float *blended[3];
+	float *other = SDL_malloc(grid_texels * sizeof(float));
+	int32_t blend_reach = SDL_max(1, (int32_t)SDL_lroundf((float)SKETCH_GRID * SKETCH_BLEND_SHARE));
 	float most = settings->max_height_meters;
+	const uint8_t *regions = terrain_sketch_plane(sketch, TERRAIN_SKETCH_REGION);
+	bool enough = scratch != NULL && other != NULL;
 
-	if (macro == NULL || scratch == NULL)
+	for (int k = 0; k < 3; k++)
 	{
-		SDL_free(macro);
-		SDL_free(scratch);
-		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Out of memory: the sketch is left out");
-		return;
+		blended[k] = SDL_malloc(grid_texels * sizeof(float));
+		enough = enough && blended[k] != NULL;
 	}
-	downsample(heights, size, macro, side);
-	for (int pass = 0; pass < 3; pass++)
+	if (!enough)
 	{
-		box_blur_rows(macro, scratch, side, reach);
-		box_blur_columns(scratch, macro, side, reach);
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Out of memory: the sketch is left out");
+		goto done;
+	}
+	// The regions' land on a grid, blurred three times (near enough a bell)
+	for (int32_t y = 0; y < SKETCH_GRID; y++)
+	{
+		for (int32_t x = 0; x < SKETCH_GRID; x++)
+		{
+			int32_t texel_x = x * TERRAIN_SKETCH_SIZE / SKETCH_GRID;
+			int32_t texel_y = y * TERRAIN_SKETCH_SIZE / SKETCH_GRID;
+			uint8_t region = regions[(size_t)texel_y * TERRAIN_SKETCH_SIZE + (size_t)texel_x];
+			const sketch_region_land_t *land = &sketch_region_lands[region < TERRAIN_SKETCH_REGION_COUNT ? region : 0];
+			size_t index = (size_t)y * SKETCH_GRID + (size_t)x;
+
+			blended[0][index] = land->height;
+			blended[1][index] = land->detail;
+			blended[2][index] = land->crests;
+		}
+	}
+	for (int k = 0; k < 3; k++)
+	{
+		for (int pass = 0; pass < 3; pass++)
+		{
+			running_blur_rows(blended[k], other, SKETCH_GRID, blend_reach);
+			transpose(other, scratch, SKETCH_GRID);
+			running_blur_rows(scratch, other, SKETCH_GRID, blend_reach);
+			transpose(other, blended[k], SKETCH_GRID);
+		}
 	}
 #pragma omp parallel for schedule(static)
 	for (int32_t y = 0; y < size; y++)
@@ -479,36 +565,37 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 			size_t index = (size_t)y * (size_t)size + (size_t)x;
 			float u = ((float)x + 0.5f) / (float)size;
 			float v = ((float)y + 0.5f) / (float)size;
-			float height_weight = terrain_sketch_sample(sketch, TERRAIN_SKETCH_HEIGHT_WEIGHT, u, v);
-			float relief_weight = terrain_sketch_sample(sketch, TERRAIN_SKETCH_RELIEF_WEIGHT, u, v);
-			float broad;
-			float detail;
-			float relief;
-			float rough;
+			float height = grid_sample(blended[0], SKETCH_GRID, u, v);
+			float rolling = grid_sample(blended[1], SKETCH_GRID, u, v);
+			float crests = grid_sample(blended[2], SKETCH_GRID, u, v);
 
-			broad = grid_sample(macro, side, u, v);
-			detail = heights[index] - broad;
-			relief = lerp_float(TERRAIN_SKETCH_UNPAINTED_RELIEF, terrain_sketch_sample(sketch, TERRAIN_SKETCH_RELIEF, u, v), relief_weight);
-			// The shape the sketch's alone (unpainted: low land); the seed's
-			// detail over it, smooth below the relief's middle, its own at
-			// it, twice as rough at the top
-			heights[index] = lerp_float(TERRAIN_SKETCH_UNPAINTED_HEIGHT, terrain_sketch_sample(sketch, TERRAIN_SKETCH_HEIGHT, u, v), height_weight)
-					* most
-				+ detail * relief * 2.0f;
-			// Crags: ridges where it is to be rougher than the seed made it
-			rough = SDL_max(relief - 0.55f, 0.0f) / 0.45f;
-			if (rough > 0.0f)
+			float detail = rolling > 0.001f ? noise_fbm(&noise->hills, u * settings->feature_count * 3.0f + 7.0f, v * settings->feature_count * 3.0f - 3.0f,
+				octave_count, settings->persistence) : 0.0f;
+
+			heights[index] = (height + detail * rolling * 0.08f) * most;
+			if (crests > 0.001f)
 			{
-				float ridge = noise_ridged(&noise->ridges, u * settings->feature_count * 3.5f + 31.0f, v * settings->feature_count * 3.5f - 17.0f,
-					octave_count, 0.5f);
+				// (as the seed's mountains: their ridged noise over bent
+				// coordinates, meandering crests; a little sharpened)
+				float x_bent = u * settings->feature_count * 2.0f;
+				float y_bent = v * settings->feature_count * 2.0f;
+				float bend_x = noise_fbm(&noise->warp, x_bent + 5.2f, y_bent + 1.3f, 4, 0.5f);
+				float bend_y = noise_fbm(&noise->warp, x_bent - 3.1f, y_bent + 7.7f, 4, 0.5f);
+				float ridge = noise_ridged(&noise->ridges, x_bent + settings->warp_amount * bend_x, y_bent + settings->warp_amount * bend_y,
+					octave_count, settings->persistence);
 
-				heights[index] += rough * relief_weight * (ridge - 0.3f) * most * 0.6f;
+				heights[index] += crests * SDL_powf(clamp_float(ridge, 0.0f, 1.0f), 1.5f) * most;
 			}
 			heights[index] = SDL_max(heights[index], 0.0f);
 		}
 	}
-	SDL_free(macro);
+done:
 	SDL_free(scratch);
+	SDL_free(other);
+	for (int k = 0; k < 3; k++)
+	{
+		SDL_free(blended[k]);
+	}
 }
 
 // The sketch's lakes: found, then the land under them sunk (deeper the more
@@ -529,7 +616,7 @@ static void sink_lakes(float *heights, int32_t size, terrain_sketch_t *sketch)
 			size_t index = (size_t)y * (size_t)size + (size_t)x;
 			float u = ((float)x + 0.5f) / (float)size;
 			float v = ((float)y + 0.5f) / (float)size;
-			float water = terrain_sketch_sample(sketch, TERRAIN_SKETCH_WATER, u, v);
+			float water = terrain_sketch_water(sketch, u, v);
 			int lake;
 			float bed;
 
@@ -826,7 +913,12 @@ bool terrain_generate_heights(float *heights, int32_t size, float cell_size_mete
 	int octave_count = octaves_for(size, cell_size_meters, settings);
 
 	initialize_generation_noise(&noise, seed);
-	if ((steps & TERRAIN_HEIGHTS_LAND) != 0)
+	// (painted: the land is the sketch's alone, the seed's not needed)
+	if ((steps & TERRAIN_HEIGHTS_LAND) != 0 && sketch != NULL && terrain_sketch_painted(sketch))
+	{
+		SDL_memset(heights, 0, cell_count * sizeof(float));
+	}
+	else if ((steps & TERRAIN_HEIGHTS_LAND) != 0)
 	{
 		// 1. Raw landscape
 #pragma omp parallel for schedule(static)

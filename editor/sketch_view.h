@@ -1,8 +1,7 @@
-// The sketch window's picture (terrain_sketch.h): the sheet as painted (its
-// height alone, the unpainted low; lakes where the water is painted) or the
-// land as it will come out, worked out small (SKETCH_VIEW_SIZE a side) from
-// the seed and the sketch; shaded from the north west, colored by height,
-// lakes blue, and what is painted tinted over it if asked. The seed's land is kept and
+// The sketch window's picture (terrain_sketch.h): the sheet as painted (each
+// region its flat color) or the land as it will come out, worked out small
+// (SKETCH_VIEW_SIZE a side) from the seed and the sketch, shaded from the
+// north west, colored by height, lakes blue. The seed's land is kept and
 // worked out again only when the seed or the land's settings change; the
 // sketch over it whenever it changes (a little while after, while it is
 // being painted, every tenth of a second); the rain's erosion only once it
@@ -27,7 +26,6 @@ typedef struct
 {
 	float *land;                   // the seed's land (meters), as terrain_gen.c makes it at this size
 	float *heights;                // with the sketch (and the erosion) over it
-	float *paper;                  // the sheet as painted (its height alone, meters)
 	uint8_t *pixels;               // RGBA
 	SDL_GPUTexture *texture;
 	// What the land and the picture were made for
@@ -38,7 +36,6 @@ typedef struct
 	uint32_t heights_revision;     // the sketch's
 	bool heights_eroded;
 	bool heights_valid;
-	bool tint_painted;             // what is painted shown over it
 	bool show_result;              // the land as it will come out (else the sheet as painted)
 	bool shown_result;             // ...as the picture was last made
 	uint32_t paper_revision;
@@ -57,8 +54,12 @@ typedef struct
 {
 	const char *name;
 	const char *tooltip;
-	terrain_sketch_brush_t brush;
+	terrain_sketch_region_t region;
+	uint8_t color[3];              // on the sheet
 } sketch_preset_t;
+
+// A region's color on the sheet (none: the paper's)
+const uint8_t *sketch_region_color(terrain_sketch_region_t region);
 
 #define SKETCH_PRESET_COUNT 5
 extern const sketch_preset_t sketch_presets[SKETCH_PRESET_COUNT];

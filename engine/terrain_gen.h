@@ -4,9 +4,9 @@
 //   1. domain warped fBm for rolling hills, plus ridged noise for
 //      mountains, mixed by a low frequency "where are the mountains" mask;
 //   2. a power curve that flattens the lowlands (good places for water);
-//      then, if a sketch is painted (terrain_sketch.h), the land's shape
-//      the sketch's (unpainted: low land), the seed's detail over it more
-//      or less as its relief says;
+//      or, if a sketch is painted (terrain_sketch.h), instead the land its
+//      regions make (each kind its height, rolling land and crests from the
+//      seed's noises, blended across their borders);
 //      then the rain's erosion (droplets running downhill: gullies, valleys,
 //      hollows filled), worked out on a grid of at most 1024 a side; then
 //      the sketch's lakes sunk in;
