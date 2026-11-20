@@ -349,21 +349,47 @@ static void downsample(const float *heights, int32_t size, float *grid, int32_t 
 	}
 }
 
-// A coarse grid at (u, v) (0..1 over the map), between its texels
+// Catmull-Rom's weights for the four texels round a point, a fraction
+// past the second
+static void cubic_weights(float fraction, float weights[4])
+{
+	float squared = fraction * fraction;
+	float cubed = squared * fraction;
+
+	weights[0] = 0.5f * (-cubed + 2.0f * squared - fraction);
+	weights[1] = 0.5f * (3.0f * cubed - 5.0f * squared + 2.0f);
+	weights[2] = 0.5f * (-3.0f * cubed + 4.0f * squared + fraction);
+	weights[3] = 0.5f * (cubed - squared);
+}
+
+// A coarse grid at (u, v) (0..1 over the map), between its texels: a cubic
+// through them (Catmull-Rom), its slope with no break at a texel (the
+// straight lines between texels left creases a texel apart, a grid of
+// them on the map's finer cells, steps on a shore or a mountain's foot)
 static float grid_sample(const float *grid, int32_t side, float u, float v)
 {
 	float x = clamp_float(u * (float)side - 0.5f, 0.0f, (float)(side - 1));
 	float y = clamp_float(v * (float)side - 0.5f, 0.0f, (float)(side - 1));
 	int32_t x0 = (int32_t)x;
 	int32_t y0 = (int32_t)y;
-	int32_t x1 = SDL_min(x0 + 1, side - 1);
-	int32_t y1 = SDL_min(y0 + 1, side - 1);
-	float fx = x - (float)x0;
-	float fy = y - (float)y0;
-	float top = lerp_float(grid[(size_t)y0 * (size_t)side + (size_t)x0], grid[(size_t)y0 * (size_t)side + (size_t)x1], fx);
-	float bottom = lerp_float(grid[(size_t)y1 * (size_t)side + (size_t)x0], grid[(size_t)y1 * (size_t)side + (size_t)x1], fx);
+	float weights_x[4];
+	float weights_y[4];
+	float sum = 0.0f;
 
-	return lerp_float(top, bottom, fy);
+	cubic_weights(x - (float)x0, weights_x);
+	cubic_weights(y - (float)y0, weights_y);
+	for (int j = 0; j < 4; j++)
+	{
+		size_t row = (size_t)clamp_int(y0 - 1 + j, 0, side - 1) * (size_t)side;
+		float across = 0.0f;
+
+		for (int i = 0; i < 4; i++)
+		{
+			across += weights_x[i] * grid[row + (size_t)clamp_int(x0 - 1 + i, 0, side - 1)];
+		}
+		sum += weights_y[j] * across;
+	}
+	return sum;
 }
 
 // --- The sketch over the seed's land ------------------------------------------------
@@ -537,7 +563,7 @@ done:
 #define LAKE_WIDE_REACH 3               // the bowl's depth blurred this many times wider
 #define LAKE_WARP_SHARE 0.02f           // the shore bent by up to this share of the map's side (the broad bends; the small ones a quarter)
 #define LAKE_SURFACE_SHARE 0.25f        // the share of a lake's shore lower than its surface (raised over it)
-#define LAKE_RIM_METERS 0.25f           // a low shore raised this much over the surface
+#define LAKE_RIM_METERS 0.15f           // the shore eased to this much over the surface
 #define LAKE_EDGE_METERS 0.2f           // the water this deep at the shore, deepening from there
 
 static int compare_floats(const void *first, const void *second)
@@ -770,12 +796,22 @@ static void sink_lakes(float *heights, int32_t size, const terrain_settings_t *s
 			edge = sketch_grid_sample(sketch->lake_hint, u, v);
 			middle = sketch_grid_sample(wide, u, v);
 			surface = sketch->lake_surfaces[lake];
-			// Its low shores raised over the surface (none lower than it
-			// round the water), then the land under it sunk: just under
-			// the surface at the shore, deepest in the middle
-			height = lerp_float(height, SDL_max(height, surface + LAKE_RIM_METERS), smoothstep_float(0.15f, 0.42f, edge));
+			// The land round it eased towards the surface, a little over
+			// it, more the nearer the water: the lower raised from farther
+			// out (it holds the water, no wall round it, no ditch past
+			// it), the higher brought down nearer (a bank); then the land
+			// under it sunk: just under the surface at the shore, deepest
+			// in the middle
+			if (height < surface + LAKE_RIM_METERS)
+			{
+				height = lerp_float(height, surface + LAKE_RIM_METERS, smoothstep_float(0.05f, 0.45f, edge));
+			}
+			else
+			{
+				height = lerp_float(height, surface + LAKE_RIM_METERS, smoothstep_float(0.2f, 0.45f, edge));
+			}
 			bed = surface - LAKE_EDGE_METERS - SDL_max(depth * sketch->lake_depth_scales[lake] - LAKE_EDGE_METERS, 0.0f) * smoothstep_float(0.5f, 0.95f, middle);
-			height = lerp_float(height, SDL_min(height, bed), smoothstep_float(0.42f, 0.6f, edge));
+			height = lerp_float(height, SDL_min(height, bed), smoothstep_float(0.45f, 0.6f, edge));
 			heights[index] = height;
 		}
 	}

@@ -299,6 +299,12 @@ typedef struct
 	// The new map's sketch (the sketch window, terrain_sketch.h) and its picture
 	terrain_sketch_t sketch;
 	sketch_view_t sketch_view;
+	// The map the first preview replaced, kept in a file to go back to (as
+	// it was, what was not saved too), with its project's name ("" none)
+	// and its own; dropped when a map is made, opened, loaded or new
+	bool preview_return_valid;
+	char preview_return_project[PROJECT_NAME_LENGTH];
+	char preview_return_name[MAP_FILE_NAME_LENGTH];
 	ui_requests_t console_requests;    // the console's "project" asks (as the interface does), done with the interface's
 } testbed_t;
 
@@ -2700,7 +2706,9 @@ static bool load_map(testbed_t *game, const char *name)
 		}
 		return false;
 	}
-	// The tools' strokes end; no project's map now
+	// The tools' strokes end; no project's map now (nor the one before a
+	// preview)
+	game->preview_return_valid = false;
 	game->tools.hover_valid = false;
 	game->tools.stamp_dragging = false;
 	game->project_name[0] = '\0';
@@ -2887,6 +2895,9 @@ static void update_sketch_view(testbed_t *game)
 		SDL_GetTicks());
 }
 
+// The map a preview replaced, in the preference folder
+static const char *const PREVIEW_RETURN_FILE = "before_preview.potop";
+
 // A map from the sketch: as the sketch window says (its size, cell, highest
 // ground, erosion, seed); a preview a quarter as big (outside any project),
 // else into the project of that name (its map replaced)
@@ -2902,6 +2913,28 @@ static bool generate_from_sketch(testbed_t *game, bool preview, const char *name
 	char message[192];
 
 	sketch_settings(game, &settings, &seed);
+	// (the map a preview replaces kept, the first's: the previews after it
+	// replace only previews; a map made drops it)
+	if (preview && !game->preview_return_valid)
+	{
+		char path[1024];
+
+		if (file_io_preference_path(PREVIEW_RETURN_FILE, path, sizeof(path))
+			&& potop_map_save_file(game->potop, path, potop_map_name(game->potop), game->potop->world.terrain.baked))
+		{
+			game->preview_return_valid = true;
+			SDL_strlcpy(game->preview_return_project, game->project_name, sizeof(game->preview_return_project));
+			SDL_strlcpy(game->preview_return_name, potop_map_name(game->potop), sizeof(game->preview_return_name));
+		}
+		else
+		{
+			SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Sketch: the map could not be kept before the preview (see the log): it is lost");
+		}
+	}
+	else if (!preview)
+	{
+		game->preview_return_valid = false;
+	}
 	if (preview)
 	{
 		int32_t small = SDL_max((size / 4 + 63) / 64 * 64, 256);
@@ -2938,16 +2971,55 @@ static bool generate_from_sketch(testbed_t *game, bool preview, const char *name
 		milliseconds_since(&mark));
 	if (preview)
 	{
-		SDL_snprintf(message, sizeof(message), "Preview, a quarter as big (%d cells of %.1f m): not in a project", size, (double)cell);
+		SDL_snprintf(message, sizeof(message), "Preview, a quarter as big (%d cells of %.1f m): not in a project (Sketch: Back to the map)", size,
+			(double)cell);
 		show_message(game, message);
 		return true;
 	}
 	return save_project(game, name);
 }
 
+// Back to the map the previews replaced, as it was (its project's again)
+static void return_from_preview(testbed_t *game)
+{
+	char path[1024];
+	char message[192];
+	potop_load_result_t result = POTOP_LOAD_FAILED;
+
+	if (!game->preview_return_valid)
+	{
+		return;
+	}
+	if (file_io_preference_path(PREVIEW_RETURN_FILE, path, sizeof(path)))
+	{
+		result = potop_map_load_file(game->potop, path, game->preview_return_name);
+	}
+	if (result == POTOP_LOAD_FAILED)
+	{
+		show_message(game, "Could not go back to the map (see the log)");
+		return;
+	}
+	game->preview_return_valid = false;
+	game->tools.hover_valid = false;
+	game->tools.stamp_dragging = false;
+	SDL_strlcpy(game->project_name, game->preview_return_project, sizeof(game->project_name));
+	ui_set_map_name(&game->ui, game->project_name[0] != '\0' ? game->project_name : game->preview_return_name);
+	SDL_snprintf(message, sizeof(message), "Back to \"%s\"", game->project_name[0] != '\0' ? game->project_name : game->preview_return_name);
+	show_message(game, message);
+}
+
 // The projects' asks (the interface's, or the console's)
 static void handle_project_requests(testbed_t *game, const ui_requests_t *requests)
 {
+	// (a map made, opened, loaded or new: the one before a preview gone)
+	if (requests->project_new || requests->project_open || requests->project_import)
+	{
+		game->preview_return_valid = false;
+	}
+	if (requests->sketch_back)
+	{
+		return_from_preview(game);
+	}
 	if (requests->project_new)
 	{
 		if (!new_map(game, requests->project_seed))
@@ -3347,6 +3419,8 @@ static void update_interface(testbed_t *game, double frame_seconds)
 	view.layouts = &game->potop->world.layouts;
 	view.seed = game->potop->world.terrain.seed;
 	view.project_name = game->project_name;
+	view.preview_return = game->preview_return_valid
+		? (game->preview_return_project[0] != '\0' ? game->preview_return_project : game->preview_return_name) : NULL;
 	view.map_baked = game->potop->world.terrain.baked;
 	view.paused = game->paused;
 	view.time_scale = time_scales[game->time_scale_index];

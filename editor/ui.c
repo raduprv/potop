@@ -2596,6 +2596,19 @@ static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
 		nk_layout_row_dynamic(context, SMALL_ROW_HEIGHT, 1);
 		nk_label(context, "Nothing painted: the map is the seed's.", NK_TEXT_LEFT);
 	}
+	if (view->preview_return != NULL)
+	{
+		char back[PROJECT_NAME_LENGTH + 32];
+
+		nk_layout_row_dynamic(context, ROW_HEIGHT + 2.0f, 1);
+		SDL_snprintf(back, sizeof(back), "Back to \"%s\"", view->preview_return);
+		tooltip_if_hovered(context, "The map the preview replaced, as it was (what was not saved on it too)");
+		if (nk_button_label(context, back))
+		{
+			ui->requests.sketch_back = true;
+			ui->sketch_open = false;
+		}
+	}
 	nk_layout_row_dynamic(context, ROW_HEIGHT, 2);
 	if (nk_button_label(context, "Clear the sketch") && view->sketch != NULL)
 	{

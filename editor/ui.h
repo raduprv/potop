@@ -107,6 +107,7 @@ typedef struct
 	// sketch_* say
 	bool sketch_preview;
 	bool sketch_generate;
+	bool sketch_back;              // back to the map the previews replaced (ui_view_t.preview_return)
 	bool apply_render;             // textures, shadow maps, vsync
 	bool apply_objects;            // vegetation density: grow it anew
 	bool regrow;
@@ -128,6 +129,7 @@ typedef struct
 	uint32_t seed;
 	bool map_baked;                // a baked map (map_file.h): it saves baked only
 	const char *project_name;      // the project open ("" none)
+	const char *preview_return;    // a preview on: the map it replaced, kept to go back to (its project's name, or the map's; NULL: none)
 	bool paused;
 	float time_scale;
 	float reached_time_scale;      // below time_scale when the machine cannot keep up
