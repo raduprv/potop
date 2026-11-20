@@ -282,6 +282,8 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 			: 2.0f / (falloff - 2.0f) * (1.0f - SDL_powf(out_to, 2.0f - falloff));
 
 		estimate = density * SDL_PI_F * (full_radius * full_radius * (1.0f + beyond) + 0.5f * (near_density - 1.0f) * near_meters * near_meters);
+		// (the slopes get more, up to twice: grass_body.glsl, GRASS_MOST_STRETCH)
+		estimate *= 1.25f;
 	}
 	capacity = (uint32_t)SDL_min(estimate + 4096.0f, (float)GRASS_MAXIMUM_BLADES);
 	if (grass->blade_buffer == NULL || grass->blade_capacity < capacity)

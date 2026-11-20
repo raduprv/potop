@@ -151,6 +151,9 @@ float hash_2d(vec2 position)
 // of that uv mean nothing). The CPU's: noise_lattice_value
 const float NOISE_LATTICE_SIZE = 512.0;
 
+// The most more blades a slope gets (the ground over its shadow: 60 degrees)
+const float GRASS_MOST_STRETCH = 2.0;
+
 float value_noise(vec2 position)
 {
 	vec2 cell = floor(position);
@@ -194,7 +197,7 @@ ivec2 cell_of(vec2 world_xz)
 
 // The ground's height, between the cells, as the terrain draws it (R32F is
 // not filtered everywhere)
-float ground_height(vec2 world_xz)
+float ground_height(vec2 world_xz, out float stretch)
 {
 	int size = int(map.x);
 	vec2 grid_position = clamp(world_xz / map.y, vec2(0.0), vec2(float(size - 1)));
@@ -209,11 +212,21 @@ float ground_height(vec2 world_xz)
 	// split from corner 10 to corner 01 (terrain_renderer.c). On a twisted
 	// cell the two differ by a quarter of h00 + h11 - h10 - h01, enough for
 	// the blades to stand in the ground (or over it) over a whole hollow
+	// (stretch: the triangle's area over its shadow on the ground plane,
+	// 1 / its normal's y)
 	if (fraction.x + fraction.y <= 1.0)
 	{
-		return corners.w + fraction.x * (corners.z - corners.w) + fraction.y * (corners.x - corners.w);
+		vec2 rise = vec2(corners.z - corners.w, corners.x - corners.w);
+
+		stretch = sqrt(1.0 + dot(rise, rise) / (map.y * map.y));
+		return corners.w + fraction.x * rise.x + fraction.y * rise.y;
 	}
-	return corners.y + (1.0 - fraction.x) * (corners.x - corners.y) + (1.0 - fraction.y) * (corners.z - corners.y);
+	{
+		vec2 rise = vec2(corners.y - corners.x, corners.y - corners.z);
+
+		stretch = sqrt(1.0 + dot(rise, rise) / (map.y * map.y));
+		return corners.y - (1.0 - fraction.x) * rise.x - (1.0 - fraction.y) * rise.y;
+	}
 }
 
 // The grass mask there (0: the blades grow .. 1: none); false outside its
@@ -575,7 +588,11 @@ void main()
 
 		threshold = exp2(-2.0 * float(coarse)) * (coarse >= 12 ? random.z : 0.25 + 0.75 * random.z);
 	}
-	if (threshold >= kept)
+	// (on a slope the grid, flat, puts fewer spots on each square meter of
+	// ground: as many more kept as the ground is longer than its shadow,
+	// up to twice, 60 degrees; the slope known only once the ground is
+	// read, this the most it can be)
+	if (threshold >= kept * GRASS_MOST_STRETCH)
 	{
 		return;
 	}
@@ -591,14 +608,23 @@ void main()
 			return;
 		}
 	}
+	float stretch;
+	float y = ground_height(world_xz, stretch);
+
+	// (the share here, the slope known)
+	kept = min(kept * min(stretch, GRASS_MOST_STRETCH), 1.0);
+	if (threshold >= kept)
+	{
+		return;
+	}
 	// Coming or going: smaller the nearer the share is to its threshold,
 	// grown whole by the time the share is as much as it gets (the disc's
-	// share, 1 / near_density, for those below it; all, nearest the eye,
-	// for the rest): no stubs where the share stays put (a high threshold's
-	// ramp is short, at the disc's edge or near the eye)
-	float top = threshold < 1.0 / density.y ? 1.0 / density.y : 1.0;
+	// share, 1 / near_density, more on a slope, for those below it; all,
+	// nearest the eye, for the rest): no stubs where the share stays put (a
+	// high threshold's ramp is short, at the disc's edge or near the eye)
+	float most_kept = min(min(stretch, GRASS_MOST_STRETCH) / density.y, 1.0);
+	float top = threshold < most_kept ? most_kept : 1.0;
 	float thinning = (debug_flags & 8) != 0 ? 1.0 : clamp((kept - threshold) / max(min(0.4 * threshold, max(top - threshold, 0.03 * top)), 1e-6), 0.0, 1.0);
-	float y = ground_height(world_xz);
 
 	// Out of view (as tall as a blade gets): the cheap test before the
 	// ground's look
