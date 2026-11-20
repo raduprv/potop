@@ -133,13 +133,17 @@ static void work_out_hull(const object_model_t *model, grass_mask_hull_t *hull)
 	int count = 0;
 	int capacity = 0;
 	float planes[2] = { -GRASS_MASK_SLICE_BELOW, GRASS_MASK_SLICE_ABOVE };
-	int index_count = SDL_max(model->pick_index_count, model->collision_index_count);
+	// (the solid triangles only: a bush's or a fir's leaves down to the
+	// ground are no wall to the grass; nor anything flat, a patch of dirt
+	// or a decal lying on it, its see-through edges counted)
+	int index_count = model->collision_index_count;
 	bool enough_memory = true;
 
 	SDL_zerop(hull);
 	hull->known = true;
 	hull->source = model->collision_positions;
-	if (model->collision_positions == NULL || model->collision_indices == NULL)
+	if (model->collision_positions == NULL || model->collision_indices == NULL
+		|| model->bounds_maximum.y - model->bounds_minimum.y < GRASS_MASK_FLAT_METERS)
 	{
 		return;
 	}
@@ -457,8 +461,11 @@ void grass_mask_update(grass_mask_t *mask, const objects_t *objects, float eye_x
 		return;
 	}
 	// (what stands changed: added, gone, sorted, come loose, moved by hand)
-	if (objects->generation != mask->objects_generation || changes != mask->objects_changes || objects->moved_box_count > 0)
+	// (another map: its objects counted anew, the generation perhaps the same)
+	if (objects->generation != mask->objects_generation || changes != mask->objects_changes || objects->moved_box_count > 0
+		|| objects->instance_count != mask->objects_count)
 	{
+		mask->objects_count = objects->instance_count;
 		mask->objects_generation = objects->generation;
 		mask->objects_changes = changes;
 		mask->rebuild_pending = true;

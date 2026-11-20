@@ -13,9 +13,10 @@
 // What clears the grass: each object whose type says so (object_types.h,
 // grass_clear_meters; by default the solid ones: physics static or body),
 // standing (not loose, moving, hidden or gone). Where it meets the ground
-// is its model cut by a slab round its origin (GRASS_MASK_SLICE_BELOW ..
-// GRASS_MASK_SLICE_ABOVE), the convex hull of that, worked out once a
-// model; the outlines of its footprints that say no grass (object_format.h)
+// is its model's solid triangles (not its leaves) cut by a slab round its
+// origin (GRASS_MASK_SLICE_BELOW .. GRASS_MASK_SLICE_ABOVE), the convex
+// hull of that, worked out once a model (a flat one, a patch or a decal,
+// none); the outlines of its footprints that say no grass (object_format.h)
 // besides, as they are (convex or not). Inside, none; out to its
 // grass_clear_meters the blades thin away.
 //
@@ -39,6 +40,7 @@
 #define GRASS_MASK_SLICE_ABOVE 0.05f        // to this far above (meters at size 1): the ground line, not what bulges over it
 #define GRASS_MASK_AUTO_METERS 0.0f         // grass_clear_meters auto, for a solid thing: the blades right up to it
 #define GRASS_MASK_HULL_POINTS 48           // a model's outline, at most
+#define GRASS_MASK_FLAT_METERS 0.15f        // a model no taller (a patch, a decal) clears no grass
 
 // Where a model meets the ground (model x, z, meters at size 1)
 typedef struct
@@ -60,6 +62,7 @@ typedef struct
 	uint64_t rebuilt_nanoseconds;  // when it was made whole (SDL_GetTicksNS)
 	uint32_t objects_generation;   // what the objects were when it was made
 	uint32_t objects_changes;
+	int objects_count;
 	grass_mask_hull_t *hulls;      // per model (objects_t.models)
 	int hull_count;
 	bool failed;

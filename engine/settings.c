@@ -317,6 +317,7 @@ static const setting_field_t setting_fields[] =
 	FIELD("objects", "lod_foliage_kept", SETTING_FLOAT, objects.lod_foliage_kept),
 	FIELD("objects", "prop_lod_pixels", SETTING_FLOAT, objects.prop_lod_pixels),
 	FIELD("objects", "grass", SETTING_BOOL, objects.grass),
+	FIELD("objects", "grass_mask", SETTING_BOOL, objects.grass_mask),
 	FIELD("objects", "grass_distance_meters", SETTING_FLOAT, objects.grass_distance_meters),
 	FIELD("objects", "grass_density", SETTING_FLOAT, objects.grass_density),
 	FIELD("objects", "grass_near_density", SETTING_FLOAT, objects.grass_near_density),
@@ -580,6 +581,7 @@ void settings_set_defaults(settings_t *settings)
 	settings->objects.lod_foliage_kept = 1.0f;
 	settings->objects.prop_lod_pixels = 0.5f;
 	settings->objects.grass = true;
+	settings->objects.grass_mask = true;
 	settings->objects.grass_distance_meters = 50.0f;
 	settings->objects.grass_density = 550.0f;
 	settings->objects.grass_near_density = 2.0f;

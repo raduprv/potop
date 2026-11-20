@@ -1695,6 +1695,8 @@ static const ui_setting_t ui_settings[] = {
 		"How far from the eye the blades go (farther they thin out and widen; past this the ground's texture alone)" },
 	{ TAB_OBJECTS, "objects", "grass_density", "Grass density", 10, 1500, 10, EFFECT_LIVE, "%.0f /m\xc2\xb2", NULL,
 		"Blades a square meter near the eye" },
+	{ TAB_OBJECTS, "objects", "grass_mask", "Grass off what stands", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
+		"The blades kept off rocks, trunks, walls (where each meets the ground); off: only off the buildings, a cell at a time" },
 	{ TAB_OBJECTS, "objects", "grass_near_density", "Denser near", 1, 8, 0.1f, EFFECT_LIVE, "%.1fx", NULL,
 		"Nearest the eye the grass is this many times as dense, back to the density above by the distance below" },
 	{ TAB_OBJECTS, "objects", "grass_near_meters", "Denser out to", 0.1f, 10, 0.1f, EFFECT_LIVE, "%.1f m", NULL,
