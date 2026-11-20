@@ -600,7 +600,7 @@ void main()
 	float distance = length(vec3(world_xz.x, y, world_xz.y) - eye.xyz);
 	// Wider far away, so the thinned out blades still cover the ground
 	// (as fast as they thin out: 1.2 at a falloff of 2, more past it)
-	float widen = min(pow(max(horizontal / density.x, 1.0), 0.6 * density.w), 8.0);
+	float widen = min(pow(max(horizontal / density.x, 1.0), 0.6 * density.w), 16.0);
 	float width = blade.y * (0.75 + 0.5 * more.y) * widen;
 
 	// They shrink into the ground over the last fifth of the distance
