@@ -110,7 +110,10 @@ are engine/ui.c; both draw with the same backend, font and colors.
   its height and roughness, the seed's noise the shapes within (the
   mountains' crests, the hills' rolls), the kinds blended over a little
   across their borders; the unpainted is low, gently rolling land; a lake
-  is sunk and filled to a little below its lowest shore. Nothing painted,
+  painted is a hint, not its shape: its corners rounded, its edge bent into
+  bays and points, its surface as high as the land round it (its low shores
+  raised a little so it holds its water), the land under it a bowl, the
+  water out to wherever the land meets it. Nothing painted,
   the map is the seed's. **What the regions make** (folded under the
   brushes): the mountains' height, their crests (how high, how many across
   the map), the hills' height and roll, the plain's, the valley floor's,

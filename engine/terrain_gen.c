@@ -368,82 +368,6 @@ static float grid_sample(const float *grid, int32_t side, float u, float v)
 
 // --- The sketch over the seed's land ------------------------------------------------
 
-// The sketch's lakes: its water texels over the threshold, joined side by
-// side into lakes; each one's surface a little under the lowest land round
-// it (as it stands now), so it holds its water
-static void find_lakes(const float *heights, int32_t size, terrain_sketch_t *sketch)
-{
-	const uint8_t *water = terrain_sketch_plane(sketch, TERRAIN_SKETCH_WATER);
-	size_t texels = (size_t)TERRAIN_SKETCH_SIZE * TERRAIN_SKETCH_SIZE;
-	uint32_t *stack = SDL_malloc(texels * sizeof(uint32_t));
-
-	SDL_memset(sketch->lake_labels, 0, texels * sizeof(uint16_t));
-	sketch->lake_count = 0;
-	if (stack == NULL)
-	{
-		return;
-	}
-	for (size_t start = 0; start < texels && sketch->lake_count < TERRAIN_SKETCH_LAKES_MAX; start++)
-	{
-		uint16_t label;
-		size_t stack_count = 0;
-		float lowest_shore = 1e30f;
-
-		if (water[start] < TERRAIN_SKETCH_LAKE_THRESHOLD || sketch->lake_labels[start] != 0)
-		{
-			continue;
-		}
-		label = (uint16_t)(sketch->lake_count + 1);
-		sketch->lake_labels[start] = label;
-		stack[stack_count++] = (uint32_t)start;
-		while (stack_count > 0)
-		{
-			uint32_t texel = stack[--stack_count];
-			int32_t x = (int32_t)(texel % TERRAIN_SKETCH_SIZE);
-			int32_t y = (int32_t)(texel / TERRAIN_SKETCH_SIZE);
-			static const int32_t steps[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
-
-			for (int k = 0; k < 4; k++)
-			{
-				int32_t nx = x + steps[k][0];
-				int32_t ny = y + steps[k][1];
-				size_t neighbor;
-
-				if (nx < 0 || ny < 0 || nx >= TERRAIN_SKETCH_SIZE || ny >= TERRAIN_SKETCH_SIZE)
-				{
-					continue;
-				}
-				neighbor = (size_t)ny * TERRAIN_SKETCH_SIZE + (size_t)nx;
-				if (water[neighbor] >= TERRAIN_SKETCH_LAKE_THRESHOLD)
-				{
-					if (sketch->lake_labels[neighbor] == 0)
-					{
-						sketch->lake_labels[neighbor] = label;
-						stack[stack_count++] = (uint32_t)neighbor;
-					}
-				}
-				else
-				{
-					// A shore: the land there (its cell)
-					int32_t cell_x = clamp_int((int)(((float)nx + 0.5f) / (float)TERRAIN_SKETCH_SIZE * (float)size), 0, size - 1);
-					int32_t cell_y = clamp_int((int)(((float)ny + 0.5f) / (float)TERRAIN_SKETCH_SIZE * (float)size), 0, size - 1);
-
-					lowest_shore = SDL_min(lowest_shore, heights[(size_t)cell_y * (size_t)size + (size_t)cell_x]);
-				}
-			}
-		}
-		// (a lake out to the map's edge everywhere: its own land's level)
-		if (lowest_shore > 1e29f)
-		{
-			lowest_shore = heights[(start / TERRAIN_SKETCH_SIZE) * (size_t)size / TERRAIN_SKETCH_SIZE * (size_t)size
-				+ (start % TERRAIN_SKETCH_SIZE) * (size_t)size / TERRAIN_SKETCH_SIZE];
-		}
-		sketch->lake_surfaces[sketch->lake_count] = SDL_max(lowest_shore - 0.5f, 0.5f);
-		sketch->lake_count++;
-	}
-	SDL_free(stack);
-}
-
 #define SKETCH_GRID 512
 
 // A running box blur (sum over 2 reach + 1, the edges held), a row at a time
@@ -493,11 +417,14 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 	// (what the regions make, blended: the height, the detail, the crests)
 	float *blended[3];
 	float *other = SDL_malloc(grid_texels * sizeof(float));
+	// (how much of each texel's own counts: none of a lake's, which takes
+	// the land round it, its lake sunk into that after: sink_lakes)
+	float *weights = SDL_malloc(grid_texels * sizeof(float));
 	const terrain_sketch_land_t *land = &sketch->land;
 	int32_t blend_reach = SDL_max(1, (int32_t)SDL_lroundf((float)SKETCH_GRID * clamp_float(land->blend_share, 0.0f, 0.2f)));
 	float most = settings->max_height_meters;
 	const uint8_t *regions = terrain_sketch_plane(sketch, TERRAIN_SKETCH_REGION);
-	bool enough = scratch != NULL && other != NULL;
+	bool enough = scratch != NULL && other != NULL && weights != NULL;
 
 	for (int k = 0; k < 3; k++)
 	{
@@ -519,21 +446,36 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 			uint8_t region = regions[(size_t)texel_y * TERRAIN_SKETCH_SIZE + (size_t)texel_x];
 			int kind = region < TERRAIN_SKETCH_REGION_COUNT ? region : 0;
 			size_t index = (size_t)y * SKETCH_GRID + (size_t)x;
+			float weight = kind == TERRAIN_SKETCH_LAKE ? 0.0f : 1.0f;
 
-			blended[0][index] = land->height[kind];
-			blended[1][index] = land->roll[kind];
-			blended[2][index] = land->crests[kind];
+			weights[index] = weight;
+			blended[0][index] = land->height[kind] * weight;
+			blended[1][index] = land->roll[kind] * weight;
+			blended[2][index] = land->crests[kind] * weight;
 		}
 	}
-	for (int k = 0; k < 3; k++)
+	for (int k = 0; k < 4; k++)
 	{
+		float *grid = k < 3 ? blended[k] : weights;
+
 		for (int pass = 0; pass < 3; pass++)
 		{
-			running_blur_rows(blended[k], other, SKETCH_GRID, blend_reach);
+			running_blur_rows(grid, other, SKETCH_GRID, blend_reach);
 			transpose(other, scratch, SKETCH_GRID);
 			running_blur_rows(scratch, other, SKETCH_GRID, blend_reach);
-			transpose(other, blended[k], SKETCH_GRID);
+			transpose(other, grid, SKETCH_GRID);
 		}
+	}
+	// (each the weighted mean of what is round it: a lake's own land none,
+	// the land round it carried over it, as high as its shores; far into
+	// one, the unpainted land's)
+	for (size_t i = 0; i < grid_texels; i++)
+	{
+		bool known = weights[i] > 1e-3f;
+
+		blended[0][i] = known ? blended[0][i] / weights[i] : land->height[TERRAIN_SKETCH_NONE];
+		blended[1][i] = known ? blended[1][i] / weights[i] : land->roll[TERRAIN_SKETCH_NONE];
+		blended[2][i] = known ? blended[2][i] / weights[i] : land->crests[TERRAIN_SKETCH_NONE];
 	}
 #pragma omp parallel for schedule(static)
 	for (int32_t y = 0; y < size; y++)
@@ -570,21 +512,225 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 done:
 	SDL_free(scratch);
 	SDL_free(other);
+	SDL_free(weights);
 	for (int k = 0; k < 3; k++)
 	{
 		SDL_free(blended[k]);
 	}
 }
 
-// The sketch's lakes: found, then the land under them sunk (deeper the more
-// water is painted), softly towards their shores (after the rain's
-// erosion, which would fill them)
-static void sink_lakes(float *heights, int32_t size, terrain_sketch_t *sketch)
+// The sketch's lakes. What is painted is a hint, not their shape: the
+// painted water blurred (its corners rounded, LAKE_HINT_SHARE of the map's
+// side) after its edge is bent by the warp noise; each lake's surface the level
+// of the land round it (LAKE_SURFACE_SHARE of its shore lower), the land
+// under it sunk into a bowl from there, its low shores raised a little
+// over the surface so it holds its water. The world fills each with water
+// to its surface, as far as the land under it is lower (world.c): the
+// shore where the land meets the water, wherever that is
+#define LAKE_HINT_SHARE 0.006f          // the painted water blurred over this share of the map's side
+#define LAKE_WIDE_REACH 3               // the bowl's depth blurred this many times wider
+#define LAKE_WARP_SHARE 0.02f           // the shore bent by up to this share of the map's side (the broad bends; the small ones a quarter)
+#define LAKE_SURFACE_SHARE 0.25f        // the share of a lake's shore lower than its surface (raised over it)
+#define LAKE_RIM_METERS 0.25f           // a low shore raised this much over the surface
+#define LAKE_EDGE_METERS 0.2f           // the water this deep at the shore, deepening from there
+
+static int compare_floats(const void *first, const void *second)
 {
+	float a = *(const float *)first;
+	float b = *(const float *)second;
+
+	return a < b ? -1 : (a > b ? 1 : 0);
+}
+
+// The sketch's grid blurred three times (near enough a bell)
+static void blur_sketch_grid(float *grid, float *scratch, float *other, int32_t reach)
+{
+	for (int pass = 0; pass < 3; pass++)
+	{
+		running_blur_rows(grid, other, TERRAIN_SKETCH_SIZE, reach);
+		transpose(other, scratch, TERRAIN_SKETCH_SIZE);
+		running_blur_rows(scratch, other, TERRAIN_SKETCH_SIZE, reach);
+		transpose(other, grid, TERRAIN_SKETCH_SIZE);
+	}
+}
+
+// The land's height at a texel of the sketch (its cell)
+static float height_at_texel(const float *heights, int32_t size, int32_t x, int32_t y)
+{
+	int32_t cell_x = clamp_int((int)(((float)x + 0.5f) / (float)TERRAIN_SKETCH_SIZE * (float)size), 0, size - 1);
+	int32_t cell_y = clamp_int((int)(((float)y + 0.5f) / (float)TERRAIN_SKETCH_SIZE * (float)size), 0, size - 1);
+
+	return heights[(size_t)cell_y * (size_t)size + (size_t)cell_x];
+}
+
+// The lakes found in the hint (over a half, side by side), each texel's
+// lake spread out over the hint's fringe (over LAKE_FRINGE: the nearest
+// lake's), each lake's surface from its shore's land
+#define LAKE_FRINGE 0.05f
+
+static void find_lakes(const float *heights, int32_t size, terrain_sketch_t *sketch)
+{
+	size_t texels = (size_t)TERRAIN_SKETCH_SIZE * TERRAIN_SKETCH_SIZE;
+	const float *hint = sketch->lake_hint;
+	uint32_t *queue = SDL_malloc(texels * sizeof(uint32_t));
+	float *shore = SDL_malloc(texels * sizeof(float));
+	static const int32_t steps[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+	size_t head;
+	size_t tail = 0;
+
+	SDL_memset(sketch->lake_labels, 0, texels * sizeof(uint16_t));
+	sketch->lake_count = 0;
+	if (queue == NULL || shore == NULL)
+	{
+		SDL_free(queue);
+		SDL_free(shore);
+		return;
+	}
+	// Each lake: its texels joined, the land just past its edge its shore
+	for (size_t start = 0; start < texels && sketch->lake_count < TERRAIN_SKETCH_LAKES_MAX; start++)
+	{
+		uint16_t label;
+		size_t first = tail;
+		size_t shore_count = 0;
+		double inside_sum = 0.0;
+		size_t inside_count = 0;
+		float surface;
+
+		if (hint[start] < 0.5f || sketch->lake_labels[start] != 0)
+		{
+			continue;
+		}
+		label = (uint16_t)(sketch->lake_count + 1);
+		sketch->lake_labels[start] = label;
+		queue[tail++] = (uint32_t)start;
+		for (head = first; head < tail; head++)
+		{
+			int32_t x = (int32_t)(queue[head] % TERRAIN_SKETCH_SIZE);
+			int32_t y = (int32_t)(queue[head] / TERRAIN_SKETCH_SIZE);
+
+			inside_sum += height_at_texel(heights, size, x, y);
+			inside_count++;
+			for (int k = 0; k < 4; k++)
+			{
+				int32_t nx = x + steps[k][0];
+				int32_t ny = y + steps[k][1];
+				size_t neighbor;
+
+				if (nx < 0 || ny < 0 || nx >= TERRAIN_SKETCH_SIZE || ny >= TERRAIN_SKETCH_SIZE)
+				{
+					continue;
+				}
+				neighbor = (size_t)ny * TERRAIN_SKETCH_SIZE + (size_t)nx;
+				if (hint[neighbor] >= 0.5f)
+				{
+					if (sketch->lake_labels[neighbor] == 0)
+					{
+						sketch->lake_labels[neighbor] = label;
+						queue[tail++] = (uint32_t)neighbor;
+					}
+				}
+				else
+				{
+					shore[shore_count++] = height_at_texel(heights, size, nx, ny);
+				}
+			}
+		}
+		// (its surface: as high as most of its shore, a quarter of it
+		// lower and raised; none, out to the map's edge everywhere: its
+		// own land's level)
+		if (shore_count > 0)
+		{
+			SDL_qsort(shore, shore_count, sizeof(float), compare_floats);
+			surface = shore[(size_t)((float)(shore_count - 1) * LAKE_SURFACE_SHARE)];
+		}
+		else
+		{
+			surface = (float)(inside_sum / (double)SDL_max(inside_count, (size_t)1));
+		}
+		sketch->lake_surfaces[sketch->lake_count] = SDL_max(surface, 0.5f);
+		sketch->lake_count++;
+	}
+	// Spread over the fringe, the nearest lake's (breadth first from all of
+	// them at once)
+	for (head = 0; head < tail; head++)
+	{
+		int32_t x = (int32_t)(queue[head] % TERRAIN_SKETCH_SIZE);
+		int32_t y = (int32_t)(queue[head] / TERRAIN_SKETCH_SIZE);
+		uint16_t label = sketch->lake_labels[queue[head]];
+
+		for (int k = 0; k < 4; k++)
+		{
+			int32_t nx = x + steps[k][0];
+			int32_t ny = y + steps[k][1];
+			size_t neighbor;
+
+			if (nx < 0 || ny < 0 || nx >= TERRAIN_SKETCH_SIZE || ny >= TERRAIN_SKETCH_SIZE)
+			{
+				continue;
+			}
+			neighbor = (size_t)ny * TERRAIN_SKETCH_SIZE + (size_t)nx;
+			if (sketch->lake_labels[neighbor] == 0 && hint[neighbor] >= LAKE_FRINGE)
+			{
+				sketch->lake_labels[neighbor] = label;
+				queue[tail++] = (uint32_t)neighbor;
+			}
+		}
+	}
+	SDL_free(queue);
+	SDL_free(shore);
+}
+
+static float sketch_grid_sample(const float *grid, float u, float v)
+{
+	return grid_sample(grid, TERRAIN_SKETCH_SIZE, u, v);
+}
+
+// The lakes made: the hint worked out, the lakes found, the land shaped
+// round and under them (after the erosion, which would fill them)
+static void sink_lakes(float *heights, int32_t size, const terrain_settings_t *settings, const generation_noise_t *noise,
+	terrain_sketch_t *sketch)
+{
+	size_t texels = (size_t)TERRAIN_SKETCH_SIZE * TERRAIN_SKETCH_SIZE;
+	const uint8_t *water = terrain_sketch_plane(sketch, TERRAIN_SKETCH_WATER);
+	float *wide = SDL_malloc(texels * sizeof(float));
+	float *scratch = SDL_malloc(texels * sizeof(float));
+	float *other = SDL_malloc(texels * sizeof(float));
+	int32_t reach = SDL_max(2, (int32_t)SDL_lroundf((float)TERRAIN_SKETCH_SIZE * LAKE_HINT_SHARE));
+	float depth = SDL_max(sketch->land.lake_depth_meters, 0.5f);
+	float warp_frequency = SDL_max(settings->feature_count, 1.0f) * 4.0f;
+
+	sketch->lake_count = 0;
+	if (wide == NULL || scratch == NULL || other == NULL || sketch->lake_hint == NULL)
+	{
+		goto done;
+	}
+	// What is painted, its edge bent (broad bays and points, smaller
+	// ones on them): no lake as round as the brush
+#pragma omp parallel for schedule(static)
+	for (int32_t y = 0; y < TERRAIN_SKETCH_SIZE; y++)
+	{
+		for (int32_t x = 0; x < TERRAIN_SKETCH_SIZE; x++)
+		{
+			float u = ((float)x + 0.5f) / (float)TERRAIN_SKETCH_SIZE;
+			float v = ((float)y + 0.5f) / (float)TERRAIN_SKETCH_SIZE;
+			float bent_u = u + LAKE_WARP_SHARE * (noise_fbm(&noise->warp, u * warp_frequency + 11.3f, v * warp_frequency - 5.7f, 2, 0.5f)
+				+ 0.25f * noise_fbm(&noise->warp, u * warp_frequency * 4.0f + 3.1f, v * warp_frequency * 4.0f + 9.4f, 2, 0.5f));
+			float bent_v = v + LAKE_WARP_SHARE * (noise_fbm(&noise->warp, u * warp_frequency - 2.9f, v * warp_frequency + 8.1f, 2, 0.5f)
+				+ 0.25f * noise_fbm(&noise->warp, u * warp_frequency * 4.0f - 7.6f, v * warp_frequency * 4.0f - 1.8f, 2, 0.5f));
+			int32_t texel_x = clamp_int((int)(bent_u * (float)TERRAIN_SKETCH_SIZE), 0, TERRAIN_SKETCH_SIZE - 1);
+			int32_t texel_y = clamp_int((int)(bent_v * (float)TERRAIN_SKETCH_SIZE), 0, TERRAIN_SKETCH_SIZE - 1);
+
+			sketch->lake_hint[(size_t)y * TERRAIN_SKETCH_SIZE + (size_t)x] =
+				water[(size_t)texel_y * TERRAIN_SKETCH_SIZE + (size_t)texel_x] >= TERRAIN_SKETCH_LAKE_THRESHOLD ? 1.0f : 0.0f;
+		}
+	}
+	blur_sketch_grid(sketch->lake_hint, scratch, other, reach);
+	SDL_memcpy(wide, sketch->lake_hint, texels * sizeof(float));
+	blur_sketch_grid(wide, scratch, other, reach * LAKE_WIDE_REACH);
 	find_lakes(heights, size, sketch);
 	if (sketch->lake_count == 0)
 	{
-		return;
+		goto done;
 	}
 #pragma omp parallel for schedule(static)
 	for (int32_t y = 0; y < size; y++)
@@ -594,33 +740,33 @@ static void sink_lakes(float *heights, int32_t size, terrain_sketch_t *sketch)
 			size_t index = (size_t)y * (size_t)size + (size_t)x;
 			float u = ((float)x + 0.5f) / (float)size;
 			float v = ((float)y + 0.5f) / (float)size;
-			float water = terrain_sketch_water(sketch, u, v);
-			int lake;
+			int lake = terrain_sketch_lake_at(sketch, u, v);
+			float edge;
+			float middle;
+			float surface;
 			float bed;
+			float height = heights[index];
 
-			if (water <= 0.25f)
+			if (lake < 0)
 			{
 				continue;
 			}
-			lake = terrain_sketch_lake_at(sketch, u, v);
-			if (lake < 0)
-			{
-				// (a shore texel by a lake: the nearest lake round it, if any)
-				for (int k = 0; k < 4 && lake < 0; k++)
-				{
-					float step = 1.0f / (float)TERRAIN_SKETCH_SIZE;
-
-					lake = terrain_sketch_lake_at(sketch, u + (k == 0 ? step : k == 1 ? -step : 0.0f), v + (k == 2 ? step : k == 3 ? -step : 0.0f));
-				}
-				if (lake < 0)
-				{
-					continue;
-				}
-			}
-			bed = sketch->lake_surfaces[lake] - SDL_max(sketch->land.lake_depth_meters, 0.5f) * water;
-			heights[index] = lerp_float(heights[index], SDL_min(heights[index], bed), smoothstep_float(0.25f, 0.6f, water));
+			edge = sketch_grid_sample(sketch->lake_hint, u, v);
+			middle = sketch_grid_sample(wide, u, v);
+			surface = sketch->lake_surfaces[lake];
+			// Its low shores raised over the surface (none lower than it
+			// round the water), then the land under it sunk: just under
+			// the surface at the shore, deepest in the middle
+			height = lerp_float(height, SDL_max(height, surface + LAKE_RIM_METERS), smoothstep_float(0.15f, 0.42f, edge));
+			bed = surface - LAKE_EDGE_METERS - (depth - LAKE_EDGE_METERS) * smoothstep_float(0.5f, 0.95f, middle);
+			height = lerp_float(height, SDL_min(height, bed), smoothstep_float(0.42f, 0.6f, edge));
+			heights[index] = height;
 		}
 	}
+done:
+	SDL_free(wide);
+	SDL_free(scratch);
+	SDL_free(other);
 }
 
 // --- Erosion by the rain's droplets ---------------------------------------------------
@@ -954,7 +1100,7 @@ bool terrain_generate_heights(float *heights, int32_t size, float cell_size_mete
 	// below the water, which ran out down the slopes)
 	if (sketch != NULL && terrain_sketch_painted(sketch))
 	{
-		sink_lakes(heights, size, sketch);
+		sink_lakes(heights, size, settings, &noise, sketch);
 	}
 	return true;
 }

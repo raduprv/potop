@@ -16,7 +16,8 @@ bool terrain_sketch_create(terrain_sketch_t *sketch)
 	SDL_zerop(sketch);
 	sketch->planes = SDL_calloc(TERRAIN_SKETCH_PLANES, PLANE_TEXELS);
 	sketch->lake_labels = SDL_calloc(PLANE_TEXELS, sizeof(uint16_t));
-	if (sketch->planes == NULL || sketch->lake_labels == NULL)
+	sketch->lake_hint = SDL_calloc(PLANE_TEXELS, sizeof(float));
+	if (sketch->planes == NULL || sketch->lake_labels == NULL || sketch->lake_hint == NULL)
 	{
 		terrain_sketch_destroy(sketch);
 		return false;
@@ -47,6 +48,7 @@ void terrain_sketch_destroy(terrain_sketch_t *sketch)
 {
 	SDL_free(sketch->planes);
 	SDL_free(sketch->lake_labels);
+	SDL_free(sketch->lake_hint);
 	SDL_zerop(sketch);
 }
 
@@ -179,6 +181,18 @@ int terrain_sketch_lake_at(const terrain_sketch_t *sketch, float u, float v)
 	}
 	label = sketch->lake_labels[(size_t)y * TERRAIN_SKETCH_SIZE + (size_t)x];
 	return label > 0 && (int)label <= sketch->lake_count ? (int)label - 1 : -1;
+}
+
+float terrain_sketch_lake_hint(const terrain_sketch_t *sketch, float u, float v)
+{
+	int32_t x = clamp_int((int)(u * (float)TERRAIN_SKETCH_SIZE), 0, TERRAIN_SKETCH_SIZE - 1);
+	int32_t y = clamp_int((int)(v * (float)TERRAIN_SKETCH_SIZE), 0, TERRAIN_SKETCH_SIZE - 1);
+
+	if (sketch == NULL || sketch->lake_hint == NULL)
+	{
+		return 0.0f;
+	}
+	return sketch->lake_hint[(size_t)y * TERRAIN_SKETCH_SIZE + (size_t)x];
 }
 
 // --- Files ---------------------------------------------------------------------

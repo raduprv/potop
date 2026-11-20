@@ -15,7 +15,7 @@ const sketch_preset_t sketch_presets[SKETCH_PRESET_COUNT] =
 	{ "Hills", "Rolling hills", TERRAIN_SKETCH_HILLS, { 118, 158, 78 } },
 	{ "Mountains", "Mountains: crests and peaks", TERRAIN_SKETCH_MOUNTAINS, { 146, 112, 88 } },
 	{ "Valley", "A low valley: the rain cuts a river bed down it", TERRAIN_SKETCH_VALLEY, { 86, 156, 146 } },
-	{ "Lake", "A lake: the land sunk under it, filled to a little below its lowest shore", TERRAIN_SKETCH_LAKE, { 62, 112, 196 } },
+	{ "Lake", "A lake about here (a hint: its shore where the land meets the water), as high as the land round it", TERRAIN_SKETCH_LAKE, { 62, 112, 196 } },
 };
 
 // The blank sheet's color
@@ -131,7 +131,7 @@ static void compose_picture(sketch_view_t *view, const terrain_sketch_t *sketch,
 			{
 				color[c] *= 0.3f + 0.85f * shade;
 			}
-			if (lake >= 0 && height < sketch->lake_surfaces[lake])
+			if (lake >= 0 && height < sketch->lake_surfaces[lake] && terrain_sketch_lake_hint(sketch, u, v) >= 0.3f)
 			{
 				float deep = clamp_float((sketch->lake_surfaces[lake] - height) / 6.0f, 0.0f, 1.0f);
 

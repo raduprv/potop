@@ -70,9 +70,12 @@ typedef struct
 	terrain_sketch_land_t land;
 	uint8_t *planes;               // TERRAIN_SKETCH_PLANES planes of TERRAIN_SKETCH_SIZE squared, one after the other
 	uint32_t revision;             // grows with every change
-	// The lakes the last terrain made from it found (terrain_gen.c): each
-	// texel's lake (0: none, else 1 + its index), each lake's surface
-	// (meters); the world fills them with water after (world.c)
+	// The lakes the last terrain made from it found (terrain_gen.c): the
+	// painted water blurred (0..1, the hint the lakes are made from), each
+	// texel's lake (0: none, else 1 + its index; over the hint's fringe too,
+	// the nearest lake's), each lake's surface (meters); the world fills
+	// them with water after (world.c)
+	float *lake_hint;
 	uint16_t *lake_labels;
 	float lake_surfaces[TERRAIN_SKETCH_LAKES_MAX];
 	int lake_count;
@@ -111,6 +114,9 @@ float terrain_sketch_water(const terrain_sketch_t *sketch, float u, float v);
 
 // The lake at (u, v): its index (-1: none)
 int terrain_sketch_lake_at(const terrain_sketch_t *sketch, float u, float v);
+
+// The lakes' hint at (u, v), its texel's (0..1: over a half, in a lake)
+float terrain_sketch_lake_hint(const terrain_sketch_t *sketch, float u, float v);
 
 // In a folder (ending in a slash): regions.png and land.ini. Load: false
 // if there is no regions.png (the sketch then blank, the land as it starts)

@@ -253,37 +253,107 @@ void world_apply_harvest(world_t *world, const map_features_t *features)
 }
 
 // The sketch's lakes (terrain_sketch.h, found when the land was made):
-// water up to each one's surface where the land is under it
+// water up to each one's surface wherever the land under it is lower and
+// joined to its middle (from where its hint is over a half, out through
+// the land under its surface, no farther than its own texels): the shore
+// where the land meets the water, no puddles past its rim
 static void fill_sketch_lakes(world_t *world)
 {
 	const terrain_sketch_t *sketch = world->generation_sketch;
 	terrain_t *terrain = &world->terrain;
+	int32_t size = terrain->size;
+	size_t cell_count = (size_t)size * (size_t)size;
+	uint8_t *seen = SDL_calloc(cell_count, 1);
+	uint32_t *stack = NULL;
+	size_t stack_capacity = 0;
 	int64_t filled = 0;
+	static const int32_t steps[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
 
-	for (int32_t y = 0; y < terrain->size; y++)
+	if (seen == NULL)
 	{
-		float v = ((float)y + 0.5f) / (float)terrain->size;
-
-		for (int32_t x = 0; x < terrain->size; x++)
+		return;
+	}
+	for (int32_t y = 0; y < size; y++)
+	{
+		for (int32_t x = 0; x < size; x++)
 		{
-			float u = ((float)x + 0.5f) / (float)terrain->size;
-			int lake = terrain_sketch_lake_at(sketch, u, v);
-			int32_t ground;
+			size_t start = (size_t)y * (size_t)size + (size_t)x;
+			float u = ((float)x + 0.5f) / (float)size;
+			float v = ((float)y + 0.5f) / (float)size;
+			int lake;
 			int32_t surface;
+			size_t stack_count = 0;
 
+			if (seen[start] || terrain_sketch_lake_hint(sketch, u, v) < 0.5f)
+			{
+				continue;
+			}
+			lake = terrain_sketch_lake_at(sketch, u, v);
 			if (lake < 0)
 			{
 				continue;
 			}
-			ground = terrain->heights[terrain_index(terrain, x, y)];
 			surface = (int32_t)(sketch->lake_surfaces[lake] * (float)TERRAIN_HEIGHT_UNITS_PER_METER);
-			if (surface > ground)
+			if (terrain->heights[terrain_index(terrain, x, y)] >= surface)
 			{
-				water_add_units(&world->water, x, y, surface - ground);
+				continue;
+			}
+			seen[start] = 1;
+			if (stack_capacity == 0)
+			{
+				stack_capacity = 65536;
+				stack = SDL_malloc(stack_capacity * sizeof(uint32_t));
+				if (stack == NULL)
+				{
+					SDL_free(seen);
+					return;
+				}
+			}
+			stack[stack_count++] = (uint32_t)start;
+			while (stack_count > 0)
+			{
+				uint32_t cell = stack[--stack_count];
+				int32_t cell_x = (int32_t)(cell % (uint32_t)size);
+				int32_t cell_y = (int32_t)(cell / (uint32_t)size);
+				int32_t ground = terrain->heights[terrain_index(terrain, cell_x, cell_y)];
+
+				water_add_units(&world->water, cell_x, cell_y, surface - ground);
 				filled++;
+				for (int k = 0; k < 4; k++)
+				{
+					int32_t next_x = cell_x + steps[k][0];
+					int32_t next_y = cell_y + steps[k][1];
+					size_t next;
+
+					if (next_x < 0 || next_y < 0 || next_x >= size || next_y >= size)
+					{
+						continue;
+					}
+					next = (size_t)next_y * (size_t)size + (size_t)next_x;
+					if (seen[next] || terrain->heights[terrain_index(terrain, next_x, next_y)] >= surface
+						|| terrain_sketch_lake_at(sketch, ((float)next_x + 0.5f) / (float)size, ((float)next_y + 0.5f) / (float)size) != lake)
+					{
+						continue;
+					}
+					seen[next] = 1;
+					if (stack_count == stack_capacity)
+					{
+						uint32_t *grown = SDL_realloc(stack, stack_capacity * 2 * sizeof(uint32_t));
+
+						if (grown == NULL)
+						{
+							continue;
+						}
+						stack = grown;
+						stack_capacity *= 2;
+					}
+					stack[stack_count++] = (uint32_t)next;
+				}
 			}
 		}
 	}
+	SDL_free(stack);
+	SDL_free(seen);
 	SDL_Log("Sketch: %d lakes, %lld cells under water", sketch->lake_count, (long long)filled);
 }
 
