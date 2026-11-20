@@ -390,6 +390,10 @@ float hash_1d(vec2 position)
 	return fract(sin(dot(position, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
+// (settings.h, grass_debug 64: a blade colored by what sets its height,
+// red its thinning, green its clump, blue the ground's amount)
+vec3 debug_height_color;
+
 // Its color before what changes up it (grass.vert: lighter and yellower to
 // the tip, the silt's brown, the gust's sheen): the ground's grass under it
 // (the far, smooth scale of its texture), the terrain's variation over its
@@ -401,6 +405,10 @@ vec3 blade_color(vec3 root, vec4 surface)
 
 	// (settings.h, grass_debug 32: all one color, to tell a darker patch
 	// from a sparser one)
+	if ((int(coarse.z + 0.5) & 64) != 0)
+	{
+		return debug_height_color;
+	}
 	if ((int(coarse.z + 0.5) & 32) != 0)
 	{
 		return pow(textureLod(material_color_array, vec3(vec2(0.5), look.x), 12.0).rgb, vec3(2.2)) * tint.rgb;
@@ -618,6 +626,12 @@ void main()
 	// Clumps: taller and shorter patches
 	float clump = 0.65 + 0.7 * value_noise(world_xz * 0.9);
 	float height = blade.x * (0.6 + 0.8 * more.x) * (0.55 + 0.45 * amount) * clump * thinning;
+	debug_height_color = vec3(thinning, (clump - 0.65) / 0.7, amount);
+	// (settings.h, grass_debug 128: every blade as tall as the setting)
+	if ((debug_flags & 128) != 0)
+	{
+		height = blade.x;
+	}
 	float distance = length(vec3(world_xz.x, y, world_xz.y) - eye.xyz);
 	// Wider far away, so the thinned out blades still cover the ground
 	// (as fast as they thin out: 1.2 at a falloff of 2, more past it)

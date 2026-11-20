@@ -344,7 +344,7 @@ void grass_prepare(grass_t *grass, const camera_t *camera, const render_settings
 	uniforms.tint[3] = SDL_clamp(settings->grass_dry_share, 0.0f, 1.0f);
 	uniforms.coarse[0] = SDL_max(settings->grass_coarse_meters, 0.0f);
 	uniforms.coarse[1] = SDL_clamp(settings->grass_coarse_width, 0.5f, 3.0f);
-	uniforms.coarse[2] = (float)SDL_clamp(settings->grass_debug, 0, 63);
+	uniforms.coarse[2] = (float)SDL_clamp(settings->grass_debug, 0, 255);
 	uniforms.density[0] = full_radius;
 	uniforms.density[1] = near_density;
 	uniforms.density[2] = near_meters;
