@@ -726,6 +726,11 @@ void objects_random_placement(const objects_t *objects, int type, float random_a
 // category -1); returns how many
 int objects_remove_in_radius(objects_t *objects, float x, float z, float radius, int category);
 
+// Removes every object of the categories flagged (one per category of the
+// types', true: remove) within the radius of (x, z), or over the whole map
+// with a radius under 0; returns how many
+int objects_remove_categories(objects_t *objects, float x, float z, float radius, const bool *categories);
+
 // Removes the objects flagged (one byte per object, non-zero: remove),
 // keeping the order of the rest; returns how many
 int objects_remove_flagged(objects_t *objects, const uint8_t *remove);

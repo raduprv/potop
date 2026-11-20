@@ -12,6 +12,7 @@
 #include <stdbool.h>
 
 #include "math3d.h"
+#include "object_types.h"
 #include "settings.h"
 #include "stamps.h"
 #include "terrain.h"
@@ -56,6 +57,7 @@ typedef struct
 	float brush_radius_meters;
 	stamp_type_t current_stamp;
 	int plant_category;            // what the plant tool plants, index into object_types_t.categories
+	bool clear_categories[OBJECT_CATEGORIES_MAX]; // what the clear tool removes, each category (object_types_t's; all to start with)
 	int layout;                    // what the layout tool places, index into layouts_t.layouts
 	int object_category;           // the object tool: category shown in its list
 	int object_type;               // ...and the type it places (index into object_types_t.types)

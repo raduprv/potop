@@ -50,6 +50,11 @@ int edit_plant(world_t *world, int category, float x, float z, float radius_mete
 // Every object under the brush away; how many
 int edit_clear(world_t *world, float x, float z, float radius_meters);
 
+// Every object of the categories flagged (one per category, true: away)
+// under the brush, or over the whole map with a radius under 0 (the
+// ground's cover stamped afresh then: none left under what went); how many
+int edit_clear_categories(world_t *world, float x, float z, float radius_meters, const bool *categories);
+
 // One object of a type at (x, z), turned and sized; loose things (with a
 // body) dropped from drop_meters above the ground, awake. False if it
 // could not be put (no model, no room)

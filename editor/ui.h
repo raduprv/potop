@@ -108,6 +108,7 @@ typedef struct
 	bool sketch_preview;
 	bool sketch_generate;
 	bool sketch_back;              // back to the map the previews replaced (ui_view_t.preview_return)
+	bool clear_map;                // every object of the categories the clear tool removes, off the whole map
 	// The sketch kept on its own under the name sketch_file says
 	// (project.h: sketch_library_path), the window's map fields with it;
 	// or one kept so brought back
@@ -229,6 +230,7 @@ typedef struct
 	int sketch_brush;              // a region (sketch_presets), SKETCH_PRESET_COUNT erase
 	terrain_sketch_level_t sketch_level; // how much of its kind the brush paints
 	terrain_sketch_shape_t sketch_shape; // how big its shapes
+	bool sketch_preview_small;     // the preview a quarter as big, quicker (off: as big as the map made, its land as the map's)
 	float sketch_brush_meters;     // the brush's radius
 	bool sketch_stroke;            // painting: the mouse held since the frame before, there
 	float sketch_last_u;

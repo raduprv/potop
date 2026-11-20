@@ -15,7 +15,7 @@
 | 5 6 7 8 | soil for raise / paint / raising stamps: sand, earth, clay, rock |
 | T | stamp tool; press again for the next stamp: crater, dam, hill, channel, lake, plateau |
 | G | plant tool; press again for the next category: trees, dead wood, bushes, grass, flowers, rocks, cacti, water plants, crops |
-| H | clear tool: removes every object under the brush |
+| H | clear tool: removes the objects under the brush of the categories ticked in its options (All, None, Vegetation), or with **Clear them off the whole map** all of them everywhere |
 | O / Shift+O | place one object of the plant category under the cursor / remove the nearest object |
 | K / Shift+K | place an actor under the cursor, facing the camera / remove the nearest actor |
 | Ctrl+K | the next actor type K places |

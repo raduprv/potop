@@ -894,6 +894,63 @@ static void brush_options(ui_t *ui, const ui_view_t *view)
 			}
 			break;
 		}
+		case TOOL_CLEAR:
+		{
+			const object_types_t *types = view->object_types;
+			// (what is vegetation: the quick choice's)
+			static const char *const vegetation[] = { "trees", "bushes", "flowers", "grass", "dead wood", "cacti" };
+			int count = SDL_min(types->category_count, (int)SDL_arraysize(tools->clear_categories));
+
+			nk_layout_row_dynamic(context, ROW_HEIGHT - 4.0f, 3);
+			if (nk_button_label(context, "All"))
+			{
+				for (int i = 0; i < count; i++)
+				{
+					tools->clear_categories[i] = true;
+				}
+			}
+			if (nk_button_label(context, "None"))
+			{
+				for (int i = 0; i < count; i++)
+				{
+					tools->clear_categories[i] = false;
+				}
+			}
+			tooltip_if_hovered(context, "Trees, bushes, flowers, grass, dead wood, cacti");
+			if (nk_button_label(context, "Vegetation"))
+			{
+				for (int i = 0; i < count; i++)
+				{
+					tools->clear_categories[i] = false;
+					for (int k = 0; k < (int)SDL_arraysize(vegetation); k++)
+					{
+						tools->clear_categories[i] |= SDL_strcasecmp(types->categories[i], vegetation[k]) == 0;
+					}
+				}
+			}
+			for (int i = 0; i < count; i++)
+			{
+				char label[48];
+				nk_bool checked = tools->clear_categories[i];
+
+				if (i % 2 == 0)
+				{
+					nk_layout_row_dynamic(context, SMALL_ROW_HEIGHT + 2.0f, 2);
+				}
+				display_name(types->categories[i], label, sizeof(label));
+				if (nk_checkbox_label(context, label, &checked))
+				{
+					tools->clear_categories[i] = checked;
+				}
+			}
+			nk_layout_row_dynamic(context, ROW_HEIGHT, 1);
+			tooltip_if_hovered(context, "Every object of the categories ticked, off the whole map (the brush removes only those too)");
+			if (nk_button_label(context, "Clear them off the whole map"))
+			{
+				ui->requests.clear_map = true;
+			}
+			break;
+		}
 		case TOOL_REMOVE_LAYOUT:
 			nk_layout_row_dynamic(context, SMALL_ROW_HEIGHT, 1);
 			nk_label(context, "Click a village part to remove it", NK_TEXT_LEFT);
@@ -1093,7 +1150,7 @@ static void brushes_window(ui_t *ui, const ui_view_t *view)
 				}
 			}
 		}
-		if (tool_button(ui, "clear", "Clear", "Remove the objects under the brush (H)", tool == TOOL_CLEAR))
+		if (tool_button(ui, "clear", "Clear", "Remove the objects under the brush, of the categories ticked; or all of them off the whole map (H)", tool == TOOL_CLEAR))
 		{
 			select_tool(tools, TOOL_CLEAR);
 		}
@@ -2625,8 +2682,18 @@ static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
 	clean_project_name(ui->sketch_name_input, clean, sizeof(clean));
 	taken = project_listed(ui, clean);
 	replaces_open = clean[0] != '\0' && SDL_strcmp(clean, view->project_name) == 0;
+	nk_layout_row_dynamic(context, ROW_HEIGHT - 4.0f, 1);
+	{
+		nk_bool full = !ui->sketch_preview_small;
+
+		tooltip_if_hovered(context, "The preview as big as the map made (its land just as the map's, slower); off: a quarter as big, quickly");
+		if (nk_checkbox_label(context, "Full size preview", &full))
+		{
+			ui->sketch_preview_small = !full;
+		}
+	}
 	nk_layout_row_dynamic(context, ROW_HEIGHT + 2.0f, 2);
-	tooltip_if_hovered(context, "The land in 3D a quarter as big, quickly, outside any project");
+	tooltip_if_hovered(context, "The land in 3D, outside any project, no objects (back to the sketch: New or Sketch)");
 	if (nk_button_label(context, "Preview"))
 	{
 		ui->requests.sketch_preview = true;

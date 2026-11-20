@@ -2018,6 +2018,40 @@ int objects_remove_in_radius(objects_t *objects, float x, float z, float radius,
 	return removed;
 }
 
+int objects_remove_categories(objects_t *objects, float x, float z, float radius, const bool *categories)
+{
+	uint8_t *remove;
+	int removed;
+	bool any = false;
+
+	if (objects->instance_count == 0)
+	{
+		return 0;
+	}
+	remove = SDL_calloc((size_t)objects->instance_count, 1);
+	if (remove == NULL)
+	{
+		return 0;
+	}
+	for (int i = 0; i < objects->instance_count; i++)
+	{
+		const object_instance_t *instance = &objects->instances[i];
+		int category = objects->types.types[instance->type].category;
+		float offset_x = instance->x - x;
+		float offset_z = instance->z - z;
+
+		if (category >= 0 && category < objects->types.category_count && categories[category]
+			&& (radius < 0.0f || offset_x * offset_x + offset_z * offset_z <= radius * radius))
+		{
+			remove[i] = 1;
+			any = true;
+		}
+	}
+	removed = any ? compact(objects, remove) : 0;
+	SDL_free(remove);
+	return removed;
+}
+
 bool objects_remove_nearest(objects_t *objects, float x, float z, float radius)
 {
 	int nearest = -1;

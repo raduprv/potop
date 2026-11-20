@@ -132,9 +132,11 @@ are engine/ui.c; both draw with the same backend, font and colors.
   seed, its size, cell, highest ground, how much the rain erodes it when it
   is made), the regions and what to do; at the right **The sketch** (the
   sheet as painted) or **What it makes** (the land, worked out small, the
-  rain's erosion once you stop painting). **Preview** makes the land in 3D
-  a quarter as big, nothing grown on it, outside any project (reopen the
-  sketch to go on); **Make the map** makes it at its size into the project
+  rain's erosion once you stop painting). **Preview** makes the land in 3D,
+  nothing grown on it, outside any project (New or Sketch: back to the
+  sketch as it was; **Back to** the map it replaced), as big as the map
+  made with **Full size preview** (on to start with: its land just as the
+  map's), else a quarter as big, quicker; **Make the map** makes it at its size into the project
   named (a new one, or the one open: everything on its map is lost, so it
   asks), grown as a new map is. The sketch is saved with the project
   (`sketch/regions.png`, gray: the region times 40, 0 unpainted, then

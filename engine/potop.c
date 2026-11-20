@@ -1650,6 +1650,11 @@ int potop_edit_clear(potop_t *potop, float x, float z, float radius_meters)
 	return edit_clear(&potop->world, x, z, radius_meters);
 }
 
+int potop_edit_clear_categories(potop_t *potop, float x, float z, float radius_meters, const bool *categories)
+{
+	return edit_clear_categories(&potop->world, x, z, radius_meters, categories);
+}
+
 
 bool potop_edit_place_layout(potop_t *potop, int layout, float x, float z)
 {

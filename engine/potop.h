@@ -1022,6 +1022,10 @@ bool potop_edit_add_water(potop_t *potop, float x, float z, float cubic_meters, 
 int potop_edit_plant(potop_t *potop, int category, float x, float z, float radius_meters, float seconds);
 // Every object under the brush away; how many
 int potop_edit_clear(potop_t *potop, float x, float z, float radius_meters);
+// Every object of the categories flagged (one per category of objects.ini's,
+// true: away) under the brush, or over the whole map with a radius under 0;
+// how many
+int potop_edit_clear_categories(potop_t *potop, float x, float z, float radius_meters, const bool *categories);
 // A village's layout there; the one nearest (30 m) away: how many objects went
 bool potop_edit_place_layout(potop_t *potop, int layout, float x, float z);
 int potop_edit_remove_layout(potop_t *potop, float x, float z);

@@ -1781,7 +1781,7 @@ static void apply_object_tools(testbed_t *game, float frame_seconds)
 	}
 	else if (tools->current_tool == TOOL_CLEAR)
 	{
-		potop_edit_clear(game->potop, tools->hover_point.x, tools->hover_point.z, tools->brush_radius_meters);
+		potop_edit_clear_categories(game->potop, tools->hover_point.x, tools->hover_point.z, tools->brush_radius_meters, tools->clear_categories);
 	}
 }
 
@@ -2937,7 +2937,7 @@ static bool generate_from_sketch(testbed_t *game, bool preview, const char *name
 	{
 		game->preview_return_valid = false;
 	}
-	if (preview)
+	if (preview && game->ui.sketch_preview_small)
 	{
 		int32_t small = SDL_max((size / 4 + 63) / 64 * 64, 256);
 
@@ -2973,7 +2973,8 @@ static bool generate_from_sketch(testbed_t *game, bool preview, const char *name
 		milliseconds_since(&mark));
 	if (preview)
 	{
-		SDL_snprintf(message, sizeof(message), "Preview, a quarter as big (%d cells of %.1f m): New or Sketch, back to the sketch", size, (double)cell);
+		SDL_snprintf(message, sizeof(message), "Preview%s (%d cells of %.1f m): New or Sketch, back to the sketch",
+			game->ui.sketch_preview_small ? ", a quarter as big" : "", size, (double)cell);
 		game->previewing = true;
 		show_message(game, message);
 		return true;
@@ -3109,6 +3110,14 @@ static void load_sketch_file(testbed_t *game, const char *name)
 // The projects' asks (the interface's, or the console's)
 static void handle_project_requests(testbed_t *game, const ui_requests_t *requests)
 {
+	if (requests->clear_map)
+	{
+		char message[96];
+		int removed = potop_edit_clear_categories(game->potop, 0.0f, 0.0f, -1.0f, game->tools.clear_categories);
+
+		SDL_snprintf(message, sizeof(message), "%d objects removed from the whole map", removed);
+		show_message(game, message);
+	}
 	if (requests->sketch_save && game->sketch.planes != NULL)
 	{
 		save_sketch_file(game, requests->sketch_file);

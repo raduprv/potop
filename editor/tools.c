@@ -16,6 +16,10 @@ void tools_initialize(tool_state_t *tools, const tool_settings_t *settings)
 	tools->light_intensity = 1.5f;
 	tools->light_radius_meters = 8.0f;
 	tools->light_height_meters = 1.8f;
+	for (int i = 0; i < (int)SDL_arraysize(tools->clear_categories); i++)
+	{
+		tools->clear_categories[i] = true;
+	}
 }
 
 void tools_shutdown(tool_state_t *tools)

@@ -220,6 +220,17 @@ int edit_clear(world_t *world, float x, float z, float radius_meters)
 	return objects_remove_in_radius(&world->objects, x, z, radius_meters, -1);
 }
 
+int edit_clear_categories(world_t *world, float x, float z, float radius_meters, const bool *categories)
+{
+	int removed = objects_remove_categories(&world->objects, x, z, radius_meters, categories);
+
+	if (removed > 0 && radius_meters < 0.0f)
+	{
+		material_map_restamp(&world->terrain, &world->objects);
+	}
+	return removed;
+}
+
 uint32_t edit_place_object(world_t *world, int type, float x, float z, float yaw_radians, float scale, bool awake)
 {
 	const object_types_t *types = &world->objects.types;
