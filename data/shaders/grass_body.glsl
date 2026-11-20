@@ -669,6 +669,11 @@ void main()
 			flatten = random_direction * silt * 0.8;
 		}
 	}
+	// (settings.h, grass_debug 256: none laid down, by water or silt)
+	if ((debug_flags & 256) != 0)
+	{
+		flatten = vec2(0.0);
+	}
 	vec3 root = vec3(world_xz.x, y, world_xz.y);
 	// (grass.vert's own hash of it, the same)
 	float own = blade_hash(root.xz);
