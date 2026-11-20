@@ -537,8 +537,9 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 {
 	size_t grid_texels = (size_t)SKETCH_GRID * SKETCH_GRID;
 	float *scratch = SDL_malloc(grid_texels * sizeof(float));
-	// (what the regions make, blended: the height, the detail, the crests)
-	float *blended[3];
+	// (what the regions make, blended: the height, the detail, the crests;
+	// then how much of each shape, big, normal, small)
+	float *blended[3 + TERRAIN_SKETCH_SHAPE_COUNT];
 	float *other = SDL_malloc(grid_texels * sizeof(float));
 	// (how much of each texel's own counts: none of a lake's, which takes
 	// the land round it, its lake sunk into that after: sink_lakes)
@@ -548,9 +549,10 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 	float most = settings->max_height_meters;
 	const uint8_t *regions = terrain_sketch_plane(sketch, TERRAIN_SKETCH_REGION);
 	const uint8_t *levels = terrain_sketch_plane(sketch, TERRAIN_SKETCH_LEVEL);
+	const uint8_t *shapes = terrain_sketch_plane(sketch, TERRAIN_SKETCH_SHAPE);
 	bool enough = scratch != NULL && other != NULL && weights != NULL;
 
-	for (int k = 0; k < 3; k++)
+	for (int k = 0; k < 3 + TERRAIN_SKETCH_SHAPE_COUNT; k++)
 	{
 		blended[k] = SDL_malloc(grid_texels * sizeof(float));
 		enough = enough && blended[k] != NULL;
@@ -581,11 +583,15 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 			blended[0][index] = SDL_max(base + (land->height[kind] - base) * scale, 0.0f) * weight;
 			blended[1][index] = land->roll[kind] * scale * weight;
 			blended[2][index] = land->crests[kind] * scale * weight;
+			for (int k = 0; k < TERRAIN_SKETCH_SHAPE_COUNT; k++)
+			{
+				blended[3 + k][index] = shapes[texel] == k ? 1.0f : 0.0f;
+			}
 		}
 	}
-	for (int k = 0; k < 4; k++)
+	for (int k = 0; k < 4 + TERRAIN_SKETCH_SHAPE_COUNT; k++)
 	{
-		float *grid = k < 3 ? blended[k] : weights;
+		float *grid = k < 3 + TERRAIN_SKETCH_SHAPE_COUNT ? blended[k] : weights;
 
 		for (int pass = 0; pass < 3; pass++)
 		{
@@ -617,24 +623,53 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 			float height = grid_sample(blended[0], SKETCH_GRID, u, v);
 			float rolling = grid_sample(blended[1], SKETCH_GRID, u, v);
 			float crests = grid_sample(blended[2], SKETCH_GRID, u, v);
+			float shape_weights[TERRAIN_SKETCH_SHAPE_COUNT];
+			float shape_total = 0.0f;
+			float detail = 0.0f;
+			float ridges = 0.0f;
 
-			float detail = rolling > 0.001f ? noise_fbm(&noise->hills, u * settings->feature_count * 3.0f + 7.0f, v * settings->feature_count * 3.0f - 3.0f,
-				octave_count, settings->persistence) : 0.0f;
-
-			heights[index] = (height + detail * rolling * 0.08f) * most;
-			if (crests > 0.001f)
+			// (how much of each shape here: their noises each at its own
+			// size, mixed as much; the cubic's overshoot cut)
+			for (int k = 0; k < TERRAIN_SKETCH_SHAPE_COUNT; k++)
 			{
-				// (as the seed's mountains: their ridged noise over bent
-				// coordinates, meandering crests; a little sharpened)
-				float x_bent = u * settings->feature_count * clamp_float(land->crest_scale, 0.1f, 20.0f);
-				float y_bent = v * settings->feature_count * clamp_float(land->crest_scale, 0.1f, 20.0f);
-				float bend_x = noise_fbm(&noise->warp, x_bent + 5.2f, y_bent + 1.3f, 4, 0.5f);
-				float bend_y = noise_fbm(&noise->warp, x_bent - 3.1f, y_bent + 7.7f, 4, 0.5f);
-				float ridge = noise_ridged(&noise->ridges, x_bent + settings->warp_amount * bend_x, y_bent + settings->warp_amount * bend_y,
-					octave_count, settings->persistence);
-
-				heights[index] += crests * SDL_powf(clamp_float(ridge, 0.0f, 1.0f), 1.5f) * most;
+				shape_weights[k] = SDL_max(grid_sample(blended[3 + k], SKETCH_GRID, u, v), 0.0f);
+				shape_weights[k] = shape_weights[k] < 0.02f ? 0.0f : shape_weights[k];
+				shape_total += shape_weights[k];
 			}
+			if (shape_total <= 0.0f)
+			{
+				shape_weights[TERRAIN_SKETCH_NORMAL] = 1.0f;
+				shape_total = 1.0f;
+			}
+			for (int k = 0; k < TERRAIN_SKETCH_SHAPE_COUNT; k++)
+			{
+				float share = shape_weights[k] / shape_total;
+				float finer = clamp_float(land->shape_scale[k], 0.1f, 10.0f);
+
+				if (share <= 0.0f)
+				{
+					continue;
+				}
+				if (rolling > 0.001f)
+				{
+					detail += share * noise_fbm(&noise->hills, u * settings->feature_count * 3.0f * finer + 7.0f,
+						v * settings->feature_count * 3.0f * finer - 3.0f, octave_count, settings->persistence);
+				}
+				if (crests > 0.001f)
+				{
+					// (as the seed's mountains: their ridged noise over bent
+					// coordinates, meandering crests; a little sharpened)
+					float x_bent = u * settings->feature_count * clamp_float(land->crest_scale, 0.1f, 20.0f) * finer;
+					float y_bent = v * settings->feature_count * clamp_float(land->crest_scale, 0.1f, 20.0f) * finer;
+					float bend_x = noise_fbm(&noise->warp, x_bent + 5.2f, y_bent + 1.3f, 4, 0.5f);
+					float bend_y = noise_fbm(&noise->warp, x_bent - 3.1f, y_bent + 7.7f, 4, 0.5f);
+					float ridge = noise_ridged(&noise->ridges, x_bent + settings->warp_amount * bend_x, y_bent + settings->warp_amount * bend_y,
+						octave_count, settings->persistence);
+
+					ridges += share * SDL_powf(clamp_float(ridge, 0.0f, 1.0f), 1.5f);
+				}
+			}
+			heights[index] = (height + detail * rolling * 0.08f) * most + crests * ridges * most;
 			heights[index] = SDL_max(heights[index], 0.0f);
 		}
 	}
@@ -642,7 +677,7 @@ done:
 	SDL_free(scratch);
 	SDL_free(other);
 	SDL_free(weights);
-	for (int k = 0; k < 3; k++)
+	for (int k = 0; k < 3 + TERRAIN_SKETCH_SHAPE_COUNT; k++)
 	{
 		SDL_free(blended[k]);
 	}

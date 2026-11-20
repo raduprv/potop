@@ -153,6 +153,7 @@ static void compose_paper(sketch_view_t *view, const terrain_sketch_t *sketch)
 {
 	const uint8_t *regions = terrain_sketch_plane(sketch, TERRAIN_SKETCH_REGION);
 	const uint8_t *levels = terrain_sketch_plane(sketch, TERRAIN_SKETCH_LEVEL);
+	const uint8_t *shapes = terrain_sketch_plane(sketch, TERRAIN_SKETCH_SHAPE);
 	int32_t step = TERRAIN_SKETCH_SIZE / SKETCH_VIEW_SIZE;
 
 #pragma omp parallel for schedule(static)
@@ -184,6 +185,23 @@ static void compose_paper(sketch_view_t *view, const terrain_sketch_t *sketch)
 					: (level == TERRAIN_SKETCH_LOW ? lerp_float((float)color[c], 255.0f, 0.45f) : (float)color[c] * 0.65f);
 
 				pixel[c] = (uint8_t)(border ? shade * 0.6f : shade);
+			}
+			// (big shapes: big sparse dots; small ones: small dense dots)
+			if (region != TERRAIN_SKETCH_NONE && !border && shapes[texel] != TERRAIN_SKETCH_NORMAL)
+			{
+				bool big = shapes[texel] == TERRAIN_SKETCH_BIG;
+				int32_t spacing = big ? 14 : 5;
+				int32_t dot = big ? 2 : 0;
+				int32_t offset_x = (x + ((y / spacing) % 2) * (spacing / 2)) % spacing;
+				int32_t offset_y = y % spacing;
+
+				if (offset_x <= dot && offset_y <= dot)
+				{
+					for (int c = 0; c < 3; c++)
+					{
+						pixel[c] = (uint8_t)(pixel[c] * 0.55f);
+					}
+				}
 			}
 			pixel[3] = 255;
 		}

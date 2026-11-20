@@ -54,13 +54,32 @@ typedef enum
 	TERRAIN_SKETCH_LEVEL_COUNT
 } terrain_sketch_level_t;
 
+// How big its shapes are: a few big mountains or hills, or many small
+// peaks and knolls (the noises' features bigger or smaller)
+typedef enum
+{
+	TERRAIN_SKETCH_BIG = 0,
+	TERRAIN_SKETCH_NORMAL,
+	TERRAIN_SKETCH_SMALL,
+	TERRAIN_SKETCH_SHAPE_COUNT
+} terrain_sketch_shape_t;
+
 typedef enum
 {
 	TERRAIN_SKETCH_REGION = 0,
 	TERRAIN_SKETCH_WATER,
 	TERRAIN_SKETCH_LEVEL,          // each texel's terrain_sketch_level_t
+	TERRAIN_SKETCH_SHAPE,          // each texel's terrain_sketch_shape_t
 	TERRAIN_SKETCH_PLANES
 } terrain_sketch_plane_t;
+
+// What a brush paints: the region, how much of its kind, how big its shapes
+typedef struct
+{
+	terrain_sketch_region_t region;
+	terrain_sketch_level_t level;
+	terrain_sketch_shape_t shape;
+} terrain_sketch_brush_t;
 
 // What the regions make (terrain_gen.c), the sketch window's Land: each
 // region's height (a share of the highest ground), its rolling land (the
@@ -81,6 +100,7 @@ typedef struct
 	float crest_scale;
 	float lake_depth_meters;
 	float level_scale[TERRAIN_SKETCH_LEVEL_COUNT];
+	float shape_scale[TERRAIN_SKETCH_SHAPE_COUNT]; // how much finer the shapes' noises (big: fewer, bigger; small: more, smaller)
 } terrain_sketch_land_t;
 
 typedef struct
@@ -117,13 +137,13 @@ static inline uint8_t *terrain_sketch_plane(const terrain_sketch_t *sketch, terr
 	return sketch->planes + (size_t)plane * TERRAIN_SKETCH_SIZE * TERRAIN_SKETCH_SIZE;
 }
 
-// A disc of the region round (u, v) (0..1 over the map), radius a share of
-// its side, at that level (TERRAIN_SKETCH_NONE: rubbed out)
-void terrain_sketch_paint(terrain_sketch_t *sketch, terrain_sketch_region_t region, terrain_sketch_level_t level, float u, float v, float radius);
+// A disc of what the brush paints round (u, v) (0..1 over the map), radius
+// a share of its side (its region TERRAIN_SKETCH_NONE: rubbed out)
+void terrain_sketch_paint(terrain_sketch_t *sketch, const terrain_sketch_brush_t *brush, float u, float v, float radius);
 
 // The same along a stroke, from one point to the next (no gaps between)
-void terrain_sketch_paint_line(terrain_sketch_t *sketch, terrain_sketch_region_t region, terrain_sketch_level_t level, float from_u, float from_v,
-	float to_u, float to_v, float radius);
+void terrain_sketch_paint_line(terrain_sketch_t *sketch, const terrain_sketch_brush_t *brush, float from_u, float from_v, float to_u, float to_v,
+	float radius);
 
 // The region at (u, v)
 terrain_sketch_region_t terrain_sketch_region_at(const terrain_sketch_t *sketch, float u, float v);
@@ -137,7 +157,8 @@ int terrain_sketch_lake_at(const terrain_sketch_t *sketch, float u, float v);
 // The lakes' hint at (u, v), its texel's (0..1: over a half, in a lake)
 float terrain_sketch_lake_hint(const terrain_sketch_t *sketch, float u, float v);
 
-// In a folder (ending in a slash): regions.png and land.ini. Load: false
+// In a folder (ending in a slash): regions.png, shapes.png (gray: big 0,
+// normal 128, small 255; none: all normal) and land.ini. Load: false
 // if there is no regions.png (the sketch then blank, the land as it starts)
 bool terrain_sketch_save(const terrain_sketch_t *sketch, const char *folder);
 bool terrain_sketch_load(terrain_sketch_t *sketch, const char *folder);

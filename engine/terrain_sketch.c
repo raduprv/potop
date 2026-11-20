@@ -45,6 +45,9 @@ void terrain_sketch_land_defaults(terrain_sketch_land_t *land)
 	land->level_scale[TERRAIN_SKETCH_LOW] = 0.5f;
 	land->level_scale[TERRAIN_SKETCH_MEDIUM] = 1.0f;
 	land->level_scale[TERRAIN_SKETCH_HIGH] = 1.7f;
+	land->shape_scale[TERRAIN_SKETCH_BIG] = 0.45f;
+	land->shape_scale[TERRAIN_SKETCH_NORMAL] = 1.0f;
+	land->shape_scale[TERRAIN_SKETCH_SMALL] = 2.2f;
 }
 
 void terrain_sketch_destroy(terrain_sketch_t *sketch)
@@ -63,6 +66,7 @@ void terrain_sketch_clear(terrain_sketch_t *sketch)
 	}
 	SDL_memset(sketch->planes, 0, TERRAIN_SKETCH_PLANES * PLANE_TEXELS);
 	SDL_memset(terrain_sketch_plane(sketch, TERRAIN_SKETCH_LEVEL), TERRAIN_SKETCH_MEDIUM, PLANE_TEXELS);
+	SDL_memset(terrain_sketch_plane(sketch, TERRAIN_SKETCH_SHAPE), TERRAIN_SKETCH_NORMAL, PLANE_TEXELS);
 	sketch->lake_count = 0;
 	sketch->revision++;
 }
@@ -86,12 +90,29 @@ bool terrain_sketch_painted(const terrain_sketch_t *sketch)
 	return false;
 }
 
-static terrain_sketch_level_t clamp_level(terrain_sketch_level_t level)
+// The brush's values, each within its range (none: rubbed out, the rest
+// as it starts)
+static terrain_sketch_brush_t clean_brush(const terrain_sketch_brush_t *brush)
 {
-	return level < TERRAIN_SKETCH_LOW ? TERRAIN_SKETCH_LOW : (level > TERRAIN_SKETCH_HIGH ? TERRAIN_SKETCH_HIGH : level);
+	terrain_sketch_brush_t clean = *brush;
+
+	if (clean.level < TERRAIN_SKETCH_LOW || clean.level > TERRAIN_SKETCH_HIGH)
+	{
+		clean.level = TERRAIN_SKETCH_MEDIUM;
+	}
+	if (clean.shape < TERRAIN_SKETCH_BIG || clean.shape > TERRAIN_SKETCH_SMALL)
+	{
+		clean.shape = TERRAIN_SKETCH_NORMAL;
+	}
+	if (clean.region == TERRAIN_SKETCH_NONE)
+	{
+		clean.level = TERRAIN_SKETCH_MEDIUM;
+		clean.shape = TERRAIN_SKETCH_NORMAL;
+	}
+	return clean;
 }
 
-static void paint_disc(terrain_sketch_t *sketch, terrain_sketch_region_t region, terrain_sketch_level_t level, float u, float v, float radius)
+static void paint_disc(terrain_sketch_t *sketch, const terrain_sketch_brush_t *brush, float u, float v, float radius)
 {
 	float center_x = u * (float)TERRAIN_SKETCH_SIZE - 0.5f;
 	float center_y = v * (float)TERRAIN_SKETCH_SIZE - 0.5f;
@@ -103,6 +124,7 @@ static void paint_disc(terrain_sketch_t *sketch, terrain_sketch_region_t region,
 	uint8_t *regions = terrain_sketch_plane(sketch, TERRAIN_SKETCH_REGION);
 	uint8_t *water = terrain_sketch_plane(sketch, TERRAIN_SKETCH_WATER);
 	uint8_t *levels = terrain_sketch_plane(sketch, TERRAIN_SKETCH_LEVEL);
+	uint8_t *shapes = terrain_sketch_plane(sketch, TERRAIN_SKETCH_SHAPE);
 
 	for (int32_t y = first_y; y <= last_y; y++)
 	{
@@ -116,40 +138,46 @@ static void paint_disc(terrain_sketch_t *sketch, terrain_sketch_region_t region,
 			{
 				continue;
 			}
-			regions[index] = (uint8_t)region;
-			water[index] = region == TERRAIN_SKETCH_LAKE ? 255 : 0;
-			levels[index] = (uint8_t)(region == TERRAIN_SKETCH_NONE ? TERRAIN_SKETCH_MEDIUM : level);
+			regions[index] = (uint8_t)brush->region;
+			water[index] = brush->region == TERRAIN_SKETCH_LAKE ? 255 : 0;
+			levels[index] = (uint8_t)brush->level;
+			shapes[index] = (uint8_t)brush->shape;
 		}
 	}
 }
 
-void terrain_sketch_paint(terrain_sketch_t *sketch, terrain_sketch_region_t region, terrain_sketch_level_t level, float u, float v, float radius)
+void terrain_sketch_paint(terrain_sketch_t *sketch, const terrain_sketch_brush_t *brush, float u, float v, float radius)
 {
-	if (sketch->planes == NULL || region < 0 || region >= TERRAIN_SKETCH_REGION_COUNT)
+	terrain_sketch_brush_t clean;
+
+	if (sketch->planes == NULL || brush->region < 0 || brush->region >= TERRAIN_SKETCH_REGION_COUNT)
 	{
 		return;
 	}
-	paint_disc(sketch, region, clamp_level(level), u, v, radius);
+	clean = clean_brush(brush);
+	paint_disc(sketch, &clean, u, v, radius);
 	sketch->revision++;
 }
 
-void terrain_sketch_paint_line(terrain_sketch_t *sketch, terrain_sketch_region_t region, terrain_sketch_level_t level, float from_u, float from_v,
-	float to_u, float to_v, float radius)
+void terrain_sketch_paint_line(terrain_sketch_t *sketch, const terrain_sketch_brush_t *brush, float from_u, float from_v, float to_u, float to_v,
+	float radius)
 {
 	float length = SDL_sqrtf((to_u - from_u) * (to_u - from_u) + (to_v - from_v) * (to_v - from_v));
 	// (discs a third of the radius apart: an even stroke)
 	int steps = (int)SDL_ceilf(length / SDL_max(radius * 0.33f, 0.5f / (float)TERRAIN_SKETCH_SIZE));
+	terrain_sketch_brush_t clean;
 
-	if (sketch->planes == NULL || region < 0 || region >= TERRAIN_SKETCH_REGION_COUNT)
+	if (sketch->planes == NULL || brush->region < 0 || brush->region >= TERRAIN_SKETCH_REGION_COUNT)
 	{
 		return;
 	}
+	clean = clean_brush(brush);
 	steps = SDL_clamp(steps, 1, 4096);
 	for (int k = 1; k <= steps; k++)
 	{
 		float along = (float)k / (float)steps;
 
-		paint_disc(sketch, region, clamp_level(level), lerp_float(from_u, to_u, along), lerp_float(from_v, to_v, along), radius);
+		paint_disc(sketch, &clean, lerp_float(from_u, to_u, along), lerp_float(from_v, to_v, along), radius);
 	}
 	sketch->revision++;
 }
@@ -343,6 +371,17 @@ bool terrain_sketch_save(const terrain_sketch_t *sketch, const char *folder)
 		gray[i] = (uint8_t)(regions[i] * TERRAIN_SKETCH_PNG_STEP + over);
 	}
 	saved = save_png(folder, "regions.png", gray, NULL);
+	// (the shapes: big black, normal gray, small white)
+	if (saved)
+	{
+		const uint8_t *shapes = terrain_sketch_plane(sketch, TERRAIN_SKETCH_SHAPE);
+
+		for (size_t i = 0; i < PLANE_TEXELS; i++)
+		{
+			gray[i] = (uint8_t)(shapes[i] == TERRAIN_SKETCH_BIG ? 0 : (shapes[i] == TERRAIN_SKETCH_SMALL ? 255 : 128));
+		}
+		saved = save_png(folder, "shapes.png", gray, NULL);
+	}
 	SDL_free(gray);
 	if (saved)
 	{
@@ -354,9 +393,10 @@ bool terrain_sketch_save(const terrain_sketch_t *sketch, const char *folder)
 
 		length += (size_t)SDL_snprintf(text + length, sizeof(text) - length,
 			"; What the sketch's regions make (terrain_sketch.h)\nblend_share = %.4f\ncrest_scale = %.3f\nlake_depth_meters = %.2f\n"
-			"low_scale = %.3f\nhigh_scale = %.3f\n",
+			"low_scale = %.3f\nhigh_scale = %.3f\nbig_shapes = %.3f\nsmall_shapes = %.3f\n",
 			(double)land->blend_share, (double)land->crest_scale, (double)land->lake_depth_meters,
-			(double)land->level_scale[TERRAIN_SKETCH_LOW], (double)land->level_scale[TERRAIN_SKETCH_HIGH]);
+			(double)land->level_scale[TERRAIN_SKETCH_LOW], (double)land->level_scale[TERRAIN_SKETCH_HIGH],
+			(double)land->shape_scale[TERRAIN_SKETCH_BIG], (double)land->shape_scale[TERRAIN_SKETCH_SMALL]);
 		for (int i = 0; i < TERRAIN_SKETCH_REGION_COUNT && length < sizeof(text); i++)
 		{
 			length += (size_t)SDL_snprintf(text + length, sizeof(text) - length, "%s_height = %.4f\n%s_roll = %.4f\n%s_crests = %.4f\n", names[i],
@@ -399,6 +439,14 @@ static void read_land_line(terrain_sketch_land_t *land, const char *line)
 	{
 		land->level_scale[TERRAIN_SKETCH_HIGH] = value;
 	}
+	else if (SDL_strcmp(key, "big_shapes") == 0)
+	{
+		land->shape_scale[TERRAIN_SKETCH_BIG] = value;
+	}
+	else if (SDL_strcmp(key, "small_shapes") == 0)
+	{
+		land->shape_scale[TERRAIN_SKETCH_SMALL] = value;
+	}
 	for (int i = 0; i < TERRAIN_SKETCH_REGION_COUNT; i++)
 	{
 		size_t name_length = SDL_strlen(names[i]);
@@ -435,6 +483,22 @@ bool terrain_sketch_load(terrain_sketch_t *sketch, const char *folder)
 		return false;
 	}
 	loaded = load_png(folder, "regions.png", regions, NULL);
+	// (the shapes, gray to the nearest; none: all normal, as cleared)
+	{
+		uint8_t *shapes = terrain_sketch_plane(sketch, TERRAIN_SKETCH_SHAPE);
+
+		if (loaded && load_png(folder, "shapes.png", shapes, NULL))
+		{
+			for (size_t i = 0; i < PLANE_TEXELS; i++)
+			{
+				shapes[i] = (uint8_t)(shapes[i] < 64 ? TERRAIN_SKETCH_BIG : (shapes[i] > 192 ? TERRAIN_SKETCH_SMALL : TERRAIN_SKETCH_NORMAL));
+			}
+		}
+		else
+		{
+			SDL_memset(shapes, TERRAIN_SKETCH_NORMAL, PLANE_TEXELS);
+		}
+	}
 	terrain_sketch_land_defaults(&sketch->land);
 	{
 		char path[1024];

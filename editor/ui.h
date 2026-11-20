@@ -108,6 +108,12 @@ typedef struct
 	bool sketch_preview;
 	bool sketch_generate;
 	bool sketch_back;              // back to the map the previews replaced (ui_view_t.preview_return)
+	// The sketch kept on its own under the name sketch_file says
+	// (project.h: sketch_library_path), the window's map fields with it;
+	// or one kept so brought back
+	bool sketch_save;
+	bool sketch_load;
+	char sketch_file[PROJECT_NAME_LENGTH];
 	bool apply_render;             // textures, shadow maps, vsync
 	bool apply_objects;            // vegetation density: grow it anew
 	bool regrow;
@@ -222,11 +228,14 @@ typedef struct
 	bool sketch_known;             // its fields filled in (when first opened)
 	int sketch_brush;              // a region (sketch_presets), SKETCH_PRESET_COUNT erase
 	terrain_sketch_level_t sketch_level; // how much of its kind the brush paints
+	terrain_sketch_shape_t sketch_shape; // how big its shapes
 	float sketch_brush_meters;     // the brush's radius
 	bool sketch_stroke;            // painting: the mouse held since the frame before, there
 	float sketch_last_u;
 	float sketch_last_v;
 	char sketch_name_input[PROJECT_NAME_LENGTH];
+	char sketch_library[PROJECT_LIST_MAX][PROJECT_NAME_LENGTH]; // the sketches kept (project.h: sketch_library_list)
+	int sketch_library_count;
 	char sketch_seed_input[16];
 	int sketch_size_index;         // 1024, 2048, 4096, 8192 cells a side
 	float sketch_cell_meters;

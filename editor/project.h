@@ -57,4 +57,14 @@ int project_list(project_info_t *infos_out, int max_infos);
 // Deletes a project's folder and what is in it (its files and the sketch's)
 bool project_delete(const char *name);
 
+// The sketches kept on their own (the sketch window's Save sketch), each a
+// folder under the preference directory (sketches/NAME/: the sketch's own
+// files, terrain_sketch_save's, and sketch.ini, the window's map fields):
+// its folder (made if missing; false if there is no preference directory),
+// and their names, alphabetically, and their count
+#define SKETCH_LIBRARY_FOLDER "sketches/"
+#define SKETCH_LIBRARY_INFO_FILE "sketch.ini"
+bool sketch_library_path(const char *name, char *path_out, size_t path_out_size);
+int sketch_library_list(char (*names_out)[PROJECT_NAME_LENGTH], int max_names);
+
 #endif

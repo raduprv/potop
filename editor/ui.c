@@ -2369,8 +2369,10 @@ static void sketch_fill_fields(ui_t *ui, const ui_view_t *view)
 	}
 	ui->sketch_brush = 0;
 	ui->sketch_level = TERRAIN_SKETCH_MEDIUM;
+	ui->sketch_shape = TERRAIN_SKETCH_NORMAL;
 	ui->sketch_brush_meters = SDL_max((float)ui_sketch_size(ui) * ui->sketch_cell_meters * 0.06f, 20.0f);
 	ui->project_count = project_list(ui->projects, PROJECT_LIST_MAX);
+	ui->sketch_library_count = sketch_library_list(ui->sketch_library, PROJECT_LIST_MAX);
 	ui->sketch_known = true;
 }
 
@@ -2442,6 +2444,10 @@ static void sketch_land_controls(ui_t *ui, terrain_sketch_t *sketch)
 		"How much of its kind a low region is (its height over the unpainted land, its roll, its crests; a lake's depth)");
 	changed |= slider_row(ui, "High", &land->level_scale[TERRAIN_SKETCH_HIGH], 1.0f, 3.0f, 0.05f, "x%.2f",
 		"How much of its kind a high region is");
+	changed |= slider_row(ui, "Big shapes", &land->shape_scale[TERRAIN_SKETCH_BIG], 0.15f, 1.0f, 0.05f, "x%.2f",
+		"How much finer a big-shaped region's noise is (under 1: fewer, bigger mountains and hills)");
+	changed |= slider_row(ui, "Small shapes", &land->shape_scale[TERRAIN_SKETCH_SMALL], 1.0f, 6.0f, 0.1f, "x%.1f",
+		"How much finer a small-shaped one's (more, smaller peaks and knolls)");
 	if (slider_row(ui, "Borders", &borders_percent, 0.2f, 8.0f, 0.1f, "%.1f %%", "How far the regions blend into each other (of the map's side)"))
 	{
 		land->blend_share = borders_percent * 0.01f;
@@ -2500,6 +2506,37 @@ static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
 	nk_layout_row_dynamic(context, SMALL_ROW_HEIGHT, 1);
 	SDL_snprintf(line, sizeof(line), "%.1f x %.1f km", (double)(map_meters * 0.001f), (double)(map_meters * 0.001f));
 	nk_label(context, line, NK_TEXT_LEFT);
+	// The sketch kept on its own, under the project's name (with the map's
+	// fields above), or one kept brought back
+	nk_layout_row_dynamic(context, ROW_HEIGHT, 2);
+	clean_project_name(ui->sketch_name_input, clean, sizeof(clean));
+	if (clean[0] == '\0')
+	{
+		nk_widget_disable_begin(context);
+	}
+	tooltip_if_hovered(context, "Keep the sketch on its own, under the project's name above (with the map's size, seed and the rest)");
+	if (nk_button_label(context, "Save sketch") && clean[0] != '\0')
+	{
+		ui->requests.sketch_save = true;
+		SDL_strlcpy(ui->requests.sketch_file, clean, sizeof(ui->requests.sketch_file));
+	}
+	if (clean[0] == '\0')
+	{
+		nk_widget_disable_end(context);
+	}
+	if (nk_combo_begin_label(context, ui->sketch_library_count > 0 ? "Load sketch" : "No sketches kept", nk_vec2(260.0f, 300.0f)))
+	{
+		nk_layout_row_dynamic(context, ROW_HEIGHT, 1);
+		for (int i = 0; i < ui->sketch_library_count; i++)
+		{
+			if (nk_combo_item_label(context, ui->sketch_library[i], NK_TEXT_LEFT))
+			{
+				ui->requests.sketch_load = true;
+				SDL_strlcpy(ui->requests.sketch_file, ui->sketch_library[i], sizeof(ui->requests.sketch_file));
+			}
+		}
+		nk_combo_end(context);
+	}
 
 	section_label(ui, "Brushes (left: paint, right: erase)");
 	// (each a swatch of its color on the sheet, then its name)
@@ -2541,6 +2578,27 @@ static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
 				ui->sketch_level = (terrain_sketch_level_t)i;
 			}
 			tooltip_if_hovered(context, level_tooltips[i]);
+		}
+	}
+	// (how big its shapes: a few big mountains, many small peaks)
+	{
+		static const char *const shape_names[TERRAIN_SKETCH_SHAPE_COUNT] = { "Big", "Normal", "Small" };
+		static const char *const shape_tooltips[TERRAIN_SKETCH_SHAPE_COUNT] = {
+			"Fewer, bigger shapes: a few big mountains, broad hills (on the sheet: big dots)",
+			"The shapes as big as What the regions make says",
+			"More, smaller shapes: many small peaks, knolls (on the sheet: small dots)" };
+
+		nk_layout_row(context, NK_DYNAMIC, ROW_HEIGHT, 4, (const float[]){ 0.25f, 0.25f, 0.25f, 0.25f });
+		nk_label(context, "Shapes", NK_TEXT_LEFT);
+		for (int i = 0; i < TERRAIN_SKETCH_SHAPE_COUNT; i++)
+		{
+			nk_bool selected = ui->sketch_shape == (terrain_sketch_shape_t)i;
+
+			if (nk_selectable_label(context, shape_names[i], NK_TEXT_CENTERED, &selected))
+			{
+				ui->sketch_shape = (terrain_sketch_shape_t)i;
+			}
+			tooltip_if_hovered(context, shape_tooltips[i]);
 		}
 	}
 	slider_row(ui, "Brush", &ui->sketch_brush_meters, 10.0f, SDL_max(map_meters * 0.3f, 20.0f), 10.0f, "%.0f m", "How far the brush reaches");
@@ -2694,15 +2752,15 @@ static void sketch_window(ui_t *ui, const ui_view_t *view)
 			// A stroke: from where the mouse was the frame before, no gaps
 			if (over && (paint || erase))
 			{
-				terrain_sketch_region_t region = erase ? TERRAIN_SKETCH_NONE : sketch_region_of(ui);
+				terrain_sketch_brush_t brush = { erase ? TERRAIN_SKETCH_NONE : sketch_region_of(ui), ui->sketch_level, ui->sketch_shape };
 
 				if (ui->sketch_stroke)
 				{
-					terrain_sketch_paint_line(view->sketch, region, ui->sketch_level, ui->sketch_last_u, ui->sketch_last_v, u, v, radius);
+					terrain_sketch_paint_line(view->sketch, &brush, ui->sketch_last_u, ui->sketch_last_v, u, v, radius);
 				}
 				else
 				{
-					terrain_sketch_paint(view->sketch, region, ui->sketch_level, u, v, radius);
+					terrain_sketch_paint(view->sketch, &brush, u, v, radius);
 				}
 				ui->sketch_last_u = u;
 				ui->sketch_last_v = v;

@@ -3012,9 +3012,111 @@ static void return_from_preview(testbed_t *game)
 	show_message(game, message);
 }
 
+// The sketch kept on its own (project.h: sketch_library_path), with the
+// sketch window's map fields in sketch.ini
+static void save_sketch_file(testbed_t *game, const char *name)
+{
+	char folder[1024];
+	char path[1100];
+	char text[512];
+	char message[192];
+	int length;
+	bool saved = sketch_library_path(name, folder, sizeof(folder)) && terrain_sketch_save(&game->sketch, folder);
+
+	if (saved)
+	{
+		length = SDL_snprintf(text, sizeof(text),
+			"; The sketch window's map fields with this sketch\nseed = %s\nsize_cells = %d\ncell_size_meters = %.3f\nmax_height_meters = %.1f\n"
+			"erosion_droplets = %.2f\n",
+			game->ui.sketch_seed_input, ui_sketch_size(&game->ui), (double)game->ui.sketch_cell_meters, (double)game->ui.sketch_max_height,
+			(double)game->ui.sketch_erosion);
+		SDL_snprintf(path, sizeof(path), "%s" SKETCH_LIBRARY_INFO_FILE, folder);
+		saved = file_io_save_file(path, text, (size_t)SDL_clamp(length, 0, (int)sizeof(text) - 1));
+	}
+	game->ui.sketch_library_count = sketch_library_list(game->ui.sketch_library, PROJECT_LIST_MAX);
+	SDL_snprintf(message, sizeof(message), saved ? "Sketch \"%s\" kept" : "Could not keep the sketch \"%s\" (see the log)", name);
+	show_message(game, message);
+}
+
+// A sketch kept brought back, the window's map fields as kept with it
+static void load_sketch_file(testbed_t *game, const char *name)
+{
+	char folder[1024];
+	char path[1100];
+	char message[192];
+	char *text;
+	size_t size = 0;
+
+	if (!sketch_library_path(name, folder, sizeof(folder)) || !terrain_sketch_load(&game->sketch, folder))
+	{
+		SDL_snprintf(message, sizeof(message), "Could not bring back the sketch \"%s\" (see the log)", name);
+		show_message(game, message);
+		return;
+	}
+	SDL_snprintf(path, sizeof(path), "%s" SKETCH_LIBRARY_INFO_FILE, folder);
+	text = file_io_load_file(path, &size);
+	if (text != NULL)
+	{
+		char *line = text;
+
+		for (size_t i = 0; i <= size; i++)
+		{
+			char key[48];
+			char value[48];
+
+			if (i < size && text[i] != '\n')
+			{
+				continue;
+			}
+			if (i < size)
+			{
+				text[i] = '\0';
+			}
+			if (SDL_sscanf(line, " %47[a-z_] = %47s", key, value) == 2)
+			{
+				if (SDL_strcmp(key, "seed") == 0)
+				{
+					SDL_strlcpy(game->ui.sketch_seed_input, value, sizeof(game->ui.sketch_seed_input));
+				}
+				else if (SDL_strcmp(key, "size_cells") == 0)
+				{
+					int cells = SDL_atoi(value);
+
+					game->ui.sketch_size_index = cells <= 1024 ? 0 : (cells <= 2048 ? 1 : (cells <= 4096 ? 2 : 3));
+				}
+				else if (SDL_strcmp(key, "cell_size_meters") == 0)
+				{
+					game->ui.sketch_cell_meters = (float)SDL_atof(value);
+				}
+				else if (SDL_strcmp(key, "max_height_meters") == 0)
+				{
+					game->ui.sketch_max_height = (float)SDL_atof(value);
+				}
+				else if (SDL_strcmp(key, "erosion_droplets") == 0)
+				{
+					game->ui.sketch_erosion = (float)SDL_atof(value);
+				}
+			}
+			line = &text[i + 1];
+		}
+		SDL_free(text);
+	}
+	SDL_strlcpy(game->ui.sketch_name_input, name, sizeof(game->ui.sketch_name_input));
+	SDL_snprintf(message, sizeof(message), "Sketch \"%s\" back", name);
+	show_message(game, message);
+}
+
 // The projects' asks (the interface's, or the console's)
 static void handle_project_requests(testbed_t *game, const ui_requests_t *requests)
 {
+	if (requests->sketch_save && game->sketch.planes != NULL)
+	{
+		save_sketch_file(game, requests->sketch_file);
+	}
+	if (requests->sketch_load && game->sketch.planes != NULL)
+	{
+		load_sketch_file(game, requests->sketch_file);
+	}
 	// (a map made, opened, loaded or new: the one before a preview gone)
 	if (requests->project_new || requests->project_open || requests->project_import)
 	{
@@ -3082,6 +3184,7 @@ static void sketch_command(void *user, const char *arguments)
 	float v = 0.5f;
 	float radius = 0.1f;
 	float level_number = 2.0f;
+	float shape_number = 2.0f;
 
 	if (game->sketch.planes == NULL)
 	{
@@ -3109,7 +3212,7 @@ static void sketch_command(void *user, const char *arguments)
 		}
 		game->ui.sketch_known = true;
 	}
-	SDL_sscanf(arguments, "%15s %127s %f %f %f %f", verb, first, &u, &v, &radius, &level_number);
+	SDL_sscanf(arguments, "%15s %127s %f %f %f %f %f", verb, first, &u, &v, &radius, &level_number, &shape_number);
 	if (SDL_strcmp(verb, "open") == 0)
 	{
 		game->ui.sketch_open = true;
@@ -3127,8 +3230,30 @@ static void sketch_command(void *user, const char *arguments)
 			SDL_Log("sketch paint: no region \"%s\" (plain, hills, mountains, valley, lake, erase)", first);
 			return;
 		}
-		terrain_sketch_paint(&game->sketch, preset < SKETCH_PRESET_COUNT ? sketch_presets[preset].region : TERRAIN_SKETCH_NONE,
-			(terrain_sketch_level_t)SDL_clamp((int)SDL_lroundf(level_number) - 1, 0, TERRAIN_SKETCH_LEVEL_COUNT - 1), u, v, radius);
+		terrain_sketch_brush_t brush;
+
+		brush.region = preset < SKETCH_PRESET_COUNT ? sketch_presets[preset].region : TERRAIN_SKETCH_NONE;
+		brush.level = (terrain_sketch_level_t)SDL_clamp((int)SDL_lroundf(level_number) - 1, 0, TERRAIN_SKETCH_LEVEL_COUNT - 1);
+		brush.shape = (terrain_sketch_shape_t)SDL_clamp((int)SDL_lroundf(shape_number) - 1, 0, TERRAIN_SKETCH_SHAPE_COUNT - 1);
+		terrain_sketch_paint(&game->sketch, &brush, u, v, radius);
+	}
+	else if (SDL_strcmp(verb, "save") == 0 || SDL_strcmp(verb, "load") == 0)
+	{
+		char clean[MAP_FILE_NAME_LENGTH];
+
+		map_file_clean_name(first, clean, sizeof(clean));
+		if (clean[0] == '\0')
+		{
+			SDL_Log("sketch %s <name>", verb);
+		}
+		else if (verb[0] == 's')
+		{
+			save_sketch_file(game, clean);
+		}
+		else
+		{
+			load_sketch_file(game, clean);
+		}
 	}
 	else if (SDL_strcmp(verb, "seed") == 0)
 	{
@@ -3168,7 +3293,7 @@ static void sketch_command(void *user, const char *arguments)
 	}
 	else
 	{
-		SDL_Log("sketch open | clear | paint <region> <u> <v> <radius> | seed <n> | size <cells> | preview | make <project> | picture <file>");
+		SDL_Log("sketch open | clear | paint <region> <u> <v> <radius> [level 1..3] [shapes 1..3] | save <name> | load <name> | seed <n> | size <cells> | preview | make <project> | picture <file>");
 	}
 }
 
@@ -6214,7 +6339,7 @@ int main(int argument_count, char **arguments)
 	console_add_command(&game.console, "project", "project list | new <name> [seed] | open <name> | save [name] | bake | import <map> <name>",
 		"Map projects (the Save, Open and New windows): their folders under projects/", project_command, &game);
 	console_add_command(&game.console, "sketch",
-		"sketch open | clear | paint <region> <u> <v> <radius> | seed <n> | size <cells> | show sketch|result | preview | make <project> | picture <file.png>",
+		"sketch open | clear | paint <region> <u> <v> <radius> [level 1..3] [shapes 1..3] | save <name> | load <name> | seed <n> | size <cells> | show sketch|result | preview | make <project> | picture <file.png>",
 		"The new map's sketch (the Sketch window): regions plain, hills, mountains, valley, lake, erase; u, v and radius shares of the map", sketch_command,
 		&game);
 	if (!terrain_sketch_create(&game.sketch) || !sketch_view_create(&game.sketch_view))

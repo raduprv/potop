@@ -197,3 +197,58 @@ bool project_delete(const char *name)
 	SDL_EnumerateDirectory(folder, remove_one, &all_removed);
 	return SDL_RemovePath(folder) && all_removed;
 }
+
+bool sketch_library_path(const char *name, char *path_out, size_t path_out_size)
+{
+	char inside[PROJECT_NAME_LENGTH + 32];
+
+	if (name[0] == '\0' || SDL_strchr(name, '/') != NULL || SDL_strcmp(name, "..") == 0)
+	{
+		return false;
+	}
+	SDL_snprintf(inside, sizeof(inside), SKETCH_LIBRARY_FOLDER "%s/", name);
+	return file_io_preference_path(inside, path_out, path_out_size);
+}
+
+typedef struct
+{
+	char (*names)[PROJECT_NAME_LENGTH];
+	int max_names;
+	int count;
+} sketch_listing_t;
+
+static SDL_EnumerationResult list_one_sketch(void *user, const char *directory, const char *file_name)
+{
+	sketch_listing_t *listing = user;
+	char path[1200];
+
+	// (a folder with a sketch's regions in it)
+	SDL_snprintf(path, sizeof(path), "%s%s/regions.png", directory, file_name);
+	if (listing->count < listing->max_names && file_name[0] != '.' && SDL_strlen(file_name) < PROJECT_NAME_LENGTH && SDL_GetPathInfo(path, NULL))
+	{
+		SDL_strlcpy(listing->names[listing->count++], file_name, PROJECT_NAME_LENGTH);
+	}
+	return SDL_ENUM_CONTINUE;
+}
+
+static int alphabetically(const void *a, const void *b)
+{
+	return SDL_strcasecmp((const char *)a, (const char *)b);
+}
+
+int sketch_library_list(char (*names_out)[PROJECT_NAME_LENGTH], int max_names)
+{
+	char folder[1024];
+	sketch_listing_t listing;
+
+	listing.names = names_out;
+	listing.max_names = max_names;
+	listing.count = 0;
+	if (!file_io_preference_path(SKETCH_LIBRARY_FOLDER, folder, sizeof(folder)))
+	{
+		return 0;
+	}
+	SDL_EnumerateDirectory(folder, list_one_sketch, &listing);
+	SDL_qsort(names_out, (size_t)listing.count, PROJECT_NAME_LENGTH, alphabetically);
+	return listing.count;
+}
