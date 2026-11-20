@@ -154,6 +154,30 @@ float noise_ridged(const noise_context_t *context, float x, float y, int octave_
 	return sum / amplitude_total;
 }
 
+float noise_ridged_soft(const noise_context_t *context, float x, float y, int octave_count, float persistence, float softness)
+{
+	float sum = 0.0f;
+	float amplitude = 1.0f;
+	float amplitude_total = 0.0f;
+	float frequency = 1.0f;
+	float previous = 1.0f;
+
+	for (int octave = 0; octave < octave_count; octave++)
+	{
+		float offset = (float)octave * 53.91f;
+		float value = noise_simplex(context, x * frequency + offset, y * frequency + offset);
+		float ridge = 1.0f - (sqrtf(value * value + softness * softness) - softness);
+
+		ridge *= ridge;
+		sum += ridge * amplitude * previous;
+		amplitude_total += amplitude;
+		previous = ridge;
+		amplitude *= persistence;
+		frequency *= 2.0f;
+	}
+	return sum / amplitude_total;
+}
+
 static float quintic_fade(float value)
 {
 	return value * value * value * (value * (value * 6.0f - 15.0f) + 10.0f);

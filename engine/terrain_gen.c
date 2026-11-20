@@ -152,7 +152,10 @@ static void apply_thermal_erosion(float *heights, int32_t size, float cell_size_
 // of the talus slope to five quarters), so the faces are not each one
 // plane. Each pair of neighbors shares its own talus (the mean of theirs):
 // what one gives the other takes
-#define ISOTROPIC_TALUS_METERS 40.0f    // the talus's noise: its features about this big
+#define ISOTROPIC_TALUS_METERS 40.0f    // the talus's noise: its features about this big (and a quarter as big, half as much)
+#define ISOTROPIC_REACH_CELL_METERS 1.0f // its iterations as many as the settings say on cells this big, fewer on bigger ones:
+                                         // the land moves a cell an iteration, so as far in meters (a preview's cells, four
+                                         // times as big, settled into talus planes four times as wide: its peaks pyramids)
 #define ISOTROPIC_SHARE_STRAIGHT 0.0732f // the excess moved to a side neighbor (the eight's shares sum to a half: no overshoot)
 #define ISOTROPIC_SHARE_DIAGONAL 0.0518f // to a diagonal one (a side one's over the square root of two)
 
@@ -165,6 +168,8 @@ static void apply_thermal_erosion_isotropic(float *heights, int32_t size, float 
 	float *next = next_heights;
 	float talus_drop = settings->talus_slope * cell_size_meters;
 	float frequency = cell_size_meters / ISOTROPIC_TALUS_METERS;
+	int32_t iterations = (int32_t)SDL_lroundf((float)settings->thermal_iterations
+		* clamp_float(ISOTROPIC_REACH_CELL_METERS / SDL_max(cell_size_meters, 0.01f), 0.1f, 1.0f));
 	static const int32_t offsets[8][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { -1, 1 }, { 1, -1 }, { -1, -1 } };
 
 	if (next_heights == NULL || talus == NULL)
@@ -180,11 +185,13 @@ static void apply_thermal_erosion_isotropic(float *heights, int32_t size, float 
 	{
 		for (int32_t x = 0; x < size; x++)
 		{
-			talus[(size_t)y * (size_t)size + (size_t)x] = (uint8_t)(clamp_float(noise_lattice_value((float)x * frequency + 37.0f,
-				(float)y * frequency - 11.0f), 0.0f, 1.0f) * 255.0f + 0.5f);
+			float broad = noise_lattice_value((float)x * frequency + 37.0f, (float)y * frequency - 11.0f);
+			float fine = noise_lattice_value((float)x * frequency * 4.0f - 5.0f, (float)y * frequency * 4.0f + 23.0f);
+
+			talus[(size_t)y * (size_t)size + (size_t)x] = (uint8_t)(clamp_float((broad * 2.0f + fine) / 3.0f, 0.0f, 1.0f) * 255.0f + 0.5f);
 		}
 	}
-	for (int32_t iteration = 0; iteration < settings->thermal_iterations; iteration++)
+	for (int32_t iteration = 0; iteration < iterations; iteration++)
 	{
 #pragma omp parallel for schedule(static)
 		for (int32_t y = 0; y < size; y++)
@@ -532,7 +539,25 @@ static void transpose(const float *source, float *target, int32_t side)
 // A sketch painted: the land the regions make (each its height, rolling
 // land more or less over it, crests out of the mountains), blended across
 // their borders; the seed giving only the shapes within (its noises)
-static void apply_sketch(float *heights, int32_t size, const terrain_settings_t *settings, const generation_noise_t *noise, int octave_count,
+// The octaves a noise of the sketch's gets: as the seed's (down to the
+// smallest feature wanted), but none finer than SKETCH_FINEST_CELLS cells
+// (its features many to a map, 'across' of them): a finer one only aliases
+// on the grid, each peak a single vertex, a pyramid of the triangles round
+// it (a small-shaped region's, a preview's cells four times as big)
+#define SKETCH_FINEST_CELLS 8.0f
+
+// How round the crests are (noise_ridged_soft): no peak a pyramid
+#define SKETCH_CREST_SOFTNESS 0.12f
+
+static int sketch_octaves(int32_t size, float cell_size_meters, const terrain_settings_t *settings, float across)
+{
+	float base_wavelength_meters = (float)size * cell_size_meters / SDL_max(across, 0.1f);
+	float finest_meters = SDL_max(SDL_max(settings->minimum_feature_meters, 1.0f), SKETCH_FINEST_CELLS * cell_size_meters);
+
+	return clamp_int((int)SDL_floorf(SDL_logf(base_wavelength_meters / finest_meters) / SDL_logf(2.0f)) + 1, 1, 12);
+}
+
+static void apply_sketch(float *heights, int32_t size, float cell_size_meters, const terrain_settings_t *settings, const generation_noise_t *noise,
 	terrain_sketch_t *sketch)
 {
 	size_t grid_texels = (size_t)SKETCH_GRID * SKETCH_GRID;
@@ -554,6 +579,18 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 	const uint8_t *levels = terrain_sketch_plane(sketch, TERRAIN_SKETCH_LEVEL);
 	const uint8_t *shapes = terrain_sketch_plane(sketch, TERRAIN_SKETCH_SHAPE);
 	bool enough = scratch != NULL && other != NULL && weights != NULL && seeded != NULL;
+	// (each shape's octaves, the hills' and the crests', its features as
+	// many across the map as their noises have)
+	int hill_octaves[TERRAIN_SKETCH_SHAPE_COUNT];
+	int crest_octaves[TERRAIN_SKETCH_SHAPE_COUNT];
+
+	for (int k = 0; k < TERRAIN_SKETCH_SHAPE_COUNT; k++)
+	{
+		float finer = clamp_float(land->shape_scale[k], 0.1f, 10.0f);
+
+		hill_octaves[k] = sketch_octaves(size, cell_size_meters, settings, settings->feature_count * 3.0f * finer);
+		crest_octaves[k] = sketch_octaves(size, cell_size_meters, settings, settings->feature_count * clamp_float(land->crest_scale, 0.1f, 20.0f) * finer);
+	}
 
 	for (int k = 0; k < 3 + TERRAIN_SKETCH_SHAPE_COUNT; k++)
 	{
@@ -661,7 +698,7 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 				if (rolling > 0.001f)
 				{
 					detail += share * noise_fbm(&noise->hills, u * settings->feature_count * 3.0f * finer + 7.0f,
-						v * settings->feature_count * 3.0f * finer - 3.0f, octave_count, settings->persistence);
+						v * settings->feature_count * 3.0f * finer - 3.0f, hill_octaves[k], settings->persistence);
 				}
 				if (crests > 0.001f)
 				{
@@ -671,8 +708,8 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 					float y_bent = v * settings->feature_count * clamp_float(land->crest_scale, 0.1f, 20.0f) * finer;
 					float bend_x = noise_fbm(&noise->warp, x_bent + 5.2f, y_bent + 1.3f, 4, 0.5f);
 					float bend_y = noise_fbm(&noise->warp, x_bent - 3.1f, y_bent + 7.7f, 4, 0.5f);
-					float ridge = noise_ridged(&noise->ridges, x_bent + settings->warp_amount * bend_x, y_bent + settings->warp_amount * bend_y,
-						octave_count, settings->persistence);
+					float ridge = noise_ridged_soft(&noise->ridges, x_bent + settings->warp_amount * bend_x, y_bent + settings->warp_amount * bend_y,
+						crest_octaves[k], settings->persistence, SKETCH_CREST_SOFTNESS);
 
 					ridges += share * SDL_powf(clamp_float(ridge, 0.0f, 1.0f), 1.5f);
 				}
@@ -1270,7 +1307,7 @@ bool terrain_generate_heights(float *heights, int32_t size, float cell_size_mete
 	// 3. The sketch where it is painted
 	if (sketch != NULL && terrain_sketch_painted(sketch))
 	{
-		apply_sketch(heights, size, settings, &noise, octave_count, sketch);
+		apply_sketch(heights, size, cell_size_meters, settings, &noise, sketch);
 	}
 	else if (sketch != NULL)
 	{

@@ -39,6 +39,12 @@ float noise_fbm(const noise_context_t *context, float x, float y, int octave_cou
 // classic look for mountain ridges. Output roughly 0..1.
 float noise_ridged(const noise_context_t *context, float x, float y, int octave_count, float persistence);
 
+// The same with its crests rounded: the noise's distance from zero eased
+// over softness (in the noise's own units, of its -1..1; 0: as sharp as
+// noise_ridged), so neither its crests nor where they meet are a crease
+// sharper than the grid it is laid on (its peaks no single vertex)
+float noise_ridged_soft(const noise_context_t *context, float x, float y, int octave_count, float persistence, float softness);
+
 // Gradient noise that repeats every `period` units in x and y (period must be
 // 1..256). Roughly -1..1.
 float noise_periodic(const noise_context_t *context, float x, float y, int period);
