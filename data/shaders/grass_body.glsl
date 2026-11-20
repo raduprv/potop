@@ -398,6 +398,13 @@ vec3 blade_color(vec3 root, vec4 surface)
 {
 	vec3 ground = textureLod(material_color_array, vec3(root.xz * look.y, look.x), 3.0).rgb;
 	vec3 color = pow(ground, vec3(2.2)) * tint.rgb;
+
+	// (settings.h, grass_debug 32: all one color, to tell a darker patch
+	// from a sparser one)
+	if ((int(coarse.z + 0.5) & 32) != 0)
+	{
+		return pow(textureLod(material_color_array, vec3(vec2(0.5), look.x), 12.0).rgb, vec3(2.2)) * tint.rgb;
+	}
 	float large = textureLod(variation_texture, root.xz * terrain.w, 0.0).r;
 	float small = textureLod(variation_texture, root.xz * terrain.w * 3.83 + 0.61, 0.0).r;
 	float amount = (large - 0.5) * 0.7 + (small - 0.5) * 0.3;
