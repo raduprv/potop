@@ -1264,8 +1264,17 @@ static void icon_bar_window(ui_t *ui, const ui_view_t *view)
 						break;
 					case 3:
 						// A new map: the sketch, its fields afresh (a new name,
-						// a new seed; the open project's sketch is its own)
-						ui_open_new_map(ui, view);
+						// a new seed; the open project's sketch is its own);
+						// from a preview, back to the sketch as it was (the
+						// sheet being painted)
+						if (view->previewing)
+						{
+							ui->sketch_open = true;
+						}
+						else
+						{
+							ui_open_new_map(ui, view);
+						}
 						break;
 					case 1:
 					case 2:

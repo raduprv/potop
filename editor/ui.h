@@ -129,6 +129,7 @@ typedef struct
 	uint32_t seed;
 	bool map_baked;                // a baked map (map_file.h): it saves baked only
 	const char *project_name;      // the project open ("" none)
+	bool previewing;               // the map is a sketch's preview (New then goes back to the sketch as it was)
 	const char *preview_return;    // a preview on: the map it replaced, kept to go back to (its project's name, or the map's; NULL: none)
 	bool paused;
 	float time_scale;

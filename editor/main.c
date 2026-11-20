@@ -303,6 +303,7 @@ typedef struct
 	// it was, what was not saved too), with its project's name ("" none)
 	// and its own; dropped when a map is made, opened, loaded or new
 	bool preview_return_valid;
+	bool previewing;                   // the map is a preview
 	char preview_return_project[PROJECT_NAME_LENGTH];
 	char preview_return_name[MAP_FILE_NAME_LENGTH];
 	ui_requests_t console_requests;    // the console's "project" asks (as the interface does), done with the interface's
@@ -2709,6 +2710,7 @@ static bool load_map(testbed_t *game, const char *name)
 	// The tools' strokes end; no project's map now (nor the one before a
 	// preview)
 	game->preview_return_valid = false;
+	game->previewing = false;
 	game->tools.hover_valid = false;
 	game->tools.stamp_dragging = false;
 	game->project_name[0] = '\0';
@@ -2971,11 +2973,12 @@ static bool generate_from_sketch(testbed_t *game, bool preview, const char *name
 		milliseconds_since(&mark));
 	if (preview)
 	{
-		SDL_snprintf(message, sizeof(message), "Preview, a quarter as big (%d cells of %.1f m): not in a project (Sketch: Back to the map)", size,
-			(double)cell);
+		SDL_snprintf(message, sizeof(message), "Preview, a quarter as big (%d cells of %.1f m): New or Sketch, back to the sketch", size, (double)cell);
+		game->previewing = true;
 		show_message(game, message);
 		return true;
 	}
+	game->previewing = false;
 	return save_project(game, name);
 }
 
@@ -3000,6 +3003,7 @@ static void return_from_preview(testbed_t *game)
 		return;
 	}
 	game->preview_return_valid = false;
+	game->previewing = false;
 	game->tools.hover_valid = false;
 	game->tools.stamp_dragging = false;
 	SDL_strlcpy(game->project_name, game->preview_return_project, sizeof(game->project_name));
@@ -3015,6 +3019,7 @@ static void handle_project_requests(testbed_t *game, const ui_requests_t *reques
 	if (requests->project_new || requests->project_open || requests->project_import)
 	{
 		game->preview_return_valid = false;
+		game->previewing = false;
 	}
 	if (requests->sketch_back)
 	{
@@ -3419,6 +3424,7 @@ static void update_interface(testbed_t *game, double frame_seconds)
 	view.layouts = &game->potop->world.layouts;
 	view.seed = game->potop->world.terrain.seed;
 	view.project_name = game->project_name;
+	view.previewing = game->previewing;
 	view.preview_return = game->preview_return_valid
 		? (game->preview_return_project[0] != '\0' ? game->preview_return_project : game->preview_return_name) : NULL;
 	view.map_baked = game->potop->world.terrain.baked;
