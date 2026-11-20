@@ -263,7 +263,7 @@ float grass_amount(vec2 world_xz, float y, out float silt, out float cleared)
 #ifdef MATERIAL_MAP
 	// The cell the terrain shows there (moved as the terrain moves it, the
 	// patches between cells left out: a blade does not see them): grass, or
-	// not; less of it under what the water did and the snow
+	// not; less of it under the snow
 	{
 		ivec2 cell = clamp(ivec2(floor(soil_warped_position(grid_position, 1.5) + 0.5)), ivec2(0), ivec2(int(map.x) - 1));
 		vec4 map_cell = texelFetch(material_map_texture, cell, 0);
@@ -274,8 +274,12 @@ float grass_amount(vec2 world_xz, float y, out float silt, out float cleared)
 		{
 			return 0.0;
 		}
-		amount = (1.0 - surface.b) * (1.0 - silt)
-			* (1.0 - terrain_snow_line_amount(vec3(world_xz.x, y, world_xz.y), slope, sun_facing, broad_noise, 0.5, terrain.xyz));
+		// (wherever the grass shows at all it grows whole: the bedrock the
+		// water laid bare and the silt it left thin the ground's grass
+		// little by little, and took most of the blades with it long
+		// before the ground looked any less green; only the snow, which
+		// hides the grass, takes them)
+		amount = 1.0 - terrain_snow_line_amount(vec3(world_xz.x, y, world_xz.y), slope, sun_facing, broad_noise, 0.5, terrain.xyz);
 		// (under the snow none: it buries them as it deepens)
 		if (control.z == 1)
 		{
