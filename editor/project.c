@@ -34,9 +34,10 @@ bool project_write_info(const project_info_t *info)
 	}
 	SDL_snprintf(text, sizeof(text),
 		"; A map project (editor/project.h)\n"
-		"name = %s\nseed = %u\nsize_cells = %d\ncell_size_meters = %.3f\ncreated_seconds = %lld\nbaked = %s\n",
+		"name = %s\nseed = %u\nsize_cells = %d\ncell_size_meters = %.3f\ncreated_seconds = %lld\nbaked = %s\n"
+		"max_height_meters = %.1f\nerosion_droplets = %.2f\n",
 		info->name, info->seed, info->size_cells, (double)info->cell_size_meters, (long long)info->created_seconds,
-		info->baked ? "true" : "false");
+		info->baked ? "true" : "false", (double)info->max_height_meters, (double)info->erosion_droplets);
 	return file_io_save_file(path, text, SDL_strlen(text));
 }
 
@@ -68,6 +69,14 @@ static bool read_info_line(void *user, const char *section, const char *key, con
 	else if (SDL_strcmp(key, "baked") == 0)
 	{
 		ini_value_to_bool(value, &info->baked);
+	}
+	else if (SDL_strcmp(key, "max_height_meters") == 0)
+	{
+		info->max_height_meters = (float)SDL_atof(value);
+	}
+	else if (SDL_strcmp(key, "erosion_droplets") == 0)
+	{
+		info->erosion_droplets = (float)SDL_atof(value);
 	}
 	else
 	{

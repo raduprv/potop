@@ -6,7 +6,8 @@
 //                  from a baked map: that can only be saved baked)
 //   baked.potop    the last bake (for play); a copy goes into the saves
 //                  (NAME_baked) for the game to find
-//   sketch/        the 2D sketch the terrain is made from (to come)
+//   sketch/        the 2D sketch the terrain was made from (terrain_sketch.h:
+//                  height.png, relief.png, water.png), if one was painted
 //
 // The editor's own: the engine knows maps by path only
 // (potop_map_save_file, potop_map_load_file).
@@ -33,6 +34,9 @@ typedef struct
 	float cell_size_meters;
 	int64_t created_seconds;       // Unix time
 	bool baked;                    // its map is a baked one (brought in so)
+	// What its land was made with besides (0: not known, the settings')
+	float max_height_meters;
+	float erosion_droplets;
 	// Found by project_list (not in project.ini)
 	int64_t modified_nanoseconds;  // its map's last save
 	uint64_t map_bytes;

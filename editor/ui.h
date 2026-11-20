@@ -19,6 +19,10 @@
 //                or a cell is pinned (see inspector.h).
 //   maps         map projects: new, save or bake, open (see project.h); maps
 //                saved before projects brought in as one, or just loaded.
+//   sketch       over the whole screen: a new map's land painted roughly
+//                from above (mountains here, a plain there, a lake), the
+//                land it makes shown as it is painted; previewed in 3D a
+//                quarter as big, made into a project (terrain_sketch.h).
 //   sky          the clouds' map from above, painted with the mouse: how
 //                many clouds, how heavy, which kind (see cloud_paint.h).
 //   console      across the top while open (` or ~): the log and a
@@ -47,6 +51,8 @@
 #include "layouts.h"
 #include "map_file.h"
 #include "project.h"
+#include "sketch_view.h"
+#include "terrain_sketch.h"
 #include "object_types.h"
 #include "particles.h"
 #include "lights.h"
@@ -95,6 +101,12 @@ typedef struct
 	char project_name[PROJECT_NAME_LENGTH];
 	uint32_t project_seed;
 	char import_map[MAP_FILE_NAME_LENGTH];
+	// The sketch window's: its land in 3D a quarter as big (outside any
+	// project), or made into the project ui_t.sketch_name_input names (its
+	// map replaced if there is one); the map's size and the rest as ui_t's
+	// sketch_* say
+	bool sketch_preview;
+	bool sketch_generate;
 	bool apply_render;             // textures, shadow maps, vsync
 	bool apply_objects;            // vegetation density: grow it anew
 	bool regrow;
@@ -147,6 +159,8 @@ typedef struct
 	bool *far_shadow_off;          // the World window (debugging): the far shadow map off
 	bool *near_shadow_off;         // ... the near one
 	cloud_paint_t *cloud_paint;    // the painted sky (the sky window paints it)
+	terrain_sketch_t *sketch;      // the new map's sketch (the sketch window paints it)
+	sketch_view_t *sketch_view;    // its picture
 	float sky_eye[2];              // where the eye is on the clouds' map (meters, wind taken off)
 	double *day_hour;              // the time of day, 0..24 (the sky window sets it; NULL: no day cycle)
 	bool *day_frozen;
@@ -199,6 +213,23 @@ typedef struct
 	bool sky_brush_neutral;        // the brush brings back the settings' sky
 	uint64_t sky_last_ticks;       // the last frame painted (ms)
 	bool console_shown;            // the console was laid out this frame (drawn even with F10)
+
+	// Sketch window (terrain_sketch.h): open over everything else
+	bool sketch_open;
+	bool sketch_known;             // its fields filled in (when first opened)
+	int sketch_brush;              // a preset (sketch_presets), SKETCH_PRESET_COUNT custom, + 1 erase
+	int sketch_custom_plane;       // custom: 0 height, 1 relief, 2 water
+	float sketch_custom_value;     // ...to this (0..1)
+	float sketch_brush_meters;     // the brush's radius
+	float sketch_brush_strength;   // how fast it paints (all the way in 1 / this seconds, at its middle)
+	uint64_t sketch_last_ticks;
+	char sketch_name_input[PROJECT_NAME_LENGTH];
+	char sketch_seed_input[16];
+	int sketch_size_index;         // 1024, 2048, 4096, 8192 cells a side
+	float sketch_cell_meters;
+	float sketch_max_height;       // meters
+	float sketch_erosion;          // droplets a texel (terrain_settings_t.erosion_droplets)
+	bool sketch_confirm_replace;
 	bool state_loaded;
 
 	// Maps window
@@ -248,6 +279,11 @@ void ui_show_message(ui_t *ui, const char *message, double time_seconds);
 // Escape: closes the topmost open window (hud_close_windows first); false
 // if none was open
 bool ui_close_windows(ui_t *ui);
+
+// The sketch window's map: cells a side (its size choice)
+int32_t ui_sketch_size(const ui_t *ui);
+// Its seed (typed; 0 if none yet)
+uint32_t ui_sketch_seed(const ui_t *ui);
 
 // The game finished a request: remembered for the save window's name field
 void ui_set_map_name(ui_t *ui, const char *name);

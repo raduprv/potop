@@ -29,6 +29,7 @@
 #include "gpu_timer.h"
 #include "grass.h"
 #include "grass_mask.h"
+#include "terrain_sketch.h"
 #include "ground_items.h"
 #include "ground_overlay.h"
 #include "hiz.h"
@@ -98,6 +99,9 @@ typedef struct
 	decals_t decals;               // marks on things (bullet holes, scorches), clustered with the lights
 	waterfalls_t waterfalls;       // where the water falls, played as particles
 	sky_occlusion_t sky_occlusion; // how much sky each cell sees (worked out once per map)
+	// What a new map is made from besides its seed (the editor's sketch,
+	// terrain_sketch.h; NULL: the seed alone); its lakes filled after
+	terrain_sketch_t *generation_sketch;
 	fireflies_t fireflies;
 	object_effects_t object_effects; // the fires and smoke the buildings carry (object_effects.h)
 	ground_footprints_t ground_footprints; // the ground under the buildings: no grass, no terrain drawn (ground_footprints.h)

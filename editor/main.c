@@ -153,6 +153,8 @@
 #include "material_map.h"
 #include "tools.h"
 #include "project.h"
+#include "sketch_view.h"
+#include "terrain_sketch.h"
 #include "ui.h"
 #include "water.h"
 #include "water_renderer.h"
@@ -294,6 +296,9 @@ typedef struct
 	bool first_frame_logged;
 	// The map project open (project.h; "" none): saves go into it
 	char project_name[PROJECT_NAME_LENGTH];
+	// The new map's sketch (the sketch window, terrain_sketch.h) and its picture
+	terrain_sketch_t sketch;
+	sketch_view_t sketch_view;
 	ui_requests_t console_requests;    // the console's "project" asks (as the interface does), done with the interface's
 } testbed_t;
 
@@ -2714,8 +2719,16 @@ static bool save_project(testbed_t *game, const char *name)
 	info.size_cells = terrain->size;
 	info.cell_size_meters = terrain->cell_size_meters;
 	info.baked = baked;
+	info.max_height_meters = terrain->max_height_meters;
+	info.erosion_droplets = game->potop->settings.terrain.erosion_droplets;
 	saved = project_path(name, PROJECT_MAP_FILE, path, sizeof(path)) && potop_map_save_file(game->potop, path, name, baked)
 		&& project_write_info(&info);
+	// Its sketch, if one is painted
+	if (saved && terrain_sketch_painted(&game->sketch) && project_path(name, PROJECT_SKETCH_FOLDER, path, sizeof(path))
+		&& !terrain_sketch_save(&game->sketch, path))
+	{
+		SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Project \"%s\": its sketch could not be saved", name);
+	}
 	SDL_Log("Project save: %.0f ms", milliseconds_since(&mark));
 	if (saved)
 	{
@@ -2798,11 +2811,107 @@ static bool open_project(testbed_t *game, const char *name)
 	game->tools.stamp_dragging = false;
 	SDL_strlcpy(game->project_name, name, sizeof(game->project_name));
 	ui_set_map_name(&game->ui, name);
+	// Its sketch (none: a clean one), and the sketch window's fields from it
+	if (game->sketch.planes != NULL)
+	{
+		project_info_t info;
+
+		if (!project_path(name, PROJECT_SKETCH_FOLDER, path, sizeof(path)) || !terrain_sketch_load(&game->sketch, path))
+		{
+			terrain_sketch_clear(&game->sketch);
+		}
+		game->ui.sketch_known = false;
+		if (project_read_info(name, &info) && info.erosion_droplets > 0.0f)
+		{
+			game->potop->settings.terrain.erosion_droplets = info.erosion_droplets;
+		}
+	}
 	SDL_Log("Project open: %.0f ms", milliseconds_since(&mark));
 	SDL_snprintf(message, sizeof(message), result == POTOP_LOAD_DONE ? "Opened project \"%s\"" : "Project \"%s\": its map is damaged, parts are missing",
 		name);
 	show_message(game, message);
 	return result == POTOP_LOAD_DONE;
+}
+
+// The land's settings the sketch window says (its highest ground, its
+// erosion), and its seed (none typed: the map's)
+static void sketch_settings(const testbed_t *game, terrain_settings_t *settings_out, uint32_t *seed_out)
+{
+	*settings_out = game->potop->settings.terrain;
+	settings_out->max_height_meters = SDL_max(game->ui.sketch_max_height, 1.0f);
+	settings_out->erosion_droplets = SDL_max(game->ui.sketch_erosion, 0.0f);
+	*seed_out = ui_sketch_seed(&game->ui);
+	if (*seed_out == 0)
+	{
+		*seed_out = game->potop->world.terrain.seed;
+	}
+}
+
+static void update_sketch_view(testbed_t *game)
+{
+	terrain_settings_t settings;
+	uint32_t seed;
+
+	if (game->sketch.planes == NULL)
+	{
+		return;
+	}
+	sketch_settings(game, &settings, &seed);
+	sketch_view_update(&game->sketch_view, &game->sketch, &settings, seed, ui_sketch_size(&game->ui), SDL_max(game->ui.sketch_cell_meters, 0.1f),
+		SDL_GetTicks());
+}
+
+// A map from the sketch: as the sketch window says (its size, cell, highest
+// ground, erosion, seed); a preview a quarter as big (outside any project),
+// else into the project of that name (its map replaced)
+static bool generate_from_sketch(testbed_t *game, bool preview, const char *name)
+{
+	terrain_settings_t *terrain = &game->potop->settings.terrain;
+	int32_t size = ui_sketch_size(&game->ui);
+	float cell = SDL_max(game->ui.sketch_cell_meters, 0.1f);
+	terrain_settings_t settings;
+	uint32_t seed;
+	bool made;
+	uint64_t mark = SDL_GetPerformanceCounter();
+	char message[192];
+
+	sketch_settings(game, &settings, &seed);
+	if (preview)
+	{
+		int32_t small = SDL_max((size / 4 + 63) / 64 * 64, 256);
+
+		cell *= (float)size / (float)small;
+		size = small;
+	}
+	terrain->size = size;
+	terrain->cell_size_meters = cell;
+	terrain->max_height_meters = settings.max_height_meters;
+	terrain->erosion_droplets = settings.erosion_droplets;
+	game->potop->world.generation_sketch = &game->sketch;
+	{
+		// (a preview is for the land: nothing grown on it, which takes the
+		// longest and as much as the whole map's)
+		bool populate = game->potop->settings.objects.populate;
+
+		game->potop->settings.objects.populate = populate && !preview;
+		made = new_map(game, seed);
+		game->potop->settings.objects.populate = populate;
+	}
+	game->potop->world.generation_sketch = NULL;
+	if (!made)
+	{
+		game->input.request_quit = true;
+		return false;
+	}
+	SDL_Log("Sketch: %s %d x %d (%.2f m cells), seed %u: %.0f ms", preview ? "previewed" : "made", size, size, (double)cell, seed,
+		milliseconds_since(&mark));
+	if (preview)
+	{
+		SDL_snprintf(message, sizeof(message), "Preview, a quarter as big (%d cells of %.1f m): not in a project", size, (double)cell);
+		show_message(game, message);
+		return true;
+	}
+	return save_project(game, name);
 }
 
 // The projects' asks (the interface's, or the console's)
@@ -2838,6 +2947,122 @@ static void handle_project_requests(testbed_t *game, const ui_requests_t *reques
 	if (requests->project_import && load_map(game, requests->import_map))
 	{
 		save_project(game, requests->project_name);
+	}
+	if (requests->sketch_preview)
+	{
+		generate_from_sketch(game, true, NULL);
+	}
+	if (requests->sketch_generate)
+	{
+		char clean[MAP_FILE_NAME_LENGTH];
+
+		map_file_clean_name(requests == &game->console_requests ? requests->project_name : game->ui.sketch_name_input, clean, sizeof(clean));
+		if (clean[0] != '\0')
+		{
+			generate_from_sketch(game, false, clean);
+		}
+	}
+}
+
+// The console's "sketch": as the sketch window
+static void sketch_command(void *user, const char *arguments)
+{
+	testbed_t *game = user;
+	char verb[16] = "";
+	char first[MAP_FILE_NAME_LENGTH] = "";
+	float u = 0.5f;
+	float v = 0.5f;
+	float radius = 0.1f;
+	float amount = 1.0f;
+
+	if (game->sketch.planes == NULL)
+	{
+		SDL_Log("sketch: there is none (no memory)");
+		return;
+	}
+	if (!game->ui.sketch_known)
+	{
+		// (the window's fields: from the map, as when it opens)
+		const terrain_t *terrain = &game->potop->world.terrain;
+
+		game->ui.sketch_size_index = terrain->size <= 1024 ? 0 : (terrain->size <= 2048 ? 1 : (terrain->size <= 4096 ? 2 : 3));
+		game->ui.sketch_cell_meters = terrain->cell_size_meters;
+		game->ui.sketch_max_height = game->potop->settings.terrain.max_height_meters;
+		game->ui.sketch_erosion = game->potop->settings.terrain.erosion_droplets;
+		SDL_snprintf(game->ui.sketch_seed_input, sizeof(game->ui.sketch_seed_input), "%u", terrain->seed);
+		game->ui.sketch_brush_meters = SDL_max((float)terrain->size * terrain->cell_size_meters * 0.06f, 20.0f);
+		game->ui.sketch_brush_strength = 2.5f;
+		game->ui.sketch_custom_value = 0.5f;
+		if (game->project_name[0] != '\0')
+		{
+			SDL_strlcpy(game->ui.sketch_name_input, game->project_name, sizeof(game->ui.sketch_name_input));
+		}
+		else
+		{
+			SDL_snprintf(game->ui.sketch_name_input, sizeof(game->ui.sketch_name_input), "map %u", terrain->seed);
+		}
+		game->ui.sketch_known = true;
+	}
+	SDL_sscanf(arguments, "%15s %127s %f %f %f %f", verb, first, &u, &v, &radius, &amount);
+	if (SDL_strcmp(verb, "open") == 0)
+	{
+		game->ui.sketch_open = true;
+	}
+	else if (SDL_strcmp(verb, "clear") == 0)
+	{
+		terrain_sketch_clear(&game->sketch);
+	}
+	else if (SDL_strcmp(verb, "paint") == 0)
+	{
+		int preset = sketch_preset_find(first);
+		terrain_sketch_brush_t brush = { -1.0f, -1.0f, -1.0f, true };
+
+		if (preset < 0)
+		{
+			SDL_Log("sketch paint: no brush \"%s\" (mountains, hills, plain, valley, lake, erase)", first);
+			return;
+		}
+		if (preset < SKETCH_PRESET_COUNT)
+		{
+			brush = sketch_presets[preset].brush;
+		}
+		terrain_sketch_paint(&game->sketch, &brush, u, v, radius, amount);
+	}
+	else if (SDL_strcmp(verb, "seed") == 0)
+	{
+		SDL_strlcpy(game->ui.sketch_seed_input, first, sizeof(game->ui.sketch_seed_input));
+	}
+	else if (SDL_strcmp(verb, "size") == 0)
+	{
+		int32_t cells = SDL_atoi(first);
+
+		int old_size = ui_sketch_size(&game->ui);
+
+		game->ui.sketch_size_index = cells <= 1024 ? 0 : (cells <= 2048 ? 1 : (cells <= 4096 ? 2 : 3));
+		game->ui.sketch_brush_meters *= (float)ui_sketch_size(&game->ui) / (float)SDL_max(old_size, 1);
+	}
+	else if (SDL_strcmp(verb, "preview") == 0)
+	{
+		game->console_requests.sketch_preview = true;
+	}
+	else if (SDL_strcmp(verb, "make") == 0 && first[0] != '\0')
+	{
+		game->console_requests.sketch_generate = true;
+		SDL_strlcpy(game->console_requests.project_name, first, sizeof(game->console_requests.project_name));
+	}
+	else if (SDL_strcmp(verb, "picture") == 0 && first[0] != '\0')
+	{
+		// (worked out whole at once: no waiting for the painting to settle)
+		game->sketch_view.changed_ticks = 0;
+		game->sketch_view.heights_valid = false;
+		update_sketch_view(game);
+		game->sketch_view.changed_ticks = 0;
+		update_sketch_view(game);
+		SDL_Log("sketch picture: %s", sketch_view_save_picture(&game->sketch_view, first) ? "saved" : "not saved");
+	}
+	else
+	{
+		SDL_Log("sketch open | clear | paint <brush> <u> <v> <radius> [amount] | seed <n> | size <cells> | preview | make <project> | picture <file>");
 	}
 }
 
@@ -3124,6 +3349,8 @@ static void update_interface(testbed_t *game, double frame_seconds)
 
 	view.near_shadow_off = &game->potop->world.near_shadow_off;
 	view.cloud_paint = &game->potop->world.cloud_paint;
+	view.sketch = game->sketch.planes != NULL ? &game->sketch : NULL;
+	view.sketch_view = &game->sketch_view;
 	view.day_hour = game->potop->settings.render.day_cycle ? &game->potop->world.day_hour : NULL;
 	view.day_frozen = &game->potop->world.day_frozen;
 	view.sky_eye[0] = game->potop->world.sky_eye[0];
@@ -3136,6 +3363,11 @@ static void update_interface(testbed_t *game, double frame_seconds)
 	SDL_memcpy(view.pick_lines, game->pick_lines, sizeof(view.pick_lines));
 	(void)frame_seconds;
 	ui_update(&game->ui, &view, game->potop->world.elapsed_seconds);
+	// The sketch's picture, while it is painted
+	if (game->ui.sketch_open)
+	{
+		update_sketch_view(game);
+	}
 	// After the interface cleared its requests: a command may ask too
 	{
 		char command[CONSOLE_INPUT_LENGTH];
@@ -5871,6 +6103,14 @@ int main(int argument_count, char **arguments)
 	console_create(&game.console);
 	console_add_command(&game.console, "project", "project list | new <name> [seed] | open <name> | save [name] | bake | import <map> <name>",
 		"Map projects (the Save, Open and New windows): their folders under projects/", project_command, &game);
+	console_add_command(&game.console, "sketch",
+		"sketch open | clear | paint <brush> <u> <v> <radius> [amount] | seed <n> | size <cells> | preview | make <project> | picture <file.png>",
+		"The new map's sketch (the Sketch window): brushes mountains, hills, plain, valley, lake, erase; u, v and radius shares of the map", sketch_command,
+		&game);
+	if (!terrain_sketch_create(&game.sketch) || !sketch_view_create(&game.sketch_view))
+	{
+		SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Sketch: no memory for it; the sketch window is off");
+	}
 	SDL_SetAppMetadata("Potop", "0.3", "potop");
 	parse_command_line(&game.command_line, argument_count, arguments);
 	headless = game.command_line.water_test || game.command_line.dam_test || game.command_line.pour_test_seconds > 0.0f;
@@ -6531,6 +6771,8 @@ int main(int argument_count, char **arguments)
 
 shutdown:
 	tools_shutdown(&game.tools);
+	sketch_view_destroy(&game.sketch_view);
+	terrain_sketch_destroy(&game.sketch);
 	if (game.gpu_ready)
 	{
 		ui_destroy(&game.ui);

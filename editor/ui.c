@@ -22,6 +22,7 @@
 #define MAPS_WINDOW "Maps"
 #define SKY_WINDOW "Sky"
 #define WORLD_WINDOW "World"
+#define SKETCH_WINDOW "Sketch"
 
 #define BRUSHES_WIDTH 276.0f
 #define ROW_HEIGHT 26.0f
@@ -1199,6 +1200,7 @@ static void icon_bar_window(ui_t *ui, const ui_view_t *view)
 		{ NULL, speed_text, "Simulation speed" },
 		{ "faster", "\xc2\xbb", "Faster (.)" },
 		{ "sky", "Sky", "Paint the clouds on their map" },
+		{ "sketch", "Sketch", "Paint a new map's land roughly (mountains, plains, lakes) and make it" },
 		{ "world", "World", "What is shown of the world (objects...)" },
 		{ "diagnostics", "Diagnostics", "What the frame and the simulation cost" },
 		{ "status", "Status", "Show or hide the status line" },
@@ -1298,12 +1300,15 @@ static void icon_bar_window(ui_t *ui, const ui_view_t *view)
 						ui->sky_open = !ui->sky_open;
 						break;
 					case 9:
-						ui->world_open = !ui->world_open;
+						ui->sketch_open = true;
 						break;
 					case 10:
-						ui->diagnostics_open = !ui->diagnostics_open;
+						ui->world_open = !ui->world_open;
 						break;
 					case 11:
+						ui->diagnostics_open = !ui->diagnostics_open;
+						break;
+					case 12:
 						ui->show_status_line = !ui->show_status_line;
 						break;
 					default:
@@ -1945,6 +1950,8 @@ static void map_list(ui_t *ui, float height)
 }
 
 // A name typed into a field (its own row, with a label)
+static void sketch_fill_fields(ui_t *ui, const ui_view_t *view);
+
 static nk_flags name_field(ui_t *ui, const char *label, char *text, int size)
 {
 	struct nk_context *context = &ui->backend.context;
@@ -2066,6 +2073,25 @@ static void new_project_controls(ui_t *ui, const ui_view_t *view)
 	}
 	if (nk_button_label(context, "Cancel"))
 	{
+		ui->maps_mode = UI_MAPS_CLOSED;
+	}
+	nk_layout_row_dynamic(context, ROW_HEIGHT + 2.0f, 1);
+	tooltip_if_hovered(context, "Paint its land roughly first (mountains, plains, lakes), then make it");
+	if (nk_button_label(context, "Sketch it first..."))
+	{
+		if (!ui->sketch_known)
+		{
+			sketch_fill_fields(ui, view);
+		}
+		if (clean[0] != '\0')
+		{
+			SDL_strlcpy(ui->sketch_name_input, clean, sizeof(ui->sketch_name_input));
+		}
+		if (ui->seed_input[0] != '\0')
+		{
+			SDL_strlcpy(ui->sketch_seed_input, ui->seed_input, sizeof(ui->sketch_seed_input));
+		}
+		ui->sketch_open = true;
 		ui->maps_mode = UI_MAPS_CLOSED;
 	}
 }
@@ -2235,7 +2261,7 @@ static void maps_window(ui_t *ui, const ui_view_t *view)
 	struct nk_context *context = &ui->backend.context;
 	nk_flags flags = NK_WINDOW_BORDER | NK_WINDOW_MOVABLE | NK_WINDOW_TITLE | NK_WINDOW_CLOSABLE | NK_WINDOW_NO_SCROLLBAR;
 	const char *title = ui->maps_mode == UI_MAPS_SAVE ? "Save" : (ui->maps_mode == UI_MAPS_LOAD ? "Open a project" : "New project");
-	float height = ui->maps_mode == UI_MAPS_NEW ? 190.0f : (ui->maps_mode == UI_MAPS_SAVE ? 380.0f : 440.0f);
+	float height = ui->maps_mode == UI_MAPS_NEW ? 226.0f : (ui->maps_mode == UI_MAPS_SAVE ? 380.0f : 440.0f);
 
 	if (ui->maps_mode == UI_MAPS_CLOSED)
 	{
@@ -2281,6 +2307,307 @@ static void maps_window(ui_t *ui, const ui_view_t *view)
 }
 
 // ---------------------------------------------------------------------------
+// Sketch: a new map's land painted roughly, over the whole screen
+
+static const int32_t sketch_sizes[4] = { 1024, 2048, 4096, 8192 };
+
+int32_t ui_sketch_size(const ui_t *ui)
+{
+	return sketch_sizes[SDL_clamp(ui->sketch_size_index, 0, 3)];
+}
+
+uint32_t ui_sketch_seed(const ui_t *ui)
+{
+	return (uint32_t)SDL_strtoul(ui->sketch_seed_input, NULL, 10);
+}
+
+// Its fields from the map and the settings, when first opened
+static void sketch_fill_fields(ui_t *ui, const ui_view_t *view)
+{
+	const terrain_settings_t *terrain = &view->settings->terrain;
+	int32_t size = view->terrain != NULL && view->terrain->size > 0 ? view->terrain->size : terrain->size;
+
+	ui->sketch_size_index = 2;
+	for (int i = 0; i < 4; i++)
+	{
+		if (sketch_sizes[i] >= size)
+		{
+			ui->sketch_size_index = i;
+			break;
+		}
+	}
+	ui->sketch_cell_meters = view->terrain != NULL && view->terrain->size > 0 ? view->terrain->cell_size_meters : terrain->cell_size_meters;
+	ui->sketch_max_height = terrain->max_height_meters;
+	ui->sketch_erosion = terrain->erosion_droplets;
+	SDL_snprintf(ui->sketch_seed_input, sizeof(ui->sketch_seed_input), "%u", view->seed);
+	if (view->project_name[0] != '\0')
+	{
+		SDL_strlcpy(ui->sketch_name_input, view->project_name, sizeof(ui->sketch_name_input));
+	}
+	else
+	{
+		SDL_snprintf(ui->sketch_name_input, sizeof(ui->sketch_name_input), "map %u", view->seed);
+	}
+	ui->sketch_brush = 0;
+	ui->sketch_custom_value = 0.5f;
+	ui->sketch_brush_meters = SDL_max((float)size * ui->sketch_cell_meters * 0.06f, 20.0f);
+	ui->sketch_brush_strength = 2.5f;
+	ui->project_count = project_list(ui->projects, PROJECT_LIST_MAX);
+	ui->sketch_known = true;
+}
+
+// What the brush chosen paints
+static terrain_sketch_brush_t sketch_brush_of(const ui_t *ui)
+{
+	terrain_sketch_brush_t brush = { -1.0f, -1.0f, -1.0f, false };
+
+	if (ui->sketch_brush < SKETCH_PRESET_COUNT)
+	{
+		return sketch_presets[ui->sketch_brush].brush;
+	}
+	if (ui->sketch_brush > SKETCH_PRESET_COUNT)
+	{
+		brush.erase = true;
+		return brush;
+	}
+	if (ui->sketch_custom_plane == 0)
+	{
+		brush.height = ui->sketch_custom_value;
+	}
+	else if (ui->sketch_custom_plane == 1)
+	{
+		brush.relief = ui->sketch_custom_value;
+	}
+	else
+	{
+		brush.water = ui->sketch_custom_value;
+	}
+	return brush;
+}
+
+// The tools, at the left
+static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
+{
+	struct nk_context *context = &ui->backend.context;
+	static const char *const size_names[4] = { "1024", "2048", "4096", "8192" };
+	static const char *const plane_names[3] = { "Height", "Relief", "Water" };
+	char clean[PROJECT_NAME_LENGTH];
+	char line[160];
+	bool taken;
+	bool replaces_open;
+	nk_flags state;
+
+	section_label(ui, "The map");
+	name_field(ui, "Project", ui->sketch_name_input, sizeof(ui->sketch_name_input));
+	nk_layout_row(context, NK_DYNAMIC, ROW_HEIGHT, 3, (const float[]){ 0.3f, 0.4f, 0.3f });
+	nk_label(context, "Seed", NK_TEXT_LEFT);
+	state = nk_edit_string_zero_terminated(context, NK_EDIT_FIELD, ui->sketch_seed_input, sizeof(ui->sketch_seed_input), nk_filter_decimal);
+	if (state & NK_EDIT_ACTIVE)
+	{
+		ui->backend.wants_text_input = true;
+	}
+	tooltip_if_hovered(context, "Another seed: the land where nothing is painted");
+	if (nk_button_label(context, "Random"))
+	{
+		SDL_snprintf(ui->sketch_seed_input, sizeof(ui->sketch_seed_input), "%u", (uint32_t)SDL_rand_bits() % 1000000u + 1u);
+	}
+	nk_layout_row(context, NK_DYNAMIC, ROW_HEIGHT, 2, (const float[]){ 0.3f, 0.7f });
+	nk_label(context, "Size", NK_TEXT_LEFT);
+	{
+		int old_size = ui_sketch_size(ui);
+
+		ui->sketch_size_index = nk_combo(context, size_names, 4, SDL_clamp(ui->sketch_size_index, 0, 3), (int)ROW_HEIGHT, nk_vec2(200.0f, 160.0f));
+		// (the brush the same share of the map)
+		ui->sketch_brush_meters *= (float)ui_sketch_size(ui) / (float)old_size;
+	}
+	slider_row(ui, "Cell", &ui->sketch_cell_meters, 0.25f, 4.0f, 0.25f, "%.2f m", "How big a cell of the map is");
+	slider_row(ui, "Highest", &ui->sketch_max_height, 20.0f, 1500.0f, 10.0f, "%.0f m", "How high the highest ground may be");
+	slider_row(ui, "Erosion", &ui->sketch_erosion, 0.0f, 4.0f, 0.1f, "%.1f", "How much the rain wears the land when it is made (0: none)");
+	nk_layout_row_dynamic(context, SMALL_ROW_HEIGHT, 1);
+	SDL_snprintf(line, sizeof(line), "%.1f x %.1f km", (double)(map_meters * 0.001f), (double)(map_meters * 0.001f));
+	nk_label(context, line, NK_TEXT_LEFT);
+
+	section_label(ui, "Brushes (left: paint, right: back to the seed)");
+	nk_layout_row_dynamic(context, ROW_HEIGHT, 2);
+	for (int i = 0; i <= SKETCH_PRESET_COUNT + 1; i++)
+	{
+		const char *name = i < SKETCH_PRESET_COUNT ? sketch_presets[i].name : (i == SKETCH_PRESET_COUNT ? "Custom" : "Erase");
+		const char *tooltip = i < SKETCH_PRESET_COUNT ? sketch_presets[i].tooltip
+			: (i == SKETCH_PRESET_COUNT ? "One thing at the value below" : "Back to what the seed makes");
+		nk_bool selected = ui->sketch_brush == i;
+
+		tooltip_if_hovered(context, tooltip);
+		if (nk_selectable_label(context, name, NK_TEXT_CENTERED, &selected))
+		{
+			ui->sketch_brush = i;
+		}
+	}
+	if (ui->sketch_brush == SKETCH_PRESET_COUNT)
+	{
+		nk_layout_row_dynamic(context, ROW_HEIGHT, 3);
+		for (int p = 0; p < 3; p++)
+		{
+			if (nk_option_label(context, plane_names[p], ui->sketch_custom_plane == p))
+			{
+				ui->sketch_custom_plane = p;
+			}
+		}
+		slider_row(ui, "Value", &ui->sketch_custom_value, 0.0f, 1.0f, 0.01f, "%.2f",
+			"Height: of the highest ground; relief: 0 smooth, 0.5 as the seed, 1 crags; water: how deep a lake");
+	}
+	slider_row(ui, "Brush", &ui->sketch_brush_meters, 10.0f, SDL_max(map_meters * 0.3f, 20.0f), 10.0f, "%.0f m", "How far the brush reaches");
+	slider_row(ui, "Strength", &ui->sketch_brush_strength, 0.2f, 10.0f, 0.1f, "%.1f", "How fast it paints");
+	if (view->sketch_view != NULL)
+	{
+		bool tint = view->sketch_view->tint_painted;
+
+		if (checkbox_row(ui, "Show what is painted", &tint, "Orange: height, purple: relief, blue: water"))
+		{
+			view->sketch_view->tint_painted = tint;
+			view->sketch_view->picture_dirty = true;
+		}
+	}
+
+	section_label(ui, "Make it");
+	clean_project_name(ui->sketch_name_input, clean, sizeof(clean));
+	taken = project_listed(ui, clean);
+	replaces_open = clean[0] != '\0' && SDL_strcmp(clean, view->project_name) == 0;
+	nk_layout_row_dynamic(context, ROW_HEIGHT + 2.0f, 2);
+	tooltip_if_hovered(context, "The land in 3D a quarter as big, quickly, outside any project");
+	if (nk_button_label(context, "Preview"))
+	{
+		ui->requests.sketch_preview = true;
+		ui->sketch_open = false;
+	}
+	if (clean[0] == '\0' || (taken && !ui->sketch_confirm_replace))
+	{
+		nk_widget_disable_begin(context);
+	}
+	tooltip_if_hovered(context, "The map at its size, into the project (its map replaced)");
+	if (nk_button_label(context, "Make the map") && clean[0] != '\0' && (!taken || ui->sketch_confirm_replace))
+	{
+		ui->requests.sketch_generate = true;
+		ui->sketch_open = false;
+		ui->sketch_confirm_replace = false;
+	}
+	if (clean[0] == '\0' || (taken && !ui->sketch_confirm_replace))
+	{
+		nk_widget_disable_end(context);
+	}
+	if (taken)
+	{
+		nk_layout_row_dynamic(context, ROW_HEIGHT, 1);
+		SDL_snprintf(line, sizeof(line), replaces_open ? "Replace this project's map (everything on it)" : "Replace \"%s\"'s map", clean);
+		checkbox_row(ui, line, &ui->sketch_confirm_replace, "Its map is made again from the sketch: what was done on it is lost");
+	}
+	else
+	{
+		nk_layout_row_dynamic(context, SMALL_ROW_HEIGHT, 1);
+		nk_label(context, clean[0] == '\0' ? "The project needs a name." : "A new project.", NK_TEXT_LEFT);
+	}
+	nk_layout_row_dynamic(context, ROW_HEIGHT, 2);
+	if (nk_button_label(context, "Clear the sketch") && view->sketch != NULL)
+	{
+		terrain_sketch_clear(view->sketch);
+	}
+	if (nk_button_label(context, "Close"))
+	{
+		ui->sketch_open = false;
+	}
+}
+
+static void sketch_window(ui_t *ui, const ui_view_t *view)
+{
+	struct nk_context *context = &ui->backend.context;
+	nk_flags flags = NK_WINDOW_BORDER | NK_WINDOW_TITLE | NK_WINDOW_CLOSABLE | NK_WINDOW_NO_SCROLLBAR;
+	uint64_t now = SDL_GetTicks();
+	float elapsed = ui->sketch_last_ticks != 0 ? SDL_min((float)(now - ui->sketch_last_ticks) * 0.001f, 0.1f) : 0.0f;
+	struct nk_rect bounds = nk_rect(0.0f, 0.0f, ui->backend.width, ui->backend.height);
+
+	ui->sketch_last_ticks = now;
+	if (!ui->sketch_open || view->sketch == NULL)
+	{
+		return;
+	}
+	if (!ui->sketch_known)
+	{
+		sketch_fill_fields(ui, view);
+	}
+	if (nk_window_is_hidden(context, SKETCH_WINDOW) && nk_window_find(context, SKETCH_WINDOW) != NULL)
+	{
+		nk_window_show(context, SKETCH_WINDOW, NK_SHOWN);
+	}
+	if (nk_begin_titled(context, SKETCH_WINDOW, "Sketch: the new map's land", bounds, flags))
+	{
+		struct nk_rect region;
+		float tools_width = SDL_min(340.0f, ui->backend.width * 0.4f);
+		float side;
+		float map_meters = (float)ui_sketch_size(ui) * ui->sketch_cell_meters;
+		struct nk_rect picture_bounds;
+
+		nk_window_set_bounds(context, SKETCH_WINDOW, bounds);
+		region = nk_window_get_content_region(context);
+		side = SDL_max(SDL_min(region.w - tools_width - 3.0f * context->style.window.spacing.x, region.h - 4.0f), 64.0f);
+		nk_layout_row(context, NK_STATIC, region.h - 4.0f, 2, (const float[]){ tools_width, side });
+		if (nk_group_begin(context, "sketch_tools", NK_WINDOW_NO_SCROLLBAR))
+		{
+			sketch_tools(ui, view, map_meters);
+			nk_group_end(context);
+		}
+		picture_bounds = nk_widget_bounds(context);
+		picture_bounds.h = side;
+		if (view->sketch_view != NULL && view->sketch_view->texture != NULL)
+		{
+			nk_image(context, nk_image_ptr(view->sketch_view->texture));
+		}
+		else
+		{
+			nk_spacing(context, 1);
+		}
+		{
+			struct nk_input *input = &context->input;
+			bool paint = nk_input_is_mouse_down(input, NK_BUTTON_LEFT);
+			bool erase = nk_input_is_mouse_down(input, NK_BUTTON_RIGHT);
+			struct nk_rect square = nk_rect(picture_bounds.x, picture_bounds.y, side, side);
+			bool over = nk_input_is_mouse_hovering_rect(input, square) && !nk_item_is_any_active(context);
+			float u = (input->mouse.pos.x - square.x) / SDL_max(square.w, 1.0f);
+			float v = (input->mouse.pos.y - square.y) / SDL_max(square.h, 1.0f);
+			float radius = ui->sketch_brush_meters / SDL_max(map_meters, 1.0f);
+			struct nk_command_buffer *canvas = nk_window_get_canvas(context);
+
+			if (over && (paint || erase) && elapsed > 0.0f)
+			{
+				terrain_sketch_brush_t brush = sketch_brush_of(ui);
+
+				if (erase)
+				{
+					brush.erase = true;
+				}
+				terrain_sketch_paint(view->sketch, &brush, u, v, radius, ui->sketch_brush_strength * elapsed);
+			}
+			if (over)
+			{
+				float reach = radius * square.w;
+
+				nk_stroke_circle(canvas, nk_rect(input->mouse.pos.x - reach, input->mouse.pos.y - reach, reach * 2.0f, reach * 2.0f), 1.5f,
+					nk_rgb(250, 250, 250));
+				nk_stroke_circle(canvas, nk_rect(input->mouse.pos.x - reach - 1.0f, input->mouse.pos.y - reach - 1.0f, reach * 2.0f + 2.0f,
+					reach * 2.0f + 2.0f), 1.0f, nk_rgb(20, 20, 20));
+			}
+		}
+	}
+	else
+	{
+		ui->sketch_open = false;
+	}
+	nk_end(context);
+	if (!ui->sketch_open)
+	{
+		nk_window_close(context, SKETCH_WINDOW);
+	}
+}
+
+// ---------------------------------------------------------------------------
 
 // The console across the top: the newest lines of the log over the line
 // being typed (console.c edits it; this only draws it)
@@ -2299,6 +2626,15 @@ void ui_update(ui_t *ui, const ui_view_t *view, double time_seconds)
 	if (ui->hidden)
 	{
 		// F10 hides the interface, not the console
+		console_window(ui, view);
+		ui_backend_update_capture(&ui->backend);
+		return;
+	}
+	// (the sketch over everything: the rest waits while it is open)
+	if (ui->sketch_open)
+	{
+		sketch_window(ui, view);
+		message_window(ui, time_seconds);
 		console_window(ui, view);
 		ui_backend_update_capture(&ui->backend);
 		return;

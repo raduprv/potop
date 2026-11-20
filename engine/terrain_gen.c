@@ -2,6 +2,7 @@
 
 #include "terrain_gen.h"
 #include "noise.h"
+#include "math3d.h"
 
 #include <SDL3/SDL.h>
 
@@ -318,7 +319,573 @@ static soil_type_t classify_soil(const generation_noise_t *noise, const terrain_
 	return SOIL_EARTH;
 }
 
-void terrain_generate(terrain_t *terrain, const terrain_settings_t *settings, const soil_settings_t *soil_settings, uint32_t seed)
+
+// --- Coarse grids ------------------------------------------------------------------
+
+// The heights averaged down to a grid of side small
+static void downsample(const float *heights, int32_t size, float *grid, int32_t small)
+{
+#pragma omp parallel for schedule(static)
+	for (int32_t y = 0; y < small; y++)
+	{
+		int32_t first_y = (int32_t)((int64_t)y * size / small);
+		int32_t end_y = SDL_max((int32_t)((int64_t)(y + 1) * size / small), first_y + 1);
+
+		for (int32_t x = 0; x < small; x++)
+		{
+			int32_t first_x = (int32_t)((int64_t)x * size / small);
+			int32_t end_x = SDL_max((int32_t)((int64_t)(x + 1) * size / small), first_x + 1);
+			double sum = 0.0;
+
+			for (int32_t j = first_y; j < end_y; j++)
+			{
+				for (int32_t i = first_x; i < end_x; i++)
+				{
+					sum += heights[(size_t)j * (size_t)size + (size_t)i];
+				}
+			}
+			grid[(size_t)y * (size_t)small + (size_t)x] = (float)(sum / (double)((end_x - first_x) * (end_y - first_y)));
+		}
+	}
+}
+
+// A coarse grid at (u, v) (0..1 over the map), between its texels
+static float grid_sample(const float *grid, int32_t side, float u, float v)
+{
+	float x = clamp_float(u * (float)side - 0.5f, 0.0f, (float)(side - 1));
+	float y = clamp_float(v * (float)side - 0.5f, 0.0f, (float)(side - 1));
+	int32_t x0 = (int32_t)x;
+	int32_t y0 = (int32_t)y;
+	int32_t x1 = SDL_min(x0 + 1, side - 1);
+	int32_t y1 = SDL_min(y0 + 1, side - 1);
+	float fx = x - (float)x0;
+	float fy = y - (float)y0;
+	float top = lerp_float(grid[(size_t)y0 * (size_t)side + (size_t)x0], grid[(size_t)y0 * (size_t)side + (size_t)x1], fx);
+	float bottom = lerp_float(grid[(size_t)y1 * (size_t)side + (size_t)x0], grid[(size_t)y1 * (size_t)side + (size_t)x1], fx);
+
+	return lerp_float(top, bottom, fy);
+}
+
+// --- The sketch over the seed's land ------------------------------------------------
+
+// The sketch's lakes: its water texels over the threshold, joined side by
+// side into lakes; each one's surface a little under the lowest land round
+// it (as it stands now), so it holds its water
+static void find_lakes(const float *heights, int32_t size, terrain_sketch_t *sketch)
+{
+	const uint8_t *water = terrain_sketch_plane(sketch, TERRAIN_SKETCH_WATER);
+	size_t texels = (size_t)TERRAIN_SKETCH_SIZE * TERRAIN_SKETCH_SIZE;
+	uint32_t *stack = SDL_malloc(texels * sizeof(uint32_t));
+
+	SDL_memset(sketch->lake_labels, 0, texels * sizeof(uint16_t));
+	sketch->lake_count = 0;
+	if (stack == NULL)
+	{
+		return;
+	}
+	for (size_t start = 0; start < texels && sketch->lake_count < TERRAIN_SKETCH_LAKES_MAX; start++)
+	{
+		uint16_t label;
+		size_t stack_count = 0;
+		float lowest_shore = 1e30f;
+
+		if (water[start] < TERRAIN_SKETCH_LAKE_THRESHOLD || sketch->lake_labels[start] != 0)
+		{
+			continue;
+		}
+		label = (uint16_t)(sketch->lake_count + 1);
+		sketch->lake_labels[start] = label;
+		stack[stack_count++] = (uint32_t)start;
+		while (stack_count > 0)
+		{
+			uint32_t texel = stack[--stack_count];
+			int32_t x = (int32_t)(texel % TERRAIN_SKETCH_SIZE);
+			int32_t y = (int32_t)(texel / TERRAIN_SKETCH_SIZE);
+			static const int32_t steps[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
+
+			for (int k = 0; k < 4; k++)
+			{
+				int32_t nx = x + steps[k][0];
+				int32_t ny = y + steps[k][1];
+				size_t neighbor;
+
+				if (nx < 0 || ny < 0 || nx >= TERRAIN_SKETCH_SIZE || ny >= TERRAIN_SKETCH_SIZE)
+				{
+					continue;
+				}
+				neighbor = (size_t)ny * TERRAIN_SKETCH_SIZE + (size_t)nx;
+				if (water[neighbor] >= TERRAIN_SKETCH_LAKE_THRESHOLD)
+				{
+					if (sketch->lake_labels[neighbor] == 0)
+					{
+						sketch->lake_labels[neighbor] = label;
+						stack[stack_count++] = (uint32_t)neighbor;
+					}
+				}
+				else
+				{
+					// A shore: the land there (its cell)
+					int32_t cell_x = clamp_int((int)(((float)nx + 0.5f) / (float)TERRAIN_SKETCH_SIZE * (float)size), 0, size - 1);
+					int32_t cell_y = clamp_int((int)(((float)ny + 0.5f) / (float)TERRAIN_SKETCH_SIZE * (float)size), 0, size - 1);
+
+					lowest_shore = SDL_min(lowest_shore, heights[(size_t)cell_y * (size_t)size + (size_t)cell_x]);
+				}
+			}
+		}
+		// (a lake out to the map's edge everywhere: its own land's level)
+		if (lowest_shore > 1e29f)
+		{
+			lowest_shore = heights[(start / TERRAIN_SKETCH_SIZE) * (size_t)size / TERRAIN_SKETCH_SIZE * (size_t)size
+				+ (start % TERRAIN_SKETCH_SIZE) * (size_t)size / TERRAIN_SKETCH_SIZE];
+		}
+		sketch->lake_surfaces[sketch->lake_count] = SDL_max(lowest_shore - 0.5f, 0.5f);
+		sketch->lake_count++;
+	}
+	SDL_free(stack);
+}
+
+// Where the sketch is painted its land instead of the seed's: the seed's
+// broad shape (its heights blurred over a fraction of a feature) towards
+// the sketch's height, the seed's detail over it more or less as the relief
+// says (and ridges besides where it is rough), lakes sunk into it
+static void apply_sketch(float *heights, int32_t size, const terrain_settings_t *settings, const generation_noise_t *noise, int octave_count,
+	terrain_sketch_t *sketch)
+{
+	int32_t side = SDL_min(size, 512);
+	float *macro = SDL_malloc((size_t)side * (size_t)side * sizeof(float));
+	float *scratch = SDL_malloc((size_t)side * (size_t)side * sizeof(float));
+	int32_t reach = SDL_max(1, (int32_t)SDL_lroundf((float)side / (SDL_max(settings->feature_count, 0.5f) * 8.0f)));
+	float most = settings->max_height_meters;
+
+	if (macro == NULL || scratch == NULL)
+	{
+		SDL_free(macro);
+		SDL_free(scratch);
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Out of memory: the sketch is left out");
+		return;
+	}
+	downsample(heights, size, macro, side);
+	for (int pass = 0; pass < 3; pass++)
+	{
+		box_blur_rows(macro, scratch, side, reach);
+		box_blur_columns(scratch, macro, side, reach);
+	}
+#pragma omp parallel for schedule(static)
+	for (int32_t y = 0; y < size; y++)
+	{
+		for (int32_t x = 0; x < size; x++)
+		{
+			size_t index = (size_t)y * (size_t)size + (size_t)x;
+			float u = ((float)x + 0.5f) / (float)size;
+			float v = ((float)y + 0.5f) / (float)size;
+			float height_weight = terrain_sketch_sample(sketch, TERRAIN_SKETCH_HEIGHT_WEIGHT, u, v);
+			float relief_weight = terrain_sketch_sample(sketch, TERRAIN_SKETCH_RELIEF_WEIGHT, u, v);
+			float broad;
+			float detail;
+			float relief;
+			float rough;
+
+			if (height_weight <= 0.0f && relief_weight <= 0.0f)
+			{
+				continue;
+			}
+			broad = grid_sample(macro, side, u, v);
+			detail = heights[index] - broad;
+			relief = lerp_float(0.5f, terrain_sketch_sample(sketch, TERRAIN_SKETCH_RELIEF, u, v), relief_weight);
+			// (smooth below the middle, the seed's own at it, twice as rough at the top)
+			heights[index] = lerp_float(broad, terrain_sketch_sample(sketch, TERRAIN_SKETCH_HEIGHT, u, v) * most, height_weight)
+				+ detail * relief * 2.0f;
+			// Crags: ridges where it is to be rougher than the seed made it
+			rough = SDL_max(relief - 0.55f, 0.0f) / 0.45f;
+			if (rough > 0.0f)
+			{
+				float ridge = noise_ridged(&noise->ridges, u * settings->feature_count * 3.5f + 31.0f, v * settings->feature_count * 3.5f - 17.0f,
+					octave_count, 0.5f);
+
+				heights[index] += rough * relief_weight * (ridge - 0.3f) * most * 0.6f;
+			}
+			heights[index] = SDL_max(heights[index], 0.0f);
+		}
+	}
+	SDL_free(macro);
+	SDL_free(scratch);
+}
+
+// The sketch's lakes: found, then the land under them sunk (deeper the more
+// water is painted), softly towards their shores (after the rain's
+// erosion, which would fill them)
+static void sink_lakes(float *heights, int32_t size, terrain_sketch_t *sketch)
+{
+	find_lakes(heights, size, sketch);
+	if (sketch->lake_count == 0)
+	{
+		return;
+	}
+#pragma omp parallel for schedule(static)
+	for (int32_t y = 0; y < size; y++)
+	{
+		for (int32_t x = 0; x < size; x++)
+		{
+			size_t index = (size_t)y * (size_t)size + (size_t)x;
+			float u = ((float)x + 0.5f) / (float)size;
+			float v = ((float)y + 0.5f) / (float)size;
+			float water = terrain_sketch_sample(sketch, TERRAIN_SKETCH_WATER, u, v);
+			int lake;
+			float bed;
+
+			if (water <= 0.25f)
+			{
+				continue;
+			}
+			lake = terrain_sketch_lake_at(sketch, u, v);
+			if (lake < 0)
+			{
+				// (a shore texel by a lake: the nearest lake round it, if any)
+				for (int k = 0; k < 4 && lake < 0; k++)
+				{
+					float step = 1.0f / (float)TERRAIN_SKETCH_SIZE;
+
+					lake = terrain_sketch_lake_at(sketch, u + (k == 0 ? step : k == 1 ? -step : 0.0f), v + (k == 2 ? step : k == 3 ? -step : 0.0f));
+				}
+				if (lake < 0)
+				{
+					continue;
+				}
+			}
+			bed = sketch->lake_surfaces[lake] - (1.0f + 7.0f * water);
+			heights[index] = lerp_float(heights[index], SDL_min(heights[index], bed), smoothstep_float(0.25f, 0.6f, water));
+		}
+	}
+}
+
+// --- Erosion by the rain's droplets ---------------------------------------------------
+
+#define DROPLET_GRID_MAXIMUM 1024       // the erosion's grid at most (finer maps: worked out on it, the change laid over theirs)
+#define DROPLET_TILE 256                // droplets started tile by tile, a tile's neighbors not at the same time
+#define DROPLET_STEPS 80
+#define DROPLET_RADIUS 2
+#define DROPLET_INERTIA 0.05f
+#define DROPLET_CAPACITY 3.0f
+#define DROPLET_MINIMUM_SLOPE 0.01f
+#define DROPLET_ERODE 0.15f
+#define DROPLET_DEPOSIT 0.1f
+#define DROPLET_EVAPORATE 0.02f
+#define DROPLET_GRAVITY 4.0f
+
+typedef struct
+{
+	int32_t offsets[(2 * DROPLET_RADIUS + 1) * (2 * DROPLET_RADIUS + 1)][2];
+	float weights[(2 * DROPLET_RADIUS + 1) * (2 * DROPLET_RADIUS + 1)];
+	int count;
+} droplet_brush_t;
+
+static uint32_t droplet_random(uint32_t *state)
+{
+	// (xorshift: each tile its own, so the result does not depend on the threads)
+	uint32_t value = *state;
+
+	value ^= value << 13;
+	value ^= value >> 17;
+	value ^= value << 5;
+	*state = value;
+	return value;
+}
+
+static float droplet_unit(uint32_t *state)
+{
+	return (float)(droplet_random(state) >> 8) * (1.0f / 16777216.0f);
+}
+
+// The height and its slope at a point between the texels
+static float droplet_height(const float *grid, int32_t side, float x, float y, float *slope_x, float *slope_y)
+{
+	int32_t cell_x = (int32_t)x;
+	int32_t cell_y = (int32_t)y;
+	float fx = x - (float)cell_x;
+	float fy = y - (float)cell_y;
+	size_t index = (size_t)cell_y * (size_t)side + (size_t)cell_x;
+	float a = grid[index];
+	float b = grid[index + 1];
+	float c = grid[index + (size_t)side];
+	float d = grid[index + (size_t)side + 1];
+
+	*slope_x = (b - a) * (1.0f - fy) + (d - c) * fy;
+	*slope_y = (c - a) * (1.0f - fx) + (d - b) * fx;
+	return a * (1.0f - fx) * (1.0f - fy) + b * fx * (1.0f - fy) + c * (1.0f - fx) * fy + d * fx * fy;
+}
+
+static void run_droplet(float *grid, int32_t side, const droplet_brush_t *brush, float x, float y)
+{
+	float direction_x = 0.0f;
+	float direction_y = 0.0f;
+	float speed = 1.0f;
+	float water = 1.0f;
+	float sediment = 0.0f;
+
+	// (the heights round it are read a texel on: not on the last ones)
+	if (x < 1.0f || y < 1.0f || x >= (float)(side - 2) || y >= (float)(side - 2))
+	{
+		return;
+	}
+	for (int step = 0; step < DROPLET_STEPS; step++)
+	{
+		int32_t cell_x = (int32_t)x;
+		int32_t cell_y = (int32_t)y;
+		float fx = x - (float)cell_x;
+		float fy = y - (float)cell_y;
+		size_t index = (size_t)cell_y * (size_t)side + (size_t)cell_x;
+		float slope_x;
+		float slope_y;
+		float height = droplet_height(grid, side, x, y, &slope_x, &slope_y);
+		float length;
+		float new_height;
+		float drop;
+		float capacity;
+		float unused_x;
+		float unused_y;
+
+		direction_x = direction_x * DROPLET_INERTIA - slope_x * (1.0f - DROPLET_INERTIA);
+		direction_y = direction_y * DROPLET_INERTIA - slope_y * (1.0f - DROPLET_INERTIA);
+		length = SDL_sqrtf(direction_x * direction_x + direction_y * direction_y);
+		if (!(length > 1e-9f))
+		{
+			break;
+		}
+		direction_x /= length;
+		direction_y /= length;
+		x += direction_x;
+		y += direction_y;
+		if (x < 1.0f || y < 1.0f || x >= (float)(side - 2) || y >= (float)(side - 2))
+		{
+			break;
+		}
+		new_height = droplet_height(grid, side, x, y, &unused_x, &unused_y);
+		drop = new_height - height;
+		capacity = SDL_max(-drop, DROPLET_MINIMUM_SLOPE) * speed * water * DROPLET_CAPACITY;
+		if (sediment > capacity || drop > 0.0f)
+		{
+			// Drops what it cannot carry (uphill: fills the pit behind it)
+			float deposit = drop > 0.0f ? SDL_min(drop, sediment) : (sediment - capacity) * DROPLET_DEPOSIT;
+
+			sediment -= deposit;
+			grid[index] += deposit * (1.0f - fx) * (1.0f - fy);
+			grid[index + 1] += deposit * fx * (1.0f - fy);
+			grid[index + (size_t)side] += deposit * (1.0f - fx) * fy;
+			grid[index + (size_t)side + 1] += deposit * fx * fy;
+		}
+		else
+		{
+			// Picks up, from round where it was (no deeper than the drop)
+			float erode = SDL_min((capacity - sediment) * DROPLET_ERODE, -drop);
+
+			for (int k = 0; k < brush->count; k++)
+			{
+				int32_t bx = cell_x + brush->offsets[k][0];
+				int32_t by = cell_y + brush->offsets[k][1];
+				float *target;
+				float taken;
+
+				if (bx < 0 || by < 0 || bx >= side || by >= side)
+				{
+					continue;
+				}
+				target = &grid[(size_t)by * (size_t)side + (size_t)bx];
+				taken = SDL_min(*target, erode * brush->weights[k]);
+				*target -= taken;
+				sediment += taken;
+			}
+		}
+		speed = SDL_sqrtf(SDL_max(speed * speed - drop * DROPLET_GRAVITY, 0.0f));
+		water *= 1.0f - DROPLET_EVAPORATE;
+	}
+}
+
+// Rain over the land: droplets run downhill, picking up where they speed
+// up and dropping it where they slow, which cuts gullies and valleys and
+// fills the hollows. Worked out on a grid of at most DROPLET_GRID_MAXIMUM
+// a side (the same for a preview a quarter as big), its change laid over
+// the map's heights; droplets_per_texel over it
+static void apply_droplet_erosion(float *heights, int32_t size, const terrain_settings_t *settings, uint32_t seed)
+{
+	int32_t side = SDL_min(size, DROPLET_GRID_MAXIMUM);
+	size_t texels = (size_t)side * (size_t)side;
+	float *grid = SDL_malloc(texels * sizeof(float));
+	float *original = SDL_malloc(texels * sizeof(float));
+	float most = SDL_max(settings->max_height_meters, 1.0f);
+	int32_t tiles = (side + DROPLET_TILE - 1) / DROPLET_TILE;
+	droplet_brush_t brush;
+	float weight_sum = 0.0f;
+	Uint64 start_ticks = SDL_GetTicks();
+
+	if (grid == NULL || original == NULL)
+	{
+		SDL_free(grid);
+		SDL_free(original);
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Out of memory: no erosion by the rain");
+		return;
+	}
+	brush.count = 0;
+	for (int32_t dy = -DROPLET_RADIUS; dy <= DROPLET_RADIUS; dy++)
+	{
+		for (int32_t dx = -DROPLET_RADIUS; dx <= DROPLET_RADIUS; dx++)
+		{
+			float distance = SDL_sqrtf((float)(dx * dx + dy * dy));
+
+			if (distance <= (float)DROPLET_RADIUS)
+			{
+				brush.offsets[brush.count][0] = dx;
+				brush.offsets[brush.count][1] = dy;
+				brush.weights[brush.count] = 1.0f - distance / (float)DROPLET_RADIUS;
+				weight_sum += brush.weights[brush.count];
+				brush.count++;
+			}
+		}
+	}
+	for (int k = 0; k < brush.count; k++)
+	{
+		brush.weights[k] /= weight_sum;
+	}
+	// (in shares of the highest ground: the droplets' numbers are made for that)
+	downsample(heights, size, grid, side);
+	for (size_t i = 0; i < texels; i++)
+	{
+		grid[i] /= most;
+		original[i] = grid[i];
+	}
+	// Tile by tile, a quarter of them at a time: those of one color are two
+	// tiles apart, farther than a droplet runs, so they never meet
+	for (int color = 0; color < 4; color++)
+	{
+#pragma omp parallel for schedule(dynamic, 1)
+		for (int32_t tile = 0; tile < tiles * tiles; tile++)
+		{
+			int32_t tile_x = tile % tiles;
+			int32_t tile_y = tile / tiles;
+			int32_t first_x = tile_x * DROPLET_TILE;
+			int32_t first_y = tile_y * DROPLET_TILE;
+			int32_t width = SDL_min(DROPLET_TILE, side - first_x);
+			int32_t depth = SDL_min(DROPLET_TILE, side - first_y);
+			uint32_t state = (seed * 2654435761u) ^ ((uint32_t)tile * 40503u + 0x9E3779B9u);
+			int64_t count = (int64_t)((float)(width * depth) * settings->erosion_droplets);
+
+			if ((tile_x & 1) + 2 * (tile_y & 1) != color)
+			{
+				continue;
+			}
+			state = state != 0 ? state : 1u;
+			for (int64_t d = 0; d < count; d++)
+			{
+				float x = (float)first_x + droplet_unit(&state) * (float)width;
+				float y = (float)first_y + droplet_unit(&state) * (float)depth;
+
+				run_droplet(grid, side, &brush, x, y);
+			}
+		}
+	}
+	// The change, over the map's own heights
+	for (size_t i = 0; i < texels; i++)
+	{
+		grid[i] = (grid[i] - original[i]) * most;
+	}
+#pragma omp parallel for schedule(static)
+	for (int32_t y = 0; y < size; y++)
+	{
+		for (int32_t x = 0; x < size; x++)
+		{
+			size_t index = (size_t)y * (size_t)size + (size_t)x;
+
+			heights[index] = SDL_max(heights[index] + grid_sample(grid, side, ((float)x + 0.5f) / (float)size, ((float)y + 0.5f) / (float)size),
+				0.0f);
+		}
+	}
+	SDL_free(grid);
+	SDL_free(original);
+	SDL_Log("Erosion by the rain: %.2f droplets a texel on %d x %d, %llu ms", (double)settings->erosion_droplets, side, side,
+		(unsigned long long)(SDL_GetTicks() - start_ticks));
+}
+
+// --- The heights ------------------------------------------------------------------------
+
+static int octaves_for(int32_t size, float cell_size_meters, const terrain_settings_t *settings)
+{
+	float base_wavelength_meters = (float)size * cell_size_meters / SDL_max(settings->feature_count, 0.1f);
+
+	// Each octave halves the wavelength; stop at the smallest wanted feature
+	return clamp_int((int)SDL_floorf(SDL_logf(base_wavelength_meters / SDL_max(settings->minimum_feature_meters, 1.0f)) / SDL_logf(2.0f)) + 1, 1,
+		12);
+}
+
+bool terrain_generate_heights(float *heights, int32_t size, float cell_size_meters, const terrain_settings_t *settings, uint32_t seed,
+	terrain_sketch_t *sketch, unsigned int steps)
+{
+	size_t cell_count = (size_t)size * (size_t)size;
+	generation_noise_t noise;
+	float minimum = 1e30f;
+	float maximum = -1e30f;
+	float inverse_range;
+	int octave_count = octaves_for(size, cell_size_meters, settings);
+
+	initialize_generation_noise(&noise, seed);
+	if ((steps & TERRAIN_HEIGHTS_LAND) != 0)
+	{
+		// 1. Raw landscape
+#pragma omp parallel for schedule(static)
+		for (int32_t y = 0; y < size; y++)
+		{
+			for (int32_t x = 0; x < size; x++)
+			{
+				heights[y * size + x] = sample_landscape(&noise, settings, octave_count, (float)x / (float)size, (float)y / (float)size);
+			}
+		}
+
+		// 2. Normalize to 0..1, flatten the lowlands, scale to meters
+#pragma omp parallel for reduction(min:minimum) reduction(max:maximum) schedule(static)
+		for (int64_t i = 0; i < (int64_t)cell_count; i++)
+		{
+			minimum = heights[i] < minimum ? heights[i] : minimum;
+			maximum = heights[i] > maximum ? heights[i] : maximum;
+		}
+		inverse_range = maximum > minimum ? 1.0f / (maximum - minimum) : 0.0f;
+#pragma omp parallel for schedule(static)
+		for (int64_t i = 0; i < (int64_t)cell_count; i++)
+		{
+			float normalized = (heights[i] - minimum) * inverse_range;
+
+			heights[i] = SDL_powf(normalized, 1.4f) * settings->max_height_meters;
+		}
+	}
+
+	// 3. The sketch where it is painted
+	if (sketch != NULL && terrain_sketch_painted(sketch))
+	{
+		apply_sketch(heights, size, settings, &noise, octave_count, sketch);
+	}
+	else if (sketch != NULL)
+	{
+		sketch->lake_count = 0;
+	}
+
+	// 4. The rain's erosion, then the sketch's lakes
+	if ((steps & TERRAIN_HEIGHTS_EROSION) != 0 && settings->erosion_droplets > 0.0f)
+	{
+		apply_droplet_erosion(heights, size, settings, seed);
+	}
+	if (sketch != NULL && terrain_sketch_painted(sketch))
+	{
+		sink_lakes(heights, size, sketch);
+	}
+
+	// 5. Thermal erosion; then the steep faces' gullies and buttresses
+	if ((steps & TERRAIN_HEIGHTS_FINISH) != 0)
+	{
+		apply_thermal_erosion(heights, size, cell_size_meters, settings);
+		carve_steep_faces(heights, size, cell_size_meters, settings, &noise);
+	}
+	return true;
+}
+
+void terrain_generate(terrain_t *terrain, const terrain_settings_t *settings, const soil_settings_t *soil_settings, uint32_t seed,
+	terrain_sketch_t *sketch)
 {
 	int32_t size = terrain->size;
 	size_t cell_count = (size_t)size * (size_t)size;
@@ -328,15 +895,10 @@ void terrain_generate(terrain_t *terrain, const terrain_settings_t *settings, co
 	// Soil depth and bedrock are smoothed over about two meters
 	int32_t bedrock_reach = SDL_max(1, (int32_t)SDL_lroundf(2.0f / terrain->cell_size_meters));
 	generation_noise_t noise;
-	float minimum = 1e30f;
-	float maximum = -1e30f;
-	float inverse_range;
 	int64_t pocket_count = 0;
 	int64_t rock_count = 0;
 	Uint64 start_ticks = SDL_GetTicks();
-	float base_wavelength_meters = (float)size * terrain->cell_size_meters / SDL_max(settings->feature_count, 0.1f);
-	// Each octave halves the wavelength; stop at the smallest wanted feature
-	int octave_count = clamp_int((int)SDL_floorf(SDL_logf(base_wavelength_meters / SDL_max(settings->minimum_feature_meters, 1.0f)) / SDL_logf(2.0f)) + 1, 1, 12);
+	int octave_count = octaves_for(size, terrain->cell_size_meters, settings);
 
 	if (heights == NULL)
 	{
@@ -346,36 +908,7 @@ void terrain_generate(terrain_t *terrain, const terrain_settings_t *settings, co
 	initialize_generation_noise(&noise, seed);
 	terrain->seed = seed;
 	terrain->max_height_meters = settings->max_height_meters;
-
-	// 1. Raw landscape
-#pragma omp parallel for schedule(static)
-	for (int32_t y = 0; y < size; y++)
-	{
-		for (int32_t x = 0; x < size; x++)
-		{
-			heights[y * size + x] = sample_landscape(&noise, settings, octave_count, (float)x / (float)size, (float)y / (float)size);
-		}
-	}
-
-	// 2. Normalize to 0..1, flatten the lowlands, scale to meters
-#pragma omp parallel for reduction(min:minimum) reduction(max:maximum) schedule(static)
-	for (int64_t i = 0; i < (int64_t)cell_count; i++)
-	{
-		minimum = heights[i] < minimum ? heights[i] : minimum;
-		maximum = heights[i] > maximum ? heights[i] : maximum;
-	}
-	inverse_range = maximum > minimum ? 1.0f / (maximum - minimum) : 0.0f;
-#pragma omp parallel for schedule(static)
-	for (int64_t i = 0; i < (int64_t)cell_count; i++)
-	{
-		float normalized = (heights[i] - minimum) * inverse_range;
-
-		heights[i] = SDL_powf(normalized, 1.4f) * settings->max_height_meters;
-	}
-
-	// 3. Thermal erosion; then the steep faces' gullies and buttresses
-	apply_thermal_erosion(heights, size, terrain->cell_size_meters, settings);
-	carve_steep_faces(heights, size, terrain->cell_size_meters, settings, &noise);
+	terrain_generate_heights(heights, size, terrain->cell_size_meters, settings, seed, sketch, TERRAIN_HEIGHTS_LAND | TERRAIN_HEIGHTS_EROSION | TERRAIN_HEIGHTS_FINISH);
 
 	// 4. Store as integer units and classify soil; 5. bedrock
 	bedrock = SDL_malloc(cell_count * sizeof(float));

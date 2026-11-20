@@ -75,6 +75,7 @@ are engine/ui.c; both draw with the same backend, font and colors.
   | `load <name>` | loads a saved map: `name`, `name.active` or `name.baked` (without the kind, the active one if there is one) |
   | `save <name>` / `bake <name>` | saves the map as its own kind / bakes it (for play), as `name.baked` |
   | `project list \| new <name> [seed] \| open <name> \| save [name] \| bake \| import <map> <name>` | map projects (the editor's; see **Projects** below) |
+  | `sketch open \| clear \| paint <brush> <u> <v> <radius> [amount] \| seed <n> \| size <cells> \| preview \| make <project> \| picture <file.png>` | the new map's sketch (see **Sketch** below): brushes `mountains`, `hills`, `plain`, `valley`, `lake`, `erase`; u, v (0..1 across the map, from its north west corner) and the radius are shares of the map's side; `picture` writes the window's picture |
   | `screenshot` | as F12 |
   | `clear` / `quit` | clears the log / leaves |
 
@@ -87,8 +88,8 @@ are engine/ui.c; both draw with the same backend, font and colors.
   its own in the preference directory's `projects` (on Linux
   `~/.local/share/potop/projects/NAME/`): `project.ini` (its name,
   seed, size, when it was made), `map.potop` (the map being made),
-  `baked.potop` (the last bake) and later `sketch/` (the 2D sketch the
-  terrain is made from). **New** makes one (a name, a seed; the size as
+  `baked.potop` (the last bake) and `sketch/` (the sketch its land was
+  made from, if one was painted: see **Sketch**). **New** makes one (a name, a seed; the size as
   Settings, New map say); **Save** saves the project open (F5 too) or
   **Bake (for play)**: into the project, and a copy into the saves as
   `NAME.baked` for the game; or saves the map as a new project. **Open**
@@ -96,6 +97,31 @@ are engine/ui.c; both draw with the same backend, font and colors.
   before projects (or by the game): **Bring it in as a project**, or
   **Just load it** outside any project. F9 opens the project open as last
   saved. N (a new map at once) and a map just loaded leave the project.
+* **Sketch** (top bar, or **Sketch it first...** in **New**): a new
+  map's land painted roughly from above, over the whole screen. At the
+  left the map (the project's name, the seed, its size, cell, highest
+  ground and how much the rain erodes it when it is made), the brushes and
+  what to do; at the right the land as it will come out, worked out small
+  as you paint (shaded from the north west, colored by height, lakes
+  blue; what is painted tinted over it: orange the height, purple the
+  relief, blue the water). Where nothing is painted the seed alone decides,
+  as without a sketch: try seeds until one is close, then paint what you
+  want different. Left button paints, right takes it back to the seed's.
+  The brushes: **Mountains** (high and rough: crests, crags), **Hills**,
+  **Plain** (low and smooth), **Valley** (low: the rain cuts a bed down
+  it), **Lake** (the land sunk under it and filled to a little below its
+  lowest shore), **Custom** (one thing at a value: the height, the relief,
+  0 smooth, 0.5 as the seed, 1 crags, or a lake's depth) and **Erase**.
+  **Preview** makes the land in 3D a quarter as big, nothing grown on it,
+  outside any project, to look at (reopen the sketch to go on); **Make the
+  map** makes it at its size into the project named (a new one, or the
+  one open: everything on its map is lost, so it asks), grown as a new map
+  is. The sketch is saved with the project (`sketch/height.png` and
+  `relief.png`, gray with the weight in alpha; `water.png`), so it can be
+  painted in an image editor too, and comes back when the project opens.
+  The erosion (`[terrain] erosion_droplets`, 1: droplets of rain a texel
+  run downhill, wearing gullies and valleys and filling hollows) is worked
+  out on a grid of at most 1024 a side, so the preview gets the same.
 * **Maps**: save under a name, load or delete from the list. Maps are zip
   archives (`.potop`) in the `saves` folder of the preference directory
   (on Linux `~/.local/share/potop/saves/`). A map keeps the ground

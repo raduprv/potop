@@ -252,9 +252,45 @@ void world_apply_harvest(world_t *world, const map_features_t *features)
 	}
 }
 
+// The sketch's lakes (terrain_sketch.h, found when the land was made):
+// water up to each one's surface where the land is under it
+static void fill_sketch_lakes(world_t *world)
+{
+	const terrain_sketch_t *sketch = world->generation_sketch;
+	terrain_t *terrain = &world->terrain;
+	int64_t filled = 0;
+
+	for (int32_t y = 0; y < terrain->size; y++)
+	{
+		float v = ((float)y + 0.5f) / (float)terrain->size;
+
+		for (int32_t x = 0; x < terrain->size; x++)
+		{
+			float u = ((float)x + 0.5f) / (float)terrain->size;
+			int lake = terrain_sketch_lake_at(sketch, u, v);
+			int32_t ground;
+			int32_t surface;
+
+			if (lake < 0)
+			{
+				continue;
+			}
+			ground = terrain->heights[terrain_index(terrain, x, y)];
+			surface = (int32_t)(sketch->lake_surfaces[lake] * (float)TERRAIN_HEIGHT_UNITS_PER_METER);
+			if (surface > ground)
+			{
+				water_add_units(&world->water, x, y, surface - ground);
+				filled++;
+			}
+		}
+	}
+	SDL_Log("Sketch: %d lakes, %lld cells under water", sketch->lake_count, (long long)filled);
+}
+
 bool world_generate(world_t *world, uint32_t seed)
 {
 	bool loaded = false;
+	bool sketched = terrain_sketch_painted(world->generation_sketch);
 
 	// (a new map has no areas, nothing heard)
 	areas_clear(&world->areas);
@@ -265,14 +301,15 @@ bool world_generate(world_t *world, uint32_t seed)
 		return false;
 	}
 
-	if (world->settings->cache.use_cache)
+	// (a sketched map is its own: not kept with the seed's, nor taken from them)
+	if (world->settings->cache.use_cache && !sketched)
 	{
 		loaded = terrain_cache_load(&world->terrain, &world->settings->terrain, world->soils, seed);
 	}
 	if (!loaded)
 	{
-		terrain_generate(&world->terrain, &world->settings->terrain, world->soils, seed);
-		if (world->settings->cache.use_cache)
+		terrain_generate(&world->terrain, &world->settings->terrain, world->soils, seed, world->generation_sketch);
+		if (world->settings->cache.use_cache && !sketched)
 		{
 			terrain_cache_save(&world->terrain, &world->settings->terrain, world->soils, &world->settings->cache);
 		}
@@ -292,6 +329,10 @@ bool world_generate(world_t *world, uint32_t seed)
 	if (world->water.depth != NULL)
 	{
 		water_clear(&world->water);
+		if (sketched && world->generation_sketch->lake_count > 0 && !world->terrain.baked)
+		{
+			fill_sketch_lakes(world);
+		}
 	}
 	erosion_reset(&world->erosion);
 	world->shadow.needs_render = true;
