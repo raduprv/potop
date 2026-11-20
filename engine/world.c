@@ -331,7 +331,9 @@ static void fill_sketch_lakes(world_t *world)
 					}
 					next = (size_t)next_y * (size_t)size + (size_t)next_x;
 					if (seen[next] || terrain->heights[terrain_index(terrain, next_x, next_y)] >= surface
-						|| terrain_sketch_lake_at(sketch, ((float)next_x + 0.5f) / (float)size, ((float)next_y + 0.5f) / (float)size) != lake)
+						|| terrain_sketch_lake_at(sketch, ((float)next_x + 0.5f) / (float)size, ((float)next_y + 0.5f) / (float)size) != lake
+						|| terrain_sketch_lake_hint(sketch, ((float)next_x + 0.5f) / (float)size, ((float)next_y + 0.5f) / (float)size)
+							< TERRAIN_SKETCH_LAKE_HOLDS)
 					{
 						continue;
 					}

@@ -131,7 +131,7 @@ static void compose_picture(sketch_view_t *view, const terrain_sketch_t *sketch,
 			{
 				color[c] *= 0.3f + 0.85f * shade;
 			}
-			if (lake >= 0 && height < sketch->lake_surfaces[lake] && terrain_sketch_lake_hint(sketch, u, v) >= 0.3f)
+			if (lake >= 0 && height < sketch->lake_surfaces[lake] && terrain_sketch_lake_hint(sketch, u, v) >= TERRAIN_SKETCH_LAKE_HOLDS)
 			{
 				float deep = clamp_float((sketch->lake_surfaces[lake] - height) / 6.0f, 0.0f, 1.0f);
 

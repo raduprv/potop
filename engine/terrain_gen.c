@@ -707,7 +707,9 @@ done:
 #define LAKE_HINT_SHARE 0.006f          // the painted water blurred over this share of the map's side
 #define LAKE_WIDE_REACH 3               // the bowl's depth blurred this many times wider
 #define LAKE_WARP_SHARE 0.02f           // the shore bent by up to this share of the map's side (the broad bends; the small ones a quarter)
-#define LAKE_SURFACE_SHARE 0.25f        // the share of a lake's shore lower than its surface (raised over it)
+#define LAKE_SURFACE_SHARE 0.05f        // the share of a lake's shore lower than its surface (raised over it: its few lowest dips)
+#define LAKE_HOLDS TERRAIN_SKETCH_LAKE_HOLDS // the water no farther out than its hint is this (world.c), the land past the shore raised
+                                        // over its surface all round by then: no wall of water where the land falls away
 #define LAKE_RIM_METERS 0.15f           // the shore eased to this much over the surface
 #define LAKE_EDGE_METERS 0.2f           // the water this deep at the shore, deepening from there
 
@@ -819,9 +821,9 @@ static void find_lakes(const float *heights, int32_t size, terrain_sketch_t *ske
 				}
 			}
 		}
-		// (its surface: as high as most of its shore, a quarter of it
-		// lower and raised; none, out to the map's edge everywhere: its
-		// own land's level)
+		// (its surface: as high as its shore's low dips, its few lowest
+		// raised over it; none, out to the map's edge everywhere: its own
+		// land's level)
 		if (shore_count > 0)
 		{
 			SDL_qsort(shore, shore_count, sizeof(float), compare_floats);
@@ -949,7 +951,7 @@ static void sink_lakes(float *heights, int32_t size, const terrain_settings_t *s
 			// in the middle
 			if (height < surface + LAKE_RIM_METERS)
 			{
-				height = lerp_float(height, surface + LAKE_RIM_METERS, smoothstep_float(0.05f, 0.45f, edge));
+				height = lerp_float(height, surface + LAKE_RIM_METERS, smoothstep_float(0.05f, LAKE_HOLDS - 0.05f, edge));
 			}
 			else
 			{

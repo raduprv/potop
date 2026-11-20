@@ -154,6 +154,10 @@ float terrain_sketch_water(const terrain_sketch_t *sketch, float u, float v);
 // The lake at (u, v): its index (-1: none)
 int terrain_sketch_lake_at(const terrain_sketch_t *sketch, float u, float v);
 
+// How far out a lake's water may reach: its hint this much (terrain_gen.c
+// raises the land over its surface all round by then)
+#define TERRAIN_SKETCH_LAKE_HOLDS 0.35f
+
 // The lakes' hint at (u, v), its texel's (0..1: over a half, in a lake)
 float terrain_sketch_lake_hint(const terrain_sketch_t *sketch, float u, float v);
 
