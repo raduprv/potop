@@ -935,14 +935,10 @@ bool terrain_generate_heights(float *heights, int32_t size, float cell_size_mete
 		sketch->lake_count = 0;
 	}
 
-	// 4. The rain's erosion, then the sketch's lakes
+	// 4. The rain's erosion
 	if ((steps & TERRAIN_HEIGHTS_EROSION) != 0 && settings->erosion_droplets > 0.0f)
 	{
 		apply_droplet_erosion(heights, size, settings, seed);
-	}
-	if (sketch != NULL && terrain_sketch_painted(sketch))
-	{
-		sink_lakes(heights, size, sketch);
 	}
 
 	// 5. Thermal erosion; then the steep faces' gullies and buttresses
@@ -950,6 +946,14 @@ bool terrain_generate_heights(float *heights, int32_t size, float cell_size_mete
 	{
 		apply_thermal_erosion(heights, size, cell_size_meters, settings);
 		carve_steep_faces(heights, size, cell_size_meters, settings, &noise);
+	}
+
+	// 6. The sketch's lakes, last: their surfaces under their shores as the
+	// land ends up (the thermal erosion after them wore the shores down
+	// below the water, which ran out down the slopes)
+	if (sketch != NULL && terrain_sketch_painted(sketch))
+	{
+		sink_lakes(heights, size, sketch);
 	}
 	return true;
 }
