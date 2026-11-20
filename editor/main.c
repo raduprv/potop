@@ -3004,7 +3004,7 @@ static void sketch_command(void *user, const char *arguments)
 	float u = 0.5f;
 	float v = 0.5f;
 	float radius = 0.1f;
-	float amount = 1.0f;
+	float level_number = 2.0f;
 
 	if (game->sketch.planes == NULL)
 	{
@@ -3032,7 +3032,7 @@ static void sketch_command(void *user, const char *arguments)
 		}
 		game->ui.sketch_known = true;
 	}
-	SDL_sscanf(arguments, "%15s %127s %f %f %f %f", verb, first, &u, &v, &radius, &amount);
+	SDL_sscanf(arguments, "%15s %127s %f %f %f %f", verb, first, &u, &v, &radius, &level_number);
 	if (SDL_strcmp(verb, "open") == 0)
 	{
 		game->ui.sketch_open = true;
@@ -3050,7 +3050,8 @@ static void sketch_command(void *user, const char *arguments)
 			SDL_Log("sketch paint: no region \"%s\" (plain, hills, mountains, valley, lake, erase)", first);
 			return;
 		}
-		terrain_sketch_paint(&game->sketch, preset < SKETCH_PRESET_COUNT ? sketch_presets[preset].region : TERRAIN_SKETCH_NONE, u, v, radius);
+		terrain_sketch_paint(&game->sketch, preset < SKETCH_PRESET_COUNT ? sketch_presets[preset].region : TERRAIN_SKETCH_NONE,
+			(terrain_sketch_level_t)SDL_clamp((int)SDL_lroundf(level_number) - 1, 0, TERRAIN_SKETCH_LEVEL_COUNT - 1), u, v, radius);
 	}
 	else if (SDL_strcmp(verb, "seed") == 0)
 	{

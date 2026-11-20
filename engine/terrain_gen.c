@@ -424,6 +424,7 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 	int32_t blend_reach = SDL_max(1, (int32_t)SDL_lroundf((float)SKETCH_GRID * clamp_float(land->blend_share, 0.0f, 0.2f)));
 	float most = settings->max_height_meters;
 	const uint8_t *regions = terrain_sketch_plane(sketch, TERRAIN_SKETCH_REGION);
+	const uint8_t *levels = terrain_sketch_plane(sketch, TERRAIN_SKETCH_LEVEL);
 	bool enough = scratch != NULL && other != NULL && weights != NULL;
 
 	for (int k = 0; k < 3; k++)
@@ -443,15 +444,20 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 		{
 			int32_t texel_x = x * TERRAIN_SKETCH_SIZE / SKETCH_GRID;
 			int32_t texel_y = y * TERRAIN_SKETCH_SIZE / SKETCH_GRID;
-			uint8_t region = regions[(size_t)texel_y * TERRAIN_SKETCH_SIZE + (size_t)texel_x];
+			size_t texel = (size_t)texel_y * TERRAIN_SKETCH_SIZE + (size_t)texel_x;
+			uint8_t region = regions[texel];
 			int kind = region < TERRAIN_SKETCH_REGION_COUNT ? region : 0;
 			size_t index = (size_t)y * SKETCH_GRID + (size_t)x;
 			float weight = kind == TERRAIN_SKETCH_LAKE ? 0.0f : 1.0f;
+			// (a low or high one: as much more or less of its kind, its
+			// height over the unpainted land's, a plain's its own)
+			float scale = kind == TERRAIN_SKETCH_NONE ? 1.0f : SDL_max(land->level_scale[SDL_min(levels[texel], TERRAIN_SKETCH_HIGH)], 0.0f);
+			float base = kind == TERRAIN_SKETCH_PLAIN ? 0.0f : land->height[TERRAIN_SKETCH_NONE];
 
 			weights[index] = weight;
-			blended[0][index] = land->height[kind] * weight;
-			blended[1][index] = land->roll[kind] * weight;
-			blended[2][index] = land->crests[kind] * weight;
+			blended[0][index] = SDL_max(base + (land->height[kind] - base) * scale, 0.0f) * weight;
+			blended[1][index] = land->roll[kind] * scale * weight;
+			blended[2][index] = land->crests[kind] * scale * weight;
 		}
 	}
 	for (int k = 0; k < 4; k++)
@@ -572,6 +578,8 @@ static void find_lakes(const float *heights, int32_t size, terrain_sketch_t *ske
 {
 	size_t texels = (size_t)TERRAIN_SKETCH_SIZE * TERRAIN_SKETCH_SIZE;
 	const float *hint = sketch->lake_hint;
+	const uint8_t *regions = terrain_sketch_plane(sketch, TERRAIN_SKETCH_REGION);
+	const uint8_t *levels = terrain_sketch_plane(sketch, TERRAIN_SKETCH_LEVEL);
 	uint32_t *queue = SDL_malloc(texels * sizeof(uint32_t));
 	float *shore = SDL_malloc(texels * sizeof(float));
 	static const int32_t steps[4][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } };
@@ -595,6 +603,7 @@ static void find_lakes(const float *heights, int32_t size, terrain_sketch_t *ske
 		double inside_sum = 0.0;
 		size_t inside_count = 0;
 		float surface;
+		int deepest_level = -1;
 
 		if (hint[start] < 0.5f || sketch->lake_labels[start] != 0)
 		{
@@ -610,6 +619,10 @@ static void find_lakes(const float *heights, int32_t size, terrain_sketch_t *ske
 
 			inside_sum += height_at_texel(heights, size, x, y);
 			inside_count++;
+			if (regions[queue[head]] == TERRAIN_SKETCH_LAKE)
+			{
+				deepest_level = SDL_max(deepest_level, (int)levels[queue[head]]);
+			}
 			for (int k = 0; k < 4; k++)
 			{
 				int32_t nx = x + steps[k][0];
@@ -648,6 +661,9 @@ static void find_lakes(const float *heights, int32_t size, terrain_sketch_t *ske
 			surface = (float)(inside_sum / (double)SDL_max(inside_count, (size_t)1));
 		}
 		sketch->lake_surfaces[sketch->lake_count] = SDL_max(surface, 0.5f);
+		// (as deep as the deepest painted in it says)
+		sketch->lake_depth_scales[sketch->lake_count] =
+			SDL_max(sketch->land.level_scale[deepest_level < 0 ? TERRAIN_SKETCH_MEDIUM : SDL_min(deepest_level, TERRAIN_SKETCH_HIGH)], 0.05f);
 		sketch->lake_count++;
 	}
 	// Spread over the fringe, the nearest lake's (breadth first from all of
@@ -758,7 +774,7 @@ static void sink_lakes(float *heights, int32_t size, const terrain_settings_t *s
 			// round the water), then the land under it sunk: just under
 			// the surface at the shore, deepest in the middle
 			height = lerp_float(height, SDL_max(height, surface + LAKE_RIM_METERS), smoothstep_float(0.15f, 0.42f, edge));
-			bed = surface - LAKE_EDGE_METERS - (depth - LAKE_EDGE_METERS) * smoothstep_float(0.5f, 0.95f, middle);
+			bed = surface - LAKE_EDGE_METERS - SDL_max(depth * sketch->lake_depth_scales[lake] - LAKE_EDGE_METERS, 0.0f) * smoothstep_float(0.5f, 0.95f, middle);
 			height = lerp_float(height, SDL_min(height, bed), smoothstep_float(0.42f, 0.6f, edge));
 			heights[index] = height;
 		}

@@ -75,7 +75,7 @@ are engine/ui.c; both draw with the same backend, font and colors.
   | `load <name>` | loads a saved map: `name`, `name.active` or `name.baked` (without the kind, the active one if there is one) |
   | `save <name>` / `bake <name>` | saves the map as its own kind / bakes it (for play), as `name.baked` |
   | `project list \| new <name> [seed] \| open <name> \| save [name] \| bake \| import <map> <name>` | map projects (the editor's; see **Projects** below) |
-  | `sketch open \| clear \| paint <region> <u> <v> <radius> \| seed <n> \| size <cells> \| show sketch\|result \| preview \| make <project> \| picture <file.png>` | the new map's sketch (see **Sketch** below): regions `plain`, `hills`, `mountains`, `valley`, `lake`, `erase`; u, v (0..1 across the map, from its north west corner) and the radius are shares of the map's side; `picture` writes the window's picture |
+  | `sketch open \| clear \| paint <region> <u> <v> <radius> [1\|2\|3] \| seed <n> \| size <cells> \| show sketch\|result \| preview \| make <project> \| picture <file.png>` | the new map's sketch (see **Sketch** below): regions `plain`, `hills`, `mountains`, `valley`, `lake`, `erase`, the level 1 low, 2 medium (if left out), 3 high; u, v (0..1 across the map, from its north west corner) and the radius are shares of the map's side; `picture` writes the window's picture |
   | `screenshot` | as F12 |
   | `clear` / `quit` | clears the log / leaves |
 
@@ -106,7 +106,10 @@ are engine/ui.c; both draw with the same backend, font and colors.
 * **Sketch**: a new map's land painted roughly from above, over the whole
   screen, in flat regions like a map's legend: **Plain**, **Hills**,
   **Mountains**, **Valley**, **Lake** (**Erase**, or the right button,
-  back to the blank sheet). The generator turns them into land: each kind
+  back to the blank sheet), each at a **Level**: low, medium or high (lower
+  or higher hills, mountains and plains, a shallower or deeper valley or
+  lake; paler or darker on the sheet; how much each is, **Low** and **High**
+  under What the regions make). The generator turns them into land: each kind
   its height and roughness, the seed's noise the shapes within (the
   mountains' crests, the hills' rolls), the kinds blended over a little
   across their borders; the unpainted is low, gently rolling land; a lake
@@ -128,7 +131,8 @@ are engine/ui.c; both draw with the same backend, font and colors.
   named (a new one, or the one open: everything on its map is lost, so it
   asks), grown as a new map is. The sketch is saved with the project
   (`sketch/regions.png`, gray: the region times 40, 0 unpainted, then
-  plain, hills, mountains, valley, lake), so it can be painted in an image
+  plain, hills, mountains, valley, lake; 12 over it a low one, 24 a high
+  one), so it can be painted in an image
   editor too, and comes back when the project opens. The erosion
   (the window's Erosion, 1 to start with: droplets of rain a texel run
   downhill, wearing gullies and valleys and filling hollows; 0: none) is

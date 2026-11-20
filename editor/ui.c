@@ -2359,6 +2359,7 @@ static void sketch_fill_fields(ui_t *ui, const ui_view_t *view)
 		SDL_snprintf(ui->sketch_name_input, sizeof(ui->sketch_name_input), "map %u", view->seed);
 	}
 	ui->sketch_brush = 0;
+	ui->sketch_level = TERRAIN_SKETCH_MEDIUM;
 	ui->sketch_brush_meters = SDL_max((float)ui_sketch_size(ui) * ui->sketch_cell_meters * 0.06f, 20.0f);
 	ui->project_count = project_list(ui->projects, PROJECT_LIST_MAX);
 	ui->sketch_known = true;
@@ -2428,6 +2429,10 @@ static void sketch_land_controls(ui_t *ui, terrain_sketch_t *sketch)
 	changed |= slider_row(ui, "Unpainted", &land->height[TERRAIN_SKETCH_NONE], 0.0f, 0.6f, 0.01f, "%.2f", "How high the land not painted lies");
 	changed |= slider_row(ui, "Unpainted roll", &land->roll[TERRAIN_SKETCH_NONE], 0.0f, 3.0f, 0.05f, "%.2f", "How much it rolls");
 	changed |= slider_row(ui, "Lakes", &land->lake_depth_meters, 1.0f, 40.0f, 0.5f, "%.1f m", "How deep a lake is at most");
+	changed |= slider_row(ui, "Low", &land->level_scale[TERRAIN_SKETCH_LOW], 0.1f, 1.0f, 0.05f, "x%.2f",
+		"How much of its kind a low region is (its height over the unpainted land, its roll, its crests; a lake's depth)");
+	changed |= slider_row(ui, "High", &land->level_scale[TERRAIN_SKETCH_HIGH], 1.0f, 3.0f, 0.05f, "x%.2f",
+		"How much of its kind a high region is");
 	if (slider_row(ui, "Borders", &borders_percent, 0.2f, 8.0f, 0.1f, "%.1f %%", "How far the regions blend into each other (of the map's side)"))
 	{
 		land->blend_share = borders_percent * 0.01f;
@@ -2505,6 +2510,28 @@ static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
 		if (nk_selectable_label(context, name, NK_TEXT_CENTERED, &selected))
 		{
 			ui->sketch_brush = i;
+		}
+	}
+	// (how much of its kind: lower or higher hills, mountains, plains,
+	// shallower or deeper valleys, lakes)
+	{
+		static const char *const level_names[TERRAIN_SKETCH_LEVEL_COUNT] = { "Low", "Medium", "High" };
+		static const char *const level_tooltips[TERRAIN_SKETCH_LEVEL_COUNT] = {
+			"Less of its kind: lower hills and mountains, a lower plain, a shallower valley or lake",
+			"As much of its kind as What the regions make says",
+			"More of its kind: higher hills and mountains, a higher plain, a deeper valley or lake" };
+
+		nk_layout_row(context, NK_DYNAMIC, ROW_HEIGHT, 4, (const float[]){ 0.25f, 0.25f, 0.25f, 0.25f });
+		nk_label(context, "Level", NK_TEXT_LEFT);
+		for (int i = 0; i < TERRAIN_SKETCH_LEVEL_COUNT; i++)
+		{
+			nk_bool selected = ui->sketch_level == (terrain_sketch_level_t)i;
+
+			if (nk_selectable_label(context, level_names[i], NK_TEXT_CENTERED, &selected))
+			{
+				ui->sketch_level = (terrain_sketch_level_t)i;
+			}
+			tooltip_if_hovered(context, level_tooltips[i]);
 		}
 	}
 	slider_row(ui, "Brush", &ui->sketch_brush_meters, 10.0f, SDL_max(map_meters * 0.3f, 20.0f), 10.0f, "%.0f m", "How far the brush reaches");
@@ -2649,11 +2676,11 @@ static void sketch_window(ui_t *ui, const ui_view_t *view)
 
 				if (ui->sketch_stroke)
 				{
-					terrain_sketch_paint_line(view->sketch, region, ui->sketch_last_u, ui->sketch_last_v, u, v, radius);
+					terrain_sketch_paint_line(view->sketch, region, ui->sketch_level, ui->sketch_last_u, ui->sketch_last_v, u, v, radius);
 				}
 				else
 				{
-					terrain_sketch_paint(view->sketch, region, u, v, radius);
+					terrain_sketch_paint(view->sketch, region, ui->sketch_level, u, v, radius);
 				}
 				ui->sketch_last_u = u;
 				ui->sketch_last_v = v;

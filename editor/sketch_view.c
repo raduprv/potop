@@ -152,6 +152,7 @@ static void compose_picture(sketch_view_t *view, const terrain_sketch_t *sketch,
 static void compose_paper(sketch_view_t *view, const terrain_sketch_t *sketch)
 {
 	const uint8_t *regions = terrain_sketch_plane(sketch, TERRAIN_SKETCH_REGION);
+	const uint8_t *levels = terrain_sketch_plane(sketch, TERRAIN_SKETCH_LEVEL);
 	int32_t step = TERRAIN_SKETCH_SIZE / SKETCH_VIEW_SIZE;
 
 #pragma omp parallel for schedule(static)
@@ -161,7 +162,9 @@ static void compose_paper(sketch_view_t *view, const terrain_sketch_t *sketch)
 		{
 			int32_t texel_x = x * step;
 			int32_t texel_y = y * step;
-			uint8_t region = regions[(size_t)texel_y * TERRAIN_SKETCH_SIZE + (size_t)texel_x];
+			size_t texel = (size_t)texel_y * TERRAIN_SKETCH_SIZE + (size_t)texel_x;
+			uint8_t region = regions[texel];
+			uint8_t level = levels[texel];
 			const uint8_t *color = sketch_region_color((terrain_sketch_region_t)region);
 			uint8_t *pixel = &view->pixels[((size_t)y * SKETCH_VIEW_SIZE + (size_t)x) * 4];
 			bool border = false;
@@ -171,11 +174,16 @@ static void compose_paper(sketch_view_t *view, const terrain_sketch_t *sketch)
 				int32_t nx = clamp_int(texel_x + (k == 0 ? step : k == 1 ? -step : 0), 0, TERRAIN_SKETCH_SIZE - 1);
 				int32_t ny = clamp_int(texel_y + (k == 2 ? step : k == 3 ? -step : 0), 0, TERRAIN_SKETCH_SIZE - 1);
 
-				border = regions[(size_t)ny * TERRAIN_SKETCH_SIZE + (size_t)nx] != region;
+				border = regions[(size_t)ny * TERRAIN_SKETCH_SIZE + (size_t)nx] != region
+					|| (region != TERRAIN_SKETCH_NONE && levels[(size_t)ny * TERRAIN_SKETCH_SIZE + (size_t)nx] != level);
 			}
+			// (a low one paler, a high one darker)
 			for (int c = 0; c < 3; c++)
 			{
-				pixel[c] = border ? (uint8_t)(color[c] * 0.6f) : color[c];
+				float shade = region == TERRAIN_SKETCH_NONE || level == TERRAIN_SKETCH_MEDIUM ? (float)color[c]
+					: (level == TERRAIN_SKETCH_LOW ? lerp_float((float)color[c], 255.0f, 0.45f) : (float)color[c] * 0.65f);
+
+				pixel[c] = (uint8_t)(border ? shade * 0.6f : shade);
 			}
 			pixel[3] = 255;
 		}

@@ -27,7 +27,11 @@
 #define TERRAIN_SKETCH_LAKES_MAX 256
 // Painted this much (of 255) or more, a texel is in a lake
 #define TERRAIN_SKETCH_LAKE_THRESHOLD 90
+// regions.png's gray: the region times this, a medium one; a low one
+// TERRAIN_SKETCH_PNG_LOW over it, a high one TERRAIN_SKETCH_PNG_HIGH
 #define TERRAIN_SKETCH_PNG_STEP 40
+#define TERRAIN_SKETCH_PNG_LOW 12
+#define TERRAIN_SKETCH_PNG_HIGH 24
 
 typedef enum
 {
@@ -40,10 +44,21 @@ typedef enum
 	TERRAIN_SKETCH_REGION_COUNT
 } terrain_sketch_region_t;
 
+// How much of its kind a region is: lower hills, higher mountains, a
+// deeper valley, a deeper lake, a higher plain
+typedef enum
+{
+	TERRAIN_SKETCH_LOW = 0,
+	TERRAIN_SKETCH_MEDIUM,
+	TERRAIN_SKETCH_HIGH,
+	TERRAIN_SKETCH_LEVEL_COUNT
+} terrain_sketch_level_t;
+
 typedef enum
 {
 	TERRAIN_SKETCH_REGION = 0,
 	TERRAIN_SKETCH_WATER,
+	TERRAIN_SKETCH_LEVEL,          // each texel's terrain_sketch_level_t
 	TERRAIN_SKETCH_PLANES
 } terrain_sketch_plane_t;
 
@@ -54,7 +69,9 @@ typedef enum
 // highest ground); how far the regions blend across their borders (a share
 // of the map's side), how big the crests are (how many across the map, as
 // the land's feature count says, times this), how deep a lake is at most
-// (meters under its surface). Saved with the sketch (land.ini)
+// (meters under its surface); how much a low and a high region are of a
+// medium one (its height over the unpainted land, a plain's its height;
+// its roll, its crests; a lake's depth). Saved with the sketch (land.ini)
 typedef struct
 {
 	float height[TERRAIN_SKETCH_REGION_COUNT];
@@ -63,6 +80,7 @@ typedef struct
 	float blend_share;
 	float crest_scale;
 	float lake_depth_meters;
+	float level_scale[TERRAIN_SKETCH_LEVEL_COUNT];
 } terrain_sketch_land_t;
 
 typedef struct
@@ -78,6 +96,7 @@ typedef struct
 	float *lake_hint;
 	uint16_t *lake_labels;
 	float lake_surfaces[TERRAIN_SKETCH_LAKES_MAX];
+	float lake_depth_scales[TERRAIN_SKETCH_LAKES_MAX];
 	int lake_count;
 } terrain_sketch_t;
 
@@ -99,12 +118,12 @@ static inline uint8_t *terrain_sketch_plane(const terrain_sketch_t *sketch, terr
 }
 
 // A disc of the region round (u, v) (0..1 over the map), radius a share of
-// its side (TERRAIN_SKETCH_NONE: rubbed out)
-void terrain_sketch_paint(terrain_sketch_t *sketch, terrain_sketch_region_t region, float u, float v, float radius);
+// its side, at that level (TERRAIN_SKETCH_NONE: rubbed out)
+void terrain_sketch_paint(terrain_sketch_t *sketch, terrain_sketch_region_t region, terrain_sketch_level_t level, float u, float v, float radius);
 
 // The same along a stroke, from one point to the next (no gaps between)
-void terrain_sketch_paint_line(terrain_sketch_t *sketch, terrain_sketch_region_t region, float from_u, float from_v, float to_u, float to_v,
-	float radius);
+void terrain_sketch_paint_line(terrain_sketch_t *sketch, terrain_sketch_region_t region, terrain_sketch_level_t level, float from_u, float from_v,
+	float to_u, float to_v, float radius);
 
 // The region at (u, v)
 terrain_sketch_region_t terrain_sketch_region_at(const terrain_sketch_t *sketch, float u, float v);

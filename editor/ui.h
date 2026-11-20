@@ -218,6 +218,7 @@ typedef struct
 	bool sketch_open;
 	bool sketch_known;             // its fields filled in (when first opened)
 	int sketch_brush;              // a region (sketch_presets), SKETCH_PRESET_COUNT erase
+	terrain_sketch_level_t sketch_level; // how much of its kind the brush paints
 	float sketch_brush_meters;     // the brush's radius
 	bool sketch_stroke;            // painting: the mouse held since the frame before, there
 	float sketch_last_u;

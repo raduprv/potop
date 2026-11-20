@@ -42,6 +42,9 @@ void terrain_sketch_land_defaults(terrain_sketch_land_t *land)
 	land->blend_share = 0.015f;
 	land->crest_scale = 2.0f;
 	land->lake_depth_meters = 8.0f;
+	land->level_scale[TERRAIN_SKETCH_LOW] = 0.5f;
+	land->level_scale[TERRAIN_SKETCH_MEDIUM] = 1.0f;
+	land->level_scale[TERRAIN_SKETCH_HIGH] = 1.7f;
 }
 
 void terrain_sketch_destroy(terrain_sketch_t *sketch)
@@ -59,6 +62,7 @@ void terrain_sketch_clear(terrain_sketch_t *sketch)
 		return;
 	}
 	SDL_memset(sketch->planes, 0, TERRAIN_SKETCH_PLANES * PLANE_TEXELS);
+	SDL_memset(terrain_sketch_plane(sketch, TERRAIN_SKETCH_LEVEL), TERRAIN_SKETCH_MEDIUM, PLANE_TEXELS);
 	sketch->lake_count = 0;
 	sketch->revision++;
 }
@@ -82,7 +86,12 @@ bool terrain_sketch_painted(const terrain_sketch_t *sketch)
 	return false;
 }
 
-static void paint_disc(terrain_sketch_t *sketch, terrain_sketch_region_t region, float u, float v, float radius)
+static terrain_sketch_level_t clamp_level(terrain_sketch_level_t level)
+{
+	return level < TERRAIN_SKETCH_LOW ? TERRAIN_SKETCH_LOW : (level > TERRAIN_SKETCH_HIGH ? TERRAIN_SKETCH_HIGH : level);
+}
+
+static void paint_disc(terrain_sketch_t *sketch, terrain_sketch_region_t region, terrain_sketch_level_t level, float u, float v, float radius)
 {
 	float center_x = u * (float)TERRAIN_SKETCH_SIZE - 0.5f;
 	float center_y = v * (float)TERRAIN_SKETCH_SIZE - 0.5f;
@@ -93,6 +102,7 @@ static void paint_disc(terrain_sketch_t *sketch, terrain_sketch_region_t region,
 	int32_t last_y = SDL_min((int32_t)SDL_ceilf(center_y + reach), TERRAIN_SKETCH_SIZE - 1);
 	uint8_t *regions = terrain_sketch_plane(sketch, TERRAIN_SKETCH_REGION);
 	uint8_t *water = terrain_sketch_plane(sketch, TERRAIN_SKETCH_WATER);
+	uint8_t *levels = terrain_sketch_plane(sketch, TERRAIN_SKETCH_LEVEL);
 
 	for (int32_t y = first_y; y <= last_y; y++)
 	{
@@ -108,22 +118,23 @@ static void paint_disc(terrain_sketch_t *sketch, terrain_sketch_region_t region,
 			}
 			regions[index] = (uint8_t)region;
 			water[index] = region == TERRAIN_SKETCH_LAKE ? 255 : 0;
+			levels[index] = (uint8_t)(region == TERRAIN_SKETCH_NONE ? TERRAIN_SKETCH_MEDIUM : level);
 		}
 	}
 }
 
-void terrain_sketch_paint(terrain_sketch_t *sketch, terrain_sketch_region_t region, float u, float v, float radius)
+void terrain_sketch_paint(terrain_sketch_t *sketch, terrain_sketch_region_t region, terrain_sketch_level_t level, float u, float v, float radius)
 {
 	if (sketch->planes == NULL || region < 0 || region >= TERRAIN_SKETCH_REGION_COUNT)
 	{
 		return;
 	}
-	paint_disc(sketch, region, u, v, radius);
+	paint_disc(sketch, region, clamp_level(level), u, v, radius);
 	sketch->revision++;
 }
 
-void terrain_sketch_paint_line(terrain_sketch_t *sketch, terrain_sketch_region_t region, float from_u, float from_v, float to_u, float to_v,
-	float radius)
+void terrain_sketch_paint_line(terrain_sketch_t *sketch, terrain_sketch_region_t region, terrain_sketch_level_t level, float from_u, float from_v,
+	float to_u, float to_v, float radius)
 {
 	float length = SDL_sqrtf((to_u - from_u) * (to_u - from_u) + (to_v - from_v) * (to_v - from_v));
 	// (discs a third of the radius apart: an even stroke)
@@ -138,7 +149,7 @@ void terrain_sketch_paint_line(terrain_sketch_t *sketch, terrain_sketch_region_t
 	{
 		float along = (float)k / (float)steps;
 
-		paint_disc(sketch, region, lerp_float(from_u, to_u, along), lerp_float(from_v, to_v, along), radius);
+		paint_disc(sketch, region, clamp_level(level), lerp_float(from_u, to_u, along), lerp_float(from_v, to_v, along), radius);
 	}
 	sketch->revision++;
 }
@@ -311,6 +322,7 @@ static bool load_png(const char *folder, const char *name, uint8_t *gray, uint8_
 bool terrain_sketch_save(const terrain_sketch_t *sketch, const char *folder)
 {
 	const uint8_t *regions = terrain_sketch_plane(sketch, TERRAIN_SKETCH_REGION);
+	const uint8_t *levels = terrain_sketch_plane(sketch, TERRAIN_SKETCH_LEVEL);
 	uint8_t *gray;
 	bool saved;
 
@@ -325,7 +337,10 @@ bool terrain_sketch_save(const terrain_sketch_t *sketch, const char *folder)
 	}
 	for (size_t i = 0; i < PLANE_TEXELS; i++)
 	{
-		gray[i] = (uint8_t)(regions[i] * TERRAIN_SKETCH_PNG_STEP);
+		int over = regions[i] == TERRAIN_SKETCH_NONE ? 0
+			: (levels[i] == TERRAIN_SKETCH_LOW ? TERRAIN_SKETCH_PNG_LOW : (levels[i] == TERRAIN_SKETCH_HIGH ? TERRAIN_SKETCH_PNG_HIGH : 0));
+
+		gray[i] = (uint8_t)(regions[i] * TERRAIN_SKETCH_PNG_STEP + over);
 	}
 	saved = save_png(folder, "regions.png", gray, NULL);
 	SDL_free(gray);
@@ -338,8 +353,10 @@ bool terrain_sketch_save(const terrain_sketch_t *sketch, const char *folder)
 		const terrain_sketch_land_t *land = &sketch->land;
 
 		length += (size_t)SDL_snprintf(text + length, sizeof(text) - length,
-			"; What the sketch's regions make (terrain_sketch.h)\nblend_share = %.4f\ncrest_scale = %.3f\nlake_depth_meters = %.2f\n",
-			(double)land->blend_share, (double)land->crest_scale, (double)land->lake_depth_meters);
+			"; What the sketch's regions make (terrain_sketch.h)\nblend_share = %.4f\ncrest_scale = %.3f\nlake_depth_meters = %.2f\n"
+			"low_scale = %.3f\nhigh_scale = %.3f\n",
+			(double)land->blend_share, (double)land->crest_scale, (double)land->lake_depth_meters,
+			(double)land->level_scale[TERRAIN_SKETCH_LOW], (double)land->level_scale[TERRAIN_SKETCH_HIGH]);
 		for (int i = 0; i < TERRAIN_SKETCH_REGION_COUNT && length < sizeof(text); i++)
 		{
 			length += (size_t)SDL_snprintf(text + length, sizeof(text) - length, "%s_height = %.4f\n%s_roll = %.4f\n%s_crests = %.4f\n", names[i],
@@ -374,6 +391,14 @@ static void read_land_line(terrain_sketch_land_t *land, const char *line)
 	{
 		land->lake_depth_meters = value;
 	}
+	else if (SDL_strcmp(key, "low_scale") == 0)
+	{
+		land->level_scale[TERRAIN_SKETCH_LOW] = value;
+	}
+	else if (SDL_strcmp(key, "high_scale") == 0)
+	{
+		land->level_scale[TERRAIN_SKETCH_HIGH] = value;
+	}
 	for (int i = 0; i < TERRAIN_SKETCH_REGION_COUNT; i++)
 	{
 		size_t name_length = SDL_strlen(names[i]);
@@ -401,6 +426,7 @@ bool terrain_sketch_load(terrain_sketch_t *sketch, const char *folder)
 {
 	uint8_t *regions = terrain_sketch_plane(sketch, TERRAIN_SKETCH_REGION);
 	uint8_t *water = terrain_sketch_plane(sketch, TERRAIN_SKETCH_WATER);
+	uint8_t *levels = terrain_sketch_plane(sketch, TERRAIN_SKETCH_LEVEL);
 	bool loaded;
 
 	terrain_sketch_clear(sketch);
@@ -436,12 +462,17 @@ bool terrain_sketch_load(terrain_sketch_t *sketch, const char *folder)
 			SDL_free(text);
 		}
 	}
-	// (the gray back to the regions, the nearest; the water follows)
+	// (the gray back to the regions and their levels: what is over a
+	// region's step, nearer the low or the high one's, or none, medium; the
+	// water follows)
 	for (size_t i = 0; i < PLANE_TEXELS; i++)
 	{
-		int region = (regions[i] + TERRAIN_SKETCH_PNG_STEP / 2) / TERRAIN_SKETCH_PNG_STEP;
+		int region = (regions[i] + 6) / TERRAIN_SKETCH_PNG_STEP;
+		int over = regions[i] - region * TERRAIN_SKETCH_PNG_STEP;
 
 		regions[i] = (uint8_t)(region < TERRAIN_SKETCH_REGION_COUNT ? region : TERRAIN_SKETCH_NONE);
+		levels[i] = (uint8_t)(regions[i] == TERRAIN_SKETCH_NONE || over < TERRAIN_SKETCH_PNG_LOW / 2 ? TERRAIN_SKETCH_MEDIUM
+			: (over < (TERRAIN_SKETCH_PNG_LOW + TERRAIN_SKETCH_PNG_HIGH) / 2 ? TERRAIN_SKETCH_LOW : TERRAIN_SKETCH_HIGH));
 		water[i] = regions[i] == TERRAIN_SKETCH_LAKE ? 255 : 0;
 	}
 	sketch->revision++;
