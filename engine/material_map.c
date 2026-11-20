@@ -633,6 +633,11 @@ bool material_map_clear_flooded_cover(terrain_t *terrain, const water_t *water, 
 	{
 		return false;
 	}
+	// (the map made smaller since, the preview a quarter as big: from its start)
+	if (next_chunk >= chunk_count)
+	{
+		next_chunk = 0;
+	}
 	for (int n = 0; n < FLOOD_CHUNKS_PER_CALL && n < chunk_count; n++)
 	{
 		int chunk = next_chunk;
