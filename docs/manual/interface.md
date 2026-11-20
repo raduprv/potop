@@ -118,7 +118,8 @@ are engine/ui.c; both draw with the same backend, font and colors.
   `sketch.ini`), **Load sketch** brings one back. The generator turns them into land: each kind
   its height and roughness, the seed's noise the shapes within (the
   mountains' crests, the hills' rolls), the kinds blended over a little
-  across their borders; the unpainted is low, gently rolling land; a lake
+  across their borders; the unpainted is the seed's own land, the painted
+  blended into it; a lake
   painted is a hint, not its shape: its corners rounded, its edge bent into
   bays and points, its surface as high as the land round it (its low shores
   raised a little so it holds its water), the land under it a bowl, the
@@ -126,7 +127,7 @@ are engine/ui.c; both draw with the same backend, font and colors.
   the map is the seed's. **What the regions make** (folded under the
   brushes): the mountains' height, their crests (how high, how many across
   the map), the hills' height and roll, the plain's, the valley floor's,
-  the unpainted land's height and roll, how deep the lakes are, how far the
+  the base the regions' heights are told from, how deep the lakes are, how far the
   regions blend; saved with the sketch (`sketch/land.ini`). At the left the map (the project's name, the
   seed, its size, cell, highest ground, how much the rain erodes it when it
   is made), the regions and what to do; at the right **The sketch** (the

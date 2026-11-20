@@ -541,16 +541,19 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 	// then how much of each shape, big, normal, small)
 	float *blended[3 + TERRAIN_SKETCH_SHAPE_COUNT];
 	float *other = SDL_malloc(grid_texels * sizeof(float));
-	// (how much of each texel's own counts: none of a lake's, which takes
-	// the land round it, its lake sunk into that after: sink_lakes)
+	// (how much of each texel's own counts: a painted one's, not a lake's,
+	// which takes the land round it, its lake sunk into that after:
+	// sink_lakes; nor the unpainted's, which keeps the seed's land; then
+	// how much of the land is the sketch's, the rest the seed's)
 	float *weights = SDL_malloc(grid_texels * sizeof(float));
+	float *seeded = SDL_malloc(grid_texels * sizeof(float));
 	const terrain_sketch_land_t *land = &sketch->land;
 	int32_t blend_reach = SDL_max(1, (int32_t)SDL_lroundf((float)SKETCH_GRID * clamp_float(land->blend_share, 0.0f, 0.2f)));
 	float most = settings->max_height_meters;
 	const uint8_t *regions = terrain_sketch_plane(sketch, TERRAIN_SKETCH_REGION);
 	const uint8_t *levels = terrain_sketch_plane(sketch, TERRAIN_SKETCH_LEVEL);
 	const uint8_t *shapes = terrain_sketch_plane(sketch, TERRAIN_SKETCH_SHAPE);
-	bool enough = scratch != NULL && other != NULL && weights != NULL;
+	bool enough = scratch != NULL && other != NULL && weights != NULL && seeded != NULL;
 
 	for (int k = 0; k < 3 + TERRAIN_SKETCH_SHAPE_COUNT; k++)
 	{
@@ -573,13 +576,14 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 			uint8_t region = regions[texel];
 			int kind = region < TERRAIN_SKETCH_REGION_COUNT ? region : 0;
 			size_t index = (size_t)y * SKETCH_GRID + (size_t)x;
-			float weight = kind == TERRAIN_SKETCH_LAKE ? 0.0f : 1.0f;
+			float weight = kind == TERRAIN_SKETCH_LAKE || kind == TERRAIN_SKETCH_NONE ? 0.0f : 1.0f;
 			// (a low or high one: as much more or less of its kind, its
 			// height over the unpainted land's, a plain's its own)
 			float scale = kind == TERRAIN_SKETCH_NONE ? 1.0f : SDL_max(land->level_scale[SDL_min(levels[texel], TERRAIN_SKETCH_HIGH)], 0.0f);
 			float base = kind == TERRAIN_SKETCH_PLAIN ? 0.0f : land->height[TERRAIN_SKETCH_NONE];
 
 			weights[index] = weight;
+			seeded[index] = kind == TERRAIN_SKETCH_NONE ? 1.0f : 0.0f;
 			blended[0][index] = SDL_max(base + (land->height[kind] - base) * scale, 0.0f) * weight;
 			blended[1][index] = land->roll[kind] * scale * weight;
 			blended[2][index] = land->crests[kind] * scale * weight;
@@ -589,9 +593,9 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 			}
 		}
 	}
-	for (int k = 0; k < 4 + TERRAIN_SKETCH_SHAPE_COUNT; k++)
+	for (int k = 0; k < 5 + TERRAIN_SKETCH_SHAPE_COUNT; k++)
 	{
-		float *grid = k < 3 + TERRAIN_SKETCH_SHAPE_COUNT ? blended[k] : weights;
+		float *grid = k < 3 + TERRAIN_SKETCH_SHAPE_COUNT ? blended[k] : (k == 3 + TERRAIN_SKETCH_SHAPE_COUNT ? weights : seeded);
 
 		for (int pass = 0; pass < 3; pass++)
 		{
@@ -601,12 +605,16 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 			transpose(other, grid, SKETCH_GRID);
 		}
 	}
-	// (each the weighted mean of what is round it: a lake's own land none,
-	// the land round it carried over it, as high as its shores; far into
-	// one, the unpainted land's)
+	// (each the weighted mean of the painted round it: a lake's own land
+	// none, the land round it carried over it, as high as its shores; and
+	// the sketch's share against the unpainted round it, the seed's land
+	// there: by a lake in it, the seed's land carried over it too)
 	for (size_t i = 0; i < grid_texels; i++)
 	{
 		bool known = weights[i] > 1e-3f;
+		float both = weights[i] + seeded[i];
+
+		seeded[i] = both > 1e-3f ? weights[i] / both : 0.0f;
 
 		blended[0][i] = known ? blended[0][i] / weights[i] : land->height[TERRAIN_SKETCH_NONE];
 		blended[1][i] = known ? blended[1][i] / weights[i] : land->roll[TERRAIN_SKETCH_NONE];
@@ -669,7 +677,11 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 					ridges += share * SDL_powf(clamp_float(ridge, 0.0f, 1.0f), 1.5f);
 				}
 			}
-			heights[index] = (height + detail * rolling * 0.08f) * most + crests * ridges * most;
+			{
+				float share = clamp_float(grid_sample(seeded, SKETCH_GRID, u, v), 0.0f, 1.0f);
+
+				heights[index] = lerp_float(heights[index], (height + detail * rolling * 0.08f) * most + crests * ridges * most, share);
+			}
 			heights[index] = SDL_max(heights[index], 0.0f);
 		}
 	}
@@ -677,6 +689,7 @@ done:
 	SDL_free(scratch);
 	SDL_free(other);
 	SDL_free(weights);
+	SDL_free(seeded);
 	for (int k = 0; k < 3 + TERRAIN_SKETCH_SHAPE_COUNT; k++)
 	{
 		SDL_free(blended[k]);
@@ -1221,12 +1234,9 @@ bool terrain_generate_heights(float *heights, int32_t size, float cell_size_mete
 	int octave_count = octaves_for(size, cell_size_meters, settings);
 
 	initialize_generation_noise(&noise, seed);
-	// (painted: the land is the sketch's alone, the seed's not needed)
-	if ((steps & TERRAIN_HEIGHTS_LAND) != 0 && sketch != NULL && terrain_sketch_painted(sketch))
-	{
-		SDL_memset(heights, 0, cell_count * sizeof(float));
-	}
-	else if ((steps & TERRAIN_HEIGHTS_LAND) != 0)
+	// (the seed's land, the sketch over it where it is painted: the
+	// unpainted stays the seed's)
+	if ((steps & TERRAIN_HEIGHTS_LAND) != 0)
 	{
 		// 1. Raw landscape
 #pragma omp parallel for schedule(static)

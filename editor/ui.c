@@ -2437,8 +2437,8 @@ static void sketch_land_controls(ui_t *ui, terrain_sketch_t *sketch)
 	changed |= slider_row(ui, "Plain", &land->height[TERRAIN_SKETCH_PLAIN], 0.0f, 0.5f, 0.01f, "%.2f", "How high a plain lies");
 	changed |= slider_row(ui, "Plain roll", &land->roll[TERRAIN_SKETCH_PLAIN], 0.0f, 2.0f, 0.05f, "%.2f", "How much it rolls");
 	changed |= slider_row(ui, "Valley", &land->height[TERRAIN_SKETCH_VALLEY], 0.0f, 0.3f, 0.01f, "%.2f", "How high a valley's floor lies");
-	changed |= slider_row(ui, "Unpainted", &land->height[TERRAIN_SKETCH_NONE], 0.0f, 0.6f, 0.01f, "%.2f", "How high the land not painted lies");
-	changed |= slider_row(ui, "Unpainted roll", &land->roll[TERRAIN_SKETCH_NONE], 0.0f, 3.0f, 0.05f, "%.2f", "How much it rolls");
+	changed |= slider_row(ui, "Base", &land->height[TERRAIN_SKETCH_NONE], 0.0f, 0.6f, 0.01f, "%.2f",
+		"The level the regions' heights are told from (a low or high one's more or less over it; the land not painted is the seed's)");
 	changed |= slider_row(ui, "Lakes", &land->lake_depth_meters, 1.0f, 40.0f, 0.5f, "%.1f m", "How deep a lake is at most");
 	changed |= slider_row(ui, "Low", &land->level_scale[TERRAIN_SKETCH_LOW], 0.1f, 1.0f, 0.05f, "x%.2f",
 		"How much of its kind a low region is (its height over the unpainted land, its roll, its crests; a lake's depth)");
