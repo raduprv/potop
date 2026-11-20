@@ -19739,10 +19739,12 @@ nk_clear(struct nk_context *ctx)
         if (((iter->flags & NK_WINDOW_HIDDEN) ||
             (iter->flags & NK_WINDOW_CLOSED)) &&
             iter == ctx->active) {
+            /* Potop: only the hotness moves. Setting ctx->end to iter->prev
+             * here cut the list short when another window came after iter
+             * (one drawn after it that frame), so that window was lost
+             * past the end and the list broke a frame later (nk_build
+             * crashed); a closed window is unlinked properly below */
             ctx->active = iter->prev;
-            ctx->end = iter->prev;
-            if (!ctx->end)
-                ctx->begin = 0;
             if (ctx->active)
                 ctx->active->flags &= ~(unsigned)NK_WINDOW_ROM;
         }

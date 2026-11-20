@@ -2526,7 +2526,11 @@ static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
 static void sketch_window(ui_t *ui, const ui_view_t *view)
 {
 	struct nk_context *context = &ui->backend.context;
-	nk_flags flags = NK_WINDOW_BORDER | NK_WINDOW_TITLE | NK_WINDOW_CLOSABLE | NK_WINDOW_NO_SCROLLBAR;
+	// (no close box, nor nk_window_close: closing the active window while
+	// another comes after it in Nuklear's list (the console, drawn after
+	// it) cuts the list short and crashes it a frame later; closed, it is
+	// simply not begun, and Nuklear lets it go cleanly)
+	nk_flags flags = NK_WINDOW_BORDER | NK_WINDOW_TITLE | NK_WINDOW_NO_SCROLLBAR;
 	struct nk_rect bounds = nk_rect(0.0f, 0.0f, ui->backend.width, ui->backend.height);
 
 	if (!ui->sketch_open || view->sketch == NULL)
@@ -2541,10 +2545,6 @@ static void sketch_window(ui_t *ui, const ui_view_t *view)
 	if (!ui->sketch_known)
 	{
 		sketch_fill_fields(ui, view);
-	}
-	if (nk_window_is_hidden(context, SKETCH_WINDOW) && nk_window_find(context, SKETCH_WINDOW) != NULL)
-	{
-		nk_window_show(context, SKETCH_WINDOW, NK_SHOWN);
 	}
 	if (nk_begin_titled(context, SKETCH_WINDOW, "Sketch: the new map's land", bounds, flags))
 	{
@@ -2622,10 +2622,6 @@ static void sketch_window(ui_t *ui, const ui_view_t *view)
 		ui->sketch_open = false;
 	}
 	nk_end(context);
-	if (!ui->sketch_open)
-	{
-		nk_window_close(context, SKETCH_WINDOW);
-	}
 }
 
 // ---------------------------------------------------------------------------
