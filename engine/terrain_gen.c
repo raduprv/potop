@@ -3,6 +3,7 @@
 #include "terrain_gen.h"
 #include "noise.h"
 #include "math3d.h"
+#include "noise_lattice.h"
 
 #include <SDL3/SDL.h>
 
@@ -141,6 +142,102 @@ static void apply_thermal_erosion(float *heights, int32_t size, float cell_size_
 		SDL_memcpy(heights, current, (size_t)size * (size_t)size * sizeof(float));
 	}
 	SDL_free(next_heights);
+}
+
+// The thermal erosion for a new map from the sketch: as above, but over all
+// eight neighbors, the diagonal ones as far as they are (their talus drop
+// times the square root of two), so slopes settle round, not into
+// pyramids square to the grid with steps along its axes; and the angle
+// they settle at varying from place to place (a slow noise, three quarters
+// of the talus slope to five quarters), so the faces are not each one
+// plane. Each pair of neighbors shares its own talus (the mean of theirs):
+// what one gives the other takes
+#define ISOTROPIC_TALUS_METERS 40.0f    // the talus's noise: its features about this big
+#define ISOTROPIC_SHARE_STRAIGHT 0.0732f // the excess moved to a side neighbor (the eight's shares sum to a half: no overshoot)
+#define ISOTROPIC_SHARE_DIAGONAL 0.0518f // to a diagonal one (a side one's over the square root of two)
+
+static void apply_thermal_erosion_isotropic(float *heights, int32_t size, float cell_size_meters, const terrain_settings_t *settings)
+{
+	size_t cell_count = (size_t)size * (size_t)size;
+	float *next_heights = SDL_malloc(cell_count * sizeof(float));
+	uint8_t *talus = SDL_malloc(cell_count);
+	float *current = heights;
+	float *next = next_heights;
+	float talus_drop = settings->talus_slope * cell_size_meters;
+	float frequency = cell_size_meters / ISOTROPIC_TALUS_METERS;
+	static const int32_t offsets[8][2] = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 }, { 1, 1 }, { -1, 1 }, { 1, -1 }, { -1, -1 } };
+
+	if (next_heights == NULL || talus == NULL)
+	{
+		SDL_free(next_heights);
+		SDL_free(talus);
+		apply_thermal_erosion(heights, size, cell_size_meters, settings);
+		return;
+	}
+	// (each cell's share of the talus, 0..255: 0.75 .. 1.25 of it)
+#pragma omp parallel for schedule(static)
+	for (int32_t y = 0; y < size; y++)
+	{
+		for (int32_t x = 0; x < size; x++)
+		{
+			talus[(size_t)y * (size_t)size + (size_t)x] = (uint8_t)(clamp_float(noise_lattice_value((float)x * frequency + 37.0f,
+				(float)y * frequency - 11.0f), 0.0f, 1.0f) * 255.0f + 0.5f);
+		}
+	}
+	for (int32_t iteration = 0; iteration < settings->thermal_iterations; iteration++)
+	{
+#pragma omp parallel for schedule(static)
+		for (int32_t y = 0; y < size; y++)
+		{
+			for (int32_t x = 0; x < size; x++)
+			{
+				size_t index = (size_t)y * (size_t)size + (size_t)x;
+				float height = current[index];
+				float change = 0.0f;
+
+				for (int k = 0; k < 8; k++)
+				{
+					int32_t nx = x + offsets[k][0];
+					int32_t ny = y + offsets[k][1];
+					size_t neighbor;
+					bool diagonal = k >= 4;
+					float share;
+					float limit;
+					float drop;
+
+					if (nx < 0 || ny < 0 || nx >= size || ny >= size)
+					{
+						continue;
+					}
+					neighbor = (size_t)ny * (size_t)size + (size_t)nx;
+					share = (float)(talus[index] + talus[neighbor]) * (0.5f / 255.0f);
+					limit = talus_drop * (0.75f + 0.5f * share) * (diagonal ? 1.41421356f : 1.0f);
+					drop = height - current[neighbor];
+					if (drop > limit)
+					{
+						change -= (drop - limit) * (diagonal ? ISOTROPIC_SHARE_DIAGONAL : ISOTROPIC_SHARE_STRAIGHT);
+					}
+					else if (-drop > limit)
+					{
+						change += (-drop - limit) * (diagonal ? ISOTROPIC_SHARE_DIAGONAL : ISOTROPIC_SHARE_STRAIGHT);
+					}
+				}
+				next[index] = height + change;
+			}
+		}
+		{
+			float *swap = current;
+
+			current = next;
+			next = swap;
+		}
+	}
+	if (current != heights)
+	{
+		SDL_memcpy(heights, current, cell_count * sizeof(float));
+	}
+	SDL_free(next_heights);
+	SDL_free(talus);
 }
 
 // A steep face's relief, seen from one side: across it (meters along the
@@ -1143,7 +1240,16 @@ bool terrain_generate_heights(float *heights, int32_t size, float cell_size_mete
 	// 5. Thermal erosion; then the steep faces' gullies and buttresses
 	if ((steps & TERRAIN_HEIGHTS_FINISH) != 0)
 	{
-		apply_thermal_erosion(heights, size, cell_size_meters, settings);
+		// (a new map from the sketch: round slopes, not the grid's
+		// pyramids; a seed's map as it always was)
+		if (sketch != NULL)
+		{
+			apply_thermal_erosion_isotropic(heights, size, cell_size_meters, settings);
+		}
+		else
+		{
+			apply_thermal_erosion(heights, size, cell_size_meters, settings);
+		}
 		carve_steep_faces(heights, size, cell_size_meters, settings, &noise);
 	}
 
