@@ -444,29 +444,6 @@ static void find_lakes(const float *heights, int32_t size, terrain_sketch_t *ske
 	SDL_free(stack);
 }
 
-// What each of the sketch's regions makes (terrain_sketch.h): its height
-// (of the highest ground), how much rolling land over it (the seed's hills'
-// noise: 1 some 8% of the highest ground either way), how high the crests
-// rise out of it (its ridged noise: the peaks and ridges)
-typedef struct
-{
-	float height;
-	float detail;
-	float crests;
-} sketch_region_land_t;
-
-static const sketch_region_land_t sketch_region_lands[TERRAIN_SKETCH_REGION_COUNT] =
-{
-	[TERRAIN_SKETCH_NONE] = { 0.14f, 0.5f, 0.0f },
-	[TERRAIN_SKETCH_PLAIN] = { 0.08f, 0.15f, 0.0f },
-	[TERRAIN_SKETCH_HILLS] = { 0.26f, 1.6f, 0.10f },
-	[TERRAIN_SKETCH_MOUNTAINS] = { 0.22f, 1.0f, 0.95f },
-	[TERRAIN_SKETCH_VALLEY] = { 0.0f, 0.3f, 0.0f },
-	[TERRAIN_SKETCH_LAKE] = { 0.08f, 0.1f, 0.0f },
-};
-
-// The regions blend over this share of the map's side
-#define SKETCH_BLEND_SHARE 0.015f
 #define SKETCH_GRID 512
 
 // A running box blur (sum over 2 reach + 1, the edges held), a row at a time
@@ -516,7 +493,8 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 	// (what the regions make, blended: the height, the detail, the crests)
 	float *blended[3];
 	float *other = SDL_malloc(grid_texels * sizeof(float));
-	int32_t blend_reach = SDL_max(1, (int32_t)SDL_lroundf((float)SKETCH_GRID * SKETCH_BLEND_SHARE));
+	const terrain_sketch_land_t *land = &sketch->land;
+	int32_t blend_reach = SDL_max(1, (int32_t)SDL_lroundf((float)SKETCH_GRID * clamp_float(land->blend_share, 0.0f, 0.2f)));
 	float most = settings->max_height_meters;
 	const uint8_t *regions = terrain_sketch_plane(sketch, TERRAIN_SKETCH_REGION);
 	bool enough = scratch != NULL && other != NULL;
@@ -539,12 +517,12 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 			int32_t texel_x = x * TERRAIN_SKETCH_SIZE / SKETCH_GRID;
 			int32_t texel_y = y * TERRAIN_SKETCH_SIZE / SKETCH_GRID;
 			uint8_t region = regions[(size_t)texel_y * TERRAIN_SKETCH_SIZE + (size_t)texel_x];
-			const sketch_region_land_t *land = &sketch_region_lands[region < TERRAIN_SKETCH_REGION_COUNT ? region : 0];
+			int kind = region < TERRAIN_SKETCH_REGION_COUNT ? region : 0;
 			size_t index = (size_t)y * SKETCH_GRID + (size_t)x;
 
-			blended[0][index] = land->height;
-			blended[1][index] = land->detail;
-			blended[2][index] = land->crests;
+			blended[0][index] = land->height[kind];
+			blended[1][index] = land->roll[kind];
+			blended[2][index] = land->crests[kind];
 		}
 	}
 	for (int k = 0; k < 3; k++)
@@ -577,8 +555,8 @@ static void apply_sketch(float *heights, int32_t size, const terrain_settings_t 
 			{
 				// (as the seed's mountains: their ridged noise over bent
 				// coordinates, meandering crests; a little sharpened)
-				float x_bent = u * settings->feature_count * 2.0f;
-				float y_bent = v * settings->feature_count * 2.0f;
+				float x_bent = u * settings->feature_count * clamp_float(land->crest_scale, 0.1f, 20.0f);
+				float y_bent = v * settings->feature_count * clamp_float(land->crest_scale, 0.1f, 20.0f);
 				float bend_x = noise_fbm(&noise->warp, x_bent + 5.2f, y_bent + 1.3f, 4, 0.5f);
 				float bend_y = noise_fbm(&noise->warp, x_bent - 3.1f, y_bent + 7.7f, 4, 0.5f);
 				float ridge = noise_ridged(&noise->ridges, x_bent + settings->warp_amount * bend_x, y_bent + settings->warp_amount * bend_y,
@@ -639,7 +617,7 @@ static void sink_lakes(float *heights, int32_t size, terrain_sketch_t *sketch)
 					continue;
 				}
 			}
-			bed = sketch->lake_surfaces[lake] - (1.0f + 7.0f * water);
+			bed = sketch->lake_surfaces[lake] - SDL_max(sketch->land.lake_depth_meters, 0.5f) * water;
 			heights[index] = lerp_float(heights[index], SDL_min(heights[index], bed), smoothstep_float(0.25f, 0.6f, water));
 		}
 	}

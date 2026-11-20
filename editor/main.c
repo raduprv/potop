@@ -332,6 +332,32 @@ static void regenerate_terrain(testbed_t *game, uint32_t seed)
 	ground_items_clear(&game->potop->world.ground_items, &game->potop->session.inventories);
 }
 
+// The empty map the editor starts with: cells a side
+#define EMPTY_START_SIZE 256
+
+// An empty map's land: flat, low (a sketch painted all plain, no rain's
+// erosion): to start from without waiting for a big one
+static void make_empty_land(testbed_t *game, uint32_t seed)
+{
+	terrain_sketch_t flat;
+	float erosion = game->potop->settings.terrain.erosion_droplets;
+
+	if (!terrain_sketch_create(&flat))
+	{
+		regenerate_terrain(game, seed);
+		return;
+	}
+	SDL_memset(terrain_sketch_plane(&flat, TERRAIN_SKETCH_REGION), TERRAIN_SKETCH_PLAIN, (size_t)TERRAIN_SKETCH_SIZE * TERRAIN_SKETCH_SIZE);
+	flat.land.roll[TERRAIN_SKETCH_PLAIN] = 0.0f;
+	flat.revision++;
+	game->potop->settings.terrain.erosion_droplets = 0.0f;
+	game->potop->world.generation_sketch = &flat;
+	regenerate_terrain(game, seed);
+	game->potop->world.generation_sketch = NULL;
+	game->potop->settings.terrain.erosion_droplets = erosion;
+	terrain_sketch_destroy(&flat);
+}
+
 static void parse_command_line(command_line_t *command_line, int argument_count, char **arguments)
 {
 	SDL_zerop(command_line);
@@ -2892,10 +2918,15 @@ static bool generate_from_sketch(testbed_t *game, bool preview, const char *name
 		// (a preview is for the land: nothing grown on it, which takes the
 		// longest and as much as the whole map's)
 		bool populate = game->potop->settings.objects.populate;
+		int32_t full_size = ui_sketch_size(&game->ui);
+		float full_cell = SDL_max(game->ui.sketch_cell_meters, 0.1f);
 
 		game->potop->settings.objects.populate = populate && !preview;
 		made = new_map(game, seed);
 		game->potop->settings.objects.populate = populate;
+		// (the settings keep the map's own size, not the preview's)
+		terrain->size = full_size;
+		terrain->cell_size_meters = full_cell;
 	}
 	game->potop->world.generation_sketch = NULL;
 	if (!made)
@@ -6083,6 +6114,7 @@ int main(int argument_count, char **arguments)
 	uint32_t seed = 0;
 	map_file_info_t start_map = { 0 };
 	bool load_at_start = false;
+	bool empty_start = false;
 	scene_dam_info_t dam_scene;
 	bool headless;
 	int exit_code = 1;
@@ -6211,8 +6243,13 @@ int main(int argument_count, char **arguments)
 			load_at_start = true;
 		}
 	}
+	// Started plainly (no map, seed or size asked for): a small, empty map
+	// at once, not a big one made only to be thrown away for New
+	empty_start = !load_at_start && game.command_line.load_name == NULL && !game.command_line.seed_given && game.command_line.size <= 0
+		&& !game.command_line.dam_scene && !game.command_line.map_test && !headless && game.command_line.screenshot_path == NULL;
 	if (load_at_start ? !world_create_land(&game.potop->world, start_map.size, start_map.cell_size_meters, start_map.baked)
-		: !world_create_land(&game.potop->world, game.potop->settings.terrain.size, SDL_max(game.potop->settings.terrain.cell_size_meters, 0.01f), false))
+		: !world_create_land(&game.potop->world, empty_start ? EMPTY_START_SIZE : game.potop->settings.terrain.size,
+			SDL_max(game.potop->settings.terrain.cell_size_meters, 0.01f), false))
 	{
 		goto shutdown;
 	}
@@ -6228,7 +6265,11 @@ int main(int argument_count, char **arguments)
 		{
 			seed = pick_random_seed();
 		}
-		if (!load_at_start)
+		if (empty_start)
+		{
+			make_empty_land(&game, seed);
+		}
+		else if (!load_at_start)
 		{
 			regenerate_terrain(&game, seed);
 		}
@@ -6264,7 +6305,7 @@ int main(int argument_count, char **arguments)
 	game.tools.plant_category = 0;
 	if (!load_at_start)
 	{
-		world_populate(&game.potop->world, game.potop->settings.objects.populate && !game.command_line.dam_scene);
+		world_populate(&game.potop->world, game.potop->settings.objects.populate && !game.command_line.dam_scene && !empty_start);
 	}
 	startup_stage(&game, "Getting ready", 0.99f);
 	if (game.command_line.physics_test && game.command_line.dam_scene)

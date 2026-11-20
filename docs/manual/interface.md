@@ -96,6 +96,9 @@ are engine/ui.c; both draw with the same backend, font and colors.
   before projects (or by the game): **Bring it in as a project**, or
   **Just load it** outside any project. F9 opens the project open as last
   saved. N (a new map at once) and a map just loaded leave the project.
+* The editor starts on a small empty map (256 cells, flat, nothing grown)
+  unless a map, a seed or a size is asked for on the command line: New or
+  Open from there.
 * **New** (top bar): a new map, its land sketched: the **Sketch** window,
   afresh (a new name and seed, a blank sheet). **Sketch** (top bar) opens
   it again as it was (to paint some more and make the map again, or after
@@ -108,7 +111,11 @@ are engine/ui.c; both draw with the same backend, font and colors.
   mountains' crests, the hills' rolls), the kinds blended over a little
   across their borders; the unpainted is low, gently rolling land; a lake
   is sunk and filled to a little below its lowest shore. Nothing painted,
-  the map is the seed's. At the left the map (the project's name, the
+  the map is the seed's. **What the regions make** (folded under the
+  brushes): the mountains' height, their crests (how high, how many across
+  the map), the hills' height and roll, the plain's, the valley floor's,
+  the unpainted land's height and roll, how deep the lakes are, how far the
+  regions blend; saved with the sketch (`sketch/land.ini`). At the left the map (the project's name, the
   seed, its size, cell, highest ground, how much the rain erodes it when it
   is made), the regions and what to do; at the right **The sketch** (the
   sheet as painted) or **What it makes** (the land, worked out small, the

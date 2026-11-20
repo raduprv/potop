@@ -47,8 +47,27 @@ typedef enum
 	TERRAIN_SKETCH_PLANES
 } terrain_sketch_plane_t;
 
+// What the regions make (terrain_gen.c), the sketch window's Land: each
+// region's height (a share of the highest ground), its rolling land (the
+// seed's hills' noise: 1 some 8% of the highest ground either way), its
+// crests (the seed's ridged noise: how high they rise, a share of the
+// highest ground); how far the regions blend across their borders (a share
+// of the map's side), how big the crests are (how many across the map, as
+// the land's feature count says, times this), how deep a lake is at most
+// (meters under its surface). Saved with the sketch (land.ini)
 typedef struct
 {
+	float height[TERRAIN_SKETCH_REGION_COUNT];
+	float roll[TERRAIN_SKETCH_REGION_COUNT];
+	float crests[TERRAIN_SKETCH_REGION_COUNT];
+	float blend_share;
+	float crest_scale;
+	float lake_depth_meters;
+} terrain_sketch_land_t;
+
+typedef struct
+{
+	terrain_sketch_land_t land;
 	uint8_t *planes;               // TERRAIN_SKETCH_PLANES planes of TERRAIN_SKETCH_SIZE squared, one after the other
 	uint32_t revision;             // grows with every change
 	// The lakes the last terrain made from it found (terrain_gen.c): each
@@ -62,8 +81,11 @@ typedef struct
 bool terrain_sketch_create(terrain_sketch_t *sketch);
 void terrain_sketch_destroy(terrain_sketch_t *sketch);
 
-// A blank sheet
+// A blank sheet (what the regions make left as it is)
 void terrain_sketch_clear(terrain_sketch_t *sketch);
+
+// What the regions make, as it starts
+void terrain_sketch_land_defaults(terrain_sketch_land_t *land);
 
 // True if any region is painted
 bool terrain_sketch_painted(const terrain_sketch_t *sketch);
@@ -90,8 +112,8 @@ float terrain_sketch_water(const terrain_sketch_t *sketch, float u, float v);
 // The lake at (u, v): its index (-1: none)
 int terrain_sketch_lake_at(const terrain_sketch_t *sketch, float u, float v);
 
-// In a folder (ending in a slash): regions.png. Load: false if there is
-// none (the sketch then blank)
+// In a folder (ending in a slash): regions.png and land.ini. Load: false
+// if there is no regions.png (the sketch then blank, the land as it starts)
 bool terrain_sketch_save(const terrain_sketch_t *sketch, const char *folder);
 bool terrain_sketch_load(terrain_sketch_t *sketch, const char *folder);
 

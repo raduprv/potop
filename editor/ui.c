@@ -2329,7 +2329,9 @@ uint32_t ui_sketch_seed(const ui_t *ui)
 static void sketch_fill_fields(ui_t *ui, const ui_view_t *view)
 {
 	const terrain_settings_t *terrain = &view->settings->terrain;
-	int32_t size = view->terrain != NULL && view->terrain->size > 0 ? view->terrain->size : terrain->size;
+	// (the open project's map's size; else the settings', not the small
+	// empty map the editor starts with)
+	int32_t size = view->project_name[0] != '\0' && view->terrain != NULL && view->terrain->size > 0 ? view->terrain->size : terrain->size;
 
 	ui->sketch_size_index = 2;
 	for (int i = 0; i < 4; i++)
@@ -2340,7 +2342,8 @@ static void sketch_fill_fields(ui_t *ui, const ui_view_t *view)
 			break;
 		}
 	}
-	ui->sketch_cell_meters = view->terrain != NULL && view->terrain->size > 0 ? view->terrain->cell_size_meters : terrain->cell_size_meters;
+	ui->sketch_cell_meters = view->project_name[0] != '\0' && view->terrain != NULL && view->terrain->size > 0 ? view->terrain->cell_size_meters
+		: terrain->cell_size_meters;
 	ui->sketch_max_height = terrain->max_height_meters;
 	ui->sketch_erosion = terrain->erosion_droplets;
 	SDL_snprintf(ui->sketch_seed_input, sizeof(ui->sketch_seed_input), "%u", view->seed);
@@ -2373,10 +2376,11 @@ void ui_open_new_map(ui_t *ui, const ui_view_t *view)
 		}
 	}
 	SDL_strlcpy(ui->sketch_name_input, name, sizeof(ui->sketch_name_input));
-	// (a blank sheet, the picture showing it)
+	// (a blank sheet, the picture showing it, the regions' land as it starts)
 	if (view->sketch != NULL)
 	{
 		terrain_sketch_clear(view->sketch);
+		terrain_sketch_land_defaults(&view->sketch->land);
 	}
 	if (view->sketch_view != NULL)
 	{
@@ -2391,6 +2395,50 @@ void ui_open_new_map(ui_t *ui, const ui_view_t *view)
 static terrain_sketch_region_t sketch_region_of(const ui_t *ui)
 {
 	return ui->sketch_brush < SKETCH_PRESET_COUNT ? sketch_presets[ui->sketch_brush].region : TERRAIN_SKETCH_NONE;
+}
+
+// What the regions make (terrain_sketch_land_t), folded away until opened
+static void sketch_land_controls(ui_t *ui, terrain_sketch_t *sketch)
+{
+	struct nk_context *context = &ui->backend.context;
+	terrain_sketch_land_t *land = &sketch->land;
+	float borders_percent = land->blend_share * 100.0f;
+	bool changed = false;
+
+	if (!nk_tree_push(context, NK_TREE_TAB, "What the regions make", NK_MINIMIZED))
+	{
+		return;
+	}
+	changed |= slider_row(ui, "Mountains", &land->height[TERRAIN_SKETCH_MOUNTAINS], 0.0f, 0.8f, 0.01f, "%.2f",
+		"How high the mountains' feet are (of the highest ground)");
+	changed |= slider_row(ui, "Crests", &land->crests[TERRAIN_SKETCH_MOUNTAINS], 0.0f, 1.5f, 0.01f, "%.2f",
+		"How high the crests and peaks rise out of them (of the highest ground)");
+	changed |= slider_row(ui, "Crest size", &land->crest_scale, 0.5f, 8.0f, 0.1f, "%.1f",
+		"How many crests across the map (more: smaller, busier mountains)");
+	changed |= slider_row(ui, "Hills", &land->height[TERRAIN_SKETCH_HILLS], 0.0f, 0.6f, 0.01f, "%.2f", "How high the hills are (of the highest ground)");
+	changed |= slider_row(ui, "Hills roll", &land->roll[TERRAIN_SKETCH_HILLS], 0.0f, 4.0f, 0.05f, "%.2f", "How much they roll (1: some 8% of the highest ground)");
+	changed |= slider_row(ui, "Plain", &land->height[TERRAIN_SKETCH_PLAIN], 0.0f, 0.5f, 0.01f, "%.2f", "How high a plain lies");
+	changed |= slider_row(ui, "Plain roll", &land->roll[TERRAIN_SKETCH_PLAIN], 0.0f, 2.0f, 0.05f, "%.2f", "How much it rolls");
+	changed |= slider_row(ui, "Valley", &land->height[TERRAIN_SKETCH_VALLEY], 0.0f, 0.3f, 0.01f, "%.2f", "How high a valley's floor lies");
+	changed |= slider_row(ui, "Unpainted", &land->height[TERRAIN_SKETCH_NONE], 0.0f, 0.6f, 0.01f, "%.2f", "How high the land not painted lies");
+	changed |= slider_row(ui, "Unpainted roll", &land->roll[TERRAIN_SKETCH_NONE], 0.0f, 3.0f, 0.05f, "%.2f", "How much it rolls");
+	changed |= slider_row(ui, "Lakes", &land->lake_depth_meters, 1.0f, 40.0f, 0.5f, "%.1f m", "How deep a lake is at most");
+	if (slider_row(ui, "Borders", &borders_percent, 0.2f, 8.0f, 0.1f, "%.1f %%", "How far the regions blend into each other (of the map's side)"))
+	{
+		land->blend_share = borders_percent * 0.01f;
+		changed = true;
+	}
+	nk_layout_row_dynamic(context, ROW_HEIGHT, 1);
+	if (nk_button_label(context, "As they start"))
+	{
+		terrain_sketch_land_defaults(land);
+		changed = true;
+	}
+	nk_tree_pop(context);
+	if (changed)
+	{
+		sketch->revision++;
+	}
 }
 
 // The tools, at the left
@@ -2455,6 +2503,10 @@ static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
 		}
 	}
 	slider_row(ui, "Brush", &ui->sketch_brush_meters, 10.0f, SDL_max(map_meters * 0.3f, 20.0f), 10.0f, "%.0f m", "How far the brush reaches");
+	if (view->sketch != NULL)
+	{
+		sketch_land_controls(ui, view->sketch);
+	}
 	if (view->sketch_view != NULL)
 	{
 		nk_layout_row_dynamic(context, ROW_HEIGHT, 2);
@@ -2558,7 +2610,7 @@ static void sketch_window(ui_t *ui, const ui_view_t *view)
 		region = nk_window_get_content_region(context);
 		side = SDL_max(SDL_min(region.w - tools_width - 3.0f * context->style.window.spacing.x, region.h - 4.0f), 64.0f);
 		nk_layout_row(context, NK_STATIC, region.h - 4.0f, 2, (const float[]){ tools_width, side });
-		if (nk_group_begin(context, "sketch_tools", NK_WINDOW_NO_SCROLLBAR))
+		if (nk_group_begin(context, "sketch_tools", 0))
 		{
 			sketch_tools(ui, view, map_meters);
 			nk_group_end(context);

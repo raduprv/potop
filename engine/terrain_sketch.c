@@ -21,8 +21,26 @@ bool terrain_sketch_create(terrain_sketch_t *sketch)
 		terrain_sketch_destroy(sketch);
 		return false;
 	}
+	terrain_sketch_land_defaults(&sketch->land);
 	terrain_sketch_clear(sketch);
 	return true;
+}
+
+void terrain_sketch_land_defaults(terrain_sketch_land_t *land)
+{
+	static const float heights[TERRAIN_SKETCH_REGION_COUNT] = { 0.14f, 0.08f, 0.26f, 0.22f, 0.0f, 0.08f };
+	static const float rolls[TERRAIN_SKETCH_REGION_COUNT] = { 0.5f, 0.15f, 1.6f, 1.0f, 0.3f, 0.1f };
+	static const float crests[TERRAIN_SKETCH_REGION_COUNT] = { 0.0f, 0.0f, 0.10f, 0.95f, 0.0f, 0.0f };
+
+	for (int i = 0; i < TERRAIN_SKETCH_REGION_COUNT; i++)
+	{
+		land->height[i] = heights[i];
+		land->roll[i] = rolls[i];
+		land->crests[i] = crests[i];
+	}
+	land->blend_share = 0.015f;
+	land->crest_scale = 2.0f;
+	land->lake_depth_meters = 8.0f;
 }
 
 void terrain_sketch_destroy(terrain_sketch_t *sketch)
@@ -297,7 +315,72 @@ bool terrain_sketch_save(const terrain_sketch_t *sketch, const char *folder)
 	}
 	saved = save_png(folder, "regions.png", gray, NULL);
 	SDL_free(gray);
+	if (saved)
+	{
+		static const char *const names[TERRAIN_SKETCH_REGION_COUNT] = { "unpainted", "plain", "hills", "mountains", "valley", "lake" };
+		char text[2048];
+		char path[1024];
+		size_t length = 0;
+		const terrain_sketch_land_t *land = &sketch->land;
+
+		length += (size_t)SDL_snprintf(text + length, sizeof(text) - length,
+			"; What the sketch's regions make (terrain_sketch.h)\nblend_share = %.4f\ncrest_scale = %.3f\nlake_depth_meters = %.2f\n",
+			(double)land->blend_share, (double)land->crest_scale, (double)land->lake_depth_meters);
+		for (int i = 0; i < TERRAIN_SKETCH_REGION_COUNT && length < sizeof(text); i++)
+		{
+			length += (size_t)SDL_snprintf(text + length, sizeof(text) - length, "%s_height = %.4f\n%s_roll = %.4f\n%s_crests = %.4f\n", names[i],
+				(double)land->height[i], names[i], (double)land->roll[i], names[i], (double)land->crests[i]);
+		}
+		SDL_snprintf(path, sizeof(path), "%sland.ini", folder);
+		saved = file_io_save_file(path, text, SDL_min(length, sizeof(text) - 1));
+	}
 	return saved;
+}
+
+// One line of land.ini: "name = value"
+static void read_land_line(terrain_sketch_land_t *land, const char *line)
+{
+	static const char *const names[TERRAIN_SKETCH_REGION_COUNT] = { "unpainted", "plain", "hills", "mountains", "valley", "lake" };
+	char key[64];
+	float value;
+
+	if (SDL_sscanf(line, " %63[a-z_] = %f", key, &value) != 2)
+	{
+		return;
+	}
+	if (SDL_strcmp(key, "blend_share") == 0)
+	{
+		land->blend_share = value;
+	}
+	else if (SDL_strcmp(key, "crest_scale") == 0)
+	{
+		land->crest_scale = value;
+	}
+	else if (SDL_strcmp(key, "lake_depth_meters") == 0)
+	{
+		land->lake_depth_meters = value;
+	}
+	for (int i = 0; i < TERRAIN_SKETCH_REGION_COUNT; i++)
+	{
+		size_t name_length = SDL_strlen(names[i]);
+
+		if (SDL_strncmp(key, names[i], name_length) != 0 || key[name_length] != '_')
+		{
+			continue;
+		}
+		if (SDL_strcmp(key + name_length, "_height") == 0)
+		{
+			land->height[i] = value;
+		}
+		else if (SDL_strcmp(key + name_length, "_roll") == 0)
+		{
+			land->roll[i] = value;
+		}
+		else if (SDL_strcmp(key + name_length, "_crests") == 0)
+		{
+			land->crests[i] = value;
+		}
+	}
 }
 
 bool terrain_sketch_load(terrain_sketch_t *sketch, const char *folder)
@@ -312,6 +395,33 @@ bool terrain_sketch_load(terrain_sketch_t *sketch, const char *folder)
 		return false;
 	}
 	loaded = load_png(folder, "regions.png", regions, NULL);
+	terrain_sketch_land_defaults(&sketch->land);
+	{
+		char path[1024];
+		size_t size = 0;
+		char *text;
+
+		SDL_snprintf(path, sizeof(path), "%sland.ini", folder);
+		text = file_io_load_file(path, &size);
+		if (text != NULL)
+		{
+			char *line = text;
+
+			for (size_t i = 0; i <= size; i++)
+			{
+				if (i == size || text[i] == '\n')
+				{
+					if (i < size)
+					{
+						text[i] = '\0';
+					}
+					read_land_line(&sketch->land, line);
+					line = &text[i + 1];
+				}
+			}
+			SDL_free(text);
+		}
+	}
 	// (the gray back to the regions, the nearest; the water follows)
 	for (size_t i = 0; i < PLANE_TEXELS; i++)
 	{
