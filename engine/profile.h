@@ -192,6 +192,10 @@ void trace_begin(const char *label);
 // steps under step_milliseconds into "the rest" (every frame traced so,
 // the slow ones logged with where their time went)
 void trace_begin_if_slow(const char *label, double log_over_milliseconds, double step_milliseconds);
+// Each step of live_milliseconds or more logged at once, as it ends (0:
+// none), not only in the line at the end: a step that takes minutes shows
+// where it is stuck (the one after the last logged)
+void trace_log_steps_over(double live_milliseconds);
 void trace_mark_slow(const char *name);
 // Logs the line (and ends the trace)
 void trace_end(void);

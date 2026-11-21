@@ -4035,6 +4035,8 @@ static void run(testbed_t *game)
 			{
 				SDL_snprintf(label, sizeof(label), "Frame %d after the load, its steps (ms)", game->potop->world.frames_since_load);
 				trace_begin(label);
+				SDL_Log("Frame %d after the load: begun (its steps of 0.1 s or more logged as they end)", game->potop->world.frames_since_load);
+				trace_log_steps_over(100.0);
 			}
 		}
 		// (any other frame: traced too, logged when it takes a quarter of a
@@ -4043,6 +4045,7 @@ static void run(testbed_t *game)
 		if (!trace_active)
 		{
 			trace_begin_if_slow("A slow frame, its steps (ms)", 250.0, 2.0);
+			trace_log_steps_over(250.0);
 		}
 		// After a stall (window dragged, debugger break) do not try to
 		// catch up on seconds of simulation

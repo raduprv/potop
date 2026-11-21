@@ -237,6 +237,7 @@ static struct
 	double rest_milliseconds;
 	double threshold_milliseconds; // steps under it into "the rest"
 	double log_over_milliseconds;  // logged only if it took this long in all (0: always)
+	double live_milliseconds;      // steps this long logged at once (0: none)
 	bool frame_asked;              // trace_next_frame: a frame traced, every step
 	int frames_to_wait;            // frames before it (time to close the console)
 } trace;
@@ -249,7 +250,13 @@ void trace_begin(const char *label)
 	trace.rest_milliseconds = 0.0;
 	trace.threshold_milliseconds = 0.5;
 	trace.log_over_milliseconds = 0.0;
+	trace.live_milliseconds = 0.0;
 	trace_active = true;
+}
+
+void trace_log_steps_over(double live_milliseconds)
+{
+	trace.live_milliseconds = live_milliseconds;
 }
 
 void trace_begin_if_slow(const char *label, double log_over_milliseconds, double step_milliseconds)
@@ -286,6 +293,10 @@ void trace_mark_slow(const char *name)
 	double milliseconds = 1000.0 * (double)(now - trace.mark) / (double)SDL_GetPerformanceFrequency();
 
 	trace.mark = now;
+	if (trace.live_milliseconds > 0.0 && milliseconds >= trace.live_milliseconds)
+	{
+		SDL_Log("  ... %s: %.0f ms", name, milliseconds);
+	}
 	if (milliseconds < trace.threshold_milliseconds)
 	{
 		trace.rest_milliseconds += milliseconds;
