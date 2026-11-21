@@ -243,6 +243,7 @@ static bool start_working(sky_occlusion_t *occlusion, const terrain_t *terrain, 
 	occlusion->directions_done = 0;
 	occlusion->working = true;
 	occlusion->start_counter = SDL_GetPerformanceCounter();
+	occlusion->steps_since_progress = 0;
 	SDL_Log("Sky occlusion: working it out for a %dx%d map, %d directions, depth maps of %d texels (%.2f m each)", terrain->size,
 		terrain->size, occlusion->direction_count, view_size, (double)(extent / (float)view_size));
 	return true;
@@ -438,6 +439,9 @@ static void finish(sky_occlusion_t *occlusion, const terrain_t *terrain, SDL_GPU
 	stop_working(occlusion);
 }
 
+// Its progress logged every this many frames it works
+#define SKY_OCCLUSION_PROGRESS_FRAMES 1000
+
 bool sky_occlusion_step(sky_occlusion_t *occlusion, const terrain_t *terrain, objects_t *objects, const render_settings_t *settings,
 	SDL_GPUTexture *height_texture, SDL_GPUBuffer *chunk_vertex_buffer, SDL_GPUBuffer *chunk_index_buffer, int chunk_index_count)
 {
@@ -468,8 +472,20 @@ bool sky_occlusion_step(sky_occlusion_t *occlusion, const terrain_t *terrain, ob
 		do_direction(occlusion, terrain, objects, prepared_pass, height_texture, chunk_vertex_buffer, chunk_index_buffer, chunk_index_count);
 	}
 	objects->prepared_pass = -1;
+	// (how far it has come, every SKY_OCCLUSION_PROGRESS_FRAMES frames: a
+	// big map's takes minutes)
+	if (++occlusion->steps_since_progress >= SKY_OCCLUSION_PROGRESS_FRAMES && occlusion->directions_done < occlusion->direction_count)
+	{
+		double seconds = (double)(SDL_GetPerformanceCounter() - occlusion->start_counter) / (double)SDL_GetPerformanceFrequency();
+		double share = (double)occlusion->directions_done / (double)SDL_max(occlusion->direction_count, 1);
+
+		occlusion->steps_since_progress = 0;
+		SDL_Log("Sky occlusion: %d of %d directions (%.0f%%), %.0f s so far, about %.0f s left", occlusion->directions_done,
+			occlusion->direction_count, 100.0 * share, seconds, share > 0.0 ? seconds * (1.0 - share) / share : 0.0);
+	}
 	if (occlusion->directions_done >= occlusion->direction_count)
 	{
+		occlusion->steps_since_progress = 0;
 		finish(occlusion, terrain, height_texture);
 	}
 	return true;

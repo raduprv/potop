@@ -80,6 +80,7 @@ typedef struct
 	// While it is worked out: the directions, how many are done, the sums
 	// (R32F a cell), the depth map of one direction
 	bool working;
+	int steps_since_progress;          // frames worked since its progress was last logged
 	float directions[SKY_OCCLUSION_MOST_DIRECTIONS][4];
 	int direction_count;
 	int directions_done;
