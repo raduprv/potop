@@ -375,6 +375,11 @@ bool camera_box_within_view_distance(const camera_t *camera, vec3_t box_minimum,
 
 void camera_compute_matrices(camera_t *camera, const camera_settings_t *settings, const terrain_t *terrain, float aspect_ratio)
 {
+	if (camera->view_distance_meters != settings->view_distance_meters)
+	{
+		SDL_Log("View distance: %.0f m%s (the terrain and the water, around the %s)", (double)settings->view_distance_meters,
+			settings->view_distance_meters > 0.0f ? "" : ", none", camera->first_person ? "eye" : "orbit target");
+	}
 	camera->view_distance_meters = settings->view_distance_meters;
 	if (camera->first_person)
 	{
