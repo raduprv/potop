@@ -188,6 +188,10 @@ int frame_profile_take_averages(char *text, size_t size);
 extern bool trace_active;
 
 void trace_begin(const char *label);
+// The same, logged only if it took log_over_milliseconds or more in all,
+// steps under step_milliseconds into "the rest" (every frame traced so,
+// the slow ones logged with where their time went)
+void trace_begin_if_slow(const char *label, double log_over_milliseconds, double step_milliseconds);
 void trace_mark_slow(const char *name);
 // Logs the line (and ends the trace)
 void trace_end(void);

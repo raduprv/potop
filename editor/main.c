@@ -4037,6 +4037,13 @@ static void run(testbed_t *game)
 				trace_begin(label);
 			}
 		}
+		// (any other frame: traced too, logged when it takes a quarter of a
+		// second or more, with the steps of 2 ms or more: what a map's first
+		// minutes spend their time on)
+		if (!trace_active)
+		{
+			trace_begin_if_slow("A slow frame, its steps (ms)", 250.0, 2.0);
+		}
 		// After a stall (window dragged, debugger break) do not try to
 		// catch up on seconds of simulation
 		frame_seconds = SDL_min(frame_seconds, 0.25);
