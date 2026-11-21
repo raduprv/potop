@@ -3151,8 +3151,14 @@ static void apply_layers(testbed_t *game)
 	game->potop->world.grass_hidden = hidden[UI_LAYER_GRASS];
 	game->potop->world.water_hidden = hidden[UI_LAYER_WATER];
 	game->potop->world.actors_hidden = hidden[UI_LAYER_ACTORS];
-	// The minimap's picture: made when the map is new (or asked), not
-	// every while (a big map's takes a moment)
+}
+
+// The minimap's picture: made when the map is new (or asked), not every
+// while (a big map's takes a moment); before the interface is laid out, which
+// takes the picture's texture for the frame (made again after, the texture
+// it drew with would be gone by the time it is drawn)
+static void update_minimap(testbed_t *game)
+{
 	if (game->ui.show_minimap && game->ui.available && !game->ui.hidden
 		&& (game->potop->session.world_map_stale || game->potop->session.world_map.texture == NULL))
 	{
@@ -4135,6 +4141,7 @@ static void run(testbed_t *game)
 			game->input.look_x_pixels = 0.0f;
 			game->input.look_y_pixels = 0.0f;
 		}
+		update_minimap(game);
 		update_interface(game, frame_seconds);
 		trace_mark("interface");
 		handle_ui_requests(game);
