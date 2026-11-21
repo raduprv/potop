@@ -81,6 +81,20 @@ typedef struct
 
 #define UI_PICK_LINES 10
 
+// The layers the tool bar shows or hides (the editor applies them: the
+// objects' categories each holds, the grass blades, the water, the actors)
+typedef enum
+{
+	UI_LAYER_GRASS = 0,
+	UI_LAYER_PLANTS,
+	UI_LAYER_TREES,
+	UI_LAYER_ROCKS,
+	UI_LAYER_BUILDINGS,
+	UI_LAYER_WATER,
+	UI_LAYER_ACTORS,
+	UI_LAYER_COUNT
+} ui_layer_t;
+
 // What the interface asks of the game; cleared every frame
 typedef struct
 {
@@ -109,6 +123,10 @@ typedef struct
 	bool sketch_generate;
 	bool sketch_back;              // back to the map the previews replaced (ui_view_t.preview_return)
 	bool clear_map;                // every object of the categories the clear tool removes, off the whole map
+	bool minimap_go;               // the camera to the point clicked on the minimap (minimap_x, z: meters)
+	float minimap_x;
+	float minimap_z;
+	bool minimap_refresh;          // its picture made again
 	// The sketch kept on its own under the name sketch_file says
 	// (project.h: sketch_library_path), the window's map fields with it;
 	// or one kept so brought back
@@ -133,6 +151,14 @@ typedef struct
 	water_t *water;
 	const object_types_t *object_types;
 	const layouts_t *layouts;
+	// The minimap: the map's picture from above (NULL: none yet), the side
+	// it covers (meters), where the camera looks and which way (degrees,
+	// the camera's yaw)
+	SDL_GPUTexture *minimap_texture;
+	float minimap_extent_meters;
+	float camera_x;
+	float camera_z;
+	float camera_yaw_degrees;
 	uint32_t seed;
 	bool map_baked;                // a baked map (map_file.h): it saves baked only
 	const char *project_name;      // the project open ("" none)
@@ -199,6 +225,8 @@ typedef struct
 	// the editor's own
 	ui_style_t style;
 	bool show_status_line;
+	bool layers_hidden[UI_LAYER_COUNT]; // the tool bar's layers (ui_layer_t) not drawn
+	bool show_minimap;
 	bool icon_labels;              // tool buttons with an icon show their name next to it
 	ui_icon_t icons[UI_ICONS_MAX];
 	int icon_count;

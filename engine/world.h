@@ -205,6 +205,11 @@ typedef struct
 	// in the editor (far_shadow_follows_edits) where whole hills move
 	vec3_t far_shadow_light;
 	bool far_shadow_follows_edits;
+	// The editor's layers: the water, the actors, the grass blades not drawn
+	// (all of them go on, only unseen)
+	bool water_hidden;
+	bool actors_hidden;
+	bool grass_hidden;
 	double simulation_accumulator_seconds;
 	uint64_t simulation_step_count;
 

@@ -268,6 +268,7 @@ bool ui_create(ui_t *ui, SDL_Window *window)
 	ui->window = window;
 	ui_style_defaults(&ui->style);
 	ui->show_status_line = true;
+	ui->show_minimap = true;
 	ui->icon_labels = true;
 	ui->brushes_bounds = nk_rect(12.0f, 12.0f, BRUSHES_WIDTH, 400.0f);
 	ui->settings.bounds = nk_rect(320.0f, 60.0f, 520.0f, 560.0f);
@@ -1242,6 +1243,14 @@ static void menu_bar(ui_t *ui, const ui_view_t *view)
 		{
 			ui->show_status_line = status;
 		}
+		{
+			nk_bool minimap = ui->show_minimap;
+
+			if (nk_checkbox_label(context, "Minimap", &minimap))
+			{
+				ui->show_minimap = minimap;
+			}
+		}
 		if (nk_menu_item_label(context, "What is shown (World)...", NK_TEXT_LEFT))
 		{
 			ui->world_open = !ui->world_open;
@@ -1311,14 +1320,50 @@ static void menu_bar(ui_t *ui, const ui_view_t *view)
 	{
 		ui->settings.open = !ui->settings.open;
 	}
+	// The simulation: run or pause, the speed, rain
+	{
+		char text[48];
+
+		nk_layout_row_push(context, 24.0f);
+		nk_spacer(context);
+		if (bar_button(ui, view->paused ? "Run" : "Pause", "Pause / run the simulation (space)"))
+		{
+			view->input->toggle_pause = true;
+		}
+		if (bar_button(ui, "\xc2\xab", "Slower (,)"))
+		{
+			view->input->time_scale_steps--;
+		}
+		if (view->paused)
+		{
+			SDL_strlcpy(text, "paused", sizeof(text));
+		}
+		else if (view->reached_time_scale < 0.95f * view->time_scale)
+		{
+			SDL_snprintf(text, sizeof(text), "x%g (%.1f)", (double)view->time_scale, (double)view->reached_time_scale);
+		}
+		else
+		{
+			SDL_snprintf(text, sizeof(text), "x%g", (double)view->time_scale);
+		}
+		nk_layout_row_push(context, text_width(ui, text) + 8.0f);
+		nk_label(context, text, NK_TEXT_CENTERED);
+		if (bar_button(ui, "\xc2\xbb", "Faster (.)"))
+		{
+			view->input->time_scale_steps++;
+		}
+		if (bar_choice(ui, "rain", "Rain", "Rain over the whole map (R)", view->water->raining))
+		{
+			view->input->toggle_rain = true;
+		}
+	}
 	// (the map's name, at the right)
 	{
 		char text[160];
 		float used = 0.0f;
 
 		SDL_snprintf(text, sizeof(text), "%s", ui->last_map_name[0] != '\0' ? ui->last_map_name : "(no map name)");
-		used = bar_width(ui, "File") + bar_width(ui, "Edit") + bar_width(ui, "View") + bar_width(ui, "Simulation") + bar_width(ui, "Terrain")
-			+ bar_width(ui, "Bake") + bar_width(ui, "Settings") + 8.0f * context->style.window.spacing.x;
+		used = nk_widget_bounds(context).x - nk_window_get_bounds(context).x;
 		nk_layout_row_push(context, SDL_max(ui->backend.width - used - text_width(ui, text) - 30.0f, 0.0f));
 		nk_spacer(context);
 		nk_layout_row_push(context, text_width(ui, text) + 8.0f);
@@ -1447,37 +1492,60 @@ static void tool_bar(ui_t *ui, const ui_view_t *view)
 			nk_combo_end(context);
 		}
 	}
-	// The simulation
+	// The layers: lit while shown; in a drop-down when the bar has no room
 	bar_gap(ui);
-	if (bar_button(ui, view->paused ? "Run" : "Pause", "Pause / run the simulation (space)"))
 	{
-		view->input->toggle_pause = true;
-	}
-	if (bar_button(ui, "\xc2\xab", "Slower (,)"))
-	{
-		view->input->time_scale_steps--;
-	}
-	if (view->paused)
-	{
-		SDL_strlcpy(text, "paused", sizeof(text));
-	}
-	else if (view->reached_time_scale < 0.95f * view->time_scale)
-	{
-		SDL_snprintf(text, sizeof(text), "x%g (%.1f)", (double)view->time_scale, (double)view->reached_time_scale);
-	}
-	else
-	{
-		SDL_snprintf(text, sizeof(text), "x%g", (double)view->time_scale);
-	}
-	nk_layout_row_push(context, text_width(ui, text) + 8.0f);
-	nk_label(context, text, NK_TEXT_CENTERED);
-	if (bar_button(ui, "\xc2\xbb", "Faster (.)"))
-	{
-		view->input->time_scale_steps++;
-	}
-	if (bar_choice(ui, "rain", "Rain", "Rain over the whole map (R)", view->water->raining))
-	{
-		view->input->toggle_rain = true;
+		static const char *const layer_names[UI_LAYER_COUNT] = { "Grass", "Plants", "Trees", "Rocks", "Buildings", "Water", "Actors" };
+		static const char *const layer_tips[UI_LAYER_COUNT] = {
+			"The grass blades shown or hidden",
+			"Bushes, flowers, grass tufts, crops, cacti, dead wood shown or hidden",
+			"The trees shown or hidden",
+			"The rocks shown or hidden",
+			"Buildings, fences, ruins, camps, farms, boats... shown or hidden",
+			"The water shown or hidden (it goes on flowing)",
+			"The animals and people shown or hidden (they go on)" };
+		float needed = 0.0f;
+		float left = ui->backend.width - (nk_widget_bounds(context).x - nk_window_get_bounds(context).x) - 16.0f;
+		int shown = 0;
+
+		for (int layer = 0; layer < UI_LAYER_COUNT; layer++)
+		{
+			needed += bar_width(ui, layer_names[layer]) + context->style.window.spacing.x;
+			shown += ui->layers_hidden[layer] ? 0 : 1;
+		}
+		if (needed <= left)
+		{
+			for (int layer = 0; layer < UI_LAYER_COUNT; layer++)
+			{
+				char icon_key[32];
+
+				SDL_snprintf(icon_key, sizeof(icon_key), "layer_%d", layer);
+				if (bar_choice(ui, icon_key, layer_names[layer], layer_tips[layer], !ui->layers_hidden[layer]))
+				{
+					ui->layers_hidden[layer] = !ui->layers_hidden[layer];
+				}
+			}
+		}
+		else
+		{
+			SDL_snprintf(text, sizeof(text), "Layers %d/%d", shown, UI_LAYER_COUNT);
+			nk_layout_row_push(context, bar_width(ui, text) + 20.0f);
+			if (nk_combo_begin_label(context, text, nk_vec2(200.0f, 260.0f)))
+			{
+				nk_layout_row_dynamic(context, ROW_HEIGHT - 4.0f, 1);
+				for (int layer = 0; layer < UI_LAYER_COUNT; layer++)
+				{
+					nk_bool layer_shown = !ui->layers_hidden[layer];
+
+					tooltip_if_hovered(context, layer_tips[layer]);
+					if (nk_checkbox_label(context, layer_names[layer], &layer_shown))
+					{
+						ui->layers_hidden[layer] = !layer_shown;
+					}
+				}
+				nk_combo_end(context);
+			}
+		}
 	}
 	nk_layout_row_end(context);
 	bar_end(ui);
@@ -1676,6 +1744,82 @@ static void context_bar(ui_t *ui, const ui_view_t *view)
 	}
 	nk_layout_row_end(context);
 	bar_end(ui);
+}
+
+// The minimap: the map from above in the scene's bottom right corner, the
+// camera's place and heading on it; a click sends the camera there
+#define MINIMAP_WINDOW "minimap"
+static const float MINIMAP_SIZE = 200.0f;
+
+static void minimap_window(ui_t *ui, const ui_view_t *view)
+{
+	struct nk_context *context = &ui->backend.context;
+	float scene_x;
+	float scene_y;
+	float scene_width;
+	float scene_height;
+	float side;
+	struct nk_rect bounds;
+
+	if (!ui->show_minimap || view->minimap_extent_meters <= 0.0f)
+	{
+		nk_window_show(context, MINIMAP_WINDOW, NK_HIDDEN);
+		return;
+	}
+	ui_viewport(ui, &scene_x, &scene_y, &scene_width, &scene_height);
+	side = SDL_min(MINIMAP_SIZE, 0.4f * SDL_min(scene_width, scene_height));
+	bounds = nk_rect(scene_x + scene_width - side - 10.0f, scene_y + scene_height - side - 10.0f, side, side);
+	nk_window_show(context, MINIMAP_WINDOW, NK_SHOWN);
+	nk_style_push_vec2(context, &context->style.window.padding, nk_vec2(2.0f, 2.0f));
+	if (nk_begin(context, MINIMAP_WINDOW, bounds, NK_WINDOW_NO_SCROLLBAR | NK_WINDOW_BORDER))
+	{
+		struct nk_command_buffer *canvas = nk_window_get_canvas(context);
+		struct nk_rect area;
+
+		nk_window_set_bounds(context, MINIMAP_WINDOW, bounds);
+		nk_layout_row_dynamic(context, side - 4.0f - 2.0f * context->style.window.border, 1);
+		area = nk_widget_bounds(context);
+		tooltip_if_hovered(context, view->minimap_texture != NULL ? "The map: a click sends the camera there (right click: the picture again)"
+			: "The map's picture is not made yet (right click: make it)");
+		if (view->minimap_texture != NULL)
+		{
+			struct nk_image image = nk_image_ptr(view->minimap_texture);
+
+			nk_image(context, image);
+		}
+		else
+		{
+			nk_spacer(context);
+		}
+		// The camera: a dot and the way it looks
+		{
+			float u = view->camera_x / view->minimap_extent_meters;
+			float v = view->camera_z / view->minimap_extent_meters;
+			float x = area.x + SDL_clamp(u, 0.0f, 1.0f) * area.w;
+			float y = area.y + SDL_clamp(v, 0.0f, 1.0f) * area.h;
+			float yaw = view->camera_yaw_degrees * MATH3D_PI / 180.0f;
+			struct nk_color mark = nk_rgb(255, 230, 120);
+
+			// (its forward: -sin, -cos of the yaw, in x and z: camera.c)
+			nk_stroke_line(canvas, x, y, x - 12.0f * SDL_sinf(yaw), y - 12.0f * SDL_cosf(yaw), 2.0f, mark);
+			nk_fill_circle(canvas, nk_rect(x - 4.0f, y - 4.0f, 8.0f, 8.0f), mark);
+		}
+		if (nk_input_is_mouse_hovering_rect(&context->input, area))
+		{
+			if (nk_input_is_mouse_pressed(&context->input, NK_BUTTON_LEFT))
+			{
+				ui->requests.minimap_go = true;
+				ui->requests.minimap_x = (context->input.mouse.pos.x - area.x) / SDL_max(area.w, 1.0f) * view->minimap_extent_meters;
+				ui->requests.minimap_z = (context->input.mouse.pos.y - area.y) / SDL_max(area.h, 1.0f) * view->minimap_extent_meters;
+			}
+			if (nk_input_is_mouse_pressed(&context->input, NK_BUTTON_RIGHT))
+			{
+				ui->requests.minimap_refresh = true;
+			}
+		}
+	}
+	nk_end(context);
+	nk_style_pop_vec2(context);
 }
 
 static void status_window(ui_t *ui)
@@ -3179,6 +3323,7 @@ void ui_update(ui_t *ui, const ui_view_t *view, double time_seconds)
 	tool_bar(ui, view);
 	context_bar(ui, view);
 	status_window(ui);
+	minimap_window(ui, view);
 	settings_window(ui, view);
 	diagnostics_window(ui);
 	sky_window(ui, view);

@@ -383,6 +383,7 @@ typedef struct
 	// (big ones) or only in the near one (grass)
 	bool far_shadow_dirty;
 	bool hidden;                       // not drawn (nor their shadows); everything else goes on
+	bool category_hidden[OBJECT_CATEGORIES_MAX]; // the editor's layers: a category's objects not drawn (nor their shadows), the rest as it is
 	bool no_terrain_occlusion;         // what the terrain (and objects) hide is drawn all the same (the World window, to compare)
 	// The occlusion culling seen (console: objects occlusion show|depth|all):
 	// the camera's culling keeps the boxes it hid (where on screen, and the
@@ -657,6 +658,9 @@ int objects_clear_vegetation(objects_t *objects, const objects_clear_circle_t *c
 // Each type's share of its objects there now (type_shares): the month
 // says; the GPU's copy follows, and the shadows when it changed
 void objects_update_seasons(objects_t *objects);
+// A category's objects hidden (drawn as out of their season: none of them,
+// nor their shadows; they stay, and their bodies) or shown again
+void objects_set_category_hidden(objects_t *objects, int category, bool hidden);
 // The turning ones (a type's spin: a windmill's sails) turned to where
 // the clock says: their slots go up again, the near map's moving layer
 // follows them. Once a frame, before the shadows

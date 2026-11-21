@@ -572,7 +572,10 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 			if (pass != NULL)
 			{
 				objects_render_shadow(&world->objects, pass);
-				actors_render_shadow(&world->actors, pass, &world->near_shadow);
+				if (!world->actors_hidden)
+				{
+					actors_render_shadow(&world->actors, pass, &world->near_shadow);
+				}
 				SDL_EndGPURenderPass(pass);
 			}
 		}
@@ -807,11 +810,17 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 			SDL_snprintf(objects_drawn, sizeof(objects_drawn), "objects drawn (%d draws)", world->objects.draw_call_count);
 			trace_mark(objects_drawn);
 		}
-		grass_draw(&world->grass, pass, &world->lit_render, &world->settings->objects, &grass_world);
+		if (!world->grass_hidden)
+		{
+			grass_draw(&world->grass, pass, &world->lit_render, &world->settings->objects, &grass_world);
+		}
 		trace_mark("grass drawn");
 		world->actors.pbr_shading = world->lit_render.pbr_shading;
-		actors_draw(&world->actors, pass, camera, &world->shadow, &world->near_shadow, world->renderer.materials.variation_texture,
-			(float)world->elapsed_seconds);
+		if (!world->actors_hidden)
+		{
+			actors_draw(&world->actors, pass, camera, &world->shadow, &world->near_shadow, world->renderer.materials.variation_texture,
+				(float)world->elapsed_seconds);
+		}
 		gpu_timer_end(&world->gpu_timer, GPU_PASS_OBJECTS);
 		trace_mark("actors drawn");
 		// The terrain last of the opaque things: its shading is the dearest
@@ -871,7 +880,7 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 						water_gpu_depth_texture(&world->water));
 				}
 				// The reflections at half size: the water in passes of its own
-				if (world->lit_render.water_reflections_half_size)
+				if (world->lit_render.water_reflections_half_size && !world->water_hidden)
 				{
 					drawn = water_renderer_draw_split(&world->water_renderer, world->scene_target.color_texture,
 						world->scene_target.depth_texture, world->scene_target.width, world->scene_target.height, &scene, &world->water,
@@ -885,7 +894,7 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 				return;
 			}
 			scene_uniforms_push(&scene);
-			if (!drawn)
+			if (!drawn && !world->water_hidden)
 			{
 				water_renderer_draw(&world->water_renderer, pass, &world->water, &world->terrain, &world->renderer, camera,
 					&world->lit_render, &world->shadow, &world->near_shadow, mirrored_clouds);

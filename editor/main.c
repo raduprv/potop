@@ -3120,9 +3120,74 @@ static void load_sketch_file(testbed_t *game, const char *name)
 	show_message(game, message);
 }
 
+// The tool bar's layers onto the world: each object category in its layer
+// (by its name; the rest always shown), the grass blades, the water, the
+// actors
+static void apply_layers(testbed_t *game)
+{
+	static const char *const plants[] = { "bushes", "flowers", "grass", "crops", "cacti", "dead wood", "water plants" };
+	static const char *const buildings[] = { "buildings", "fences", "structures", "ruins", "village", "camp", "farm", "fishing", "boats",
+		"goods" };
+	const bool *hidden = game->ui.layers_hidden;
+	objects_t *objects = &game->potop->world.objects;
+
+	for (int category = 0; category < objects->types.category_count && category < OBJECT_CATEGORIES_MAX; category++)
+	{
+		const char *name = objects->types.categories[category];
+		bool hide = false;
+
+		for (int i = 0; i < (int)SDL_arraysize(plants); i++)
+		{
+			hide |= hidden[UI_LAYER_PLANTS] && SDL_strcasecmp(name, plants[i]) == 0;
+		}
+		for (int i = 0; i < (int)SDL_arraysize(buildings); i++)
+		{
+			hide |= hidden[UI_LAYER_BUILDINGS] && SDL_strcasecmp(name, buildings[i]) == 0;
+		}
+		hide |= hidden[UI_LAYER_TREES] && SDL_strcasecmp(name, "trees") == 0;
+		hide |= hidden[UI_LAYER_ROCKS] && SDL_strcasecmp(name, "rocks") == 0;
+		objects_set_category_hidden(objects, category, hide);
+	}
+	game->potop->world.grass_hidden = hidden[UI_LAYER_GRASS];
+	game->potop->world.water_hidden = hidden[UI_LAYER_WATER];
+	game->potop->world.actors_hidden = hidden[UI_LAYER_ACTORS];
+	// The minimap's picture: made when the map is new (or asked), not
+	// every while (a big map's takes a moment)
+	if (game->ui.show_minimap && game->ui.available && !game->ui.hidden
+		&& (game->potop->session.world_map_stale || game->potop->session.world_map.texture == NULL))
+	{
+		char shown[MAP_FILE_NAME_LENGTH];
+		const char *dot;
+
+		// (the map's name without its kind: the artist's picture is looked
+		// for by it, as the game's map window does)
+		SDL_strlcpy(shown, game->potop->world.map_name, sizeof(shown));
+		dot = SDL_strrchr(shown, '.');
+		if (dot != NULL && (SDL_strcmp(dot, ".active") == 0 || SDL_strcmp(dot, ".baked") == 0))
+		{
+			shown[dot - shown] = '\0';
+		}
+		terrain_renderer_bake_materials(&game->potop->world.renderer, &game->potop->world.terrain, &game->potop->world.lit_render);
+		world_map_make(&game->potop->session.world_map, &game->potop->world.terrain, &game->potop->world.water, &game->potop->world.objects,
+			shown);
+		game->potop->session.world_map_stale = false;
+	}
+}
+
 // The projects' asks (the interface's, or the console's)
 static void handle_project_requests(testbed_t *game, const ui_requests_t *requests)
 {
+	if (requests->minimap_go && !game->potop->camera.first_person)
+	{
+		float extent = (float)game->potop->world.terrain.size * game->potop->world.terrain.cell_size_meters;
+
+		game->potop->camera.target_x = SDL_clamp(requests->minimap_x, 0.0f, extent);
+		game->potop->camera.target_z = SDL_clamp(requests->minimap_z, 0.0f, extent);
+	}
+	if (requests->minimap_refresh)
+	{
+		game->potop->session.world_map_stale = true;
+	}
 	if (requests->clear_map)
 	{
 		char message[96];
@@ -3571,6 +3636,11 @@ static void update_interface(testbed_t *game, double frame_seconds)
 	view.layouts = &game->potop->world.layouts;
 	view.seed = game->potop->world.terrain.seed;
 	view.project_name = game->project_name;
+	view.minimap_texture = game->potop->session.world_map.texture;
+	view.minimap_extent_meters = (float)game->potop->world.terrain.size * game->potop->world.terrain.cell_size_meters;
+	view.camera_x = game->potop->camera.first_person ? game->potop->camera.walker_x : game->potop->camera.target_x;
+	view.camera_z = game->potop->camera.first_person ? game->potop->camera.walker_z : game->potop->camera.target_z;
+	view.camera_yaw_degrees = game->potop->camera.first_person ? game->potop->camera.walker_yaw_degrees : game->potop->camera.yaw_degrees;
 	view.previewing = game->previewing;
 	view.preview_return = game->preview_return_valid
 		? (game->preview_return_project[0] != '\0' ? game->preview_return_project : game->preview_return_name) : NULL;
@@ -4068,6 +4138,7 @@ static void run(testbed_t *game)
 		update_interface(game, frame_seconds);
 		trace_mark("interface");
 		handle_ui_requests(game);
+		apply_layers(game);
 		trace_mark("its requests (save, load, new)");
 		follow_live_settings(game);
 		trace_mark("settings followed");

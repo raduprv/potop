@@ -5969,8 +5969,12 @@ void objects_update_seasons(objects_t *objects)
 			share = season_share(objects->month, type->months_first, type->months_last);
 		}
 		// (in fiftieths: the GPU's table and the shadows follow a step at a
-		// time, not every frame the snow grows)
+		// time, not every frame the snow grows; a category hidden: none)
 		share = SDL_roundf(share * 50.0f) / 50.0f;
+		if (type->category >= 0 && type->category < OBJECT_CATEGORIES_MAX && objects->category_hidden[type->category])
+		{
+			share = 0.0f;
+		}
 		objects->type_shares[t] = share;
 		if (SDL_fabsf(objects->type_table[4 * t + 3] - share) > 0.001f)
 		{
@@ -5984,6 +5988,16 @@ void objects_update_seasons(objects_t *objects)
 		objects->far_shadow_dirty = true;
 		objects->near_shadow_dirty = true;
 	}
+}
+
+void objects_set_category_hidden(objects_t *objects, int category, bool hidden)
+{
+	if (category < 0 || category >= OBJECT_CATEGORIES_MAX || objects->category_hidden[category] == hidden)
+	{
+		return;
+	}
+	objects->category_hidden[category] = hidden;
+	objects_update_seasons(objects);
 }
 
 void objects_draw_occlusion_debug(objects_t *objects, SDL_GPURenderPass *pass, float near_distance, float far_distance)

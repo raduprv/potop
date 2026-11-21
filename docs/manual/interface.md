@@ -16,16 +16,26 @@ are engine/ui.c; both draw with the same backend, font and colors.
     (remove objects by category, the lights placed), View (the status line,
     what is shown, the sky, diagnostics), Simulation (run, faster, slower,
     rain, drain at the edges), Terrain (the sketch), Bake, **Settings**,
-    and the map's name at the right;
+    then run or pause, slower, the speed, faster, rain, and the map's name
+    at the right;
   * the **tools**: raise, dig, paint, smooth, stamp; water, sponge, spring;
     plant, clear, object, village, unvillage; inspect, effects, light,
     area; then the brush's size, five of them (discs as big as they are)
-    and any other in the drop-down after them ([ and ]); then run or pause,
-    slower, the speed, faster, rain;
+    and any other in the drop-down after them ([ and ]); then the
+    **layers**, lit while shown: grass (the blades), plants (bushes,
+    flowers, tufts, crops, cacti, dead wood), trees, rocks, buildings
+    (fences, ruins, camps, farms, boats...), water, actors; hidden ones are
+    only not drawn (nor their shadows), everything goes on; in a drop-down
+    when the bar has no room;
   * the **tool's options**: what the chosen tool takes (the soil, the speed,
     the stamp and its height, the category to plant, the lights' kind and
     sliders...), the longer ones (the categories to clear, the object to
     place, the village, the effect, the area picked) in a drop-down there.
+* **The minimap** (the scene's bottom right corner; View: Minimap): the map
+  from above (the game's map picture: an artist's if there is one), the
+  camera's place and heading; a click sends the camera there, a right click
+  makes the picture again (it is made when the map is new, not as it is
+  edited).
 * **Settings**: tabs for graphics, clouds, water, new map, objects, camera
   and the interface. Most sliders act at once. Texture size, anisotropy, relief,
   shadow map sizes, vsync (graphics) and the vegetation density wait for
