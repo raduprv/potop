@@ -6656,6 +6656,11 @@ int main(int argument_count, char **arguments)
 	}
 	game.potop->world.renderer.tile_overlay = game.command_line.tile_overlay;
 	game.potop->world.renderer.navigation_overlay = game.command_line.navigation_overlay;
+	// No paths followed in the editor for now (world.h): a big map's took
+	// minutes, and nothing walks here. The tests where actors walk (or the
+	// F8 overlay asked for) keep them
+	game.potop->world.navigation_off = !game.command_line.actor_test && !game.command_line.walk_test && !game.command_line.bridge_test
+		&& !game.command_line.map_test && !game.command_line.navigation_overlay;
 	// (here whole hills move: the far shadow map follows the edits too)
 	game.potop->world.far_shadow_follows_edits = true;
 	game.potop->world.navigation_overlay_seconds = -1e9;

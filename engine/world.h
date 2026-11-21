@@ -155,6 +155,10 @@ typedef struct
 	uint8_t *navigation_overlay;   // F8: what goes to the terrain renderer
 	int navigation_overlay_size;
 	double navigation_overlay_seconds; // when it was last filled
+	// Not followed at all (the editor, for now: building it for a big map
+	// takes minutes and nothing there walks); the actors stand still too,
+	// their paths would be looked for on a navigation of another map
+	bool navigation_off;
 	physics_t physics;             // the objects as rigid bodies (physics.h)
 	// What lies on the ground (dropped), looked over now and then for
 	// objects gone

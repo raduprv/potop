@@ -323,6 +323,7 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 	}
 	section_start = SDL_GetPerformanceCounter();
 	// The areas that block paths (a locked gate), as they are now
+	if (!world->navigation_off)
 	{
 		navigation_blocker_t blockers[NAVIGATION_BLOCKERS_MAX];
 		int blocker_count = 0;
@@ -345,12 +346,12 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 			}
 		}
 		navigation_set_blockers(&world->navigation, blockers, blocker_count);
+		// Before the upload, which clears the terrain's change flags
+		navigation_set_detail(&world->navigation, camera->first_person ? camera->eye_position.x : camera->target_x,
+			camera->first_person ? camera->eye_position.z : camera->target_z, world->settings->simulation.navigation_detail_meters);
+		navigation_update(&world->navigation, &world->terrain, &world->objects, world->elapsed_seconds);
+		update_navigation_overlay(world);
 	}
-	// Before the upload, which clears the terrain's change flags
-	navigation_set_detail(&world->navigation, camera->first_person ? camera->eye_position.x : camera->target_x,
-		camera->first_person ? camera->eye_position.z : camera->target_z, world->settings->simulation.navigation_detail_meters);
-	navigation_update(&world->navigation, &world->terrain, &world->objects, world->elapsed_seconds);
-	update_navigation_overlay(world);
 	frame_profile_end(FRAME_NAVIGATION, section_start);
 	trace_mark("paths follow the map");
 	section_start = SDL_GetPerformanceCounter();

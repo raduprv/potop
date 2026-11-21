@@ -98,6 +98,10 @@ void world_update_door_links(world_t *world)
 
 void world_update_actors(world_t *world, float seconds)
 {
+	if (world->navigation_off)
+	{
+		return;
+	}
 	// (the doors as they are now, for the ways the actors find)
 	world_update_door_links(world);
 	actors_move(&world->actors, &world->navigation, &world->terrain, &world->water, seconds);
