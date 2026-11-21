@@ -3808,6 +3808,22 @@ static bool water_all_dry(const water_t *water)
 	return true;
 }
 
+// True if a box lies wholly past the camera's view distance, across the
+// ground (the camera's pass only)
+static bool beyond_view(const objects_t *objects, pass_t pass, vec3_t box_minimum, vec3_t box_maximum)
+{
+	float outside_x;
+	float outside_z;
+
+	if (pass != PASS_CAMERA || objects->view_distance_meters <= 0.0f)
+	{
+		return false;
+	}
+	outside_x = SDL_max(SDL_max(box_minimum.x - objects->view_center_x, objects->view_center_x - box_maximum.x), 0.0f);
+	outside_z = SDL_max(SDL_max(box_minimum.z - objects->view_center_z, objects->view_center_z - box_maximum.z), 0.0f);
+	return outside_x * outside_x + outside_z * outside_z > objects->view_distance_meters * objects->view_distance_meters;
+}
+
 static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *frustum, vec3_t eye, uint32_t *work_out, uint32_t *range_count_out)
 {
 	uint32_t work_total = 0;
@@ -3936,7 +3952,7 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 		vec3_t block_maximum = vec3_make((float)((block_i + 1) * OBJECTS_GRID_BLOCK_CELLS) * OBJECTS_GRID_CELL_METERS + 12.0f,
 			objects->block_maximum_y[block], (float)((block_j + 1) * OBJECTS_GRID_BLOCK_CELLS) * OBJECTS_GRID_CELL_METERS + 12.0f);
 
-		if (block_distance <= 0.0f
+		if (block_distance <= 0.0f || beyond_view(objects, pass, block_minimum, block_maximum)
 			|| (pass != PASS_FAR_SHADOW && distance_to_box(eye, block_minimum, block_maximum) > block_distance * objects->draw_distance_scale)
 			|| (frustum != NULL && !frustum_contains_box(frustum, block_minimum, block_maximum)))
 		{
@@ -3965,6 +3981,10 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 				(float)(j + 1) * OBJECTS_GRID_CELL_METERS + 12.0f);
 			// (too far first: on a big map that is most cells, and cheaper
 			// to tell than the six planes)
+			if (beyond_view(objects, pass, cell_minimum, cell_maximum))
+			{
+				continue;
+			}
 			if (pass != PASS_FAR_SHADOW)
 			{
 				cell_distance = distance_to_box(eye, cell_minimum, cell_maximum);
@@ -5195,6 +5215,9 @@ void objects_prepare(objects_t *objects, const camera_t *camera)
 		objects->prepared_pass = -1;
 		return;
 	}
+	objects->view_distance_meters = camera->view_distance_meters;
+	objects->view_center_x = camera->first_person ? camera->eye_position.x : camera->target_x;
+	objects->view_center_z = camera->first_person ? camera->eye_position.z : camera->target_z;
 	cull_pass(objects, PASS_CAMERA, &frustum, camera->eye_position);
 }
 

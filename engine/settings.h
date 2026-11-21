@@ -96,7 +96,7 @@ typedef struct
 	// First person on foot (C)
 	float first_person_field_of_view_degrees;
 	float first_person_near_meters;       // the near plane on foot (0.1): farther, the depth finer far off (less flicker), closer walls cut
-	float view_distance_meters;           // the terrain and the water drawn no farther (0: to the map's edge); the sky, the clouds as before
+	float view_distance_meters;           // the terrain, the water and the objects drawn no farther (0: to the map's edge); the sky, the clouds as before
 	float jump_height_scale;              // how much higher the walker jumps than its own (1; 4: up onto the houses, to look round)
 	float first_person_look_degrees_per_pixel;
 	bool first_person_invert_mouse;   // moving the mouse forward looks down

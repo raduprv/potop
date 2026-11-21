@@ -434,6 +434,12 @@ typedef struct
 	bool follow_pass_everything;
 	int follow_cursor;
 	float draw_distance_scale;     // from the settings, multiplies every type's draw distance
+	// The camera's view distance (camera.h): none drawn for it past this,
+	// across the ground from the center (0: no limit); the shadows' passes
+	// as before (what stands beyond may shade what is seen)
+	float view_distance_meters;
+	float view_center_x;
+	float view_center_z;
 	int next_group;                // the next layout gets this group number
 	// The instances by id (objects_find_id): open addressing, index + 1 per
 	// slot (0: empty); made again after instances went (they move)
