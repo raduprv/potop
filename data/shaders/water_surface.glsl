@@ -121,28 +121,46 @@ const float RIPPLE_SLOPE_RANGE = 4.0;   // (water_renderer.c's)
 // texel read differ (their variance: the levels of detail average the
 // squares too) to variance
 // (turned: the tile read along way, a unit vector; its slope turned back)
-void ripple_layer(vec2 position, float size, vec2 way, vec2 drift, float steepness, inout vec2 slope, inout float variance)
+// (size: across and along way, meters; stretched, a wave's slope along its
+// longer side as much less)
+void ripple_layer(vec2 position, vec2 size, vec2 way, vec2 drift, float steepness, inout vec2 slope, inout float variance)
 {
 	vec2 along = vec2(way.x * position.x + way.y * position.y, -way.y * position.x + way.x * position.y);
 	vec4 texel = texture(ripple_texture, along / size + drift);
-	vec2 mean = texel.rg * RIPPLE_SLOPE_RANGE;
-	vec2 squares = texel.ba * (RIPPLE_SLOPE_RANGE * RIPPLE_SLOPE_RANGE);
+	vec2 flatter = vec2(min(size.x, size.y)) / size;
+	vec2 mean = texel.rg * RIPPLE_SLOPE_RANGE * flatter;
+	vec2 squares = texel.ba * (RIPPLE_SLOPE_RANGE * RIPPLE_SLOPE_RANGE) * flatter * flatter;
 
 	slope += vec2(way.x * mean.x - way.y * mean.y, way.y * mean.x + way.x * mean.y) * steepness;
 	variance += max(squares.x + squares.y - dot(mean, mean), 0.0) * steepness * steepness;
 }
 
-// x, y: the slope; z: its variance under the pixel. Three sizes of the
-// tile (its waves 6 to 32 across: 1 m down to 3 cm), each turned its own
-// way (the same tile alike at every size would line up) and drifting
+// x, y: the slope; z: its variance under the pixel. Four sizes of the
+// tile, each turned its own way (the same tile alike at every size would
+// line up) and drifting: a broad swell stretched along the wind (tens of
+// meters: from afar the smaller tiles' repeats no longer show as a grid),
+// then the ripples, stretched a little (a few meters down to 3 cm); the
+// ripples stronger and weaker from place to place (a slow noise), so no
+// stretch of water is the same pattern over and over
 vec3 ripple_slope(vec2 position)
 {
 	vec2 slope = vec2(0.0);
 	float variance = 0.0;
+	float patches = 0.55 + 0.9 * value_noise(position * 0.035 + vec2(time_seconds * 0.004, 0.0));
 
-	ripple_layer(position, 6.0, vec2(1.0, 0.0), time_seconds * vec2(0.018, 0.008), 0.5, slope, variance);
-	ripple_layer(position, 2.5, vec2(-0.5, 0.866), vec2(0.37, 0.71) + time_seconds * vec2(-0.024, 0.036), 0.35, slope, variance);
-	ripple_layer(position, 1.1, vec2(-0.643, -0.766), vec2(0.83, 0.19) + time_seconds * vec2(0.036, -0.064), 0.25, slope, variance);
+	ripple_layer(position, vec2(46.0, 17.0), vec2(0.94, 0.342), vec2(0.61, 0.27) + time_seconds * vec2(0.004, 0.0015), 0.45, slope, variance);
+	{
+		vec2 small_slope = vec2(0.0);
+		float small_variance = 0.0;
+
+		ripple_layer(position, vec2(11.0, 6.5), vec2(1.0, 0.0), time_seconds * vec2(0.012, 0.005), 0.5, small_slope, small_variance);
+		ripple_layer(position, vec2(3.8, 2.6), vec2(-0.5, 0.866), vec2(0.37, 0.71) + time_seconds * vec2(-0.02, 0.03), 0.35, small_slope,
+			small_variance);
+		ripple_layer(position, vec2(1.3, 1.0), vec2(-0.643, -0.766), vec2(0.83, 0.19) + time_seconds * vec2(0.036, -0.064), 0.25, small_slope,
+			small_variance);
+		slope += small_slope * patches;
+		variance += small_variance * patches * patches;
+	}
 	return vec3(slope, variance);
 }
 
