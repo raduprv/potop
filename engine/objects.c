@@ -5405,7 +5405,9 @@ void objects_prepare_shadow(objects_t *objects, const shadow_map_t *shadow, cons
 	}
 	else
 	{
-		cull_pass(objects, PASS_FAR_SHADOW, NULL, vec3_make(0.0f, 0.0f, 0.0f));
+		// (the light's box: the whole map, or a square of it round the
+		// camera with all that may shade it)
+		cull_pass(objects, PASS_FAR_SHADOW, &frustum, vec3_make(0.0f, 0.0f, 0.0f));
 	}
 	// The statistics are about what the camera sees
 	objects->drawn_instance_count = drawn;

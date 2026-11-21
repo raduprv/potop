@@ -294,6 +294,43 @@ static void update_ice(world_t *world)
 #define FAR_SHADOW_FOR_TERRAIN 1u
 #define FAR_SHADOW_FOR_OBJECTS 2u
 #define FAR_SHADOW_FOR_LIGHT 4u
+#define FAR_SHADOW_FOR_CAMERA 8u
+
+// The far map with a view distance: a square round the camera, the view
+// distance plus a step to each side, moved on by whole steps (so its texels
+// stay on the same spots of the ground) once the camera is a step from its
+// middle: what is seen is always inside it
+static void follow_far_shadow_square(world_t *world, const camera_t *camera)
+{
+	float view = camera->view_distance_meters;
+	float extent = (float)world->terrain.size * world->terrain.cell_size_meters;
+	float step = SDL_max(0.25f * view, 250.0f);
+	float half_side = view + step;
+	float center_x = camera->first_person ? camera->eye_position.x : camera->target_x;
+	float center_z = camera->first_person ? camera->eye_position.z : camera->target_z;
+
+	// (none, or as big as the map: the whole map, as without one)
+	if (view <= 0.0f || 2.0f * half_side >= extent)
+	{
+		half_side = 0.0f;
+	}
+	if (half_side != world->far_shadow_half_side)
+	{
+		world->far_shadow_half_side = half_side;
+		world->far_shadow_center_x = SDL_floorf(center_x / step + 0.5f) * step;
+		world->far_shadow_center_z = SDL_floorf(center_z / step + 0.5f) * step;
+		world->shadow.needs_render = true;
+		world->far_shadow_reasons |= FAR_SHADOW_FOR_CAMERA;
+		return;
+	}
+	if (half_side > 0.0f && (SDL_fabsf(center_x - world->far_shadow_center_x) > step || SDL_fabsf(center_z - world->far_shadow_center_z) > step))
+	{
+		world->far_shadow_center_x = SDL_floorf(center_x / step + 0.5f) * step;
+		world->far_shadow_center_z = SDL_floorf(center_z / step + 0.5f) * step;
+		world->shadow.needs_render = true;
+		world->far_shadow_reasons |= FAR_SHADOW_FOR_CAMERA;
+	}
+}
 #define MOON_EARTHSHINE 0.015f
 
 static void render_frame(world_t *world, camera_t *camera, const world_render_options_t *options, int pixel_width, int pixel_height)
@@ -418,6 +455,7 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 			world->far_shadow_reasons |= FAR_SHADOW_FOR_LIGHT;
 		}
 	}
+	follow_far_shadow_square(world, camera);
 	// Erosion: only the near map, and only if the ground changed in its
 	// square
 	if (world->terrain.eroded_shadow_pending)
@@ -492,8 +530,10 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 		frame_profile_count(FRAME_FAR_SHADOW_FOR_TERRAIN, (world->far_shadow_reasons & FAR_SHADOW_FOR_TERRAIN) != 0u);
 		frame_profile_count(FRAME_FAR_SHADOW_FOR_OBJECTS, (world->far_shadow_reasons & FAR_SHADOW_FOR_OBJECTS) != 0u);
 		frame_profile_count(FRAME_FAR_SHADOW_FOR_LIGHT, (world->far_shadow_reasons & FAR_SHADOW_FOR_LIGHT) != 0u);
+		frame_profile_count(FRAME_FAR_SHADOW_FOR_CAMERA, (world->far_shadow_reasons & FAR_SHADOW_FOR_CAMERA) != 0u);
 		world->far_shadow_reasons = 0u;
-		shadow_map_update_projection(&world->shadow, &world->terrain, terrain_renderer_sun_direction(&world->lit_render));
+		shadow_map_update_projection_around(&world->shadow, &world->terrain, terrain_renderer_sun_direction(&world->lit_render),
+			world->far_shadow_center_x, world->far_shadow_center_z, world->far_shadow_half_side);
 		gpu_timer_begin(&world->gpu_timer, GPU_PASS_SHADOW);
 		world->objects.far_shadow_no_plants = world->settings->render.debug_far_shadow_no_plants;
 		objects_prepare_shadow(&world->objects, &world->shadow, NULL);
@@ -507,14 +547,15 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 				// only multiplies the triangles (a big map's whole terrain
 				// at full detail took hundreds of milliseconds)
 				int level = 0;
-				float texel_meters = (float)world->terrain.size * world->terrain.cell_size_meters / (float)SDL_max(world->shadow.size, 1);
+				float texel_meters = world->shadow.extent_meters / (float)SDL_max(world->shadow.size, 1);
 
 				while (level < TERRAIN_LOD_LEVEL_COUNT - 1 && (float)(2 << level) * world->terrain.cell_size_meters <= texel_meters)
 				{
 					level++;
 				}
 				shadow_map_render_terrain(&world->shadow, pass, &world->terrain, world->renderer.vertex_buffer, world->renderer.index_buffer,
-					world->renderer.lod_index_count[level], world->renderer.lod_index_offset[level], world->renderer.height_texture, false);
+					world->renderer.lod_index_count[level], world->renderer.lod_index_offset[level], world->renderer.height_texture,
+					world->far_shadow_half_side > 0.0f);
 				objects_render_shadow(&world->objects, pass);
 				shadow_map_end(&world->shadow, pass);
 			}

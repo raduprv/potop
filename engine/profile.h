@@ -125,6 +125,7 @@ typedef enum
 	FRAME_FAR_SHADOW_FOR_TERRAIN,  // a far shadow redraw asked for by the ground changing (the editor)
 	FRAME_FAR_SHADOW_FOR_OBJECTS,  // ... by objects changing (the editor)
 	FRAME_FAR_SHADOW_FOR_LIGHT,    // ... by the sun turning
+	FRAME_FAR_SHADOW_FOR_CAMERA,   // ... by the camera leaving its square (a view distance)
 	FRAME_COUNTER_COUNT
 } frame_counter_t;
 

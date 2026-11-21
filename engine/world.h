@@ -212,6 +212,12 @@ typedef struct
 	// Why the far map is to be drawn again (FAR_SHADOW_FOR_ bits:
 	// world_render.c), counted when it is (profile.h)
 	uint32_t far_shadow_reasons;
+	// The square of the ground the far map covers with a view distance
+	// (camera.h; half its side 0: the whole map), moved on in steps as the
+	// camera goes
+	float far_shadow_center_x;
+	float far_shadow_center_z;
+	float far_shadow_half_side;
 	// The editor's layers: the water, the actors, the grass blades not drawn
 	// (all of them go on, only unseen)
 	bool water_hidden;

@@ -74,9 +74,19 @@ void shadow_map_destroy(shadow_map_t *shadow)
 
 void shadow_map_update_projection(shadow_map_t *shadow, const terrain_t *terrain, vec3_t sun_direction)
 {
+	shadow_map_update_projection_around(shadow, terrain, sun_direction, 0.0f, 0.0f, 0.0f);
+}
+
+void shadow_map_update_projection_around(shadow_map_t *shadow, const terrain_t *terrain, vec3_t sun_direction, float center_x, float center_z,
+	float half_side)
+{
 	float extent = (float)terrain->size * terrain->cell_size_meters;
 	float minimum_height = 1e30f;
 	float maximum_height = -1e30f;
+	float square_minimum_x = 0.0f;
+	float square_minimum_z = 0.0f;
+	float square_maximum_x = extent;
+	float square_maximum_z = extent;
 	vec3_t center;
 	vec3_t eye;
 	vec3_t up;
@@ -92,27 +102,38 @@ void shadow_map_update_projection(shadow_map_t *shadow, const terrain_t *terrain
 	}
 	// Headroom above the terrain for water and, later, objects
 	maximum_height += 20.0f;
+	// The square, within the map (none, or as big: all of it)
+	if (half_side > 0.0f && 2.0f * half_side < extent)
+	{
+		square_minimum_x = SDL_max(center_x - half_side, 0.0f);
+		square_minimum_z = SDL_max(center_z - half_side, 0.0f);
+		square_maximum_x = SDL_min(center_x + half_side, extent);
+		square_maximum_z = SDL_min(center_z + half_side, extent);
+	}
 
 	sun_direction = vec3_normalize(sun_direction);
-	center = vec3_make(extent * 0.5f, 0.5f * (minimum_height + maximum_height), extent * 0.5f);
+	center = vec3_make(0.5f * (square_minimum_x + square_maximum_x), 0.5f * (minimum_height + maximum_height),
+		0.5f * (square_minimum_z + square_maximum_z));
 	eye = vec3_add(center, vec3_scale(sun_direction, extent));
 	up = SDL_fabsf(sun_direction.y) > 0.99f ? vec3_make(0.0f, 0.0f, 1.0f) : vec3_make(0.0f, 1.0f, 0.0f);
 	view = mat4_look_at(eye, center, up);
 
-	// Fit the projection tightly around the eight corners of the map's box
-	for (int corner = 0; corner < 8; corner++)
+	// Fit the projection tightly around the eight corners of the square's
+	// box (across: x, y) and of the map's (along the light: z)
+	for (int corner = 0; corner < 16; corner++)
 	{
+		bool whole_map = corner >= 8;
 		vec4_t world_corner =
 		{
-			(corner & 1) ? extent : 0.0f,
+			(corner & 1) ? (whole_map ? extent : square_maximum_x) : (whole_map ? 0.0f : square_minimum_x),
 			(corner & 2) ? maximum_height : minimum_height,
-			(corner & 4) ? extent : 0.0f,
+			(corner & 4) ? (whole_map ? extent : square_maximum_z) : (whole_map ? 0.0f : square_minimum_z),
 			1.0f
 		};
 		vec4_t view_corner = mat4_transform(view, world_corner);
 		float coordinates[3] = { view_corner.x, view_corner.y, view_corner.z };
 
-		for (int axis = 0; axis < 3; axis++)
+		for (int axis = whole_map ? 2 : 0; axis < 3; axis++)
 		{
 			view_minimum[axis] = SDL_min(view_minimum[axis], coordinates[axis]);
 			view_maximum[axis] = SDL_max(view_maximum[axis], coordinates[axis]);
@@ -126,6 +147,7 @@ void shadow_map_update_projection(shadow_map_t *shadow, const terrain_t *terrain
 	shadow->light_view_projection = mat4_multiply(
 		mat4_orthographic(view_minimum[0], view_maximum[0], view_minimum[1], view_maximum[1], shadow->depth_near, shadow->depth_far),
 		view);
+	shadow->extent_meters = SDL_max(square_maximum_x - square_minimum_x, square_maximum_z - square_minimum_z);
 	shadow->needs_render = true;
 }
 

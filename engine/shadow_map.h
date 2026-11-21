@@ -50,7 +50,8 @@ typedef struct
 	mat4_t light_view;             // world -> light view space
 	float depth_near;              // the orthographic depth range
 	float depth_far;
-	// Near cascade only: the square it covers, where it was centered
+	// Near cascade: the square it covers, where it was centered; the far
+	// one: only the side of the ground it covers (the map's, or a square's)
 	vec3_t center;
 	float extent_meters;
 	bool needs_render;
@@ -74,6 +75,13 @@ void shadow_map_destroy(shadow_map_t *shadow);
 
 // Fits an orthographic light projection around the whole terrain.
 void shadow_map_update_projection(shadow_map_t *shadow, const terrain_t *terrain, vec3_t sun_direction);
+
+// The same around a square of the ground only (center_x, center_z, half its
+// side; meters): its texels go to that square, while the depth still spans
+// the whole map, so whatever stands between the sun and the square, near or
+// far, casts into it. A square reaching past the map: the whole map
+void shadow_map_update_projection_around(shadow_map_t *shadow, const terrain_t *terrain, vec3_t sun_direction, float center_x, float center_z,
+	float half_side);
 
 // The near cascade: a finer map of a square extent_meters wide around
 // center (seen from the sun), with the far map's view and depth range.
