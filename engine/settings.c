@@ -156,6 +156,7 @@ static const setting_field_t setting_fields[] =
 	FIELD("render", "wind_direction_degrees", SETTING_FLOAT, render.wind_direction_degrees),
 	FIELD("render", "wind_speed_meters_per_second", SETTING_FLOAT, render.wind_speed_meters_per_second),
 	FIELD("render", "shadow_update_interval_seconds", SETTING_FLOAT, render.shadow_update_interval_seconds),
+	FIELD("render", "far_shadow_turn_degrees", SETTING_FLOAT, render.far_shadow_turn_degrees),
 	FIELD("render", "far_shadow_least_meters", SETTING_FLOAT, render.far_shadow_least_meters),
 	FIELD("render", "actor_shadow_update_seconds", SETTING_FLOAT, render.actor_shadow_update_seconds),
 	FIELD("render", "shadow_erosion_meters", SETTING_FLOAT, render.shadow_erosion_meters),
@@ -566,6 +567,7 @@ void settings_set_defaults(settings_t *settings)
 	settings->render.wind_direction_degrees = 30.0f;
 	settings->render.wind_speed_meters_per_second = 3.0f;
 	settings->render.shadow_update_interval_seconds = 0.5f;
+	settings->render.far_shadow_turn_degrees = 3.0f;
 	settings->render.far_shadow_least_meters = 1.5f;
 	settings->render.actor_shadow_update_seconds = 0.0f;
 	settings->render.shadow_erosion_meters = 0.15f;

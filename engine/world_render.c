@@ -291,8 +291,6 @@ static void update_ice(world_t *world)
 // albedo), and the faint earthshine on its dark part, of that
 #define MOON_DISC_BRIGHTNESS 1.6f
 // The light turning this much draws the far shadow map again
-#define FAR_SHADOW_TURN_DEGREES 3.0f
-
 #define FAR_SHADOW_FOR_TERRAIN 1u
 #define FAR_SHADOW_FOR_OBJECTS 2u
 #define FAR_SHADOW_FOR_LIGHT 4u
@@ -414,7 +412,7 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 	{
 		vec3_t light = terrain_renderer_sun_direction(&world->lit_render);
 
-		if (vec3_dot(light, world->far_shadow_light) < SDL_cosf(FAR_SHADOW_TURN_DEGREES * SDL_PI_F / 180.0f))
+		if (vec3_dot(light, world->far_shadow_light) < SDL_cosf(SDL_max(world->settings->render.far_shadow_turn_degrees, 0.01f) * SDL_PI_F / 180.0f))
 		{
 			world->shadow.needs_render = true;
 			world->far_shadow_reasons |= FAR_SHADOW_FOR_LIGHT;

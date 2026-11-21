@@ -228,6 +228,8 @@ typedef struct
 
 	// The sun shadow map is redrawn after terrain changes at most this often
 	float shadow_update_interval_seconds;
+	// ... and when the sun or the moon turned this far since it last was
+	float far_shadow_turn_degrees;
 	// Objects lower than this (meters: stones, bushes, fences) cast no
 	// shadow in the far shadow map, only in the near one (0: all of them)
 	float far_shadow_least_meters;

@@ -203,7 +203,7 @@ typedef struct
 	double last_shadow_render_seconds;
 	double last_moving_shadow_render_seconds; // the near map's moving layer
 	// The far shadow map follows the light (the sun, at night the moon):
-	// drawn again once it has turned more than FAR_SHADOW_TURN_DEGREES from
+	// drawn again once it has turned more than render.far_shadow_turn_degrees from
 	// this, the way it was last drawn. Objects and the ground changing leave
 	// it be (a stone washed away, a crater: the near map shows those), but
 	// in the editor (far_shadow_follows_edits) where whole hills move
