@@ -122,6 +122,9 @@ typedef enum
 	FRAME_TERRAIN_CHUNKS_DRAWN,
 	FRAME_WATER_CHUNKS_DRAWN,
 	FRAME_SHADOW_DRAW_CALLS,       // the objects' draw calls into the shadow maps (and the sky's occlusion)
+	FRAME_FAR_SHADOW_FOR_TERRAIN,  // a far shadow redraw asked for by the ground changing (the editor)
+	FRAME_FAR_SHADOW_FOR_OBJECTS,  // ... by objects changing (the editor)
+	FRAME_FAR_SHADOW_FOR_LIGHT,    // ... by the sun turning
 	FRAME_COUNTER_COUNT
 } frame_counter_t;
 

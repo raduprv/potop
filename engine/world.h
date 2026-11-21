@@ -209,6 +209,9 @@ typedef struct
 	// in the editor (far_shadow_follows_edits) where whole hills move
 	vec3_t far_shadow_light;
 	bool far_shadow_follows_edits;
+	// Why the far map is to be drawn again (FAR_SHADOW_FOR_ bits:
+	// world_render.c), counted when it is (profile.h)
+	uint32_t far_shadow_reasons;
 	// The editor's layers: the water, the actors, the grass blades not drawn
 	// (all of them go on, only unseen)
 	bool water_hidden;

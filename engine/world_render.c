@@ -292,6 +292,10 @@ static void update_ice(world_t *world)
 #define MOON_DISC_BRIGHTNESS 1.6f
 // The light turning this much draws the far shadow map again
 #define FAR_SHADOW_TURN_DEGREES 3.0f
+
+#define FAR_SHADOW_FOR_TERRAIN 1u
+#define FAR_SHADOW_FOR_OBJECTS 2u
+#define FAR_SHADOW_FOR_LIGHT 4u
 #define MOON_EARTHSHINE 0.015f
 
 static void render_frame(world_t *world, camera_t *camera, const world_render_options_t *options, int pixel_width, int pixel_height)
@@ -388,6 +392,7 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 	{
 		world->near_shadow.needs_render = true;
 		world->shadow.needs_render = world->shadow.needs_render || world->far_shadow_follows_edits;
+		world->far_shadow_reasons |= world->far_shadow_follows_edits ? FAR_SHADOW_FOR_OBJECTS : 0u;
 		world->objects.far_shadow_dirty = false;
 	}
 	if (world->objects.near_shadow_dirty)
@@ -400,6 +405,7 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 	if (world->terrain.shadow_dirty)
 	{
 		world->shadow.needs_render = world->shadow.needs_render || world->far_shadow_follows_edits;
+		world->far_shadow_reasons |= world->far_shadow_follows_edits ? FAR_SHADOW_FOR_TERRAIN : 0u;
 		world->near_shadow.needs_render = true;
 		world->terrain.shadow_dirty = false;
 	}
@@ -411,6 +417,7 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 		if (vec3_dot(light, world->far_shadow_light) < SDL_cosf(FAR_SHADOW_TURN_DEGREES * SDL_PI_F / 180.0f))
 		{
 			world->shadow.needs_render = true;
+			world->far_shadow_reasons |= FAR_SHADOW_FOR_LIGHT;
 		}
 	}
 	// Erosion: only the near map, and only if the ground changed in its
@@ -484,6 +491,10 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 		world->far_shadow_light = terrain_renderer_sun_direction(&world->lit_render);
 		world->objects.far_shadow_small_meters = SDL_max(world->settings->render.far_shadow_least_meters, 0.0f);
 		frame_profile_count(FRAME_SHADOW_REDRAWS, 1);
+		frame_profile_count(FRAME_FAR_SHADOW_FOR_TERRAIN, (world->far_shadow_reasons & FAR_SHADOW_FOR_TERRAIN) != 0u);
+		frame_profile_count(FRAME_FAR_SHADOW_FOR_OBJECTS, (world->far_shadow_reasons & FAR_SHADOW_FOR_OBJECTS) != 0u);
+		frame_profile_count(FRAME_FAR_SHADOW_FOR_LIGHT, (world->far_shadow_reasons & FAR_SHADOW_FOR_LIGHT) != 0u);
+		world->far_shadow_reasons = 0u;
 		shadow_map_update_projection(&world->shadow, &world->terrain, terrain_renderer_sun_direction(&world->lit_render));
 		gpu_timer_begin(&world->gpu_timer, GPU_PASS_SHADOW);
 		world->objects.far_shadow_no_plants = world->settings->render.debug_far_shadow_no_plants;

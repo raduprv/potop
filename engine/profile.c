@@ -57,7 +57,7 @@ static const char *counter_name(frame_counter_t counter)
 		"ground tiles in", "wet tiles", "chunk uploads", "physics rebuilds", "path regions built", "path tiles built", "path build microseconds", "shadow redraws", "near shadow redraws", "moving shadow redraws",
 		"path searches", "path surfaces", "objects checked", "objects moved",
 		"awake bodies", "bodies pushed", "body moves", "objects removed", "gpu water tiles", "terrain chunks drawn", "water chunks drawn",
-		"shadow draw calls" };
+		"shadow draw calls", "far shadow for the ground", "far shadow for objects", "far shadow for the light" };
 
 	return names[counter];
 }
