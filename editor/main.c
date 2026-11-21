@@ -4318,10 +4318,13 @@ static void run(testbed_t *game)
 			}
 			game->input.request_quit = true;
 		}
-		// In the background, vsync often does not hold the loop back any
-		// more (hidden windows are not presented), so it would spin at full
-		// speed; sleep instead
-		if (game->input.in_background && game->command_line.screenshot_path == NULL)
+		// Hidden (minimized, covered), vsync often does not hold the loop
+		// back any more (hidden windows are not presented), so it would spin
+		// at full speed; sleep instead. Asked of the window itself, not of the
+		// focus events: a focus lost while a long job held the loop (a new map
+		// made) could leave it asleep at ten frames a second in front of you
+		if ((SDL_GetWindowFlags(game->window) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN | SDL_WINDOW_OCCLUDED)) != 0
+			&& game->command_line.screenshot_path == NULL)
 		{
 			double frame_used = (double)(SDL_GetPerformanceCounter() - frame_start) / counter_frequency;
 			double frame_wanted = 1.0 / (double)SDL_max(game->potop->settings.simulation.background_frames_per_second, 1.0f);
