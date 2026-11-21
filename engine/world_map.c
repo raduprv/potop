@@ -83,7 +83,7 @@ static bool load_artist_picture(world_map_t *world_map, const char *map_name)
 			world_map->width = width;
 			world_map->height = height;
 			world_map->from_artist = true;
-			SDL_Log("World map: %s (%dx%d)", path, width, height);
+			SDL_Log("World map (the map window, the minimap): the artist's, %s (%dx%d)", path, width, height);
 			return true;
 		}
 	}
@@ -200,7 +200,7 @@ static bool make_picture(world_map_t *world_map, const terrain_t *terrain, const
 	world_map->width = size;
 	world_map->height = size;
 	world_map->from_artist = false;
-	SDL_Log("World map: made from the land, %dx%d, %llu ms", size, size, (unsigned long long)(SDL_GetTicks() - start));
+	SDL_Log("World map (the map window, the minimap): made from the land, %dx%d, %llu ms", size, size, (unsigned long long)(SDL_GetTicks() - start));
 	return true;
 }
 
