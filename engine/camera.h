@@ -66,10 +66,11 @@ typedef struct
 	// trembled under the temporal anti-aliasing on a 4 km map)
 	mat4_t view_projection_relative;
 	mat4_t inverse_view_projection_relative;
-	// The same with its far plane at the view distance (camera settings;
-	// none: the far plane): what the terrain and the water draw is culled
-	// by it, the rest as before (the sky, the clouds, far beyond)
-	mat4_t cull_view_projection;
+	// How far out the terrain and the water are drawn, across the ground
+	// from the eye on foot, from the target orbiting (camera settings; 0:
+	// no limit). The sky and the clouds are not cut by it: the projection
+	// keeps its far plane
+	float view_distance_meters;
 	float near_distance;
 	float far_distance;
 
@@ -131,6 +132,12 @@ void camera_get_heading(const camera_t *camera, float *yaw_degrees_out, float *p
 
 // Computes eye position and matrices for the given aspect ratio.
 void camera_compute_matrices(camera_t *camera, const camera_settings_t *settings, const terrain_t *terrain, float aspect_ratio);
+
+// False if an axis aligned box lies wholly past the view distance, measured
+// across the ground (x, z) from the eye on foot, from the target orbiting
+// (the eye may be far back and high up): whatever the height, the ground
+// around out to that distance stays
+bool camera_box_within_view_distance(const camera_t *camera, vec3_t box_minimum, vec3_t box_maximum);
 
 
 // World space ray through a window pixel. Requires up to date matrices.

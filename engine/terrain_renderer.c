@@ -1581,8 +1581,7 @@ static void order_visible_chunks(terrain_renderer_t *renderer, float chunk_exten
 static void collect_visible_chunks(terrain_renderer_t *renderer, const terrain_t *terrain, const camera_t *camera,
 	const render_settings_t *settings)
 {
-	// (out to the view distance: camera.h)
-	frustum_t frustum = frustum_from_matrix(camera->cull_view_projection);
+	frustum_t frustum = frustum_from_matrix(camera->view_projection);
 	float chunk_extent = (float)TERRAIN_CHUNK_SIZE * terrain->cell_size_meters;
 	float lod_base = lod_base_distance(terrain, settings);
 	float eye_height = lod_eye_height(terrain, camera);
@@ -1605,8 +1604,11 @@ static void collect_visible_chunks(terrain_renderer_t *renderer, const terrain_t
 	{
 		const float *block = &renderer->block_bounds[2 * ((block_y / VISIBLE_BLOCK_CHUNKS) * blocks_per_side + block_x / VISIBLE_BLOCK_CHUNKS)];
 
-		if (!frustum_contains_box(&frustum, vec3_make((float)block_x * chunk_extent, block[0], (float)block_y * chunk_extent),
-			vec3_make((float)(block_last_x + 1) * chunk_extent, block[1], (float)(block_last_y + 1) * chunk_extent)))
+		vec3_t block_minimum = vec3_make((float)block_x * chunk_extent, block[0], (float)block_y * chunk_extent);
+		vec3_t block_maximum = vec3_make((float)(block_last_x + 1) * chunk_extent, block[1], (float)(block_last_y + 1) * chunk_extent);
+
+		if (!camera_box_within_view_distance(camera, block_minimum, block_maximum)
+			|| !frustum_contains_box(&frustum, block_minimum, block_maximum))
 		{
 			continue;
 		}
@@ -1625,7 +1627,8 @@ static void collect_visible_chunks(terrain_renderer_t *renderer, const terrain_t
 			struct visible_chunk_s *entry;
 			int level = 0;
 
-			if (!frustum_contains_box(&frustum, box_minimum, box_maximum))
+			if (!camera_box_within_view_distance(camera, box_minimum, box_maximum)
+				|| !frustum_contains_box(&frustum, box_minimum, box_maximum))
 			{
 				continue;
 			}

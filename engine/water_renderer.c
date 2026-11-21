@@ -342,8 +342,10 @@ static bool chunk_has_water(const water_t *water, int chunk_x, int chunk_y)
 		|| water->tile_state[next_y * water->tiles_per_side + next_x] != WATER_TILE_DRY;
 }
 
-// The box a chunk's water fills: false if it holds none or is out of view
-static bool chunk_seen(const water_t *water, const terrain_t *terrain, const frustum_t *frustum, int chunk_x, int chunk_y)
+// The box a chunk's water fills: false if it holds none, is out of view or
+// past the view distance
+static bool chunk_seen(const water_t *water, const terrain_t *terrain, const camera_t *camera, const frustum_t *frustum, int chunk_x,
+	int chunk_y)
 {
 	const terrain_chunk_t *chunk = &terrain->chunks[chunk_y * terrain->chunks_per_side + chunk_x];
 	float chunk_extent = (float)TERRAIN_CHUNK_SIZE * terrain->cell_size_meters;
@@ -359,13 +361,12 @@ static bool chunk_seen(const water_t *water, const terrain_t *terrain, const fru
 	box_maximum = vec3_make(box_minimum.x + chunk_extent + terrain->cell_size_meters,
 		chunk->maximum_height_meters + (float)water->tile_max_depth[tile] * TERRAIN_METERS_PER_HEIGHT_UNIT + 1.0f,
 		box_minimum.z + chunk_extent + terrain->cell_size_meters);
-	return frustum_contains_box(frustum, box_minimum, box_maximum);
+	return camera_box_within_view_distance(camera, box_minimum, box_maximum) && frustum_contains_box(frustum, box_minimum, box_maximum);
 }
 
 bool water_renderer_visible(const water_t *water, const terrain_t *terrain, const camera_t *camera)
 {
-	// (out to the view distance: camera.h)
-	frustum_t frustum = frustum_from_matrix(camera->cull_view_projection);
+	frustum_t frustum = frustum_from_matrix(camera->view_projection);
 
 	if (water_gpu_depth_texture(water) == NULL)
 	{
@@ -375,7 +376,7 @@ bool water_renderer_visible(const water_t *water, const terrain_t *terrain, cons
 	{
 		for (int chunk_x = 0; chunk_x < terrain->chunks_per_side; chunk_x++)
 		{
-			if (chunk_seen(water, terrain, &frustum, chunk_x, chunk_y))
+			if (chunk_seen(water, terrain, camera, &frustum, chunk_x, chunk_y))
 			{
 				return true;
 			}
@@ -431,7 +432,7 @@ bool water_renderer_capture(water_renderer_t *renderer, SDL_GPUTexture *color_te
 
 void water_renderer_prepare(water_renderer_t *renderer, const water_t *water, const terrain_t *terrain, const camera_t *camera)
 {
-	frustum_t frustum = frustum_from_matrix(camera->cull_view_projection);
+	frustum_t frustum = frustum_from_matrix(camera->view_projection);
 	int chunk_count = terrain->chunks_per_side * terrain->chunks_per_side;
 
 	renderer->instance_count = 0;
@@ -467,7 +468,7 @@ void water_renderer_prepare(water_renderer_t *renderer, const water_t *water, co
 	{
 		for (int chunk_x = 0; chunk_x < terrain->chunks_per_side; chunk_x++)
 		{
-			if (!chunk_seen(water, terrain, &frustum, chunk_x, chunk_y))
+			if (!chunk_seen(water, terrain, camera, &frustum, chunk_x, chunk_y))
 			{
 				continue;
 			}

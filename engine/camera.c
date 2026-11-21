@@ -357,21 +357,25 @@ void camera_update_first_person(camera_t *camera, const input_state_t *input, co
 	camera->target_height = ground;
 }
 
-// The culling's far plane: the view distance (from the eye, so the orbit's
-// distance on top), never past the far plane; none set: the far plane
-static float cull_far(const camera_t *camera, const camera_settings_t *settings)
+bool camera_box_within_view_distance(const camera_t *camera, vec3_t box_minimum, vec3_t box_maximum)
 {
-	float view = settings->view_distance_meters;
+	float center_x = camera->first_person ? camera->eye_position.x : camera->target_x;
+	float center_z = camera->first_person ? camera->eye_position.z : camera->target_z;
+	float outside_x;
+	float outside_z;
 
-	if (view <= 0.0f)
+	if (camera->view_distance_meters <= 0.0f)
 	{
-		return camera->far_distance;
+		return true;
 	}
-	return SDL_clamp(view + (camera->first_person ? 0.0f : camera->distance_meters), camera->near_distance + 1.0f, camera->far_distance);
+	outside_x = SDL_max(SDL_max(box_minimum.x - center_x, center_x - box_maximum.x), 0.0f);
+	outside_z = SDL_max(SDL_max(box_minimum.z - center_z, center_z - box_maximum.z), 0.0f);
+	return outside_x * outside_x + outside_z * outside_z <= camera->view_distance_meters * camera->view_distance_meters;
 }
 
 void camera_compute_matrices(camera_t *camera, const camera_settings_t *settings, const terrain_t *terrain, float aspect_ratio)
 {
+	camera->view_distance_meters = settings->view_distance_meters;
 	if (camera->first_person)
 	{
 		float yaw_radians = degrees_to_radians(camera->walker_yaw_degrees);
@@ -390,8 +394,6 @@ void camera_compute_matrices(camera_t *camera, const camera_settings_t *settings
 
 		camera->projection = mat4_perspective(2.0f * half_angle, aspect_ratio, camera->near_distance, camera->far_distance);
 		camera->view_projection = mat4_multiply(camera->projection, camera->view);
-		camera->cull_view_projection = mat4_multiply(mat4_perspective(2.0f * half_angle, aspect_ratio, camera->near_distance,
-			cull_far(camera, settings)), camera->view);
 		mat4_inverse(camera->view_projection, &camera->inverse_view_projection);
 		camera->view_projection_relative = mat4_multiply(camera->projection,
 			mat4_look_at(vec3_make(0.0f, 0.0f, 0.0f), direction, vec3_make(0.0f, 1.0f, 0.0f)));
@@ -432,8 +434,6 @@ void camera_compute_matrices(camera_t *camera, const camera_settings_t *settings
 	camera->projection = mat4_perspective(degrees_to_radians(settings->field_of_view_degrees), aspect_ratio,
 		camera->near_distance, camera->far_distance);
 	camera->view_projection = mat4_multiply(camera->projection, camera->view);
-	camera->cull_view_projection = mat4_multiply(mat4_perspective(degrees_to_radians(settings->field_of_view_degrees), aspect_ratio,
-		camera->near_distance, cull_far(camera, settings)), camera->view);
 	mat4_inverse(camera->view_projection, &camera->inverse_view_projection);
 	camera->view_projection_relative = mat4_multiply(camera->projection,
 		mat4_look_at(vec3_make(0.0f, 0.0f, 0.0f), vec3_subtract(target, eye), vec3_make(0.0f, 1.0f, 0.0f)));
