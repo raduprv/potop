@@ -364,7 +364,8 @@ static bool chunk_seen(const water_t *water, const terrain_t *terrain, const fru
 
 bool water_renderer_visible(const water_t *water, const terrain_t *terrain, const camera_t *camera)
 {
-	frustum_t frustum = frustum_from_matrix(camera->view_projection);
+	// (out to the view distance: camera.h)
+	frustum_t frustum = frustum_from_matrix(camera->cull_view_projection);
 
 	if (water_gpu_depth_texture(water) == NULL)
 	{
@@ -430,7 +431,7 @@ bool water_renderer_capture(water_renderer_t *renderer, SDL_GPUTexture *color_te
 
 void water_renderer_prepare(water_renderer_t *renderer, const water_t *water, const terrain_t *terrain, const camera_t *camera)
 {
-	frustum_t frustum = frustum_from_matrix(camera->view_projection);
+	frustum_t frustum = frustum_from_matrix(camera->cull_view_projection);
 	int chunk_count = terrain->chunks_per_side * terrain->chunks_per_side;
 
 	renderer->instance_count = 0;

@@ -66,6 +66,10 @@ typedef struct
 	// trembled under the temporal anti-aliasing on a 4 km map)
 	mat4_t view_projection_relative;
 	mat4_t inverse_view_projection_relative;
+	// The same with its far plane at the view distance (camera settings;
+	// none: the far plane): what the terrain and the water draw is culled
+	// by it, the rest as before (the sky, the clouds, far beyond)
+	mat4_t cull_view_projection;
 	float near_distance;
 	float far_distance;
 

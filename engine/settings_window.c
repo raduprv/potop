@@ -441,6 +441,8 @@ static const ui_setting_t ui_settings[] = {
 	{ TAB_CAMERA, "camera", "maximum_pitch_degrees", "Steepest view", 30, 89, 1, EFFECT_LIVE, "%.0f\xc2\xb0", NULL, NULL, false },
 	HEADING(TAB_CAMERA, "On foot (C)"),
 	{ TAB_CAMERA, "camera", "first_person_field_of_view_degrees", "Field of view (on foot)", 15, 110, 1, EFFECT_LIVE, "%.0f\xc2\xb0", NULL, NULL, false },
+	{ TAB_CAMERA, "camera", "view_distance_meters", "View distance", 0, 20000, 250, EFFECT_LIVE, "%.0f m", NULL,
+		"The terrain and the water drawn no farther (0: to the map's edge); the sky and the clouds as far as ever", false },
 	{ TAB_CAMERA, "camera", "first_person_near_meters", "Near plane", 0.02f, 1, 0.01f, EFFECT_LIVE, "%.2f m", NULL,
 		"Farther: less flicker far off; walls close by cut away", false },
 	{ TAB_CAMERA, "camera", "first_person_look_degrees_per_pixel", "Mouse speed", 0.02f, 0.5f, 0.01f, EFFECT_LIVE, NULL, NULL, NULL, false },

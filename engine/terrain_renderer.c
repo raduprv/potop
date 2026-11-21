@@ -1581,7 +1581,8 @@ static void order_visible_chunks(terrain_renderer_t *renderer, float chunk_exten
 static void collect_visible_chunks(terrain_renderer_t *renderer, const terrain_t *terrain, const camera_t *camera,
 	const render_settings_t *settings)
 {
-	frustum_t frustum = frustum_from_matrix(camera->view_projection);
+	// (out to the view distance: camera.h)
+	frustum_t frustum = frustum_from_matrix(camera->cull_view_projection);
 	float chunk_extent = (float)TERRAIN_CHUNK_SIZE * terrain->cell_size_meters;
 	float lod_base = lod_base_distance(terrain, settings);
 	float eye_height = lod_eye_height(terrain, camera);

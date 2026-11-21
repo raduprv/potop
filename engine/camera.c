@@ -357,6 +357,19 @@ void camera_update_first_person(camera_t *camera, const input_state_t *input, co
 	camera->target_height = ground;
 }
 
+// The culling's far plane: the view distance (from the eye, so the orbit's
+// distance on top), never past the far plane; none set: the far plane
+static float cull_far(const camera_t *camera, const camera_settings_t *settings)
+{
+	float view = settings->view_distance_meters;
+
+	if (view <= 0.0f)
+	{
+		return camera->far_distance;
+	}
+	return SDL_clamp(view + (camera->first_person ? 0.0f : camera->distance_meters), camera->near_distance + 1.0f, camera->far_distance);
+}
+
 void camera_compute_matrices(camera_t *camera, const camera_settings_t *settings, const terrain_t *terrain, float aspect_ratio)
 {
 	if (camera->first_person)
@@ -377,6 +390,8 @@ void camera_compute_matrices(camera_t *camera, const camera_settings_t *settings
 
 		camera->projection = mat4_perspective(2.0f * half_angle, aspect_ratio, camera->near_distance, camera->far_distance);
 		camera->view_projection = mat4_multiply(camera->projection, camera->view);
+		camera->cull_view_projection = mat4_multiply(mat4_perspective(2.0f * half_angle, aspect_ratio, camera->near_distance,
+			cull_far(camera, settings)), camera->view);
 		mat4_inverse(camera->view_projection, &camera->inverse_view_projection);
 		camera->view_projection_relative = mat4_multiply(camera->projection,
 			mat4_look_at(vec3_make(0.0f, 0.0f, 0.0f), direction, vec3_make(0.0f, 1.0f, 0.0f)));
@@ -417,6 +432,8 @@ void camera_compute_matrices(camera_t *camera, const camera_settings_t *settings
 	camera->projection = mat4_perspective(degrees_to_radians(settings->field_of_view_degrees), aspect_ratio,
 		camera->near_distance, camera->far_distance);
 	camera->view_projection = mat4_multiply(camera->projection, camera->view);
+	camera->cull_view_projection = mat4_multiply(mat4_perspective(degrees_to_radians(settings->field_of_view_degrees), aspect_ratio,
+		camera->near_distance, cull_far(camera, settings)), camera->view);
 	mat4_inverse(camera->view_projection, &camera->inverse_view_projection);
 	camera->view_projection_relative = mat4_multiply(camera->projection,
 		mat4_look_at(vec3_make(0.0f, 0.0f, 0.0f), vec3_subtract(target, eye), vec3_make(0.0f, 1.0f, 0.0f)));

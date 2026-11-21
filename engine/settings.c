@@ -54,6 +54,7 @@ static const setting_field_t setting_fields[] =
 	FIELD("camera", "zoom_step_factor", SETTING_FLOAT, camera.zoom_step_factor),
 	FIELD("camera", "first_person_field_of_view_degrees", SETTING_FLOAT, camera.first_person_field_of_view_degrees),
 	FIELD("camera", "first_person_near_meters", SETTING_FLOAT, camera.first_person_near_meters),
+	FIELD("camera", "view_distance_meters", SETTING_FLOAT, camera.view_distance_meters),
 	FIELD("camera", "jump_height_scale", SETTING_FLOAT, camera.jump_height_scale),
 	FIELD("camera", "first_person_look_degrees_per_pixel", SETTING_FLOAT, camera.first_person_look_degrees_per_pixel),
 	FIELD("camera", "first_person_invert_mouse", SETTING_BOOL, camera.first_person_invert_mouse),
@@ -464,6 +465,7 @@ void settings_set_defaults(settings_t *settings)
 	settings->camera.zoom_step_factor = 1.15f;
 	settings->camera.first_person_field_of_view_degrees = 70.0f;
 	settings->camera.first_person_near_meters = 0.1f;
+	settings->camera.view_distance_meters = 0.0f;
 	settings->camera.jump_height_scale = 1.0f;
 	settings->camera.first_person_look_degrees_per_pixel = 0.12f;
 	settings->camera.first_person_invert_mouse = false;
