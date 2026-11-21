@@ -151,6 +151,10 @@ float hash_2d(vec2 position)
 // of that uv mean nothing). The CPU's: noise_lattice_value
 const float NOISE_LATTICE_SIZE = 512.0;
 
+// How much deeper than a blade the water may be with the blade still there
+// (as water weed, its tip that far under)
+const float WEED_DEPTH_METERS = 1.5;
+
 // The most more blades a slope gets (the ground over its shadow: 60 degrees)
 const float GRASS_MOST_STRETCH = 2.0;
 
@@ -416,6 +420,10 @@ float hash_1d(vec2 position)
 // red its thinning, green its clump, blue the ground's amount)
 vec3 debug_height_color;
 
+// How far under the water the blade stands (0: dry, 1: all of it): grown
+// green as water weed there, its color's spare byte (grass.vert)
+float blade_submerged = 0.0;
+
 // Its color before what changes up it (grass.vert: lighter and yellower to
 // the tip, the silt's brown, the gust's sheen): the ground's grass under it
 // (the far, smooth scale of its texture), the terrain's variation over its
@@ -493,7 +501,7 @@ void write_blade(uint base, vec3 root, float height, float width, float facing_t
 	blades[base + 3u] = packHalf2x16(vec2(height, width));
 	blades[base + 4u] = packHalf2x16(flatten);
 	blades[base + 5u] = packUnorm4x8(vec4(facing_turn, sun, sky.a, surface.r));
-	blades[base + 6u] = packUnorm4x8(vec4(sqrt(clamp(color * 0.5, 0.0, 1.0)), 0.0));
+	blades[base + 6u] = packUnorm4x8(vec4(sqrt(clamp(color * 0.5, 0.0, 1.0)), blade_submerged));
 	blades[base + 7u] = pack_shared_exponent(sky.rgb);
 }
 
@@ -679,8 +687,10 @@ void main()
 	{
 		return;
 	}
-	// Water: deeper than the blade by a little, none; shallower, laid down
-	// the way it flows, more the faster and the deeper; silt leaves them down
+	// Water: deeper than the blade by more than WEED_DEPTH_METERS, none;
+	// shallower, laid down the way it flows, more the faster and the
+	// deeper; silt leaves them down; all under it in still water, they
+	// stand as water weed (green, swaying: grass.vert)
 	vec2 flatten = vec2(0.0);
 	{
 		ivec2 cell = cell_of(world_xz);
@@ -689,19 +699,23 @@ void main()
 		float speed = length(flow);
 		vec2 random_direction = vec2(cos(more.z * 6.2831853), sin(more.z * 6.2831853));
 
-		if (depth > height + 0.4 && (debug_flags & 16) == 0)
+		if (depth > height + WEED_DEPTH_METERS && (debug_flags & 16) == 0)
 		{
 			return;
 		}
+		blade_submerged = clamp((depth - 0.3 * height) / max(0.7 * height, 0.02), 0.0, 1.0);
 		if (depth > 0.005)
 		{
 			float under = clamp(depth / max(height, 0.05), 0.0, 1.0);
+			float current = clamp(speed / 0.4, 0.0, 1.0);
 
-			flatten = (speed > 0.01 ? flow / speed : random_direction) * under * (0.35 + 0.65 * clamp(speed / 0.4, 0.0, 1.0));
+			// (the current lays them down; in still water a weed stands,
+			// leaning a little)
+			flatten = (speed > 0.01 ? flow / speed : random_direction) * under * mix(0.35 + 0.65 * current, 0.12 + 0.88 * current, blade_submerged);
 		}
-		if (silt > 0.05 && dot(flatten, flatten) < silt * silt * 0.6)
+		if (silt > 0.05 && dot(flatten, flatten) < silt * silt * 0.6 * (1.0 - blade_submerged))
 		{
-			flatten = random_direction * silt * 0.8;
+			flatten = random_direction * silt * 0.8 * (1.0 - blade_submerged);
 		}
 	}
 	// (settings.h, grass_debug 256: none laid down, by water or silt)

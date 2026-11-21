@@ -131,14 +131,23 @@ void main()
 	}
 	// Its color (the scatter's: the ground's grass under it, the terrain's
 	// variation, wet, dry, its own shade), lighter and yellower at the tip;
-	// brown under silt
+	// brown under silt; under the water a weed's green (deep, a little blue,
+	// browner at the foot, its own shade)
 	{
-		vec3 color = unpackUnorm4x8(blade_second.z).rgb;
+		vec4 packed_color = unpackUnorm4x8(blade_second.z);
+		vec3 color = packed_color.rgb;
 		float silt = bytes.w;
+		float submerged = packed_color.a;
 
 		color = color * color * 2.0;
 		color = mix(color, color * vec3(1.25, 1.2, 0.85), t * 0.6);
-		color = mix(color, vec3(0.16, 0.12, 0.08), clamp(silt * 1.2, 0.0, 0.85));
+		color = mix(color, vec3(0.16, 0.12, 0.08), clamp(silt * 1.2, 0.0, 0.85) * (1.0 - submerged));
+		if (submerged > 0.0)
+		{
+			vec3 weed = mix(vec3(0.05, 0.075, 0.03), vec3(0.06, 0.2, 0.1), t) * (0.75 + 0.5 * own);
+
+			color = mix(color, weed, submerged);
+		}
 		albedo = color * (0.8 + 0.2 * t);
 		// (the wave: paler and a little grey green, more up the blade)
 		albedo = mix(albedo, albedo * vec3(1.55, 1.6, 1.35) + vec3(0.02, 0.026, 0.016), clamp(gusts.w * gust_sheen * (0.5 + 0.5 * t), 0.0, 1.5));
