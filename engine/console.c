@@ -1,6 +1,9 @@
 // The console. See console.h.
 
 #include "console.h"
+
+#include <stdio.h>
+#include <unistd.h>
 #include "settings.h"
 
 #include <stdarg.h>
@@ -104,11 +107,61 @@ static void add_message(console_t *console, SDL_LogPriority priority, const char
 	}
 }
 
+// A line's color in a terminal (ANSI): the warnings and errors by their
+// priority, the rest by what the line begins with (NULL: plain)
+static const char *terminal_color(SDL_LogPriority priority, const char *message)
+{
+	static const struct
+	{
+		const char *start;
+		const char *color;
+	} colored[] = {
+		{ "Stutter", "\033[35m" },          // magenta: hitches
+		{ "A slow frame", "\033[35m" },
+		{ "  ...", "\033[90m" },             // gray: a frame's long steps, as they end
+		{ "Frame ", "\033[90m" },
+		{ "Sky occlusion", "\033[36m" },    // cyan
+		{ "Navigation", "\033[34m" },       // blue
+		{ "Load", "\033[32m" },             // green: loading, saving, projects
+		{ "Loaded", "\033[32m" },
+		{ "Saved", "\033[32m" },
+		{ "Project", "\033[32m" },
+		{ "Opened", "\033[32m" },
+		{ "Startup", "\033[32m" },
+	};
+
+	if (priority >= SDL_LOG_PRIORITY_ERROR)
+	{
+		return "\033[1;31m";
+	}
+	if (priority == SDL_LOG_PRIORITY_WARN)
+	{
+		return "\033[33m";
+	}
+	for (int i = 0; i < (int)SDL_arraysize(colored); i++)
+	{
+		if (SDL_strncmp(message, colored[i].start, SDL_strlen(colored[i].start)) == 0)
+		{
+			return colored[i].color;
+		}
+	}
+	return NULL;
+}
+
 static void SDLCALL log_output(void *userdata, int category, SDL_LogPriority priority, const char *message)
 {
 	console_t *console = userdata;
+	const char *color = console->terminal_colors ? terminal_color(priority, message) : NULL;
 
-	if (console->previous_output != NULL)
+	// (in a terminal, colored: written here as SDL's own output does, its
+	// priority before it; elsewhere, SDL's own output)
+	if (color != NULL)
+	{
+		static const char *names[SDL_LOG_PRIORITY_COUNT] = { "", "TRACE", "VERBOSE", "DEBUG", "INFO", "WARN", "ERROR", "CRITICAL" };
+
+		fprintf(stderr, "%s%s: %s\033[0m\n", color, priority > 0 && priority < SDL_LOG_PRIORITY_COUNT ? names[priority] : "", message);
+	}
+	else if (console->previous_output != NULL)
 	{
 		console->previous_output(console->previous_userdata, category, priority, message);
 	}
@@ -122,6 +175,8 @@ void console_create(console_t *console)
 	console->mutex = SDL_CreateMutex();
 	SDL_GetLogOutputFunction(&console->previous_output, &console->previous_userdata);
 	SDL_SetLogOutputFunction(log_output, console);
+	// (colors only in a terminal, and not when NO_COLOR asks for none)
+	console->terminal_colors = isatty(STDERR_FILENO) && SDL_getenv("NO_COLOR") == NULL;
 	console->hooked = true;
 }
 

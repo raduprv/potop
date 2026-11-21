@@ -102,6 +102,7 @@ typedef struct
 	SDL_LogOutputFunction previous_output;
 	void *previous_userdata;
 	bool hooked;
+	bool terminal_colors;          // the log written in color (a terminal)
 
 	// The commands added by the game or the editor
 	console_added_command_t added[CONSOLE_ADDED_MAX];
