@@ -833,6 +833,14 @@ void gpu_clip_matrix(const float gl[16], float out[16])
 	}
 }
 
+void gpu_set_scene_rect(int32_t x, int32_t y, int32_t width, int32_t height)
+{
+	gpu.scene_x = x;
+	gpu.scene_y = y;
+	gpu.scene_width = SDL_max(width, 0);
+	gpu.scene_height = SDL_max(height, 0);
+}
+
 void gpu_set_scene_samples(int samples)
 {
 	static const SDL_GPUSampleCount counts[4] = { SDL_GPU_SAMPLECOUNT_1, SDL_GPU_SAMPLECOUNT_2, SDL_GPU_SAMPLECOUNT_4, SDL_GPU_SAMPLECOUNT_8 };

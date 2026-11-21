@@ -304,6 +304,10 @@ typedef struct
 	// and its own; dropped when a map is made, opened, loaded or new
 	bool preview_return_valid;
 	bool previewing;                   // the map is a preview
+	// Where the scene is drawn in the window (pixels, its top left): the
+	// bars round it (ui_viewport); its size is the frame's pixel size
+	int viewport_x;
+	int viewport_y;
 	char preview_return_project[PROJECT_NAME_LENGTH];
 	char preview_return_name[MAP_FILE_NAME_LENGTH];
 	ui_requests_t console_requests;    // the console's "project" asks (as the interface does), done with the interface's
@@ -2197,9 +2201,18 @@ static void update_hover(testbed_t *game, int pixel_width, int pixel_height)
 		return;
 	}
 	// Mouse coordinates are in window points; the framebuffer may have more
-	// pixels than that on high density displays
-	camera_pixel_ray(&game->potop->camera, game->input.pointer_x * pixel_density, game->input.pointer_y * pixel_density,
-		pixel_width, pixel_height, &origin, &direction);
+	// pixels than that on high density displays; the scene starts where the
+	// bars end (game->viewport_x, y)
+	{
+		float x = game->input.pointer_x * pixel_density - (float)game->viewport_x;
+		float y = game->input.pointer_y * pixel_density - (float)game->viewport_y;
+
+		if (x < 0.0f || y < 0.0f || x >= (float)pixel_width || y >= (float)pixel_height)
+		{
+			return;
+		}
+		camera_pixel_ray(&game->potop->camera, x, y, pixel_width, pixel_height, &origin, &direction);
+	}
 	game->tools.hover_valid = terrain_raycast(&game->potop->world.terrain, origin, direction, game->potop->camera.far_distance, &game->tools.hover_point);
 	game->pointer_ray_valid = true;
 	game->pointer_ray_origin = origin;
@@ -4062,6 +4075,29 @@ static void run(testbed_t *game)
 		SDL_GetWindowSizeInPixels(game->window, &pixel_width, &pixel_height);
 		pixel_width = SDL_max(pixel_width, 1);
 		pixel_height = SDL_max(pixel_height, 1);
+		// The scene drawn between the bars: its part of the window (pixels),
+		// its size the one the camera, the pointer and the drawing use
+		{
+			float to_pixels = game->ui.backend.scale * SDL_GetWindowPixelDensity(game->window);
+			float x = 0.0f;
+			float y = 0.0f;
+			float width = (float)pixel_width;
+			float height = (float)pixel_height;
+
+			if (game->ui.available)
+			{
+				ui_viewport(&game->ui, &x, &y, &width, &height);
+				x *= to_pixels;
+				y *= to_pixels;
+				width *= to_pixels;
+				height *= to_pixels;
+			}
+			game->viewport_x = SDL_clamp((int)SDL_lroundf(x), 0, pixel_width - 1);
+			game->viewport_y = SDL_clamp((int)SDL_lroundf(y), 0, pixel_height - 1);
+			pixel_width = SDL_clamp((int)SDL_lroundf(width), 1, pixel_width - game->viewport_x);
+			pixel_height = SDL_clamp((int)SDL_lroundf(height), 1, pixel_height - game->viewport_y);
+			gpu_set_scene_rect(game->viewport_x, game->viewport_y, pixel_width, pixel_height);
+		}
 
 		if (game->potop->camera.first_person)
 		{

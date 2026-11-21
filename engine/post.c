@@ -507,5 +507,31 @@ void post_draw(post_t *post, SDL_GPUTexture *scene_texture, int scene_width, int
 	samplers[2].sampler = gpu.nearest_clamp;
 	samplers[3].texture = post->grade_texture;
 	samplers[3].sampler = gpu.linear_clamp;
+	if (gpu.scene_width > 0 && gpu.scene_height > 0)
+	{
+		// (into its part of the picture, the rest black for the interface
+		// to draw over)
+		SDL_GPUColorTargetInfo color;
+		SDL_GPURenderPass *pass;
+		SDL_GPUViewport viewport = { (float)gpu.scene_x, (float)gpu.scene_y, (float)gpu.scene_width, (float)gpu.scene_height, 0.0f, 1.0f };
+		SDL_Rect scissor = { gpu.scene_x, gpu.scene_y, gpu.scene_width, gpu.scene_height };
+
+		SDL_zero(color);
+		color.texture = gpu.final_texture;
+		color.load_op = SDL_GPU_LOADOP_CLEAR;
+		color.store_op = SDL_GPU_STOREOP_STORE;
+		pass = SDL_BeginGPURenderPass(gpu.command_buffer, &color, 1, NULL);
+		if (pass != NULL)
+		{
+			SDL_SetGPUViewport(pass, &viewport);
+			SDL_SetGPUScissor(pass, &scissor);
+			SDL_BindGPUGraphicsPipeline(pass, post->final_pipeline);
+			SDL_BindGPUFragmentSamplers(pass, 0, samplers, 4);
+			SDL_PushGPUFragmentUniformData(gpu.command_buffer, 0, &uniforms, sizeof(uniforms));
+			SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+			SDL_EndGPURenderPass(pass);
+		}
+		return;
+	}
 	draw_into(gpu.final_texture, gpu.final_width, gpu.final_height, post->final_pipeline, samplers, 4, &uniforms, sizeof(uniforms));
 }

@@ -436,23 +436,6 @@ static bool tool_button(ui_t *ui, const char *icon_key, const char *label, const
 	return value != selected;
 }
 
-// A plain button with an icon or its name; tooltip on hover
-static bool icon_button(ui_t *ui, const char *icon_key, const char *label, const char *tooltip)
-{
-	struct nk_context *context = &ui->backend.context;
-	const struct nk_image *icon = icon_for(ui, icon_key);
-	struct nk_rect bounds = nk_widget_bounds(context);
-	bool clicked;
-
-	tooltip_if_hovered(context, tooltip);
-	clicked = nk_button_label(context, icon != NULL ? " " : label);
-	if (icon != NULL)
-	{
-		draw_icon(ui, bounds, icon, NULL, false);
-	}
-	return clicked;
-}
-
 static void section_label(ui_t *ui, const char *text)
 {
 	ui_widget_section(&ui->backend.context, text);
@@ -487,11 +470,6 @@ static void display_name(const char *name, char *text_out, size_t text_out_size)
 
 // ---------------------------------------------------------------------------
 // The brush panel
-
-static void tool_row_begin(struct nk_context *context)
-{
-	nk_layout_row_dynamic(context, ROW_HEIGHT, 3);
-}
 
 // (the chosen tool's button again: no tool)
 static void select_tool(tool_state_t *tools, tool_type_t tool)
@@ -583,12 +561,18 @@ static void area_overlay(ui_t *ui, const ui_view_t *view)
 	const tool_state_t *tools = view->tools;
 	const float *m = view->view_projection.m;
 	bool shown = tools->current_tool == TOOL_AREA && view->areas != NULL && view->terrain != NULL;
+	// (projected into the scene's part of the window: ui_viewport)
+	float scene_x;
+	float scene_y;
+	float scene_width;
+	float scene_height;
 
 	if (!shown)
 	{
 		nk_window_show(context, "area_overlay", NK_HIDDEN);
 		return;
 	}
+	ui_viewport(ui, &scene_x, &scene_y, &scene_width, &scene_height);
 	nk_window_show(context, "area_overlay", NK_SHOWN);
 	nk_style_push_style_item(context, &context->style.window.fixed_background, nk_style_item_color(nk_rgba(0, 0, 0, 0)));
 	if (nk_begin(context, "area_overlay", nk_rect(0.0f, 0.0f, ui->backend.width, ui->backend.height),
@@ -646,8 +630,8 @@ static void area_overlay(ui_t *ui, const ui_view_t *view)
 					bool seen = clip_w > 0.1f;
 					float screen[2];
 
-					screen[0] = seen ? (clip_x / clip_w * 0.5f + 0.5f) * ui->backend.width : 0.0f;
-					screen[1] = seen ? (0.5f - clip_y / clip_w * 0.5f) * ui->backend.height : 0.0f;
+					screen[0] = seen ? scene_x + (clip_x / clip_w * 0.5f + 0.5f) * scene_width : 0.0f;
+					screen[1] = seen ? scene_y + (0.5f - clip_y / clip_w * 0.5f) * scene_height : 0.0f;
 					if (seen && previous_seen)
 					{
 						nk_stroke_line(canvas, previous[0], previous[1], screen[0], screen[1], 2.0f, color);
@@ -664,8 +648,8 @@ static void area_overlay(ui_t *ui, const ui_view_t *view)
 				float clip_w = m[3] * drawn.x + m[7] * y + m[11] * drawn.z + m[15];
 
 				label_seen = clip_w > 0.1f && drawn.name[0] != '\0';
-				label_x = (clip_x / SDL_max(clip_w, 0.1f) * 0.5f + 0.5f) * ui->backend.width;
-				label_y = (0.5f - clip_y / SDL_max(clip_w, 0.1f) * 0.5f) * ui->backend.height;
+				label_x = scene_x + (clip_x / SDL_max(clip_w, 0.1f) * 0.5f + 0.5f) * scene_width;
+				label_y = scene_y + (0.5f - clip_y / SDL_max(clip_w, 0.1f) * 0.5f) * scene_height;
 			}
 			if (label_seen)
 			{
@@ -768,17 +752,6 @@ static void brush_options(ui_t *ui, const ui_view_t *view)
 			SDL_snprintf(text, sizeof(text), "Size: %.0f m across", (double)(2.0f * view->layouts->layouts[tools->layout].footprint_meters));
 			nk_layout_row_dynamic(context, SMALL_ROW_HEIGHT, 1);
 			nk_label(context, text, NK_TEXT_LEFT);
-		}
-	}
-	else if (tool != TOOL_SPRING && tool != TOOL_REMOVE_LAYOUT && tool != TOOL_OBJECT && tool != TOOL_INSPECT && tool != TOOL_EFFECT
-		&& tool != TOOL_LIGHT && tool != TOOL_AREA && tool != TOOL_NONE)
-	{
-		float radius = tools->brush_radius_meters;
-
-		if (slider_row(ui, "Size", &radius, settings->tools.brush_minimum_radius_meters, settings->tools.brush_maximum_radius_meters, 0.5f,
-			"%.1f m", "Brush radius ([ and ])"))
-		{
-			tools->brush_radius_meters = radius;
 		}
 	}
 
@@ -1054,91 +1027,389 @@ static void brush_options(ui_t *ui, const ui_view_t *view)
 	}
 }
 
-static void brushes_window(ui_t *ui, const ui_view_t *view)
+// ---------------------------------------------------------------------------
+// The bars: the menu, the tools, the chosen tool's options (along the top)
+// and the status line (along the bottom); the scene drawn in what is left
+// between them (ui_viewport)
+
+#define MENU_BAR_WINDOW "menu_bar"
+#define TOOL_BAR_WINDOW "tool_bar"
+#define CONTEXT_BAR_WINDOW "context_bar"
+static const float MENU_BAR_HEIGHT = 26.0f;
+static const float TOOL_BAR_HEIGHT = 34.0f;
+static const float CONTEXT_BAR_HEIGHT = 32.0f;
+static const float STATUS_BAR_HEIGHT = SMALL_ROW_HEIGHT + 8.0f;
+// (the most widgets a bar's row holds)
+static const int BAR_ITEMS_MAX = 64;
+// The brush's sizes on the tool bar (meters, its radius), within the
+// settings' smallest and largest
+static const float BRUSH_PRESETS[5] = { 2.0f, 5.0f, 10.0f, 20.0f, 40.0f };
+
+static bool bars_shown(const ui_t *ui)
+{
+	return ui->available && !ui->hidden && !ui->sketch_open;
+}
+
+void ui_viewport(const ui_t *ui, float *x_out, float *y_out, float *width_out, float *height_out)
+{
+	float top = bars_shown(ui) ? MENU_BAR_HEIGHT + TOOL_BAR_HEIGHT + CONTEXT_BAR_HEIGHT : 0.0f;
+	float bottom = bars_shown(ui) && ui->show_status_line ? STATUS_BAR_HEIGHT : 0.0f;
+
+	*x_out = 0.0f;
+	*y_out = top;
+	*width_out = ui->backend.width;
+	*height_out = SDL_max(ui->backend.height - top - bottom, 1.0f);
+}
+
+// A bar's window: fixed along the top or the bottom, opaque, no title
+static bool bar_begin(ui_t *ui, const char *name, float y, float height)
+{
+	struct nk_context *context = &ui->backend.context;
+	struct nk_rect bounds = nk_rect(0.0f, y, ui->backend.width, height);
+	struct nk_color background = ui->style.colors[NK_COLOR_WINDOW];
+	bool open;
+
+	background.a = 255;
+	nk_style_push_style_item(context, &context->style.window.fixed_background, nk_style_item_color(background));
+	nk_style_push_vec2(context, &context->style.window.padding, nk_vec2(6.0f, 4.0f));
+	open = nk_begin(context, name, bounds, NK_WINDOW_NO_SCROLLBAR | NK_WINDOW_BORDER);
+	if (open)
+	{
+		nk_window_set_bounds(context, name, bounds);
+	}
+	return open;
+}
+
+static void bar_end(ui_t *ui)
+{
+	nk_end(&ui->backend.context);
+	nk_style_pop_vec2(&ui->backend.context);
+	nk_style_pop_style_item(&ui->backend.context);
+}
+
+// A text widget's width on a bar (its text, the button's padding)
+static float bar_width(ui_t *ui, const char *text)
+{
+	return text_width(ui, text) + 2.0f * ui->backend.context.style.button.padding.x + 4.0f;
+}
+
+// A gap between groups on a bar
+static void bar_gap(ui_t *ui)
+{
+	nk_layout_row_push(&ui->backend.context, 6.0f);
+	nk_spacer(&ui->backend.context);
+}
+
+static void bar_label(ui_t *ui, const char *text)
+{
+	nk_layout_row_push(&ui->backend.context, text_width(ui, text) + 8.0f);
+	nk_label(&ui->backend.context, text, NK_TEXT_LEFT);
+}
+
+// A selectable on a bar (its name, or its icon); true when clicked
+static bool bar_choice(ui_t *ui, const char *icon_key, const char *label, const char *tooltip, bool selected)
+{
+	nk_layout_row_push(&ui->backend.context, bar_width(ui, label));
+	return tool_button(ui, icon_key, label, tooltip, selected);
+}
+
+static bool bar_button(ui_t *ui, const char *label, const char *tooltip)
+{
+	struct nk_context *context = &ui->backend.context;
+
+	nk_layout_row_push(context, bar_width(ui, label));
+	tooltip_if_hovered(context, tooltip);
+	return nk_button_label(context, label) != 0;
+}
+
+// label, slider, its value, on a bar; true when changed
+static bool bar_slider(ui_t *ui, const char *label, float *value, float minimum, float maximum, float step, const char *format,
+	const char *tooltip)
+{
+	struct nk_context *context = &ui->backend.context;
+	char text[32];
+	float before = *value;
+
+	bar_label(ui, label);
+	nk_layout_row_push(context, 110.0f);
+	tooltip_if_hovered(context, tooltip);
+	nk_slider_float(context, minimum, value, maximum, step);
+	SDL_snprintf(text, sizeof(text), format, (double)*value);
+	nk_layout_row_push(context, text_width(ui, "000.0 m3/s") + 4.0f);
+	nk_label(context, text, NK_TEXT_LEFT);
+	return *value != before;
+}
+
+// A drop-down on a bar holding what the tool panel held (brush_options): its
+// label, then the panel's widgets in it
+static void bar_options_drop(ui_t *ui, const ui_view_t *view, const char *label, float width, float height)
+{
+	struct nk_context *context = &ui->backend.context;
+
+	nk_layout_row_push(context, SDL_max(bar_width(ui, label) + 20.0f, 120.0f));
+	if (nk_combo_begin_label(context, label, nk_vec2(width, height)))
+	{
+		brush_options(ui, view);
+		nk_combo_end(context);
+	}
+}
+
+// The maps window, to save (or bake) or to open (again: closed)
+static void open_maps(ui_t *ui, const ui_view_t *view, ui_maps_mode_t mode)
+{
+	if (ui->maps_mode == mode)
+	{
+		ui->maps_mode = UI_MAPS_CLOSED;
+		return;
+	}
+	ui->maps_mode = mode;
+	ui->map_entry_count = map_file_list(ui->map_entries, MAP_FILE_LIST_MAX);
+	ui->project_count = project_list(ui->projects, PROJECT_LIST_MAX);
+	ui->selected_map = -1;
+	ui->selected_project = -1;
+	ui->confirm_delete = false;
+	ui->confirm_project_delete = false;
+	ui->project_name_input[0] = '\0';
+	if (mode == UI_MAPS_SAVE && view->project_name[0] == '\0')
+	{
+		SDL_snprintf(ui->project_name_input, sizeof(ui->project_name_input), "map %u", view->seed);
+	}
+}
+
+static void menu_bar(ui_t *ui, const ui_view_t *view)
 {
 	struct nk_context *context = &ui->backend.context;
 	tool_state_t *tools = view->tools;
-	tool_type_t tool = tools->current_tool;
-	bool hovered = nk_input_is_mouse_hovering_rect(&context->input, ui->brushes_bounds) || nk_item_is_any_active(context);
-	struct nk_color background = ui->style.colors[NK_COLOR_WINDOW];
-	struct nk_color header = ui->style.colors[NK_COLOR_HEADER];
-	nk_flags flags = NK_WINDOW_BORDER | NK_WINDOW_MOVABLE | NK_WINDOW_TITLE | NK_WINDOW_MINIMIZABLE;
-	float content_bottom = 0.0f;
+	struct nk_vec2 menu_size = nk_vec2(260.0f, 360.0f);
 
-	if (!hovered)
+	if (!bar_begin(ui, MENU_BAR_WINDOW, 0.0f, MENU_BAR_HEIGHT))
 	{
-		background.a = (nk_byte)((float)background.a * ui->style.panel_opacity);
-		header.a = (nk_byte)((float)header.a * SDL_min(1.0f, ui->style.panel_opacity + 0.2f));
+		bar_end(ui);
+		return;
 	}
-	nk_style_push_style_item(context, &context->style.window.fixed_background, nk_style_item_color(background));
-	nk_style_push_style_item(context, &context->style.window.header.normal, nk_style_item_color(header));
-	nk_style_push_style_item(context, &context->style.window.header.hover, nk_style_item_color(header));
-	nk_style_push_style_item(context, &context->style.window.header.active, nk_style_item_color(header));
-
-	if (nk_begin(context, BRUSHES_WINDOW, ui->brushes_bounds, flags))
+	nk_menubar_begin(context);
+	nk_layout_row_begin(context, NK_STATIC, MENU_BAR_HEIGHT - 8.0f, BAR_ITEMS_MAX);
+	nk_layout_row_push(context, bar_width(ui, "File"));
+	if (nk_menu_begin_label(context, "File", NK_TEXT_CENTERED, menu_size))
 	{
-		section_label(ui, "TERRAIN");
-		tool_row_begin(context);
-		if (tool_button(ui, "raise", "Raise", "Raise the ground (1)", tool == TOOL_RAISE))
+		nk_layout_row_dynamic(context, ROW_HEIGHT - 4.0f, 1);
+		if (nk_menu_item_label(context, "New map...", NK_TEXT_LEFT))
 		{
-			select_tool(tools, TOOL_RAISE);
+			if (view->previewing)
+			{
+				ui->sketch_open = true;
+			}
+			else
+			{
+				ui_open_new_map(ui, view);
+			}
 		}
-		if (tool_button(ui, "dig", "Dig", "Dig the ground away (2)", tool == TOOL_DIG))
+		if (nk_menu_item_label(context, "Open... (F9: the project as last saved)", NK_TEXT_LEFT))
 		{
-			select_tool(tools, TOOL_DIG);
+			open_maps(ui, view, UI_MAPS_LOAD);
 		}
-		if (tool_button(ui, "paint", "Paint", "Paint the soil type (3)", tool == TOOL_PAINT_SOIL))
+		if (nk_menu_item_label(context, "Save or bake... (F5: save at once)", NK_TEXT_LEFT))
 		{
-			select_tool(tools, TOOL_PAINT_SOIL);
+			open_maps(ui, view, UI_MAPS_SAVE);
 		}
-		tool_row_begin(context);
-		if (tool_button(ui, "smooth", "Smooth", "Smooth the ground (4)", tool == TOOL_SMOOTH))
+		if (nk_menu_item_label(context, "Sketch (paint the land again)...", NK_TEXT_LEFT))
 		{
-			select_tool(tools, TOOL_SMOOTH);
+			ui->sketch_open = true;
 		}
-		if (tool_button(ui, "stamp", "Stamp", "Craters, dams, hills, channels, lakes, plateaus (T)", tool == TOOL_STAMP))
+		nk_menu_end(context);
+	}
+	nk_layout_row_push(context, bar_width(ui, "Edit"));
+	if (nk_menu_begin_label(context, "Edit", NK_TEXT_CENTERED, menu_size))
+	{
+		nk_layout_row_dynamic(context, ROW_HEIGHT - 4.0f, 1);
+		if (nk_menu_item_label(context, "Remove objects (by category)...", NK_TEXT_LEFT))
 		{
-			select_tool(tools, TOOL_STAMP);
+			tools->current_tool = TOOL_CLEAR;
 		}
+		if (nk_menu_item_label(context, "Remove all placed lights", NK_TEXT_LEFT) && view->lights != NULL)
+		{
+			lights_clear_placed(view->lights);
+		}
+		nk_menu_end(context);
+	}
+	nk_layout_row_push(context, bar_width(ui, "View"));
+	if (nk_menu_begin_label(context, "View", NK_TEXT_CENTERED, menu_size))
+	{
+		nk_bool status = ui->show_status_line;
+
+		nk_layout_row_dynamic(context, ROW_HEIGHT - 4.0f, 1);
+		if (nk_checkbox_label(context, "Status line", &status))
+		{
+			ui->show_status_line = status;
+		}
+		if (nk_menu_item_label(context, "What is shown (World)...", NK_TEXT_LEFT))
+		{
+			ui->world_open = !ui->world_open;
+		}
+		if (nk_menu_item_label(context, "Sky...", NK_TEXT_LEFT))
+		{
+			ui->sky_open = !ui->sky_open;
+		}
+		if (nk_menu_item_label(context, "Diagnostics...", NK_TEXT_LEFT))
+		{
+			ui->diagnostics_open = !ui->diagnostics_open;
+		}
+		nk_menu_end(context);
+	}
+	nk_layout_row_push(context, bar_width(ui, "Simulation"));
+	if (nk_menu_begin_label(context, "Simulation", NK_TEXT_CENTERED, menu_size))
+	{
+		nk_bool raining = view->water->raining;
+		nk_bool draining = view->water->drain_edges;
+
+		nk_layout_row_dynamic(context, ROW_HEIGHT - 4.0f, 1);
+		if (nk_menu_item_label(context, view->paused ? "Run (space)" : "Pause (space)", NK_TEXT_LEFT))
+		{
+			view->input->toggle_pause = true;
+		}
+		if (nk_menu_item_label(context, "Faster (.)", NK_TEXT_LEFT))
+		{
+			view->input->time_scale_steps++;
+		}
+		if (nk_menu_item_label(context, "Slower (,)", NK_TEXT_LEFT))
+		{
+			view->input->time_scale_steps--;
+		}
+		if (nk_checkbox_label(context, "Rain (R)", &raining))
+		{
+			view->input->toggle_rain = true;
+		}
+		if (nk_checkbox_label(context, "Drain at the edges (B)", &draining))
+		{
+			view->input->toggle_borders = true;
+		}
+		nk_menu_end(context);
+	}
+	nk_layout_row_push(context, bar_width(ui, "Terrain"));
+	if (nk_menu_begin_label(context, "Terrain", NK_TEXT_CENTERED, menu_size))
+	{
+		nk_layout_row_dynamic(context, ROW_HEIGHT - 4.0f, 1);
+		if (nk_menu_item_label(context, "Sketch (paint the land again)...", NK_TEXT_LEFT))
+		{
+			ui->sketch_open = true;
+		}
+		nk_menu_end(context);
+	}
+	nk_layout_row_push(context, bar_width(ui, "Bake"));
+	if (nk_menu_begin_label(context, "Bake", NK_TEXT_CENTERED, menu_size))
+	{
+		nk_layout_row_dynamic(context, ROW_HEIGHT - 4.0f, 1);
+		if (nk_menu_item_label(context, "Save or bake the project...", NK_TEXT_LEFT))
+		{
+			open_maps(ui, view, UI_MAPS_SAVE);
+		}
+		nk_menu_end(context);
+	}
+	nk_layout_row_push(context, bar_width(ui, "Settings"));
+	tooltip_if_hovered(context, "Settings");
+	if (nk_button_label(context, "Settings"))
+	{
+		ui->settings.open = !ui->settings.open;
+	}
+	// (the map's name, at the right)
+	{
+		char text[160];
+		float used = 0.0f;
+
+		SDL_snprintf(text, sizeof(text), "%s", ui->last_map_name[0] != '\0' ? ui->last_map_name : "(no map name)");
+		used = bar_width(ui, "File") + bar_width(ui, "Edit") + bar_width(ui, "View") + bar_width(ui, "Simulation") + bar_width(ui, "Terrain")
+			+ bar_width(ui, "Bake") + bar_width(ui, "Settings") + 8.0f * context->style.window.spacing.x;
+		nk_layout_row_push(context, SDL_max(ui->backend.width - used - text_width(ui, text) - 30.0f, 0.0f));
 		nk_spacer(context);
+		nk_layout_row_push(context, text_width(ui, text) + 8.0f);
+		nk_label(context, text, NK_TEXT_RIGHT);
+	}
+	nk_layout_row_end(context);
+	nk_menubar_end(context);
+	bar_end(ui);
+}
 
-		section_label(ui, "WATER");
-		tool_row_begin(context);
-		if (tool_button(ui, "water_add", "Water", "Pour water (or shift + click with any tool)", tool == TOOL_WATER_ADD))
-		{
-			select_tool(tools, TOOL_WATER_ADD);
-		}
-		if (tool_button(ui, "sponge", "Sponge", "Take water away (or ctrl + click with any tool)", tool == TOOL_WATER_REMOVE))
-		{
-			select_tool(tools, TOOL_WATER_REMOVE);
-		}
-		if (tool_button(ui, "spring", "Spring", "Place or remove a spring (F)", tool == TOOL_SPRING))
-		{
-			select_tool(tools, TOOL_SPRING);
-		}
-		nk_layout_row_dynamic(context, ROW_HEIGHT - 4.0f, 2);
-		{
-			nk_bool raining = view->water->raining;
-			nk_bool draining = view->water->drain_edges;
+typedef struct
+{
+	tool_type_t tool;
+	const char *icon;
+	const char *label;
+	const char *tooltip;
+} tool_bar_item_t;
 
-			tooltip_if_hovered(context, "Rain over the whole map (R)");
-			if (nk_checkbox_label(context, "Rain", &raining))
-			{
-				view->input->toggle_rain = true;
-			}
-			tooltip_if_hovered(context, "Water leaves the map at its borders; off: the borders are walls (B)");
-			if (nk_checkbox_label(context, "Drain at edges", &draining))
-			{
-				view->input->toggle_borders = true;
-			}
-		}
+static const tool_bar_item_t TOOL_BAR_ITEMS[] = {
+	{ TOOL_RAISE, "raise", "Raise", "Raise the ground (1)" },
+	{ TOOL_DIG, "dig", "Dig", "Dig the ground away (2)" },
+	{ TOOL_PAINT_SOIL, "paint", "Paint", "Paint the soil type (3)" },
+	{ TOOL_SMOOTH, "smooth", "Smooth", "Smooth the ground (4)" },
+	{ TOOL_STAMP, "stamp", "Stamp", "Craters, dams, hills, channels, lakes, plateaus (T)" },
+	{ TOOL_COUNT, NULL, NULL, NULL },
+	{ TOOL_WATER_ADD, "water_add", "Water", "Pour water (or shift + click with any tool)" },
+	{ TOOL_WATER_REMOVE, "sponge", "Sponge", "Take water away (or ctrl + click with any tool)" },
+	{ TOOL_SPRING, "spring", "Spring", "Place or remove a spring (F)" },
+	{ TOOL_COUNT, NULL, NULL, NULL },
+	{ TOOL_PLANT, "plant", "Plant", "Plant trees, bushes, grass... (G)" },
+	{ TOOL_CLEAR, "clear", "Clear", "Remove the objects under the brush, of the categories ticked; or all of them off the whole map (H)" },
+	{ TOOL_OBJECT, "object", "Object", "Place one object of a chosen type (O: one of the plant category)" },
+	{ TOOL_LAYOUT, "layout", "Village", "Place homesteads, camps, mills... (L)" },
+	{ TOOL_REMOVE_LAYOUT, "remove_layout", "Unvillage", "Remove a whole homestead, camp... (Delete)" },
+	{ TOOL_COUNT, NULL, NULL, NULL },
+	{ TOOL_INSPECT, "inspect", "Inspect", "Everything about the water and ground of one cell" },
+	{ TOOL_EFFECT, "effects", "Effects", "Particle effects: fire, smoke, magic (data/particles.ini)" },
+	{ TOOL_LIGHT, "light", "Light", "Place a light (a click by one removes it); kept with the map" },
+	{ TOOL_AREA, "area", "Area", "Areas: who comes in and goes out tells the game; kept with the map" },
+};
 
-		section_label(ui, "NATURE");
-		tool_row_begin(context);
-		if (tool_button(ui, "plant", "Plant", "Plant trees, bushes, grass... (G)", tool == TOOL_PLANT))
+// A brush size's button: a disc as big as its share of the largest
+static bool brush_preset_button(ui_t *ui, float radius, float largest, bool selected)
+{
+	struct nk_context *context = &ui->backend.context;
+	struct nk_rect bounds;
+	nk_bool value = selected;
+	char tooltip[48];
+
+	nk_layout_row_push(context, TOOL_BAR_HEIGHT - 12.0f);
+	bounds = nk_widget_bounds(context);
+	SDL_snprintf(tooltip, sizeof(tooltip), "Brush %.0f m across", (double)(2.0f * radius));
+	tooltip_if_hovered(context, tooltip);
+	nk_selectable_label(context, " ", NK_TEXT_CENTERED, &value);
+	{
+		struct nk_command_buffer *canvas = nk_window_get_canvas(context);
+		float most = SDL_max(bounds.h - 6.0f, 4.0f);
+		float size = SDL_max(most * SDL_sqrtf(radius / SDL_max(largest, 1.0f)), 4.0f);
+		struct nk_color color = value ? context->style.selectable.text_normal_active : context->style.selectable.text_normal;
+
+		nk_fill_circle(canvas, nk_rect(bounds.x + 0.5f * (bounds.w - size), bounds.y + 0.5f * (bounds.h - size), size, size), color);
+	}
+	return value != selected;
+}
+
+static void tool_bar(ui_t *ui, const ui_view_t *view)
+{
+	struct nk_context *context = &ui->backend.context;
+	tool_state_t *tools = view->tools;
+	settings_t *settings = view->settings;
+	char text[48];
+
+	if (!bar_begin(ui, TOOL_BAR_WINDOW, MENU_BAR_HEIGHT, TOOL_BAR_HEIGHT))
+	{
+		bar_end(ui);
+		return;
+	}
+	nk_layout_row_begin(context, NK_STATIC, TOOL_BAR_HEIGHT - 10.0f, BAR_ITEMS_MAX);
+	for (int i = 0; i < (int)SDL_arraysize(TOOL_BAR_ITEMS); i++)
+	{
+		const tool_bar_item_t *item = &TOOL_BAR_ITEMS[i];
+
+		if (item->label == NULL)
 		{
-			select_tool(tools, TOOL_PLANT);
-			if (!object_types_category_plantable(view->object_types, tools->plant_category))
+			bar_gap(ui);
+			continue;
+		}
+		if (bar_choice(ui, item->icon, item->label, item->tooltip, tools->current_tool == item->tool))
+		{
+			select_tool(tools, item->tool);
+			if (item->tool == TOOL_PLANT && !object_types_category_plantable(view->object_types, tools->plant_category))
 			{
 				for (int category = 0; category < view->object_types->category_count; category++)
 				{
@@ -1150,258 +1421,274 @@ static void brushes_window(ui_t *ui, const ui_view_t *view)
 				}
 			}
 		}
-		if (tool_button(ui, "clear", "Clear", "Remove the objects under the brush, of the categories ticked; or all of them off the whole map (H)", tool == TOOL_CLEAR))
-		{
-			select_tool(tools, TOOL_CLEAR);
-		}
-		if (tool_button(ui, "object", "Object", "Place one object of a chosen type (O: one of the plant category)", tool == TOOL_OBJECT))
-		{
-			select_tool(tools, TOOL_OBJECT);
-		}
-
-		section_label(ui, "VILLAGES");
-		tool_row_begin(context);
-		if (tool_button(ui, "layout", "Place", "Place homesteads, camps, mills... (L)", tool == TOOL_LAYOUT))
-		{
-			select_tool(tools, TOOL_LAYOUT);
-		}
-		if (tool_button(ui, "remove_layout", "Remove", "Remove a whole homestead, camp... (Delete)", tool == TOOL_REMOVE_LAYOUT))
-		{
-			select_tool(tools, TOOL_REMOVE_LAYOUT);
-		}
-		nk_spacer(context);
-
-		section_label(ui, "DEBUG");
-		tool_row_begin(context);
-		if (tool_button(ui, "inspect", "Inspect", "Everything about the water and ground of one cell", tool == TOOL_INSPECT))
-		{
-			select_tool(tools, TOOL_INSPECT);
-		}
-		if (tool_button(ui, "effects", "Effects", "Particle effects: fire, smoke, magic (data/particles.ini)", tool == TOOL_EFFECT))
-		{
-			select_tool(tools, TOOL_EFFECT);
-		}
-		if (tool_button(ui, "light", "Light", "Place a light (a click by one removes it); kept with the map", tool == TOOL_LIGHT))
-		{
-			select_tool(tools, TOOL_LIGHT);
-		}
-		if (tool_button(ui, "area", "Area", "Areas: who comes in and goes out tells the game; kept with the map", tool == TOOL_AREA))
-		{
-			select_tool(tools, TOOL_AREA);
-		}
-
-		section_label(ui, "BRUSH");
-		brush_options(ui, view);
-
-		// Where the content ends: the window is fitted to it
-		nk_layout_row_dynamic(context, 1.0f, 1);
-		content_bottom = nk_widget_bounds(context).y;
-		ui->brushes_bounds = nk_window_get_bounds(context);
 	}
-	ui->brushes_collapsed = nk_window_is_collapsed(context, BRUSHES_WINDOW);
-	nk_end(context);
-	nk_style_pop_style_item(context);
-	nk_style_pop_style_item(context);
-	nk_style_pop_style_item(context);
-	nk_style_pop_style_item(context);
-
-	if (!ui->brushes_placed)
+	// The brush's size: five, and any other (its slider in a drop-down)
+	bar_gap(ui);
 	{
-		// The first frame: the stored state
-		ui->brushes_placed = true;
-		if (ui->brushes_collapsed)
+		float smallest = settings->tools.brush_minimum_radius_meters;
+		float largest = settings->tools.brush_maximum_radius_meters;
+		float biggest_preset = SDL_clamp(BRUSH_PRESETS[4], smallest, largest);
+
+		for (int i = 0; i < (int)SDL_arraysize(BRUSH_PRESETS); i++)
 		{
-			nk_window_collapse(context, BRUSHES_WINDOW, NK_MINIMIZED);
+			float radius = SDL_clamp(BRUSH_PRESETS[i], smallest, largest);
+
+			if (brush_preset_button(ui, radius, biggest_preset, SDL_fabsf(tools->brush_radius_meters - radius) < 0.01f))
+			{
+				tools->brush_radius_meters = radius;
+			}
+		}
+		SDL_snprintf(text, sizeof(text), "%.1f m", (double)tools->brush_radius_meters);
+		nk_layout_row_push(context, bar_width(ui, "00.0 m") + 18.0f);
+		tooltip_if_hovered(context, "The brush's radius, any ([ and ])");
+		if (nk_combo_begin_label(context, text, nk_vec2(300.0f, 80.0f)))
+		{
+			slider_row(ui, "Radius", &tools->brush_radius_meters, smallest, largest, 0.5f, "%.1f m", "The brush's radius ([ and ])");
+			nk_combo_end(context);
 		}
 	}
-	if (content_bottom > 0.0f && !ui->brushes_collapsed)
+	// The simulation
+	bar_gap(ui);
+	if (bar_button(ui, view->paused ? "Run" : "Pause", "Pause / run the simulation (space)"))
 	{
-		struct nk_rect bounds = ui->brushes_bounds;
-		float wanted = content_bottom - bounds.y + context->style.window.padding.y + 2.0f * context->style.window.spacing.y + 6.0f;
-		float room = ui->backend.height - bounds.y - 8.0f;
-		float height = SDL_max(SDL_min(wanted, room), 80.0f);
-
-		// Kept on screen after the window got smaller
-		bounds.x = SDL_clamp(bounds.x, 0.0f, SDL_max(ui->backend.width - 60.0f, 0.0f));
-		bounds.y = SDL_clamp(bounds.y, 0.0f, SDL_max(ui->backend.height - 40.0f, 0.0f));
-		if (SDL_fabsf(height - bounds.h) > 0.5f || bounds.x != ui->brushes_bounds.x || bounds.y != ui->brushes_bounds.y)
-		{
-			bounds.h = height;
-			nk_window_set_bounds(context, BRUSHES_WINDOW, bounds);
-			ui->brushes_bounds = bounds;
-		}
+		view->input->toggle_pause = true;
 	}
-}
-
-// ---------------------------------------------------------------------------
-// The icon bar and the status line
-
-typedef struct
-{
-	const char *icon;
-	const char *label;
-	const char *tooltip;
-} icon_bar_item_t;
-
-static void icon_bar_window(ui_t *ui, const ui_view_t *view)
-{
-	struct nk_context *context = &ui->backend.context;
-	char speed_text[32];
-	icon_bar_item_t items[] = {
-		{ "settings", "Settings", "Settings" },
-		{ "save", "Save", "Save or bake the project (F5: save it at once)" },
-		{ "load", "Open", "Open a project, or bring in a saved map (F9: the project as last saved)" },
-		{ "new_map", "New", "A new map: its land sketched (or left to the seed), made into a project (N: a new map at once, outside any project)" },
-		{ view->paused ? "play" : "pause", view->paused ? "Run" : "Pause", "Pause / run the simulation (space)" },
-		{ "slower", "\xc2\xab", "Slower (,)" },
-		{ NULL, speed_text, "Simulation speed" },
-		{ "faster", "\xc2\xbb", "Faster (.)" },
-		{ "sky", "Sky", "Paint the clouds on their map" },
-		{ "sketch", "Sketch", "The sketch again: paint the land some more and make the map again" },
-		{ "world", "World", "What is shown of the world (objects...)" },
-		{ "diagnostics", "Diagnostics", "What the frame and the simulation cost" },
-		{ "status", "Status", "Show or hide the status line" },
-	};
-	int item_count = (int)(sizeof(items) / sizeof(items[0]));
-	float widths[16];
-	float total = 0.0f;
-	float row_height = ROW_HEIGHT;
-	struct nk_vec2 padding = context->style.window.padding;
-	float spacing = context->style.window.spacing.x;
-
+	if (bar_button(ui, "\xc2\xab", "Slower (,)"))
+	{
+		view->input->time_scale_steps--;
+	}
 	if (view->paused)
 	{
-		SDL_strlcpy(speed_text, "paused", sizeof(speed_text));
+		SDL_strlcpy(text, "paused", sizeof(text));
 	}
 	else if (view->reached_time_scale < 0.95f * view->time_scale)
 	{
-		SDL_snprintf(speed_text, sizeof(speed_text), "x%g (%.1f)", (double)view->time_scale, (double)view->reached_time_scale);
+		SDL_snprintf(text, sizeof(text), "x%g (%.1f)", (double)view->time_scale, (double)view->reached_time_scale);
 	}
 	else
 	{
-		SDL_snprintf(speed_text, sizeof(speed_text), "x%g", (double)view->time_scale);
+		SDL_snprintf(text, sizeof(text), "x%g", (double)view->time_scale);
 	}
-	for (int i = 0; i < item_count; i++)
+	nk_layout_row_push(context, text_width(ui, text) + 8.0f);
+	nk_label(context, text, NK_TEXT_CENTERED);
+	if (bar_button(ui, "\xc2\xbb", "Faster (.)"))
 	{
-		const struct nk_image *icon = items[i].icon != NULL ? icon_for(ui, items[i].icon) : NULL;
-
-		widths[i] = icon != NULL ? row_height : text_width(ui, items[i].label) + 2.0f * context->style.button.padding.x + 8.0f;
-		if (items[i].icon == NULL)
-		{
-			// The speed label: room for its longest text
-			widths[i] = text_width(ui, "x16 (15.9)") + 6.0f;
-		}
-		total += widths[i] + spacing;
+		view->input->time_scale_steps++;
 	}
-	total += 2.0f * padding.x;
+	if (bar_choice(ui, "rain", "Rain", "Rain over the whole map (R)", view->water->raining))
 	{
-		struct nk_rect bounds = nk_rect(ui->backend.width - total - 8.0f, 8.0f, total, row_height + 2.0f * padding.y + 2.0f);
+		view->input->toggle_rain = true;
+	}
+	nk_layout_row_end(context);
+	bar_end(ui);
+}
 
-		if (nk_begin(context, ICON_BAR_WINDOW, bounds, NK_WINDOW_NO_SCROLLBAR | NK_WINDOW_BORDER))
+// The chosen tool's options, along a bar
+static void context_bar(ui_t *ui, const ui_view_t *view)
+{
+	struct nk_context *context = &ui->backend.context;
+	tool_state_t *tools = view->tools;
+	settings_t *settings = view->settings;
+	tool_type_t tool = tools->current_tool;
+	char text[96];
+
+	if (!bar_begin(ui, CONTEXT_BAR_WINDOW, MENU_BAR_HEIGHT + TOOL_BAR_HEIGHT, CONTEXT_BAR_HEIGHT))
+	{
+		bar_end(ui);
+		return;
+	}
+	nk_layout_row_begin(context, NK_STATIC, CONTEXT_BAR_HEIGHT - 10.0f, BAR_ITEMS_MAX);
+	if (tool == TOOL_RAISE || tool == TOOL_PAINT_SOIL || tool == TOOL_STAMP)
+	{
+		static const char *soil_labels[SOIL_TYPE_COUNT] = { "Sand", "Earth", "Clay", "Rock" };
+		static const char *soil_icons[SOIL_TYPE_COUNT] = { "soil_sand", "soil_earth", "soil_clay", "soil_rock" };
+		static const char *soil_tooltips[SOIL_TYPE_COUNT] = { "Sand (5): washes away easily", "Earth (6)", "Clay (7): holds water back",
+			"Rock (8): does not erode" };
+
+		bar_label(ui, "Soil");
+		for (int soil = 0; soil < SOIL_TYPE_COUNT; soil++)
 		{
-			nk_window_set_bounds(context, ICON_BAR_WINDOW, bounds);
-			nk_layout_row_begin(context, NK_STATIC, row_height, item_count);
-			for (int i = 0; i < item_count; i++)
+			if (bar_choice(ui, soil_icons[soil], soil_labels[soil], soil_tooltips[soil], tools->current_soil == (soil_type_t)soil))
 			{
-				nk_layout_row_push(context, widths[i]);
-				if (items[i].icon == NULL)
-				{
-					tooltip_if_hovered(context, items[i].tooltip);
-					nk_label(context, items[i].label, NK_TEXT_CENTERED);
-					continue;
-				}
-				if (!icon_button(ui, items[i].icon, items[i].label, items[i].tooltip))
-				{
-					continue;
-				}
-				switch (i)
-				{
-					case 0:
-						ui->settings.open = !ui->settings.open;
-						break;
-					case 3:
-						// A new map: the sketch, its fields afresh (a new name,
-						// a new seed; the open project's sketch is its own);
-						// from a preview, back to the sketch as it was (the
-						// sheet being painted)
-						if (view->previewing)
-						{
-							ui->sketch_open = true;
-						}
-						else
-						{
-							ui_open_new_map(ui, view);
-						}
-						break;
-					case 1:
-					case 2:
-					{
-						ui_maps_mode_t mode = i == 1 ? UI_MAPS_SAVE : UI_MAPS_LOAD;
+				tools->current_soil = (soil_type_t)soil;
+			}
+		}
+		bar_gap(ui);
+	}
+	switch (tool)
+	{
+		case TOOL_NONE:
+			bar_label(ui, "No tool: pick one on the bar above (or a key: 1 to 4, T, F, G, H, O, L)");
+			break;
+		case TOOL_RAISE:
+		case TOOL_DIG:
+			bar_slider(ui, "Speed", &settings->tools.raise_meters_per_second, 0.5f, 30.0f, 0.5f, "%.1f m/s", "How fast the ground rises or sinks");
+			break;
+		case TOOL_SMOOTH:
+			bar_slider(ui, "Strength", &settings->tools.smooth_strength_per_second, 0.5f, 10.0f, 0.1f, "%.1f", NULL);
+			break;
+		case TOOL_STAMP:
+			for (int stamp = 0; stamp < STAMP_COUNT; stamp++)
+			{
+				char label[32];
+				char icon_key[48];
 
-						if (ui->maps_mode == mode)
-						{
-							ui->maps_mode = UI_MAPS_CLOSED;
-							break;
-						}
-						ui->maps_mode = mode;
-						ui->map_entry_count = map_file_list(ui->map_entries, MAP_FILE_LIST_MAX);
-						ui->project_count = project_list(ui->projects, PROJECT_LIST_MAX);
-						ui->selected_map = -1;
-						ui->selected_project = -1;
-						ui->confirm_delete = false;
-						ui->confirm_project_delete = false;
-						ui->project_name_input[0] = '\0';
-						if (mode == UI_MAPS_SAVE && view->project_name[0] == '\0')
-						{
-							SDL_snprintf(ui->project_name_input, sizeof(ui->project_name_input), "map %u", view->seed);
-						}
-						break;
-					}
-					case 4:
-						view->input->toggle_pause = true;
-						break;
-					case 5:
-						view->input->time_scale_steps--;
-						break;
-					case 7:
-						view->input->time_scale_steps++;
-						break;
-					case 8:
-						ui->sky_open = !ui->sky_open;
-						break;
-					case 9:
-						ui->sketch_open = true;
-						break;
-					case 10:
-						ui->world_open = !ui->world_open;
-						break;
-					case 11:
-						ui->diagnostics_open = !ui->diagnostics_open;
-						break;
-					case 12:
-						ui->show_status_line = !ui->show_status_line;
-						break;
-					default:
-						break;
+				display_name(stamps_name((stamp_type_t)stamp), label, sizeof(label));
+				SDL_snprintf(icon_key, sizeof(icon_key), "stamp_%s", stamps_name((stamp_type_t)stamp));
+				if (bar_choice(ui, icon_key, label, stamps_is_line((stamp_type_t)stamp) ? "Drag from one end to the other" : "Click to place",
+					tools->current_stamp == (stamp_type_t)stamp))
+				{
+					tools->current_stamp = (stamp_type_t)stamp;
+					tools->stamp_dragging = false;
 				}
 			}
-			nk_layout_row_end(context);
+			bar_gap(ui);
+			bar_slider(ui, "Height", &tools->stamp_height_meters, 0.5f, 30.0f, 0.5f, "%.1f m", "Height or depth of the stamp (- and =)");
+			break;
+		case TOOL_WATER_ADD:
+		case TOOL_WATER_REMOVE:
+			bar_slider(ui, "Rate", &settings->tools.water_meters_per_second, 0.1f, 10.0f, 0.1f, "%.1f m/s",
+				"Water added or taken at the brush center, meters of depth per second");
+			break;
+		case TOOL_SPRING:
+			SDL_snprintf(text, sizeof(text), "Click: place or remove (%d springs)", view->water->spring_count);
+			bar_label(ui, text);
+			bar_gap(ui);
+			bar_slider(ui, "Flow", &settings->water.spring_cubic_meters_per_second, 0.1f, 20.0f, 0.1f, "%.1f m3/s", "Water per spring");
+			break;
+		case TOOL_PLANT:
+		{
+			const object_types_t *types = view->object_types;
+
+			for (int category = 0; category < types->category_count; category++)
+			{
+				char label[48];
+				char icon_key[64];
+
+				if (!object_types_category_plantable(types, category))
+				{
+					continue;
+				}
+				display_name(types->categories[category], label, sizeof(label));
+				SDL_snprintf(icon_key, sizeof(icon_key), "plant_%s", types->categories[category]);
+				if (bar_choice(ui, icon_key, label, NULL, tools->plant_category == category))
+				{
+					tools->plant_category = category;
+				}
+			}
+			break;
 		}
-		nk_end(context);
+		case TOOL_CLEAR:
+		{
+			int ticked = 0;
+			int count = SDL_min(view->object_types->category_count, (int)SDL_arraysize(tools->clear_categories));
+
+			for (int i = 0; i < count; i++)
+			{
+				ticked += tools->clear_categories[i] ? 1 : 0;
+			}
+			SDL_snprintf(text, sizeof(text), "Categories: %d of %d", ticked, count);
+			bar_options_drop(ui, view, text, 360.0f, 420.0f);
+			bar_gap(ui);
+			if (bar_button(ui, "Clear them off the whole map", "Every object of the categories ticked, off the whole map"))
+			{
+				ui->requests.clear_map = true;
+			}
+			break;
+		}
+		case TOOL_OBJECT:
+		{
+			const object_types_t *types = view->object_types;
+			char name[OBJECT_TYPE_NAME_LENGTH];
+
+			if (tools->object_type >= 0 && tools->object_type < types->type_count)
+			{
+				display_name(types->types[tools->object_type].name, name, sizeof(name));
+			}
+			else
+			{
+				SDL_strlcpy(name, "(choose)", sizeof(name));
+			}
+			SDL_snprintf(text, sizeof(text), "Object: %s", name);
+			bar_options_drop(ui, view, text, 380.0f, 480.0f);
+			break;
+		}
+		case TOOL_LAYOUT:
+			if (view->layouts->count > 0)
+			{
+				char name[64];
+
+				display_name(view->layouts->layouts[tools->layout].name, name, sizeof(name));
+				SDL_snprintf(text, sizeof(text), "Place: %s", name);
+				bar_options_drop(ui, view, text, 320.0f, 420.0f);
+				SDL_snprintf(text, sizeof(text), "%.0f m across", (double)(2.0f * view->layouts->layouts[tools->layout].footprint_meters));
+				bar_label(ui, text);
+			}
+			break;
+		case TOOL_REMOVE_LAYOUT:
+			bar_label(ui, "Click a village part to remove it");
+			break;
+		case TOOL_INSPECT:
+			bar_label(ui, "Click: pin the cell; click it again: let go");
+			break;
+		case TOOL_EFFECT:
+			bar_options_drop(ui, view, "Effects", 340.0f, 420.0f);
+			break;
+		case TOOL_AREA:
+			bar_label(ui, "Drag: a new area; click in one: pick it");
+			bar_options_drop(ui, view, "The area picked", 360.0f, 460.0f);
+			break;
+		case TOOL_LIGHT:
+		{
+			static const char *const kinds[TOOL_LIGHT_KIND_COUNT] = { "Lamp", "Fire", "Cold", "White" };
+			static const char *const kind_tips[TOOL_LIGHT_KIND_COUNT] =
+			{
+				"Warm, steady, a glowing core; lit at dusk",
+				"Orange, dancing; burns day and night",
+				"Blue-white (magic, moonstone); lit at dusk",
+				"Plain white; lit at dusk",
+			};
+
+			for (int kind = 0; kind < TOOL_LIGHT_KIND_COUNT; kind++)
+			{
+				if (bar_choice(ui, "light_kind", kinds[kind], kind_tips[kind], tools->light_kind == kind))
+				{
+					tools->light_kind = kind;
+				}
+			}
+			bar_gap(ui);
+			bar_slider(ui, "Bright", &tools->light_intensity, 0.1f, 6.0f, 0.1f, "%.1f", "1: about the noon sun a meter away");
+			bar_slider(ui, "Reach", &tools->light_radius_meters, 1.0f, 40.0f, 0.5f, "%.1f m", "Nothing beyond this");
+			bar_slider(ui, "Height", &tools->light_height_meters, 0.0f, 10.0f, 0.1f, "%.1f m", "Above the ground");
+			if (view->lights != NULL)
+			{
+				SDL_snprintf(text, sizeof(text), "Placed: %d, lighting: %d", view->lights->placed_count, view->lights->count);
+				bar_label(ui, text);
+				if (bar_button(ui, "Remove all", "Every light placed, away"))
+				{
+					lights_clear_placed(view->lights);
+				}
+			}
+			break;
+		}
+		default:
+			break;
 	}
+	nk_layout_row_end(context);
+	bar_end(ui);
 }
 
 static void status_window(ui_t *ui)
 {
 	struct nk_context *context = &ui->backend.context;
-	float height = SMALL_ROW_HEIGHT + 8.0f;
+	float height = STATUS_BAR_HEIGHT;
 	struct nk_color background = ui->style.colors[NK_COLOR_WINDOW];
 
 	if (!ui->show_status_line)
 	{
 		return;
 	}
-	background.a = (nk_byte)((float)background.a * 0.7f);
+	background.a = 255;
 	nk_style_push_style_item(context, &context->style.window.fixed_background, nk_style_item_color(background));
 	nk_style_push_vec2(context, &context->style.window.padding, nk_vec2(8.0f, 4.0f));
 	if (nk_begin(context, STATUS_WINDOW, nk_rect(0.0f, ui->backend.height - height, ui->backend.width, height),
@@ -2888,8 +3175,9 @@ void ui_update(ui_t *ui, const ui_view_t *view, double time_seconds)
 		return;
 	}
 	area_overlay(ui, view);
-	brushes_window(ui, view);
-	icon_bar_window(ui, view);
+	menu_bar(ui, view);
+	tool_bar(ui, view);
+	context_bar(ui, view);
 	status_window(ui);
 	settings_window(ui, view);
 	diagnostics_window(ui);

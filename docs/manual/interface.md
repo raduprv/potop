@@ -9,15 +9,23 @@ inventory, loot, prompt, names) is the HUD, engine/hud.c: the game gives it
 a hud_view_t each frame and reads back hud_requests_t. The editor's windows
 are engine/ui.c; both draw with the same backend, font and colors.
 
-* **Brushes** (top left, always there): the tools by group. Terrain: raise,
-  dig, paint, smooth, stamp. Water: pour, sponge, spring, plus the rain and
-  border switches. Nature: plant, clear. Villages: place, remove. Debug:
-  inspect (see below). Below them
-  the brush size and the options of the current tool (soil, stamp type and
-  height, plant category, layout, rates). Drag it by its title, fold it with
-  the button there. It is see-through until the pointer is over it.
-* **Icon bar** (top right): settings, save, open, new (projects), pause, slower,
-  the speed, faster, diagnostics, status line.
+* **The bars** (along the top, and the status line along the bottom; the
+  scene is drawn only between them, ui_viewport, its size the one the
+  camera and the pointer use):
+  * the **menu**: File (new map, open, save or bake, the sketch), Edit
+    (remove objects by category, the lights placed), View (the status line,
+    what is shown, the sky, diagnostics), Simulation (run, faster, slower,
+    rain, drain at the edges), Terrain (the sketch), Bake, **Settings**,
+    and the map's name at the right;
+  * the **tools**: raise, dig, paint, smooth, stamp; water, sponge, spring;
+    plant, clear, object, village, unvillage; inspect, effects, light,
+    area; then the brush's size, five of them (discs as big as they are)
+    and any other in the drop-down after them ([ and ]); then run or pause,
+    slower, the speed, faster, rain;
+  * the **tool's options**: what the chosen tool takes (the soil, the speed,
+    the stamp and its height, the category to plant, the lights' kind and
+    sliders...), the longer ones (the categories to clear, the object to
+    place, the village, the effect, the area picked) in a drop-down there.
 * **Settings**: tabs for graphics, clouds, water, new map, objects, camera
   and the interface. Most sliders act at once. Texture size, anisotropy, relief,
   shadow map sizes, vsync (graphics) and the vegetation density wait for

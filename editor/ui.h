@@ -307,6 +307,12 @@ uint32_t ui_sketch_seed(const ui_t *ui);
 // The game finished a request: remembered for the save window's name field
 void ui_set_map_name(ui_t *ui, const char *name);
 
+// Where the scene is drawn: the window less the bars (the menu, the tools,
+// the tool's options along the top, the status line along the bottom), in
+// the interface's units (ui_backend.h); the whole window while the bars
+// are not shown (the interface hidden, the sketch open)
+void ui_viewport(const ui_t *ui, float *x_out, float *y_out, float *width_out, float *height_out);
+
 // Rebuilds the backend (new interface scale or font size). Returns false
 // if that failed; the interface is then off.
 bool ui_rebuild(ui_t *ui);

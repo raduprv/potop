@@ -79,6 +79,12 @@ typedef struct
 	SDL_GPUTexture *final_texture;
 	uint32_t final_width;
 	uint32_t final_height;
+	// Where in it the scene goes (pixels; a width of 0: all of it): the
+	// editor's bars round it (gpu_set_scene_rect)
+	int32_t scene_x;
+	int32_t scene_y;
+	int32_t scene_width;
+	int32_t scene_height;
 
 	// Uploads waiting for the next copy pass: their bytes in staging, in order
 	uint8_t *staging;
@@ -124,6 +130,9 @@ void gpu_set_anisotropy(float anisotropy);
 // fewer if the device cannot do as many. Before the renderers make their
 // pipelines (they are made for it: a change takes effect at the next start)
 void gpu_set_scene_samples(int samples);
+// The scene drawn into this part of the frame's picture (pixels from its
+// top left), the rest left to the interface; a width of 0: all of it
+void gpu_set_scene_rect(int32_t x, int32_t y, int32_t width, int32_t height);
 
 // gpu.linear_repeat with its levels of detail biased by bias (negative:
 // sharper); 0, or none made: gpu.linear_repeat itself
