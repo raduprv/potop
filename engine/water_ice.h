@@ -33,6 +33,10 @@ typedef struct
 	// all clear). idle_seconds: since the winter's end
 	float idle_seconds;
 	bool resting;
+	// Any ice grown since the last reset out of winter: if not, there is
+	// none to melt and it rests at once (it ran a few times a second over
+	// the whole map for half an hour after a load)
+	bool holds_any;
 	int pass_count;                // statistics
 	int reset_count;
 } water_ice_t;

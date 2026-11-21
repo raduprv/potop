@@ -122,7 +122,7 @@ void water_ice_update(water_ice_t *ice, const water_ice_inputs_t *inputs)
 		{
 			return;
 		}
-		if (ice->idle_seconds > ICE_LINGER_SECONDS)
+		if (ice->idle_seconds > ICE_LINGER_SECONDS || !ice->holds_any)
 		{
 			// (the season's own: none)
 			reset = true;
@@ -174,6 +174,7 @@ void water_ice_update(water_ice_t *ice, const water_ice_inputs_t *inputs)
 	SDL_DispatchGPUCompute(pass, (uint32_t)(((int64_t)inputs->map_size * inputs->map_size + 255) / 256), 1, 1);
 	SDL_EndGPUComputePass(pass);
 	ice->cleared = true;
+	ice->holds_any = uniforms.winter > 0.0f || uniforms.snowfall > 0.0f || uniforms.frozen > 0.0f || (!uniforms.reset && ice->holds_any);
 	ice->pass_count++;
 	ice->reset_count += uniforms.reset;
 }

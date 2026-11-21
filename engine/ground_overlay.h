@@ -31,6 +31,10 @@ typedef struct
 	// since): it rests. idle_seconds: since anything last fell
 	float idle_seconds;
 	bool resting;
+	// Anything worked in since the last reset with nothing falling: if
+	// not, there is nothing to melt away and it rests at once (it ran a
+	// few times a second over the whole map for minutes after a load)
+	bool holds_any;
 	int pass_count;                // statistics: passes run, of them resets
 	int reset_count;
 } ground_overlay_t;

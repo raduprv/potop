@@ -102,7 +102,7 @@ void ground_overlay_update(ground_overlay_t *overlay, const ground_overlay_input
 		{
 			return;
 		}
-		if (overlay->idle_seconds > OVERLAY_LINGER_SECONDS)
+		if (overlay->idle_seconds > OVERLAY_LINGER_SECONDS || !overlay->holds_any)
 		{
 			// (the season's own: none of either)
 			reset = true;
@@ -166,6 +166,7 @@ void ground_overlay_update(ground_overlay_t *overlay, const ground_overlay_input
 	SDL_DispatchGPUCompute(pass, (uint32_t)(((int64_t)inputs->map_size * inputs->map_size + 255) / 256), 1, 1);
 	SDL_EndGPUComputePass(pass);
 	overlay->cleared = true;
+	overlay->holds_any = uniforms.snowfall > 0.0f || uniforms.winter > 0.0f || uniforms.bloom > 0.0f || (!uniforms.reset && overlay->holds_any);
 	overlay->pass_count++;
 	overlay->reset_count += uniforms.reset;
 }
