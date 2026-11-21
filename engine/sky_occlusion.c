@@ -272,7 +272,7 @@ static void do_direction(sky_occlusion_t *occlusion, const terrain_t *terrain, o
 	{
 		return;
 	}
-	shadow_map_render_terrain(&occlusion->view, pass, terrain, chunk_vertex_buffer, chunk_index_buffer, chunk_index_count, height_texture, false);
+	shadow_map_render_terrain(&occlusion->view, pass, terrain, chunk_vertex_buffer, chunk_index_buffer, chunk_index_count, 0, height_texture, false);
 	objects_render_shadow(objects, pass);
 	shadow_map_end(&occlusion->view, pass);
 

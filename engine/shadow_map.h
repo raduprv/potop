@@ -103,8 +103,10 @@ void shadow_map_mark_moving(shadow_map_t *shadow, vec3_t minimum, vec3_t maximum
 // marked) or the marks are not enough; the marks are then cleared
 SDL_GPURenderPass *shadow_map_begin_moving(shadow_map_t *shadow, bool whole);
 
+// The terrain's chunks, chunk_index_count indices from first_index in the
+// chunk index buffer each (a level of detail: terrain_renderer.h)
 void shadow_map_render_terrain(shadow_map_t *shadow, SDL_GPURenderPass *pass, const terrain_t *terrain, SDL_GPUBuffer *chunk_vertex_buffer,
-	SDL_GPUBuffer *chunk_index_buffer, int chunk_index_count, SDL_GPUTexture *height_texture, bool cull);
+	SDL_GPUBuffer *chunk_index_buffer, int chunk_index_count, int first_index, SDL_GPUTexture *height_texture, bool cull);
 
 void shadow_map_end(shadow_map_t *shadow, SDL_GPURenderPass *pass);
 

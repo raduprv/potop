@@ -332,7 +332,7 @@ SDL_GPURenderPass *shadow_map_begin_moving(shadow_map_t *shadow, bool whole)
 // instance a chunk (shadow.vert finds its origin from the run's first and
 // its instance); the far map and the sky's occlusion, unculled, are one
 // draw, the near map's few rows a draw or so each
-static void draw_chunk_run(SDL_GPURenderPass *pass, const terrain_t *terrain, int first, int count, int chunk_index_count)
+static void draw_chunk_run(SDL_GPURenderPass *pass, const terrain_t *terrain, int first, int count, int chunk_index_count, int first_index)
 {
 	struct
 	{
@@ -357,11 +357,11 @@ static void draw_chunk_run(SDL_GPURenderPass *pass, const terrain_t *terrain, in
 	run.padding[1] = 0.0f;
 	run.padding[2] = 0.0f;
 	SDL_PushGPUVertexUniformData(gpu.command_buffer, 1, &run, sizeof(run));
-	SDL_DrawGPUIndexedPrimitives(pass, (uint32_t)chunk_index_count, (uint32_t)count, 0, 0, 0);
+	SDL_DrawGPUIndexedPrimitives(pass, (uint32_t)chunk_index_count, (uint32_t)count, (uint32_t)first_index, 0, 0);
 }
 
 void shadow_map_render_terrain(shadow_map_t *shadow, SDL_GPURenderPass *pass, const terrain_t *terrain, SDL_GPUBuffer *chunk_vertex_buffer,
-	SDL_GPUBuffer *chunk_index_buffer, int chunk_index_count, SDL_GPUTexture *height_texture, bool cull)
+	SDL_GPUBuffer *chunk_index_buffer, int chunk_index_count, int first_index, SDL_GPUTexture *height_texture, bool cull)
 {
 	frustum_t frustum = frustum_from_matrix(shadow->light_view_projection);
 	float chunk_extent = (float)TERRAIN_CHUNK_SIZE * terrain->cell_size_meters;
@@ -382,7 +382,7 @@ void shadow_map_render_terrain(shadow_map_t *shadow, SDL_GPURenderPass *pass, co
 	SDL_BindGPUVertexSamplers(pass, 0, &height_binding, 1);
 	if (!cull)
 	{
-		draw_chunk_run(pass, terrain, 0, chunk_count, chunk_index_count);
+		draw_chunk_run(pass, terrain, 0, chunk_count, chunk_index_count, first_index);
 		return;
 	}
 	for (int index = 0; index < chunk_count; index++)
@@ -402,10 +402,10 @@ void shadow_map_render_terrain(shadow_map_t *shadow, SDL_GPURenderPass *pass, co
 			run_count++;
 			continue;
 		}
-		draw_chunk_run(pass, terrain, run_first, run_count, chunk_index_count);
+		draw_chunk_run(pass, terrain, run_first, run_count, chunk_index_count, first_index);
 		run_count = 0;
 	}
-	draw_chunk_run(pass, terrain, run_first, run_count, chunk_index_count);
+	draw_chunk_run(pass, terrain, run_first, run_count, chunk_index_count, first_index);
 }
 
 void shadow_map_end(shadow_map_t *shadow, SDL_GPURenderPass *pass)

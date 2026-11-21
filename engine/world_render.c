@@ -494,8 +494,18 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 
 			if (pass != NULL)
 			{
+				// The level of detail whose cells are about a texel: finer
+				// only multiplies the triangles (a big map's whole terrain
+				// at full detail took hundreds of milliseconds)
+				int level = 0;
+				float texel_meters = (float)world->terrain.size * world->terrain.cell_size_meters / (float)SDL_max(world->shadow.size, 1);
+
+				while (level < TERRAIN_LOD_LEVEL_COUNT - 1 && (float)(2 << level) * world->terrain.cell_size_meters <= texel_meters)
+				{
+					level++;
+				}
 				shadow_map_render_terrain(&world->shadow, pass, &world->terrain, world->renderer.vertex_buffer, world->renderer.index_buffer,
-					world->renderer.index_count, world->renderer.height_texture, false);
+					world->renderer.lod_index_count[level], world->renderer.lod_index_offset[level], world->renderer.height_texture, false);
 				objects_render_shadow(&world->objects, pass);
 				shadow_map_end(&world->shadow, pass);
 			}
@@ -547,7 +557,7 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 			if (pass != NULL)
 			{
 				shadow_map_render_terrain(&world->near_shadow, pass, &world->terrain, world->renderer.vertex_buffer,
-					world->renderer.index_buffer, world->renderer.index_count, world->renderer.height_texture, true);
+					world->renderer.index_buffer, world->renderer.index_count, 0, world->renderer.height_texture, true);
 				objects_render_shadow(&world->objects, pass);
 				shadow_map_end(&world->near_shadow, pass);
 			}
