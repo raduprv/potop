@@ -690,6 +690,9 @@ void objects_update_spin(objects_t *objects, double seconds);
 // windmill's sails): the box it is drawn within whichever way it is turned
 // kept for the near map's moving layer (too many: the whole layer again)
 void objects_note_moved(objects_t *objects, int k);
+// An object put somewhere else by hand (the editor): told as one replaced, so
+// its body is made again where it is now (physics)
+void objects_note_replaced(objects_t *objects, int k);
 // The boxes kept marked on the near map (shadow_map_mark_moving), and let go
 void objects_mark_moved_shadows(objects_t *objects, shadow_map_t *shadow);
 

@@ -107,6 +107,8 @@ typedef struct
 	bool pointer_over_ui;
 	bool left_button_down;         // from the events the interface did not take
 	bool right_button_down;        // the same (first person, a weapon up: aiming)
+	bool right_clicked;            // let go this frame, the pointer barely moved while it was down (not a turn of the camera)
+	float right_drag_pixels;       // how far it moved while down
 	bool keyboard_captured;        // a text field of the interface has the keyboard
 	// Held while the left button is down: either the terrain tool or, with
 	// a modifier, a water action

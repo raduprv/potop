@@ -13,6 +13,7 @@ void input_begin_frame(input_state_t *input)
 {
 	input->rotate_drag_x_pixels = 0.0f;
 	input->rotate_drag_y_pixels = 0.0f;
+	input->right_clicked = false;
 	input->pan_drag_x_pixels = 0.0f;
 	input->pan_drag_y_pixels = 0.0f;
 	input->zoom_steps = 0.0f;
@@ -266,6 +267,7 @@ void input_handle_event(input_state_t *input, const SDL_Event *event)
 			{
 				input->rotate_drag_x_pixels += event->motion.xrel;
 				input->rotate_drag_y_pixels += event->motion.yrel;
+				input->right_drag_pixels += SDL_fabsf(event->motion.xrel) + SDL_fabsf(event->motion.yrel);
 			}
 			if (event->motion.state & SDL_BUTTON_MMASK)
 			{
@@ -281,6 +283,7 @@ void input_handle_event(input_state_t *input, const SDL_Event *event)
 			else if (event->button.button == SDL_BUTTON_RIGHT)
 			{
 				input->right_button_down = true;
+				input->right_drag_pixels = 0.0f;
 			}
 			break;
 		case SDL_EVENT_MOUSE_BUTTON_UP:
@@ -290,6 +293,8 @@ void input_handle_event(input_state_t *input, const SDL_Event *event)
 			}
 			else if (event->button.button == SDL_BUTTON_RIGHT)
 			{
+				// (a click, not the camera turned: it hardly moved)
+				input->right_clicked = input->right_button_down && input->right_drag_pixels < 6.0f;
 				input->right_button_down = false;
 			}
 			break;

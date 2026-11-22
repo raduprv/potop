@@ -6116,6 +6116,15 @@ void objects_update_spin(objects_t *objects, double seconds)
 	}
 }
 
+void objects_note_replaced(objects_t *objects, int k)
+{
+	if (k >= 0 && k < objects->instance_count)
+	{
+		note_change(objects, k, OBJECT_CHANGE_RETYPED);
+		mark_shadows_dirty(objects, objects->instances[k].type);
+	}
+}
+
 void objects_note_moved(objects_t *objects, int k)
 {
 	const object_instance_t *instance;

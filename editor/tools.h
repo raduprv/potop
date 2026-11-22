@@ -61,6 +61,7 @@ typedef struct
 	int layout;                    // what the layout tool places, index into layouts_t.layouts
 	int object_category;           // the object tool: category shown in its list
 	int object_type;               // ...and the type it places (index into object_types_t.types)
+	bool object_in_hand;           // ...placed by a click (picked from its list or the browser); else a click takes up one standing there
 	int effect;                    // the effect tool: index into particles_t.effects
 	int light_kind;                // the light tool: lamp, fire, cold, white (TOOL_LIGHT_KIND_*)
 	float light_intensity;

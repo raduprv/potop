@@ -748,6 +748,7 @@ static void object_options(ui_t *ui, const ui_view_t *view)
 		if (tool_button(ui, "", label, tooltip, tools->object_type == t))
 		{
 			tools->object_type = t;
+			tools->object_in_hand = true;
 		}
 	}
 	{
@@ -2368,6 +2369,7 @@ static void object_browser_window(ui_t *ui, const ui_view_t *view)
 				if (clicked)
 				{
 					tools->object_type = shown[k];
+					tools->object_in_hand = true;
 					tools->object_category = type->category;
 					tools->current_tool = TOOL_OBJECT;
 				}

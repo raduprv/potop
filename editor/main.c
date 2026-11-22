@@ -255,6 +255,17 @@ typedef struct
 	bool pick_was_held;
 	float pick_microseconds;
 	uint32_t selected_actor;       // clicked on (tests): the next clicks send it somewhere; 0 = none
+	// The object tool with nothing in hand: the object taken up (its id; 0
+	// none), following the pointer until a click puts it down; where it was
+	// grabbed from its origin, where it stood and how it was turned (Escape
+	// puts it back), Q and E turning it (the camera's keys, taken)
+	uint32_t carried_id;
+	float carry_offset_x;
+	float carry_offset_z;
+	float carry_from_x;
+	float carry_from_z;
+	float carry_from_yaw;
+	float carry_turn;
 	int actor_type_to_place;       // K puts one of these (ctrl + K: the next type)
 	char actor_name_to_place[32];  // ...with this name, game number, enemy or not (the World window)
 	int actor_game_id_to_place;
@@ -1419,6 +1430,11 @@ static void update_pick(testbed_t *game)
 	pick_t pick;
 
 	game->pick_line_count = 0;
+	// (an object carried keeps its own glow, carry_object)
+	if (game->carried_id != 0)
+	{
+		return;
+	}
 	objects_set_highlight(&game->potop->world.objects, -1, NULL);
 	game->potop->world.actors.highlight_id = 0;
 	if (!held)
@@ -1720,6 +1736,124 @@ static void place_or_remove_light(testbed_t *game, vec3_t point)
 	}
 }
 
+// The object tool with nothing in hand: a click takes up the object under
+// the pointer (it follows it, Q and E turn it), a click puts it down, a right
+// click or Delete removes it, Escape puts it back. A module (a building of
+// parts) is put down anew, its parts with it
+#define CARRY_TURN_RADIANS_PER_SECOND 2.0f
+
+static void put_carried_where(objects_t *objects, terrain_t *terrain, int index, float x, float z, float yaw)
+{
+	object_instance_t *instance = &objects->instances[index];
+
+	instance->x = SDL_clamp(x, 0.0f, (float)terrain->size * terrain->cell_size_meters);
+	instance->z = SDL_clamp(z, 0.0f, (float)terrain->size * terrain->cell_size_meters);
+	instance->yaw_radians = yaw;
+	objects_refresh_ground(objects, terrain, index);
+	objects_update_rotation(instance);
+	instance->y = objects_instance_base_y(instance);
+	objects_touch(objects, index);
+	objects_note_moved(objects, index);
+}
+
+static void carry_object(testbed_t *game, float frame_seconds)
+{
+	static const float carry_color[3] = { 0.4f, 0.9f, 1.0f };
+	objects_t *objects = &game->potop->world.objects;
+	terrain_t *terrain = &game->potop->world.terrain;
+	tool_state_t *tools = &game->tools;
+	int index = game->carried_id != 0 ? objects_find_id(objects, game->carried_id) : -1;
+
+	if (game->carried_id != 0 && index < 0)
+	{
+		game->carried_id = 0;
+	}
+	if (index < 0)
+	{
+		pick_t pick;
+
+		if (!game->input.apply_tool_pressed || game->input.pointer_over_ui)
+		{
+			return;
+		}
+		// Taken up: the first object the pointer's ray meets
+		pick_along_ray(game, OBJECTS_RAY_ALL, 0.0f, &pick);
+		for (int i = 0; i < pick.count; i++)
+		{
+			if (!pick.hits[i].is_actor && pick.hits[i].instance >= 0 && pick.hits[i].instance < objects->instance_count)
+			{
+				object_instance_t *instance = &objects->instances[pick.hits[i].instance];
+
+				game->carried_id = instance->id;
+				game->carry_from_x = instance->x;
+				game->carry_from_z = instance->z;
+				game->carry_from_yaw = instance->yaw_radians;
+				game->carry_offset_x = tools->hover_valid ? instance->x - tools->hover_point.x : 0.0f;
+				game->carry_offset_z = tools->hover_valid ? instance->z - tools->hover_point.z : 0.0f;
+				// (out of the grid while it moves: drawn where it is set)
+				objects_set_free(objects, pick.hits[i].instance, true);
+				break;
+			}
+		}
+		return;
+	}
+	{
+		object_instance_t *instance = &objects->instances[index];
+		bool is_module = objects->types.types[instance->type].module_type >= 0 || (instance->state & OBJECT_STATE_PART) != 0;
+
+		// Removed
+		if (game->input.right_clicked || game->input.request_remove_layout)
+		{
+			uint32_t id = game->carried_id;
+
+			game->carried_id = 0;
+			objects_set_free(objects, index, false);
+			potop_object_remove(game->potop, id);
+			return;
+		}
+		// Put back where it stood
+		if (game->input.request_escape)
+		{
+			game->input.request_escape = false;
+			put_carried_where(objects, terrain, index, game->carry_from_x, game->carry_from_z, game->carry_from_yaw);
+			objects_set_free(objects, index, false);
+			objects_note_replaced(objects, index);
+			game->carried_id = 0;
+			return;
+		}
+		// Following the pointer, turned by Q and E
+		if (tools->hover_valid)
+		{
+			put_carried_where(objects, terrain, index, tools->hover_point.x + game->carry_offset_x, tools->hover_point.z + game->carry_offset_z,
+				instance->yaw_radians + game->carry_turn * CARRY_TURN_RADIANS_PER_SECOND * frame_seconds);
+		}
+		objects_set_highlight(objects, index, carry_color);
+		// Put down: back into the grid, its body (if any) made where it is
+		// now; a module anew, its parts with it
+		if (game->input.apply_tool_pressed && !game->input.pointer_over_ui)
+		{
+			game->carried_id = 0;
+			objects_set_free(objects, index, false);
+			if (is_module && (instance->state & OBJECT_STATE_PART) == 0)
+			{
+				int type = instance->type;
+				float x = instance->x;
+				float z = instance->z;
+				float yaw = instance->yaw_radians;
+				float scale = instance->scale;
+				bool awake = (instance->state & OBJECT_STATE_AWAKE) != 0;
+
+				potop_object_remove(game->potop, instance->id);
+				potop_object_place(game->potop, type, x, z, yaw, scale, awake);
+			}
+			else
+			{
+				objects_note_replaced(objects, index);
+			}
+		}
+	}
+}
+
 // The plant and clear tools work per rendered frame, not per simulation
 // step, so that they also work while the game is paused
 static void apply_object_tools(testbed_t *game, float frame_seconds)
@@ -1740,10 +1874,21 @@ static void apply_object_tools(testbed_t *game, float frame_seconds)
 	}
 	if (tools->current_tool == TOOL_OBJECT)
 	{
-		if (game->input.apply_tool_pressed)
+		// Something in hand: placed by a click, let go of by a right one;
+		// else one standing there taken up, carried, put down
+		if (tools->object_in_hand && game->carried_id == 0)
 		{
-			place_chosen_object(game, tools->hover_point);
+			if (game->input.apply_tool_pressed)
+			{
+				place_chosen_object(game, tools->hover_point);
+			}
+			if (game->input.right_clicked)
+			{
+				tools->object_in_hand = false;
+			}
+			return;
 		}
+		carry_object(game, frame_seconds);
 		return;
 	}
 	if (tools->current_tool == TOOL_EFFECT)
@@ -2042,7 +2187,7 @@ static void handle_requests(testbed_t *game)
 		game->tools.layout = clamp_int(game->tools.layout, 0, game->potop->world.layouts.count - 1);
 		game->tools.current_tool = TOOL_LAYOUT;
 	}
-	if (input->request_remove_layout && game->tools.hover_valid)
+	if (input->request_remove_layout && game->tools.hover_valid && game->carried_id == 0)
 	{
 		remove_nearest_layout(game);
 	}
@@ -2261,8 +2406,19 @@ static void describe_tool(const testbed_t *game, char *text_out, size_t text_out
 				? game->potop->world.particles.effects[tools->effect].name : "none");
 			break;
 		case TOOL_OBJECT:
-			SDL_snprintf(text_out, text_out_size, "object %s", tools->object_type >= 0 && tools->object_type < game->potop->world.objects.types.type_count
-				? game->potop->world.objects.types.types[tools->object_type].name : "none");
+			if (game->carried_id != 0)
+			{
+				SDL_strlcpy(text_out, "object carried: click puts it down, Q/E turn it, right click or Delete removes it, Escape puts it back", text_out_size);
+			}
+			else if (!tools->object_in_hand)
+			{
+				SDL_strlcpy(text_out, "object: click one to take it up (pick a type to place new ones)", text_out_size);
+			}
+			else
+			{
+				SDL_snprintf(text_out, text_out_size, "object %s (right click: let go of it)", tools->object_type >= 0
+					&& tools->object_type < game->potop->world.objects.types.type_count ? game->potop->world.objects.types.types[tools->object_type].name : "none");
+			}
 			break;
 		default:
 			SDL_snprintf(text_out, text_out_size, "%s, r = %.0f m", tools_tool_name(tools->current_tool), (double)tools->brush_radius_meters);
@@ -2560,7 +2716,13 @@ static void render_frame(testbed_t *game, int pixel_width, int pixel_height)
 		{
 			brush.radius = 0.0f;
 		}
-		if (game->tools.current_tool == TOOL_OBJECT && game->tools.object_type >= 0 && game->tools.object_type < game->potop->world.objects.types.type_count
+		// (the object tool with nothing in hand: no circle, the object
+		// under the pointer is taken up)
+		if (game->tools.current_tool == TOOL_OBJECT && !game->tools.object_in_hand)
+		{
+			brush.radius = 0.0f;
+		}
+		else if (game->tools.current_tool == TOOL_OBJECT && game->tools.object_type >= 0 && game->tools.object_type < game->potop->world.objects.types.type_count
 			&& game->potop->world.objects.types.types[game->tools.object_type].model >= 0)
 		{
 			const object_type_t *type = &game->potop->world.objects.types.types[game->tools.object_type];
@@ -3540,7 +3702,8 @@ static void handle_ui_requests(testbed_t *game)
 		game->selected_actor = 0;
 		game->input.request_escape = false;
 	}
-	if (game->input.request_escape)
+	// (an object carried: Escape puts it back first, carry_object)
+	if (game->input.request_escape && game->carried_id == 0)
 	{
 		// Escape closes what is open first (the editor's windows), the
 		// topmost first; with nothing open it leaves first person. Quitting is Ctrl+Q (escape was too easy to
@@ -4191,6 +4354,13 @@ static void run(testbed_t *game)
 			gpu_set_scene_rect(game->viewport_x, game->viewport_y, pixel_width, pixel_height);
 		}
 
+		// (Q and E turn an object carried, not the camera)
+		game->carry_turn = 0.0f;
+		if (game->carried_id != 0)
+		{
+			game->carry_turn = game->input.rotate_keyboard;
+			game->input.rotate_keyboard = 0.0f;
+		}
 		if (game->potop->camera.first_person)
 		{
 			player_walk(&game->potop->session.player, &game->potop->world, &game->potop->camera, &game->input, &game->potop->settings.camera, (float)frame_seconds);
