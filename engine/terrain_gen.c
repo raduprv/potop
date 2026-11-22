@@ -329,7 +329,7 @@ static void carve_steep_faces(float *heights, int32_t size, float cell_size_mete
 // too (its talus is less steep); blades and spikes a few meters thick, walls
 // standing up with a hair's width on top, are worn down to rounded ridges
 #define EDGE_SLOPE 1.0f                 // meters a meter: the steepest crest kept as it is
-#define EDGE_PASSES 400
+#define EDGE_PASSES 100000                // (only a guard: the heights only ever come down, so it settles)
 #define EDGE_SETTLED_METERS 0.01f       // a pass that moves nothing more than this ends them
 #define EDGE_TILE 64                    // only the tiles where something moved last pass (or next to them) go again
 
