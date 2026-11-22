@@ -403,7 +403,9 @@ static bool bake(impostor_baker_t *baker, const object_model_t *model, const flo
 					SDL_GPUTextureSamplerBinding texture_binding = { material->texture, gpu.linear_repeat };
 					bake_fragment_uniforms_t fragment_uniforms = { material->alpha_tested ? 1 : 0, material->lighting_normals ? 1 : 0, mode, 0 };
 
-					if (material->texture == NULL || material->index_count == 0)
+					// (a plant's baked snow: not in the picture, which is
+					// its look out of winter)
+					if (material->texture == NULL || material->index_count == 0 || material->snow_cover)
 					{
 						continue;
 					}

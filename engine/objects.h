@@ -172,6 +172,7 @@ typedef struct
 	impostor_baker_t impostor_baker;
 	bool impostors_pending;
 	bool impostors_enabled;        // objects.impostors (the settings)
+	bool plant_impostors;          // objects.plant_impostors: the plants get impostors too
 	bool impostors_everywhere;     // the console's "objects impostors all": at any distance (to look at them)
 	bool impostors_tinted;         // the World window: impostors tinted, to tell them from the models
 	// The culling's switch to impostors: the projection's focal length

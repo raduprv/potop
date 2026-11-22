@@ -298,6 +298,8 @@ static const ui_setting_t ui_settings[] = {
 	{ TAB_OBJECTS, "objects", "draw_distance_scale", "Object distance", 0.2f, 3, 0.05f, EFFECT_LIVE, NULL, NULL, "Multiplies every object's draw distance", false },
 	{ TAB_OBJECTS, "objects", "impostors", "Far objects as pictures", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
 		"Trees and houses far away are drawn as pictures of themselves (impostors): faster, the same at that size", false },
+	{ TAB_OBJECTS, "objects", "plant_impostors", "Plants as pictures too", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
+		"The grown plants (trees, bushes) far away as pictures too: still, in their summer look (off: their levels of detail all the way)", false },
 	{ TAB_OBJECTS, "objects", "impostor_pixels", "Pictures from", 16, 512, 4, EFFECT_LIVE, "%.0f px", NULL,
 		"Objects smaller than this on screen are drawn as pictures (their pictures are 64 px: above that they are a little soft)", false },
 	{ TAB_OBJECTS, "objects", "lod", "Fewer branches far away", 0, 0, 0, EFFECT_LIVE, NULL, NULL,

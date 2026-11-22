@@ -65,6 +65,12 @@ void world_follow_settings(world_t *world)
 
 	world->objects.draw_distance_scale = SDL_max(world->settings->objects.draw_distance_scale, 0.01f);
 	world->objects.impostors_enabled = world->settings->objects.impostors;
+	// (the plants' impostors made, or let go)
+	if (world->objects.plant_impostors != world->settings->objects.plant_impostors)
+	{
+		world->objects.plant_impostors = world->settings->objects.plant_impostors;
+		world->objects.impostors_pending = true;
+	}
 	world->objects.impostors_tinted = world->settings->objects.show_impostors;
 	world->objects.lod_enabled = world->settings->objects.lod;
 	// The month (season.h): the shadows follow the foliage and the snow

@@ -608,6 +608,7 @@ bool objects_create(objects_t *objects, const terrain_t *terrain, const settings
 	load_models(objects);
 	trace_mark("models and textures");
 	objects->impostors_enabled = settings->objects.impostors;
+	objects->plant_impostors = settings->objects.plant_impostors;
 	objects->lod_enabled = settings->objects.lod;
 	objects->lod_distance_scale = settings->objects.lod_distance_scale;
 	objects->lod_foliage_kept = settings->objects.lod_foliage_kept;
@@ -731,8 +732,9 @@ static void swap_material_texture(object_material_t *material, SDL_GPUTexture *o
 // (not a damaged or destroyed look), and worth one
 static bool wants_impostor(const objects_t *objects, int model)
 {
-	// Not the plants: their levels of detail do better far away
-	if (model >= 0 && model < objects->model_count && objects->models[model].plant_buffer != NULL)
+	// The plants only if asked (objects.plant_impostors): theirs are still,
+	// in no season, where their levels of detail sway and turn
+	if (!objects->plant_impostors && model >= 0 && model < objects->model_count && objects->models[model].plant_buffer != NULL)
 	{
 		return false;
 	}
