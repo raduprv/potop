@@ -31,6 +31,41 @@ typedef enum
 // dig) or the share a second it smooths by (smooth); false on a baked map
 bool edit_terrain(world_t *world, edit_brush_t brush, float x, float z, float radius_meters, float rate, soil_type_t soil, float seconds);
 
+// The sculpt brush: the ground's large shapes over hundreds of meters, its
+// small ones (the erosion's, the rocks') kept
+typedef enum
+{
+	EDIT_SCULPT_RAISE,             // up at rate meters a second, in the shape given
+	EDIT_SCULPT_LOWER,
+	EDIT_SCULPT_FLATTEN,           // the large shape towards target_meters, rate the share a second
+	EDIT_SCULPT_SMOOTH,            // the large shape smoothed, rate the share a second
+	EDIT_SCULPT_ROUGHEN,           // hills of a few tens of meters added, rate meters a second
+	EDIT_SCULPT_MODE_COUNT
+} edit_sculpt_mode_t;
+
+typedef enum
+{
+	EDIT_SCULPT_SHAPE_HILLS,       // rounded, uneven
+	EDIT_SCULPT_SHAPE_RIDGES,      // mountain crests (the generator's ridged noise)
+	EDIT_SCULPT_SHAPE_EVEN,        // the brush's bell alone
+	EDIT_SCULPT_SHAPE_COUNT
+} edit_sculpt_shape_t;
+
+typedef struct
+{
+	edit_sculpt_mode_t mode;
+	edit_sculpt_shape_t shape;
+	float x;                       // meters
+	float z;
+	float radius_meters;
+	float rate;
+	float target_meters;           // flatten: the height it goes to
+	float feature_meters;          // raise, lower, roughen: how wide its hills or crests are
+} edit_sculpt_t;
+
+// One stroke of seconds. False on a baked map
+bool edit_sculpt(world_t *world, const edit_sculpt_t *sculpt, float seconds);
+
 // Water poured (meters_per_second > 0) or sponged (< 0) under the brush
 bool edit_water(world_t *world, float x, float z, float radius_meters, float meters_per_second, float seconds);
 // That much water (cubic meters) put at once round (x, z), most in the

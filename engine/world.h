@@ -37,6 +37,7 @@
 #include "lights.h"
 #include "map_file.h"
 #include "navigation.h"
+#include "noise.h"
 #include "objects.h"
 #include "particles.h"
 #include "physics.h"
@@ -77,6 +78,14 @@ typedef struct
 	// The smoothing brush's copy of the ground it reads (edit.h)
 	int32_t *edit_scratch;
 	int32_t edit_scratch_capacity;
+	// The sculpt brush's (edit_sculpt): its noise (from the map's seed, made
+	// once), its region's heights and their large shapes
+	noise_context_t sculpt_noise;
+	noise_context_t sculpt_ridges;
+	bool sculpt_noise_ready;
+	uint32_t sculpt_noise_seed;
+	float *sculpt_scratch;
+	int32_t sculpt_scratch_capacity;
 	double water_copy_milliseconds; // this frame's water copies to and from the GPU (diagnostics)
 	bool renderers_created;        // world_create ran (world_destroy lets go of them)
 	// Told what is being made and how far along (0..1), for a loading

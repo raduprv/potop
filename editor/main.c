@@ -159,6 +159,7 @@
 #include "water.h"
 #include "water_renderer.h"
 #include "world.h"
+#include "edit.h"
 #include "session.h"
 #include "potop_engine.h"
 #include "ui_loading.h"
@@ -192,6 +193,7 @@ typedef struct
 	float heading[2];
 	int debug_view;
 	bool brush_test;
+	bool sculpt_test;              // --sculpt-test: each sculpt mode two seconds in the map's middle, timed
 	bool flood_test;
 	bool water_test;
 	bool dam_scene;
@@ -267,6 +269,12 @@ typedef struct
 	float carry_from_z;
 	float carry_from_yaw;
 	float carry_turn;
+	bool sculpt_stroke;            // the sculpt tool held: since when, the flattening's height, the time not yet sculpted
+	float sculpt_target_meters;
+	float sculpt_seconds;
+	int sculpt_strokes;            // ...its strokes' count and time (logged when let go)
+	double sculpt_total_ms;
+	double sculpt_longest_ms;
 	int actor_type_to_place;       // K puts one of these (ctrl + K: the next type)
 	char actor_name_to_place[32];  // ...with this name, game number, enemy or not (the World window)
 	int actor_game_id_to_place;
@@ -395,6 +403,11 @@ static void parse_command_line(command_line_t *command_line, int argument_count,
 		const char *argument = arguments[i];
 		const char *value = i + 1 < argument_count ? arguments[i + 1] : NULL;
 
+		if (SDL_strcmp(argument, "--sculpt-test") == 0)
+		{
+			command_line->sculpt_test = true;
+			continue;
+		}
 		if (SDL_strcmp(argument, "--brush-test") == 0)
 		{
 			command_line->brush_test = true;
@@ -966,6 +979,89 @@ static bool baked_refuses(testbed_t *game)
 // The brushes' tools are in the order of the engine's brushes
 _Static_assert((int)TOOL_RAISE == (int)POTOP_BRUSH_RAISE && (int)TOOL_SMOOTH == (int)POTOP_BRUSH_SMOOTH, "brush tools");
 
+// The sculpt tool held at x, z: its strokes some ten times a second (each
+// one redoes the ground's chunks there), the flattening's height taken where
+// the stroke started
+static void sculpt_step(testbed_t *game, float x, float z, float step_seconds)
+{
+	const tool_state_t *tools = &game->tools;
+	edit_sculpt_t sculpt;
+	Uint64 started;
+
+	if (!game->sculpt_stroke)
+	{
+		game->sculpt_stroke = true;
+		game->sculpt_target_meters = terrain_sample_height_meters(&game->potop->world.terrain, x, z);
+		game->sculpt_seconds = 0.1f;
+	}
+	else
+	{
+		game->sculpt_seconds += step_seconds;
+	}
+	if (game->sculpt_seconds < 0.1f)
+	{
+		return;
+	}
+	SDL_zero(sculpt);
+	sculpt.mode = (edit_sculpt_mode_t)tools->sculpt_mode;
+	sculpt.shape = (edit_sculpt_shape_t)tools->sculpt_shape;
+	sculpt.x = x;
+	sculpt.z = z;
+	sculpt.radius_meters = tools->sculpt_radius_meters;
+	sculpt.rate = (sculpt.mode == EDIT_SCULPT_FLATTEN || sculpt.mode == EDIT_SCULPT_SMOOTH) ? tools->sculpt_share_per_second : tools->sculpt_meters_per_second;
+	sculpt.target_meters = game->sculpt_target_meters;
+	sculpt.feature_meters = tools->sculpt_feature_meters;
+	started = SDL_GetTicksNS();
+	edit_sculpt(&game->potop->world, &sculpt, SDL_min(game->sculpt_seconds, 0.5f));
+	game->sculpt_seconds = 0.0f;
+	{
+		double took = (double)(SDL_GetTicksNS() - started) / 1.0e6;
+
+		game->sculpt_strokes++;
+		game->sculpt_total_ms += took;
+		game->sculpt_longest_ms = SDL_max(game->sculpt_longest_ms, took);
+	}
+}
+
+static void sculpt_stroke_end(testbed_t *game)
+{
+	if (game->sculpt_strokes > 0)
+	{
+		SDL_Log("Sculpt: %d steps, %.1f ms each, %.1f ms the longest (r = %.0f m)", game->sculpt_strokes, game->sculpt_total_ms / (double)game->sculpt_strokes,
+			game->sculpt_longest_ms, (double)game->tools.sculpt_radius_meters);
+	}
+	game->sculpt_stroke = false;
+	game->sculpt_strokes = 0;
+	game->sculpt_total_ms = 0.0;
+	game->sculpt_longest_ms = 0.0;
+}
+
+// --sculpt-test: each sculpt mode, two seconds of it, 250 m around the map's
+// middle (in ridges), timed
+static void sculpt_test(testbed_t *game)
+{
+	float center = (float)game->potop->world.terrain.size * game->potop->world.terrain.cell_size_meters * 0.5f;
+
+	for (int mode = 0; mode < EDIT_SCULPT_MODE_COUNT; mode++)
+	{
+		game->tools.sculpt_mode = mode;
+		game->tools.sculpt_shape = EDIT_SCULPT_SHAPE_RIDGES;
+		game->tools.sculpt_radius_meters = 250.0f;
+		for (int step = 0; step < 20; step++)
+		{
+			sculpt_step(game, center, center, 0.1f);
+		}
+		SDL_Log("Sculpt test, %s:", (const char *[]){ "raise", "lower", "flatten", "smooth", "roughen" }[mode]);
+		sculpt_stroke_end(game);
+	}
+	game->tools.sculpt_mode = EDIT_SCULPT_RAISE;
+	for (int step = 0; step < 20; step++)
+	{
+		sculpt_step(game, center, center, 0.1f);
+	}
+	sculpt_stroke_end(game);
+}
+
 static void simulation_step(testbed_t *game, float step_seconds)
 {
 	float map_center = (float)game->potop->world.terrain.size * game->potop->world.terrain.cell_size_meters * 0.5f;
@@ -989,7 +1085,7 @@ static void simulation_step(testbed_t *game, float step_seconds)
 		float z = game->tools.hover_point.z;
 		float radius = game->tools.brush_radius_meters;
 
-		if ((water_action != WATER_ACTION_NONE || game->tools.current_tool < TOOL_STAMP) && baked_refuses(game))
+		if ((water_action != WATER_ACTION_NONE || game->tools.current_tool < TOOL_STAMP || game->tools.current_tool == TOOL_SCULPT) && baked_refuses(game))
 		{
 			return;
 		}
@@ -1006,6 +1102,14 @@ static void simulation_step(testbed_t *game, float step_seconds)
 			potop_edit_terrain(game->potop, brush, x, z, radius, brush == POTOP_BRUSH_SMOOTH ? rates->smooth_strength_per_second : rates->raise_meters_per_second,
 				(potop_soil_t)game->tools.current_soil, step_seconds);
 		}
+		else if (game->tools.current_tool == TOOL_SCULPT)
+		{
+			sculpt_step(game, x, z, step_seconds);
+		}
+	}
+	if (!game->input.apply_tool_held && game->sculpt_stroke)
+	{
+		sculpt_stroke_end(game);
 	}
 
 	world_step(&game->potop->world, step_seconds);
@@ -2246,7 +2350,11 @@ static void handle_requests(testbed_t *game)
 	}
 	handle_stamp_tool(game);
 	handle_area_tool(game);
-	if (input->brush_size_steps != 0)
+	if (input->brush_size_steps != 0 && game->tools.current_tool == TOOL_SCULPT)
+	{
+		game->tools.sculpt_radius_meters = clamp_float(game->tools.sculpt_radius_meters * SDL_powf(1.2f, (float)input->brush_size_steps), 20.0f, 1500.0f);
+	}
+	else if (input->brush_size_steps != 0)
 	{
 		game->tools.brush_radius_meters *= SDL_powf(1.2f, (float)input->brush_size_steps);
 		game->tools.brush_radius_meters = clamp_float(game->tools.brush_radius_meters,
@@ -2457,6 +2565,9 @@ static void describe_tool(const testbed_t *game, char *text_out, size_t text_out
 				SDL_snprintf(text_out, text_out_size, "object %s (right click: let go of it)", tools->object_type >= 0
 					&& tools->object_type < game->potop->world.objects.types.type_count ? game->potop->world.objects.types.types[tools->object_type].name : "none");
 			}
+			break;
+		case TOOL_SCULPT:
+			SDL_snprintf(text_out, text_out_size, "sculpt, r = %.0f m", (double)tools->sculpt_radius_meters);
 			break;
 		default:
 			SDL_snprintf(text_out, text_out_size, "%s, r = %.0f m", tools_tool_name(tools->current_tool), (double)tools->brush_radius_meters);
@@ -2732,7 +2843,7 @@ static void render_frame(testbed_t *game, int pixel_width, int pixel_height)
 		brush.start_z = game->tools.hover_point.z;
 		brush.end_x = brush.start_x;
 		brush.end_z = brush.start_z;
-		brush.radius = game->tools.brush_radius_meters;
+		brush.radius = game->tools.current_tool == TOOL_SCULPT ? game->tools.sculpt_radius_meters : game->tools.brush_radius_meters;
 		if (game->tools.current_tool == TOOL_LAYOUT && game->potop->world.layouts.count > 0)
 		{
 			brush.radius = game->tools.layout_in_hand ? game->potop->world.layouts.layouts[game->tools.layout].footprint_meters : 0.0f;
@@ -7293,6 +7404,10 @@ int main(int argument_count, char **arguments)
 
 			play_effect(&game, effect, target, false);
 		}
+	}
+	if (game.command_line.sculpt_test)
+	{
+		sculpt_test(&game);
 	}
 	if (game.command_line.warmup_seconds > 0.0f)
 	{

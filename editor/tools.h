@@ -36,6 +36,7 @@ typedef enum
 	TOOL_EFFECT,          // a click plays the chosen particle effect: on an actor, an object, or at the point
 	TOOL_LIGHT,           // a click places a light (or removes the one next to it): see lights.h
 	TOOL_AREA,            // a drag draws an area, a click in one picks it (its name, size, triggers in the panel): see areas.h
+	TOOL_SCULPT,          // the ground's large shapes, hundreds of meters at a time, its small ones kept (edit.h's edit_sculpt)
 	TOOL_NONE,            // nothing: clicks only pick (the start; a click on the chosen tool's button again)
 	TOOL_COUNT
 } tool_type_t;
@@ -70,6 +71,16 @@ typedef struct
 	float light_height_meters;     // above the ground where it is placed
 	bool object_awake;             // loose things the physics takes at once (they settle, roll); else put down asleep
 	float stamp_height_meters;
+
+	// The sculpt tool: what it does (EDIT_SCULPT_*), in what shape
+	// (EDIT_SCULPT_SHAPE_*), how wide, how fast (meters a second up, down or
+	// rough; the share a second flattened or smoothed), how wide its hills
+	int sculpt_mode;
+	int sculpt_shape;
+	float sculpt_radius_meters;
+	float sculpt_meters_per_second;
+	float sculpt_share_per_second;
+	float sculpt_feature_meters;
 
 	// Line stamps (dam, channel) are dragged: where the drag started
 	bool stamp_dragging;

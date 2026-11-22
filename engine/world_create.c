@@ -207,6 +207,9 @@ void world_destroy(world_t *world)
 	SDL_free(world->edit_scratch);
 	world->edit_scratch = NULL;
 	world->edit_scratch_capacity = 0;
+	SDL_free(world->sculpt_scratch);
+	world->sculpt_scratch = NULL;
+	world->sculpt_scratch_capacity = 0;
 	water_gpu_release(&world->water);
 	erosion_destroy(&world->erosion);
 	water_destroy(&world->water);

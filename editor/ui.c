@@ -5,6 +5,7 @@
 #include "ui_widgets.h"
 
 #include "cloud_weather.h"
+#include "edit.h"
 #include "file_io.h"
 #include "ini_parser.h"
 #include "season.h"
@@ -1083,6 +1084,9 @@ static const int BAR_ITEMS_MAX = 64;
 // The brush's sizes on the tool bar (meters, its radius), within the
 // settings' smallest and largest
 static const float BRUSH_PRESETS[5] = { 2.0f, 5.0f, 10.0f, 20.0f, 40.0f };
+static const float SCULPT_PRESETS[5] = { 50.0f, 100.0f, 200.0f, 400.0f, 800.0f };
+static const float SCULPT_RADIUS_MINIMUM = 20.0f;
+static const float SCULPT_RADIUS_MAXIMUM = 1500.0f;
 
 static bool bars_shown(const ui_t *ui)
 {
@@ -1430,6 +1434,7 @@ static const tool_bar_item_t TOOL_BAR_ITEMS[] = {
 	{ TOOL_PAINT_SOIL, "paint", "Paint", "Paint the soil type (3)" },
 	{ TOOL_SMOOTH, "smooth", "Smooth", "Smooth the ground (4)" },
 	{ TOOL_STAMP, "stamp", "Stamp", "Craters, dams, hills, channels, lakes, plateaus (T)" },
+	{ TOOL_SCULPT, "sculpt", "Sculpt", "Mountains, valleys, plains hundreds of meters across; the small shapes kept" },
 	{ TOOL_COUNT, NULL, NULL, NULL },
 	{ TOOL_WATER_ADD, "water_add", "Water", "Pour water (or shift + click with any tool)" },
 	{ TOOL_WATER_REMOVE, "sponge", "Sponge", "Take water away (or ctrl + click with any tool)" },
@@ -1509,28 +1514,33 @@ static void tool_bar(ui_t *ui, const ui_view_t *view)
 			}
 		}
 	}
-	// The brush's size: five, and any other (its slider in a drop-down)
+	// The brush's size: five, and any other (its slider in a drop-down);
+	// the sculpt tool's its own, larger
 	bar_gap(ui);
 	{
-		float smallest = settings->tools.brush_minimum_radius_meters;
-		float largest = settings->tools.brush_maximum_radius_meters;
-		float biggest_preset = SDL_clamp(BRUSH_PRESETS[4], smallest, largest);
+		bool sculpting = tools->current_tool == TOOL_SCULPT;
+		const float *presets = sculpting ? SCULPT_PRESETS : BRUSH_PRESETS;
+		float *brush_radius = sculpting ? &tools->sculpt_radius_meters : &tools->brush_radius_meters;
+		float smallest = sculpting ? SCULPT_RADIUS_MINIMUM : settings->tools.brush_minimum_radius_meters;
+		float largest = sculpting ? SCULPT_RADIUS_MAXIMUM : settings->tools.brush_maximum_radius_meters;
+		float biggest_preset = SDL_clamp(presets[4], smallest, largest);
 
 		for (int i = 0; i < (int)SDL_arraysize(BRUSH_PRESETS); i++)
 		{
-			float radius = SDL_clamp(BRUSH_PRESETS[i], smallest, largest);
+			float radius = SDL_clamp(presets[i], smallest, largest);
 
-			if (brush_preset_button(ui, radius, biggest_preset, SDL_fabsf(tools->brush_radius_meters - radius) < 0.01f))
+			if (brush_preset_button(ui, radius, biggest_preset, SDL_fabsf(*brush_radius - radius) < 0.01f))
 			{
-				tools->brush_radius_meters = radius;
+				*brush_radius = radius;
 			}
 		}
-		SDL_snprintf(text, sizeof(text), "%.1f m", (double)tools->brush_radius_meters);
+		SDL_snprintf(text, sizeof(text), sculpting ? "%.0f m" : "%.1f m", (double)*brush_radius);
 		nk_layout_row_push(context, bar_width(ui, "00.0 m") + 18.0f);
 		tooltip_if_hovered(context, "The brush's radius, any ([ and ])");
 		if (nk_combo_begin_label(context, text, nk_vec2(300.0f, 80.0f)))
 		{
-			slider_row(ui, "Radius", &tools->brush_radius_meters, smallest, largest, 0.5f, "%.1f m", "The brush's radius ([ and ])");
+			slider_row(ui, "Radius", brush_radius, smallest, largest, sculpting ? 5.0f : 0.5f, sculpting ? "%.0f m" : "%.1f m",
+				"The brush's radius ([ and ])");
 			nk_combo_end(context);
 		}
 	}
@@ -1637,6 +1647,53 @@ static void context_bar(ui_t *ui, const ui_view_t *view)
 		case TOOL_SMOOTH:
 			bar_slider(ui, "Strength", &settings->tools.smooth_strength_per_second, 0.5f, 10.0f, 0.1f, "%.1f", NULL);
 			break;
+		case TOOL_SCULPT:
+		{
+			static const char *mode_labels[EDIT_SCULPT_MODE_COUNT] = { "Raise", "Lower", "Flatten", "Smooth", "Roughen" };
+			static const char *mode_tips[EDIT_SCULPT_MODE_COUNT] = {
+				"Up, in the shape chosen",
+				"Down, in the shape chosen",
+				"Towards the height where the stroke started (the small shapes kept)",
+				"The large shapes smoothed (the small ones kept)",
+				"Hills as wide as chosen added, up and down" };
+			static const char *shape_labels[EDIT_SCULPT_SHAPE_COUNT] = { "Hills", "Ridges", "Even" };
+			static const char *shape_tips[EDIT_SCULPT_SHAPE_COUNT] = { "Rounded, uneven", "Mountain crests", "The brush's bell alone" };
+			bool by_meters = tools->sculpt_mode == EDIT_SCULPT_RAISE || tools->sculpt_mode == EDIT_SCULPT_LOWER
+				|| tools->sculpt_mode == EDIT_SCULPT_ROUGHEN;
+
+			for (int mode = 0; mode < EDIT_SCULPT_MODE_COUNT; mode++)
+			{
+				if (bar_choice(ui, "", mode_labels[mode], mode_tips[mode], tools->sculpt_mode == mode))
+				{
+					tools->sculpt_mode = mode;
+				}
+			}
+			bar_gap(ui);
+			if (tools->sculpt_mode == EDIT_SCULPT_RAISE || tools->sculpt_mode == EDIT_SCULPT_LOWER)
+			{
+				for (int shape = 0; shape < EDIT_SCULPT_SHAPE_COUNT; shape++)
+				{
+					if (bar_choice(ui, "", shape_labels[shape], shape_tips[shape], tools->sculpt_shape == shape))
+					{
+						tools->sculpt_shape = shape;
+					}
+				}
+				bar_gap(ui);
+			}
+			if (by_meters)
+			{
+				bar_slider(ui, "Speed", &tools->sculpt_meters_per_second, 0.5f, 60.0f, 0.5f, "%.1f m/s", "Meters a second at the brush's middle");
+				if (tools->sculpt_mode == EDIT_SCULPT_ROUGHEN || tools->sculpt_shape != EDIT_SCULPT_SHAPE_EVEN)
+				{
+					bar_slider(ui, "Hills", &tools->sculpt_feature_meters, 20.0f, 2000.0f, 10.0f, "%.0f m", "How wide its hills or crests are");
+				}
+			}
+			else
+			{
+				bar_slider(ui, "Strength", &tools->sculpt_share_per_second, 0.1f, 5.0f, 0.1f, "%.1f", "How fast it gets there");
+			}
+			break;
+		}
 		case TOOL_STAMP:
 			for (int stamp = 0; stamp < STAMP_COUNT; stamp++)
 			{

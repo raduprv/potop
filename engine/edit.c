@@ -153,6 +153,202 @@ bool edit_terrain(world_t *world, edit_brush_t brush, float x, float z, float ra
 	return true;
 }
 
+// The sculpt brush (edit.h). Heights are split into a large shape (a box
+// blur a few times over, SCULPT_DETAIL_METERS across) and what is left (the
+// small shapes): flatten and smooth change the large shape alone and put the
+// small ones back; raise, lower and roughen add smooth shapes, which leave
+// the small ones as they were anyway
+#define SCULPT_DETAIL_METERS 14.0f
+#define SCULPT_BLUR_PASSES 3
+
+// Box blur of a w by h field along rows then columns, radius r cells, the
+// edges held (a running sum: as fast for any radius); line is scratch of
+// max(w, h) floats
+static void box_blur(float *field, int32_t w, int32_t h, int32_t r, float *line)
+{
+	if (r <= 0)
+	{
+		return;
+	}
+	for (int32_t y = 0; y < h; y++)
+	{
+		float *row = field + (size_t)y * (size_t)w;
+		float sum = 0.0f;
+
+		for (int32_t k = -r; k <= r; k++)
+		{
+			sum += row[clamp_int(k, 0, w - 1)];
+		}
+		for (int32_t x = 0; x < w; x++)
+		{
+			line[x] = sum / (float)(2 * r + 1);
+			sum += row[clamp_int(x + r + 1, 0, w - 1)] - row[clamp_int(x - r, 0, w - 1)];
+		}
+		SDL_memcpy(row, line, sizeof(float) * (size_t)w);
+	}
+	for (int32_t x = 0; x < w; x++)
+	{
+		float sum = 0.0f;
+
+		for (int32_t k = -r; k <= r; k++)
+		{
+			sum += field[(size_t)clamp_int(k, 0, h - 1) * (size_t)w + (size_t)x];
+		}
+		for (int32_t y = 0; y < h; y++)
+		{
+			line[y] = sum / (float)(2 * r + 1);
+			sum += field[(size_t)clamp_int(y + r + 1, 0, h - 1) * (size_t)w + (size_t)x] - field[(size_t)clamp_int(y - r, 0, h - 1) * (size_t)w + (size_t)x];
+		}
+		for (int32_t y = 0; y < h; y++)
+		{
+			field[(size_t)y * (size_t)w + (size_t)x] = line[y];
+		}
+	}
+}
+
+bool edit_sculpt(world_t *world, const edit_sculpt_t *sculpt, float seconds)
+{
+	terrain_t *terrain = &world->terrain;
+	float cell_size = terrain->cell_size_meters;
+	float radius_cells = sculpt->radius_meters / cell_size;
+	float center_x = sculpt->x / cell_size;
+	float center_y = sculpt->z / cell_size;
+	bool large_shape = sculpt->mode == EDIT_SCULPT_FLATTEN || sculpt->mode == EDIT_SCULPT_SMOOTH;
+	int32_t detail_cells = SDL_max((int32_t)SDL_lroundf(SCULPT_DETAIL_METERS / cell_size / 2.0f), 1);
+	int32_t smooth_cells = SDL_max((int32_t)SDL_lroundf(radius_cells / 8.0f), 1);
+	// (the large shape needs its neighbors: a margin round the brush)
+	int32_t margin = large_shape ? SCULPT_BLUR_PASSES * (detail_cells + (sculpt->mode == EDIT_SCULPT_SMOOTH ? smooth_cells : 0)) + 1 : 0;
+	int32_t minimum_x = clamp_int((int32_t)SDL_floorf(center_x - radius_cells), 0, terrain->size - 1);
+	int32_t minimum_y = clamp_int((int32_t)SDL_floorf(center_y - radius_cells), 0, terrain->size - 1);
+	int32_t maximum_x = clamp_int((int32_t)SDL_ceilf(center_x + radius_cells), 0, terrain->size - 1);
+	int32_t maximum_y = clamp_int((int32_t)SDL_ceilf(center_y + radius_cells), 0, terrain->size - 1);
+	int32_t outer_x = clamp_int(minimum_x - margin, 0, terrain->size - 1);
+	int32_t outer_y = clamp_int(minimum_y - margin, 0, terrain->size - 1);
+	int32_t outer_w = clamp_int(maximum_x + margin, 0, terrain->size - 1) - outer_x + 1;
+	int32_t outer_h = clamp_int(maximum_y + margin, 0, terrain->size - 1) - outer_y + 1;
+	float *shape = NULL;
+	float *smoothed = NULL;
+	float units = (float)TERRAIN_HEIGHT_UNITS_PER_METER;
+
+	if (terrain->baked)
+	{
+		return false;
+	}
+	if (maximum_x < minimum_x || maximum_y < minimum_y || radius_cells <= 0.0f)
+	{
+		return true;
+	}
+	if (!world->sculpt_noise_ready || world->sculpt_noise_seed != terrain->seed)
+	{
+		world->sculpt_noise_seed = terrain->seed;
+		noise_initialize(&world->sculpt_noise, (uint64_t)terrain->seed * 2654435761ull + 17u);
+		noise_initialize(&world->sculpt_ridges, (uint64_t)terrain->seed * 2654435761ull + 29u);
+		world->sculpt_noise_ready = true;
+	}
+	world_touch_water(world);
+	// The large shape (and for smoothing, that shape smoothed again over a
+	// share of the brush): two fields of the region with its margin, and a
+	// line
+	if (large_shape)
+	{
+		int32_t needed = 2 * outer_w * outer_h + SDL_max(outer_w, outer_h);
+
+		if (needed > world->sculpt_scratch_capacity)
+		{
+			float *grown = SDL_realloc(world->sculpt_scratch, sizeof(float) * (size_t)needed);
+
+			if (grown == NULL)
+			{
+				return true;
+			}
+			world->sculpt_scratch = grown;
+			world->sculpt_scratch_capacity = needed;
+		}
+		shape = world->sculpt_scratch;
+		smoothed = shape + (size_t)outer_w * (size_t)outer_h;
+		for (int32_t y = 0; y < outer_h; y++)
+		{
+			for (int32_t x = 0; x < outer_w; x++)
+			{
+				shape[(size_t)y * (size_t)outer_w + (size_t)x] = (float)terrain->heights[terrain_index(terrain, outer_x + x, outer_y + y)];
+			}
+		}
+		for (int pass = 0; pass < SCULPT_BLUR_PASSES; pass++)
+		{
+			box_blur(shape, outer_w, outer_h, detail_cells, smoothed + (size_t)outer_w * (size_t)outer_h);
+		}
+		if (sculpt->mode == EDIT_SCULPT_SMOOTH)
+		{
+			SDL_memcpy(smoothed, shape, sizeof(float) * (size_t)outer_w * (size_t)outer_h);
+			// (its line after both fields: the second field is what it blurs)
+			for (int pass = 0; pass < SCULPT_BLUR_PASSES; pass++)
+			{
+				box_blur(smoothed, outer_w, outer_h, smooth_cells, world->sculpt_scratch + 2 * (size_t)outer_w * (size_t)outer_h);
+			}
+		}
+	}
+	#pragma omp parallel for schedule(dynamic, 16)
+	for (int32_t y = minimum_y; y <= maximum_y; y++)
+	{
+		for (int32_t cell_x = minimum_x; cell_x <= maximum_x; cell_x++)
+		{
+			float distance = SDL_sqrtf(((float)cell_x - center_x) * ((float)cell_x - center_x) + ((float)y - center_y) * ((float)y - center_y));
+			float falloff = brush_falloff(distance, radius_cells);
+			int32_t index = terrain_index(terrain, cell_x, y);
+			float world_x = (float)cell_x * cell_size;
+			float world_z = (float)y * cell_size;
+			float frequency = 1.0f / SDL_max(sculpt->feature_meters, 1.0f);
+			float height = (float)terrain->heights[index];
+
+			if (falloff <= 0.0f)
+			{
+				continue;
+			}
+			switch (sculpt->mode)
+			{
+				case EDIT_SCULPT_RAISE:
+				case EDIT_SCULPT_LOWER:
+				{
+					float form = 1.0f;
+
+					if (sculpt->shape == EDIT_SCULPT_SHAPE_HILLS)
+					{
+						form = 1.0f + 0.8f * noise_fbm(&world->sculpt_noise, world_x * frequency, world_z * frequency, 4, 0.5f);
+					}
+					else if (sculpt->shape == EDIT_SCULPT_SHAPE_RIDGES)
+					{
+						form = 0.2f + 1.8f * noise_ridged_soft(&world->sculpt_ridges, world_x * frequency, world_z * frequency, 5, 0.5f, 0.12f);
+					}
+					height += (sculpt->mode == EDIT_SCULPT_RAISE ? 1.0f : -1.0f) * sculpt->rate * seconds * units * falloff * SDL_max(form, 0.0f);
+					break;
+				}
+				case EDIT_SCULPT_ROUGHEN:
+					height += sculpt->rate * seconds * units * falloff * noise_fbm(&world->sculpt_noise, world_x * frequency + 91.0f, world_z * frequency + 37.0f, 4, 0.5f);
+					break;
+				case EDIT_SCULPT_FLATTEN:
+				case EDIT_SCULPT_SMOOTH:
+				{
+					size_t local = (size_t)(y - outer_y) * (size_t)outer_w + (size_t)(cell_x - outer_x);
+					float large = shape[local];
+					float goal = sculpt->mode == EDIT_SCULPT_FLATTEN ? sculpt->target_meters * units : smoothed[local];
+					float amount = clamp_float(sculpt->rate * seconds * falloff, 0.0f, 1.0f);
+
+					// (the small shapes on it as they were)
+					height += (goal - large) * amount;
+					break;
+				}
+				default:
+					break;
+			}
+			terrain->heights[index] = SDL_max((int32_t)SDL_lroundf(height), 0);
+		}
+	}
+	terrain_fix_layers(terrain, minimum_x, minimum_y, maximum_x, maximum_y);
+	terrain_mark_cells_changed(terrain, minimum_x, minimum_y, maximum_x, maximum_y);
+	wake_water(world, sculpt->x, sculpt->z, sculpt->radius_meters);
+	return true;
+}
+
 bool edit_water(world_t *world, float x, float z, float radius_meters, float meters_per_second, float seconds)
 {
 	if (world->terrain.baked)
