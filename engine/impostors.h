@@ -45,18 +45,24 @@
 // baked again
 #define IMPOSTOR_VERSION 2
 // impostor.frag's samplers: the shadow maps (0, 1), the variation (2), the
-// color atlas (3), the clouds' shadows (4), the normal atlas (5)
-#define IMPOSTOR_FRAGMENT_SAMPLERS 6
+// color atlases (3, the plants' 6), the clouds' shadows (4), the normal
+// atlases (5, the plants' 7): arrays, a layer a model
+#define IMPOSTOR_FRAGMENT_SAMPLERS 8
 
 typedef struct
 {
+	// Its atlases as made (until moved into the arrays: in_array)
 	SDL_GPUTexture *albedo;        // RGBA8, mipmapped: sRGB color, alpha covered
-	SDL_GPUTexture *normal;        // RGBA8, mipmapped: normal in the model's axes * 0.5 + 0.5 (half as long: leaves), alpha depth
+	SDL_GPUTexture *normal;        // RGBA8, mipmapped: normal in the model's axes * 0.5 + 0.5 (a plant's leaves a quarter as long), alpha depth
 	float sphere[4];               // the model's bounding sphere: center, radius (model axes, meters at size 1)
 	float look[4];                 // x: how leafy, 0..1 (its triangles' share in cut out materials): lit like leaves; y: a plant's (1); z, w: pictures across, down its atlas
 	int atlas_width;               // its atlases' size
 	int atlas_height;
 	int month_index;               // a plant's: the month its foliage's pictures are of (0 January; -1 not a plant)
+	// Moved into the objects' arrays (objects_t.impostor_arrays: albedo and
+	// normal then let go): which layer of its kind's
+	bool in_array;
+	int layer;
 } impostor_t;
 
 typedef struct

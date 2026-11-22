@@ -684,8 +684,10 @@ void main()
 			float level_value = decisions[2u * slot + 1u];
 			uint level = uint(floor(level_value));
 			float level_gone = round((1.0 - clamp((level_value - float(level)) * 2.0, 0.0, 1.0)) * 255.0);
+			uint drawn_model = model;
+			bool as_impostor = fade >= IMPOSTOR;
 
-			if (fade >= IMPOSTOR)
+			if (as_impostor)
 			{
 				fade -= IMPOSTOR;
 				model += LOD_LEVELS * uint(model_count);
@@ -728,6 +730,20 @@ void main()
 			instances[base + 12u] = look.y;
 			instances[base + 13u] = look.z;
 			instances[base + 14u] = look.w;
+			// An impostor's: its model's sphere, and its layer in its kind's
+			// arrays and how leafy (impostor.vert; it has no lights, no look)
+			if (as_impostor)
+			{
+				vec4 sphere = models[MODEL_WORDS * drawn_model + 1u];
+				vec4 pool = models[MODEL_WORDS * drawn_model + 4u];
+
+				instances[base + 9u] = sphere.x;
+				instances[base + 10u] = sphere.y;
+				instances[base + 11u] = sphere.z;
+				instances[base + 12u] = sphere.w;
+				instances[base + 13u] = pool.z;
+				instances[base + 14u] = pool.w;
+			}
 		}
 	}
 }

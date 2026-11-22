@@ -15,9 +15,13 @@
 
 #include "shadows.glsl"
 layout(set = TEXTURE_SET, binding = 2) uniform sampler2D variation_texture;
-layout(set = TEXTURE_SET, binding = 3) uniform sampler2D albedo_atlas;           // sRGB; alpha: covered
+// Every impostor's atlases, a layer a model (objects_t.impostor_arrays):
+// the hemisphere's grids, the plants'
+layout(set = TEXTURE_SET, binding = 3) uniform sampler2DArray albedo_atlases;     // sRGB; alpha: covered
 layout(set = TEXTURE_SET, binding = 4) uniform sampler2D cloud_shadow_texture;
-layout(set = TEXTURE_SET, binding = 5) uniform sampler2D normal_atlas;           // model axes * 0.5 + 0.5; alpha: depth
+layout(set = TEXTURE_SET, binding = 5) uniform sampler2DArray normal_atlases;     // model axes * 0.5 + 0.5; alpha: depth
+layout(set = TEXTURE_SET, binding = 6) uniform sampler2DArray plant_albedo_atlases;
+layout(set = TEXTURE_SET, binding = 7) uniform sampler2DArray plant_normal_atlases;
 #define CLOUD_SHADOW_TEXTURE
 #include "underwater.glsl"
 #define CLOUDS_EXPLICIT_LOD
@@ -43,6 +47,7 @@ layout(location = 10) flat in float leafy;
 layout(location = 12) in float haze;                     // impostor.vert's haze_amount
 layout(location = 11) flat in vec4 sky_light;           // impostor.vert's: the light sent back (rgb), the sky seen (a)
 layout(location = 13) flat in vec2 picture_grid;         // impostor.vert
+layout(location = 14) flat in int picture_layer;
 
 layout(std140, set = UNIFORM_SET, binding = 1) uniform impostor_draw_block
 {
@@ -92,7 +97,8 @@ void main()
 	float drawn_fade = highlighted ? fade - 2.0 : fade;
 	vec2 points[3] = vec2[3](picture_point_0, picture_point_1, picture_point_2);
 	ivec2 frames[3] = ivec2[3](frames_01.xy, frames_01.zw, frame_2);
-	float atlas_size = float(textureSize(albedo_atlas, 0).x);
+	bool plant = leafy < 0.0;
+	float atlas_size = float(plant ? textureSize(plant_albedo_atlases, 0).x : textureSize(albedo_atlases, 0).x);
 	// The mip level, from how fast the first picture's point moves across
 	// the pixels (the three move alike)
 	vec2 texel_ddx = dFdx(picture_point_0) * 0.5 * atlas_size / picture_grid.x;
@@ -115,8 +121,9 @@ void main()
 			continue;
 		}
 		vec2 uv = impostor_atlas_uv(frames[k], points[k], picture_grid);
-		vec4 albedo_sample = textureLod(albedo_atlas, uv, lod);
-		vec4 normal_sample = textureLod(normal_atlas, uv, lod);
+		vec3 at = vec3(uv, float(picture_layer));
+		vec4 albedo_sample = plant ? textureLod(plant_albedo_atlases, at, lod) : textureLod(albedo_atlases, at, lod);
+		vec4 normal_sample = plant ? textureLod(plant_normal_atlases, at, lod) : textureLod(normal_atlases, at, lod);
 		float weight = weights[k] * albedo_sample.a;
 
 		coverage += weights[k] * albedo_sample.a;

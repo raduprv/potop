@@ -179,6 +179,12 @@ typedef struct
 	// times the scene's height in pixels, over a picture's (0: none)
 	float impostor_factor;
 	SDL_GPUGraphicsPipeline *impostor_pipeline;
+	// Every impostor's atlases, a layer each, in arrays by kind (0: the
+	// hemisphere's grid, 1: a plant's), albedo then normal: all of them
+	// drawn in one call (draw_impostors)
+	SDL_GPUTexture *impostor_arrays[2][2];
+	int impostor_first_draw;       // the impostors' draws, after every material's
+	int impostor_draw_count;
 	SDL_GPUBuffer *impostor_index_buffer;  // a square: two triangles
 
 	// The buildings' textures' level of detail bias this frame (the TAA's

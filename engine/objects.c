@@ -517,11 +517,15 @@ static bool create_pipelines(objects_t *objects)
 		{
 			{ 0, sizeof(float) * INSTANCE_FLOATS, SDL_GPU_VERTEXINPUTRATE_INSTANCE, 0 },
 		};
-		static const SDL_GPUVertexAttribute impostor_attributes[3] =
+		// (an impostor's instance: placement, rotation, fade; then its
+		// model's sphere and its layer and look, objects_cull.comp)
+		static const SDL_GPUVertexAttribute impostor_attributes[5] =
 		{
 			{ 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, 0 },
 			{ 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, sizeof(float) * 4 },
 			{ 2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT, sizeof(float) * 8 },
+			{ 3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, sizeof(float) * 9 },
+			{ 4, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, sizeof(float) * 13 },
 		};
 		static const uint16_t square[6] = { 0, 1, 2, 2, 1, 3 };
 		SDL_GPUShader *impostor_vertex = gpu_load_shader("impostor.vert", 4, 0, 2);
@@ -535,7 +539,7 @@ static bool create_pipelines(objects_t *objects)
 			info.vertex_buffers = impostor_buffers;
 			info.vertex_buffer_count = 1;
 			info.vertex_attributes = impostor_attributes;
-			info.vertex_attribute_count = 3;
+			info.vertex_attribute_count = 5;
 			info.cull = SDL_GPU_CULLMODE_NONE;
 			info.depth_test = true;
 			info.depth_write = true;
@@ -750,6 +754,131 @@ static bool wants_impostor(const objects_t *objects, int model)
 	return false;
 }
 
+// Every impostor into its kind's arrays (objects_t.impostor_arrays), a layer
+// each: the newly made from their own atlases (let go after), the rest from
+// the arrays before. Outside a frame. False if the arrays could not be made
+// (none drawn then)
+static bool build_impostor_arrays(objects_t *objects)
+{
+	SDL_GPUTexture *arrays[2][2] = { { NULL, NULL }, { NULL, NULL } };
+	int counts[2] = { 0, 0 };
+	int sizes[2][2] = { { IMPOSTOR_ATLAS_PIXELS, IMPOSTOR_ATLAS_PIXELS },
+		{ IMPOSTOR_PLANT_AZIMUTHS * IMPOSTOR_PLANT_CELL_PIXELS, IMPOSTOR_PLANT_ELEVATIONS * IMPOSTOR_PLANT_CELL_PIXELS } };
+	SDL_GPUCommandBuffer *command_buffer;
+	SDL_GPUCopyPass *copy;
+	bool ok = true;
+
+	for (int m = 0; m < objects->impostor_capacity; m++)
+	{
+		const impostor_t *impostor = &objects->impostors[m];
+
+		if (impostor->albedo != NULL || impostor->in_array)
+		{
+			counts[impostor->month_index >= 0 ? 1 : 0]++;
+		}
+	}
+	for (int kind = 0; kind < 2 && ok; kind++)
+	{
+		for (int k = 0; k < 2 && counts[kind] > 0; k++)
+		{
+			arrays[kind][k] = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D_ARRAY, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, (uint32_t)sizes[kind][0],
+				(uint32_t)sizes[kind][1], (uint32_t)counts[kind], 0, SDL_GPU_TEXTUREUSAGE_SAMPLER);
+			ok = ok && arrays[kind][k] != NULL;
+		}
+	}
+	// (the newly made's atlases and their mipmaps are still on their way up)
+	gpu_flush_uploads();
+	gpu_submit_work(NULL);
+	command_buffer = ok ? SDL_AcquireGPUCommandBuffer(gpu.device) : NULL;
+	copy = command_buffer != NULL ? SDL_BeginGPUCopyPass(command_buffer) : NULL;
+	if (copy == NULL)
+	{
+		if (command_buffer != NULL)
+		{
+			SDL_CancelGPUCommandBuffer(command_buffer);
+		}
+		ok = false;
+	}
+	counts[0] = 0;
+	counts[1] = 0;
+	for (int m = 0; m < objects->impostor_capacity && ok; m++)
+	{
+		impostor_t *impostor = &objects->impostors[m];
+		int kind = impostor->month_index >= 0 ? 1 : 0;
+		int levels = (int)gpu_mip_count((uint32_t)sizes[kind][0], (uint32_t)sizes[kind][1]);
+
+		if (impostor->albedo == NULL && !impostor->in_array)
+		{
+			continue;
+		}
+		for (int k = 0; k < 2; k++)
+		{
+			SDL_GPUTexture *from = impostor->albedo != NULL ? (k == 0 ? impostor->albedo : impostor->normal) : objects->impostor_arrays[kind][k];
+
+			for (int level = 0; level < levels && from != NULL; level++)
+			{
+				SDL_GPUTextureLocation source;
+				SDL_GPUTextureLocation destination;
+
+				SDL_zero(source);
+				source.texture = from;
+				source.mip_level = (uint32_t)level;
+				source.layer = impostor->albedo != NULL ? 0u : (uint32_t)impostor->layer;
+				SDL_zero(destination);
+				destination.texture = arrays[kind][k];
+				destination.mip_level = (uint32_t)level;
+				destination.layer = (uint32_t)counts[kind];
+				SDL_CopyGPUTextureToTexture(copy, &source, &destination, SDL_max((uint32_t)sizes[kind][0] >> level, 1u),
+					SDL_max((uint32_t)sizes[kind][1] >> level, 1u), 1, false);
+			}
+		}
+		impostor->layer = counts[kind]++;
+	}
+	if (ok)
+	{
+		SDL_EndGPUCopyPass(copy);
+		ok = SDL_SubmitGPUCommandBuffer(command_buffer);
+	}
+	// The newly made let go (now in the arrays), the arrays before too
+	for (int m = 0; m < objects->impostor_capacity; m++)
+	{
+		impostor_t *impostor = &objects->impostors[m];
+
+		if (impostor->albedo == NULL && !impostor->in_array)
+		{
+			continue;
+		}
+		if (impostor->albedo != NULL)
+		{
+			SDL_ReleaseGPUTexture(gpu.device, impostor->albedo);
+			SDL_ReleaseGPUTexture(gpu.device, impostor->normal);
+			impostor->albedo = NULL;
+			impostor->normal = NULL;
+		}
+		impostor->in_array = ok;
+	}
+	for (int kind = 0; kind < 2; kind++)
+	{
+		for (int k = 0; k < 2; k++)
+		{
+			if (objects->impostor_arrays[kind][k] != NULL)
+			{
+				SDL_ReleaseGPUTexture(gpu.device, objects->impostor_arrays[kind][k]);
+			}
+			objects->impostor_arrays[kind][k] = ok ? arrays[kind][k] : NULL;
+			if (!ok && arrays[kind][k] != NULL)
+			{
+				SDL_ReleaseGPUTexture(gpu.device, arrays[kind][k]);
+			}
+		}
+	}
+	if (!ok)
+	{
+		SDL_LogWarn(SDL_LOG_CATEGORY_RENDER, "Impostors: cannot gather them in arrays (%s); far objects are drawn whole", SDL_GetError());
+	}
+	return ok;
+}
+
 void objects_update_impostors(objects_t *objects)
 {
 	bool changed = false;
@@ -787,11 +916,14 @@ void objects_update_impostors(objects_t *objects)
 
 		// (a plant's of another month: its foliage's pictures are not
 		// those of now)
-		if (wanted && impostor->albedo != NULL && impostor->month_index >= 0 && impostor->month_index != month_index)
+		bool held = impostor->albedo != NULL || impostor->in_array;
+
+		if (wanted && held && impostor->month_index >= 0 && impostor->month_index != month_index)
 		{
 			impostor_release(impostor);
 		}
-		if (wanted && impostor->albedo == NULL)
+		held = impostor->albedo != NULL || impostor->in_array;
+		if (wanted && !held)
 		{
 			if (impostor_make(&objects->impostor_baker, impostor, &objects->models[m], &objects->textures, objects->month))
 			{
@@ -799,7 +931,7 @@ void objects_update_impostors(objects_t *objects)
 			}
 			changed = true;
 		}
-		else if (!wanted && impostor->albedo != NULL)
+		else if (!wanted && held)
 		{
 			impostor_release(impostor);
 			changed = true;
@@ -810,10 +942,12 @@ void objects_update_impostors(objects_t *objects)
 		int total = 0;
 		double texels = 0.0;
 
+		// (all of them in the arrays, to be drawn in one call)
+		build_impostor_arrays(objects);
 		for (int m = 0; m < objects->model_count; m++)
 		{
-			total += objects->impostors[m].albedo != NULL ? 1 : 0;
-			texels += objects->impostors[m].albedo != NULL ? (double)objects->impostors[m].atlas_width * objects->impostors[m].atlas_height : 0.0;
+			total += objects->impostors[m].in_array ? 1 : 0;
+			texels += objects->impostors[m].in_array ? (double)objects->impostors[m].atlas_width * objects->impostors[m].atlas_height : 0.0;
 		}
 		SDL_Log("Impostors: %d made (%d baked, %d from the cache) in %.2f s; %d models have one (%.0f MB)", made,
 			objects->impostor_baker.baked - baked_before, objects->impostor_baker.loaded - loaded_before,
@@ -840,7 +974,7 @@ bool objects_reload_changed(objects_t *objects)
 			for (int k = 0; k < objects->models[m].material_count; k++)
 			{
 				if (objects->models[m].materials[k].texture == old_textures[i] && m < objects->impostor_capacity
-					&& objects->impostors[m].albedo != NULL)
+					&& (objects->impostors[m].albedo != NULL || objects->impostors[m].in_array))
 				{
 					// Its pictures, taken again with the new texture
 					impostor_release(&objects->impostors[m]);
@@ -1100,6 +1234,16 @@ void objects_destroy(objects_t *objects)
 	impostor_baker_destroy(&objects->impostor_baker);
 	if (gpu.device != NULL)
 	{
+		for (int kind = 0; kind < 2; kind++)
+		{
+			for (int k = 0; k < 2; k++)
+			{
+				if (objects->impostor_arrays[kind][k] != NULL)
+				{
+					SDL_ReleaseGPUTexture(gpu.device, objects->impostor_arrays[kind][k]);
+				}
+			}
+		}
 		if (objects->impostor_pipeline != NULL)
 		{
 			SDL_ReleaseGPUGraphicsPipeline(gpu.device, objects->impostor_pipeline);
@@ -2779,7 +2923,7 @@ static SDL_GPUBuffer *grow_buffer(SDL_GPUBuffer *buffer, SDL_GPUBufferUsageFlags
 // Whether a model has an impostor to draw
 static bool has_impostor(const objects_t *objects, int model)
 {
-	return model < objects->impostor_capacity && objects->impostors[model].albedo != NULL && objects->impostor_pipeline != NULL;
+	return model < objects->impostor_capacity && objects->impostors[model].in_array && objects->impostor_pipeline != NULL;
 }
 
 // Whether a model goes in the shadows' shared buffers (see objects.h): one
@@ -3128,6 +3272,14 @@ static bool upload_tables(objects_t *objects)
 			{
 				SDL_memcpy(&models[MODEL_FLOATS * m + 16], &pool_bases[2 * m], sizeof(uint32_t) * 2);
 			}
+			// Its impostor's layer in its kind's arrays, and how leafy (a
+			// plant's -1: told a texel at a time), into its impostors'
+			// instances (objects_cull.comp, impostor.vert)
+			if (has_impostor(objects, m))
+			{
+				models[MODEL_FLOATS * m + 18] = (float)objects->impostors[m].layer;
+				models[MODEL_FLOATS * m + 19] = objects->impostors[m].look[1] > 0.5f ? -1.0f : objects->impostors[m].look[0];
+			}
 			// A building's look (its type's age, its spread, its lichen and
 			// moss): into each of its instances, for prop_body.glsl, so that
 			// the buildings of many models share one draw
@@ -3223,6 +3375,7 @@ static bool upload_tables(objects_t *objects)
 		}
 		// The impostors' draws, after every material's: one per model that
 		// has one, of the model's second set of counts (model_count + m)
+		objects->impostor_first_draw = objects->draw_count;
 		for (int m = 0; m < objects->model_count; m++)
 		{
 			if (has_impostor(objects, m))
@@ -3237,6 +3390,7 @@ static bool upload_tables(objects_t *objects)
 				objects->draw_count++;
 			}
 		}
+		objects->impostor_draw_count = objects->draw_count - objects->impostor_first_draw;
 		// Each model's sway and flutter in the wind: from the type it is the
 		// model of (the first, if several)
 		SDL_free(objects->model_wind);
@@ -5168,11 +5322,11 @@ static int draw_models(const objects_t *objects, SDL_GPURenderPass *pass, bool a
 // The impostors the camera's culling picked: a square each (see impostors.h)
 static int draw_impostors(const objects_t *objects, SDL_GPURenderPass *pass)
 {
-	int draw_calls = 0;
 	SDL_GPUBufferBinding instance_binding = { objects->instance_buffers[PASS_CAMERA], 0 };
 	SDL_GPUBufferBinding index_binding = { objects->impostor_index_buffer, 0 };
+	SDL_GPUTexture *empty = objects->impostor_arrays[0][0] != NULL ? objects->impostor_arrays[0][0] : objects->impostor_arrays[1][0];
 
-	if (objects->impostor_pipeline == NULL || objects->impostor_index_buffer == NULL)
+	if (objects->impostor_pipeline == NULL || objects->impostor_index_buffer == NULL || objects->impostor_draw_count <= 0 || empty == NULL)
 	{
 		return 0;
 	}
@@ -5184,36 +5338,27 @@ static int draw_impostors(const objects_t *objects, SDL_GPURenderPass *pass)
 
 		SDL_PushGPUFragmentUniformData(gpu.command_buffer, 1, tint, sizeof(tint));
 	}
+	// Every impostor's atlases, by kind (a kind with none: the other's
+	// arrays in its place, never read)
+	{
+		SDL_GPUTextureSamplerBinding albedo = { objects->impostor_arrays[0][0] != NULL ? objects->impostor_arrays[0][0] : empty, gpu.linear_clamp };
+		SDL_GPUTextureSamplerBinding normal = { objects->impostor_arrays[0][1] != NULL ? objects->impostor_arrays[0][1] : empty, gpu.linear_clamp };
+		SDL_GPUTextureSamplerBinding plants[2] =
+		{
+			{ objects->impostor_arrays[1][0] != NULL ? objects->impostor_arrays[1][0] : empty, gpu.linear_clamp },
+			{ objects->impostor_arrays[1][1] != NULL ? objects->impostor_arrays[1][1] : empty, gpu.linear_clamp },
+		};
+
+		SDL_BindGPUFragmentSamplers(pass, 3, &albedo, 1);
+		SDL_BindGPUFragmentSamplers(pass, 5, &normal, 1);
+		SDL_BindGPUFragmentSamplers(pass, 6, plants, 2);
+	}
 	SDL_BindGPUVertexBuffers(pass, 0, &instance_binding, 1);
 	SDL_BindGPUIndexBuffer(pass, &index_binding, SDL_GPU_INDEXELEMENTSIZE_16BIT);
-	for (int d = 0; d < objects->draw_count; d++)
-	{
-		const impostor_t *impostor;
-
-		if (objects->draw_materials[d] >= 0 || !model_on_map(objects, objects->draw_models[d]))
-		{
-			continue;
-		}
-		impostor = &objects->impostors[objects->draw_models[d]];
-		{
-			SDL_GPUTextureSamplerBinding albedo = { impostor->albedo, gpu.linear_clamp };
-			SDL_GPUTextureSamplerBinding normal = { impostor->normal, gpu.linear_clamp };
-
-			SDL_BindGPUFragmentSamplers(pass, 3, &albedo, 1);
-			SDL_BindGPUFragmentSamplers(pass, 5, &normal, 1);
-		}
-		{
-			float uniforms[8];
-
-			SDL_memcpy(uniforms, impostor->sphere, sizeof(impostor->sphere));
-			SDL_memcpy(uniforms + 4, impostor->look, sizeof(impostor->look));
-			SDL_PushGPUVertexUniformData(gpu.command_buffer, 1, uniforms, sizeof(uniforms));
-		}
-		SDL_DrawGPUIndexedPrimitivesIndirect(pass, objects->argument_buffers[PASS_CAMERA],
-			(uint32_t)(sizeof(uint32_t) * DRAW_ARGUMENT_WORDS * (size_t)d), 1);
-		draw_calls++;
-	}
-	return draw_calls;
+	// One call for them all: each model's instances know its layer
+	SDL_DrawGPUIndexedPrimitivesIndirect(pass, objects->argument_buffers[PASS_CAMERA],
+		(uint32_t)(sizeof(uint32_t) * DRAW_ARGUMENT_WORDS * (size_t)objects->impostor_first_draw), (uint32_t)objects->impostor_draw_count);
+	return 1;
 }
 
 void objects_prepare(objects_t *objects, const camera_t *camera)

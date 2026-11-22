@@ -19,12 +19,11 @@
 layout(location = 0) in vec4 instance_placement;         // x, y, z of the origin, size
 layout(location = 1) in vec4 instance_rotation;          // quaternion (x, y, z, w)
 layout(location = 2) in float instance_fade;
-
-layout(std140, set = UNIFORM_SET, binding = 1) uniform impostor_block
-{
-	vec4 sphere;                   // the model's bounding sphere: center, radius (model units)
-	vec4 look;                     // x: how leafy (0..1: lit like leaves, the light wrapping round); y: a plant's (impostor.glsl); z, w: pictures across, down its atlas
-};
+// Its model's (objects_cull.comp): the bounding sphere (center, radius;
+// model units); its layer in its kind's arrays, how leafy (0..1: lit like
+// leaves; a plant's -1: its pictures a plant's, told a texel at a time)
+layout(location = 3) in vec4 sphere;
+layout(location = 4) in vec2 picture;
 
 layout(location = 0) out vec3 world_position;            // on the square
 layout(location = 1) out vec2 picture_point_0;           // the point on each picture (-1..1)
@@ -40,6 +39,7 @@ layout(location = 10) flat out float leafy;
 layout(location = 12) out float haze;                    // how much the haze hides it (scene.glsl's haze_amount, per vertex: it changes slowly over a blade, a card, a picture)
 layout(location = 11) flat out vec4 sky_light;          // at its middle: the light sent back (rgb, onto a face up), the sky seen (a)
 layout(location = 13) flat out vec2 picture_grid;        // pictures across, down the atlas
+layout(location = 14) flat out int picture_layer;        // its layer in its kind's arrays (a plant's: leafy below 0)
 
 vec4 conjugate(vec4 quaternion)
 {
@@ -91,10 +91,12 @@ void main()
 		vec3 eye = impostor_rotate(back, eye_position - center) / radius;
 		vec3 point = impostor_rotate(back, world_position - center) / radius;
 
-		picture_grid = look.zw;
+		bool plant = picture.y < 0.0;
+
+		picture_grid = plant ? vec2(IMPOSTOR_PLANT_AZIMUTHS, IMPOSTOR_PLANT_ELEVATIONS) : vec2(IMPOSTOR_GRID);
 		// A plant's: the three pictures round the eye's side and height
 		// (its columns going round)
-		if (look.y > 0.5)
+		if (plant)
 		{
 			vec3 toward = normalize(eye);
 			float azimuth = atan(toward.z, toward.x);
@@ -168,7 +170,8 @@ void main()
 	fade = instance_fade;
 	toward_eye = vec4(eye_direction, radius);
 	// (a plant's: told a texel at a time, impostor.frag)
-	leafy = look.y > 0.5 ? -1.0 : look.x;
+	leafy = picture.y;
+	picture_layer = int(picture.x + 0.5);
 	haze = clamp(haze_amount(world_position), 0.0, 1.0);
 	// Drawn at the sphere's near side (the same square on the screen,
 	// moved towards the eye along the rays: the attributes stay those of
