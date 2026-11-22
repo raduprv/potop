@@ -22,6 +22,7 @@
 typedef struct
 {
 	bool plant;
+	bool thumbnail;                // one picture from a three quarter view (impostor_make_thumbnail)
 	int month_index;               // a plant's (0 January), its foliage's pictures of that month; -1 none
 	float month;                   // ... and the month itself (season.h: 1 .. 13), for its autumn
 	int grid_x;                    // pictures across, down
@@ -37,6 +38,7 @@ static picture_layout_t layout_for(const object_model_t *model, float month)
 	picture_layout_t layout;
 
 	layout.plant = model->plant_buffer != NULL;
+	layout.thumbnail = false;
 	layout.month_index = layout.plant ? season_month_index(month) : -1;
 	layout.month = month;
 	layout.grid_x = layout.plant ? IMPOSTOR_PLANT_AZIMUTHS : IMPOSTOR_GRID;
@@ -489,7 +491,7 @@ static bool bake(impostor_baker_t *baker, const object_model_t *model, const pic
 				SDL_zero(vertex_uniforms);
 				vertex_uniforms.frame[0] = x;
 				vertex_uniforms.frame[1] = y;
-				vertex_uniforms.frame[2] = layout->plant ? 1 : 0;
+				vertex_uniforms.frame[2] = layout->thumbnail ? 2 : (layout->plant ? 1 : 0);
 				SDL_memcpy(vertex_uniforms.sphere, sphere, sizeof(vertex_uniforms.sphere));
 				// A plant's month cells (objects.c's plant_month_cells,
 				// the snow aside): each moved to that month's picture
@@ -682,6 +684,69 @@ bool impostor_make(impostor_baker_t *baker, impostor_t *impostor, const object_m
 		impostor_release(impostor);
 		return false;
 	}
+	return true;
+}
+
+bool impostor_make_thumbnail(impostor_baker_t *baker, const object_model_t *model, float month, uint8_t *rgba_out)
+{
+	picture_layout_t layout = layout_for(model, month);
+	float sphere[4];
+	uint8_t *atlases;
+	// The light from over the viewer's left shoulder (model axes; the view
+	// impostor.glsl's IMPOSTOR_THUMBNAIL_DIRECTION)
+	float light[3] = { 0.15f, 0.85f, 0.75f };
+	float light_length = SDL_sqrtf(light[0] * light[0] + light[1] * light[1] + light[2] * light[2]);
+	size_t texels = (size_t)IMPOSTOR_THUMBNAIL_PIXELS * IMPOSTOR_THUMBNAIL_PIXELS;
+
+	layout.thumbnail = true;
+	layout.grid_x = 1;
+	layout.grid_y = 1;
+	layout.cell_pixels = IMPOSTOR_THUMBNAIL_PIXELS;
+	layout.atlas_width = IMPOSTOR_THUMBNAIL_PIXELS;
+	layout.atlas_height = IMPOSTOR_THUMBNAIL_PIXELS;
+	layout.atlas_bytes = texels * 4;
+	atlases = SDL_malloc(layout.atlas_bytes * 2);
+	if (atlases == NULL)
+	{
+		return false;
+	}
+	bounding_sphere(model, sphere);
+	if (!bake(baker, model, &layout, sphere, atlases))
+	{
+		SDL_free(atlases);
+		return false;
+	}
+	// Lit as the editor's pictures want it: some light all round, the
+	// rest from the one side (the leaves' wrapped, as they are drawn)
+	for (size_t i = 0; i < texels; i++)
+	{
+		const uint8_t *albedo = atlases + 4 * i;
+		const uint8_t *normal_depth = atlases + layout.atlas_bytes + 4 * i;
+		float normal[3];
+		float length;
+		float facing = 0.0f;
+		float lit;
+
+		for (int k = 0; k < 3; k++)
+		{
+			normal[k] = (float)normal_depth[k] / 127.5f - 1.0f;
+		}
+		length = SDL_sqrtf(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+		if (length > 1e-3f)
+		{
+			facing = (normal[0] * light[0] + normal[1] * light[1] + normal[2] * light[2]) / (length * light_length);
+		}
+		// (a plant's leaves: baked a quarter as long, lit wrapped round)
+		lit = length < 0.5f ? 0.55f + 0.6f * (facing * 0.5f + 0.5f) : 0.4f + 0.85f * SDL_max(facing, 0.0f);
+		for (int k = 0; k < 3; k++)
+		{
+			float linear = SDL_powf((float)albedo[k] / 255.0f, 2.2f) * lit;
+
+			rgba_out[4 * i + k] = (uint8_t)SDL_clamp(SDL_powf(linear, 1.0f / 2.2f) * 255.0f + 0.5f, 0.0f, 255.0f);
+		}
+		rgba_out[4 * i + 3] = albedo[3] >= 128 ? 255 : 0;
+	}
+	SDL_free(atlases);
 	return true;
 }
 

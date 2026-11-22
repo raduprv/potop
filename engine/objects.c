@@ -958,6 +958,48 @@ void objects_update_impostors(objects_t *objects)
 	}
 }
 
+#define THUMBNAILS_PER_FRAME 12
+
+void objects_update_thumbnails(objects_t *objects)
+{
+	uint8_t *picture;
+	int made = 0;
+
+	if (!objects->thumbnails_wanted || objects->thumbnails_made >= objects->model_count || gpu.device == NULL)
+	{
+		return;
+	}
+	if (objects->thumbnail_capacity < objects->model_count)
+	{
+		SDL_GPUTexture **grown = SDL_realloc(objects->thumbnails, sizeof(SDL_GPUTexture *) * (size_t)objects->model_count);
+
+		if (grown == NULL)
+		{
+			return;
+		}
+		SDL_memset(grown + objects->thumbnail_capacity, 0, sizeof(SDL_GPUTexture *) * (size_t)(objects->model_count - objects->thumbnail_capacity));
+		objects->thumbnails = grown;
+		objects->thumbnail_capacity = objects->model_count;
+	}
+	picture = SDL_malloc((size_t)IMPOSTOR_THUMBNAIL_PIXELS * IMPOSTOR_THUMBNAIL_PIXELS * 4);
+	if (picture == NULL)
+	{
+		return;
+	}
+	while (objects->thumbnails_made < objects->model_count && made < THUMBNAILS_PER_FRAME)
+	{
+		int m = objects->thumbnails_made++;
+
+		if (objects->thumbnails[m] == NULL && objects->models[m].vertex_buffer != NULL
+			&& impostor_make_thumbnail(&objects->impostor_baker, &objects->models[m], objects->month, picture))
+		{
+			objects->thumbnails[m] = object_texture_upload(picture, IMPOSTOR_THUMBNAIL_PIXELS, IMPOSTOR_THUMBNAIL_PIXELS);
+		}
+		made++;
+	}
+	SDL_free(picture);
+}
+
 bool objects_reload_changed(objects_t *objects)
 {
 	SDL_GPUTexture *old_textures[16];
@@ -1234,6 +1276,13 @@ void objects_destroy(objects_t *objects)
 	impostor_baker_destroy(&objects->impostor_baker);
 	if (gpu.device != NULL)
 	{
+		for (int m = 0; m < objects->thumbnail_capacity; m++)
+		{
+			if (objects->thumbnails[m] != NULL)
+			{
+				SDL_ReleaseGPUTexture(gpu.device, objects->thumbnails[m]);
+			}
+		}
 		for (int kind = 0; kind < 2; kind++)
 		{
 			for (int k = 0; k < 2; k++)
@@ -1253,6 +1302,8 @@ void objects_destroy(objects_t *objects)
 			SDL_ReleaseGPUBuffer(gpu.device, objects->impostor_index_buffer);
 		}
 	}
+	SDL_free(objects->thumbnails);
+
 	SDL_zerop(objects);
 }
 

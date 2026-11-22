@@ -155,6 +155,10 @@ typedef struct
 	// it covers (meters), where the camera looks and which way (degrees,
 	// the camera's yaw)
 	SDL_GPUTexture *minimap_texture;
+	// The object browser's pictures, a texture a model (NULL: none yet;
+	// objects_t.thumbnails)
+	SDL_GPUTexture *const *object_thumbnails;
+	int object_thumbnail_count;
 	float minimap_extent_meters;
 	float camera_x;
 	float camera_z;
@@ -237,6 +241,12 @@ typedef struct
 	bool brushes_placed;           // nk_begin ran once with the stored bounds
 	settings_window_t settings;     // the settings (settings_window.h)
 	bool diagnostics_open;
+	// The object browser: the object types' pictures, to pick the one the
+	// Object tool places (over the rest while open)
+	bool object_browser_open;
+	struct nk_rect object_browser_bounds;
+	char object_search[48];
+	int object_browser_category;   // -1: all
 	struct nk_rect diagnostics_bounds;
 	struct nk_rect inspector_bounds;
 	ui_maps_mode_t maps_mode;

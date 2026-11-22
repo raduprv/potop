@@ -34,6 +34,8 @@
 #define IMPOSTOR_PLANT_AZIMUTHS 8      // impostor.glsl's
 #define IMPOSTOR_PLANT_ELEVATIONS 3
 #define IMPOSTOR_PLANT_CELL_PIXELS 128
+// The editor's pictures of the models (impostor_make_thumbnail)
+#define IMPOSTOR_THUMBNAIL_PIXELS 128
 // The baker's targets: the largest atlas of either
 #define IMPOSTOR_BAKE_WIDTH (IMPOSTOR_PLANT_AZIMUTHS * IMPOSTOR_PLANT_CELL_PIXELS)
 #define IMPOSTOR_BAKE_HEIGHT IMPOSTOR_ATLAS_PIXELS
@@ -83,6 +85,12 @@ void impostor_baker_destroy(impostor_baker_t *baker);
 
 // Whether a model is worth an impostor
 bool impostor_worth_one(const object_model_t *model);
+
+// A picture of the model for the editor's object browser: one, from a three
+// quarter view, lit (sRGB RGBA, IMPOSTOR_THUMBNAIL_PIXELS square, alpha 0 or
+// 255; a plant's foliage as in month). Outside a frame (it waits for the
+// GPU). False if it could not be baked
+bool impostor_make_thumbnail(impostor_baker_t *baker, const object_model_t *model, float month, uint8_t *rgba_out);
 
 // The model's impostor, from the cache or baked (which waits for the GPU).
 // Outside a frame (between gpu_end_frame and gpu_begin_frame). A plant's

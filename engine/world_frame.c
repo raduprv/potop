@@ -233,5 +233,6 @@ void world_end_frame(world_t *world, const camera_t *camera, float seconds, bool
 	// New or changed models' impostors (baked or from the cache; between
 	// frames, as baking waits for the GPU)
 	objects_update_impostors(&world->objects);
+	objects_update_thumbnails(&world->objects);
 	trace_mark("physics drawn between steps, impostors");
 }

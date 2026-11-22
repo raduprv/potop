@@ -3643,6 +3643,10 @@ static void update_interface(testbed_t *game, double frame_seconds)
 	view.seed = game->potop->world.terrain.seed;
 	view.project_name = game->project_name;
 	view.minimap_texture = game->potop->session.world_map.texture;
+	view.object_thumbnails = game->potop->world.objects.thumbnails;
+	view.object_thumbnail_count = game->potop->world.objects.thumbnail_capacity;
+	// (the browser's pictures made once it is first opened)
+	game->potop->world.objects.thumbnails_wanted = game->potop->world.objects.thumbnails_wanted || game->ui.object_browser_open;
 	view.minimap_extent_meters = (float)game->potop->world.terrain.size * game->potop->world.terrain.cell_size_meters;
 	view.camera_x = game->potop->camera.first_person ? game->potop->camera.walker_x : game->potop->camera.target_x;
 	view.camera_z = game->potop->camera.first_person ? game->potop->camera.walker_z : game->potop->camera.target_z;

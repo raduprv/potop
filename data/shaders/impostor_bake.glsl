@@ -17,7 +17,7 @@ layout(location = 5) in vec4 plant_snow;                  // plant.vert's: w its
 
 layout(std140, set = UNIFORM_SET, binding = 0) uniform bake_block
 {
-	ivec4 frame;                   // xy: the picture in the grid; z: a plant's (impostor.glsl's plant pictures); w: its month cells (plant.glsl)
+	ivec4 frame;                   // xy: the picture in the grid; z: 1 a plant's (impostor.glsl's plant pictures), 2 the editor's picture; w: its month cells (plant.glsl)
 	vec4 sphere;                   // the model's bounding sphere: center, radius (model units)
 #ifdef PLANT_BAKE
 	vec4 season;                   // the material's (plant.glsl's), for the month baked
@@ -33,7 +33,8 @@ layout(location = 4) out float turned;                    // how far its card ha
 
 void main()
 {
-	vec3 direction = frame.z != 0 ? impostor_plant_direction(frame.xy) : impostor_frame_direction(frame.xy);
+	vec3 direction = frame.z == 2 ? normalize(IMPOSTOR_THUMBNAIL_DIRECTION)
+		: (frame.z != 0 ? impostor_plant_direction(frame.xy) : impostor_frame_direction(frame.xy));
 	vec3 right;
 	vec3 up;
 	vec3 relative = model_position - sphere.xyz;

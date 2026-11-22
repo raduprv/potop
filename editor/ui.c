@@ -18,6 +18,7 @@
 #define MESSAGE_WINDOW "message"
 #define PICK_WINDOW "pick"
 #define DIAGNOSTICS_WINDOW "Diagnostics"
+#define OBJECT_BROWSER_WINDOW "Objects"
 #define INSPECTOR_WINDOW "Inspector"
 #define MAPS_WINDOW "Maps"
 #define SKY_WINDOW "Sky"
@@ -135,6 +136,14 @@ static bool state_key(void *user_data, const char *section, const char *key, con
 	{
 		return read_rect(value, &ui->sky_bounds);
 	}
+	if (SDL_strcmp(key, "objects") == 0)
+	{
+		return read_rect(value, &ui->object_browser_bounds);
+	}
+	if (SDL_strcmp(key, "objects_open") == 0)
+	{
+		return ini_value_to_bool(value, &ui->object_browser_open);
+	}
 	if (SDL_strcmp(key, "world") == 0)
 	{
 		return read_rect(value, &ui->world_bounds);
@@ -157,6 +166,7 @@ static void save_state(const ui_t *ui)
 	const struct nk_rect *inspector = &ui->inspector_bounds;
 	const struct nk_rect *sky = &ui->sky_bounds;
 	const struct nk_rect *world = &ui->world_bounds;
+	const struct nk_rect *objects = &ui->object_browser_bounds;
 
 	if (!file_io_preference_path(UI_STATE_FILE, path, sizeof(path)))
 	{
@@ -169,14 +179,15 @@ static void save_state(const ui_t *ui)
 		"[windows]\nbrushes = %.0f, %.0f, %.0f, %.0f\nbrushes_collapsed = %s\n"
 		"settings = %.0f, %.0f, %.0f, %.0f\nsettings_tab = %d\n"
 		"diagnostics = %.0f, %.0f, %.0f, %.0f\ndiagnostics_open = %s\ninspector = %.0f, %.0f, %.0f, %.0f\n"
-		"sky = %.0f, %.0f, %.0f, %.0f\nworld = %.0f, %.0f, %.0f, %.0f\nlast_map = %s\n",
+		"sky = %.0f, %.0f, %.0f, %.0f\nworld = %.0f, %.0f, %.0f, %.0f\nobjects = %.0f, %.0f, %.0f, %.0f\nobjects_open = %s\nlast_map = %s\n",
 		(double)ui->style.scale, (double)ui->style.font_size, (double)ui->style.dialog_text_scale, (double)ui->style.panel_opacity, ui->show_status_line ? "true" : "false",
 		(double)brushes->x, (double)brushes->y, (double)brushes->w, (double)brushes->h, ui->brushes_collapsed ? "true" : "false",
 		(double)settings->x, (double)settings->y, (double)settings->w, (double)settings->h, ui->settings.tab,
 		(double)diagnostics->x, (double)diagnostics->y, (double)diagnostics->w, (double)diagnostics->h,
 		ui->diagnostics_open ? "true" : "false", (double)inspector->x, (double)inspector->y, (double)inspector->w, (double)inspector->h,
 		(double)sky->x, (double)sky->y, (double)sky->w, (double)sky->h,
-		(double)world->x, (double)world->y, (double)world->w, (double)world->h, ui->last_map_name);
+		(double)world->x, (double)world->y, (double)world->w, (double)world->h,
+		(double)objects->x, (double)objects->y, (double)objects->w, (double)objects->h, ui->object_browser_open ? "true" : "false", ui->last_map_name);
 	file_io_save_file(path, text, SDL_strlen(text));
 }
 
@@ -273,6 +284,8 @@ bool ui_create(ui_t *ui, SDL_Window *window)
 	ui->brushes_bounds = nk_rect(12.0f, 12.0f, BRUSHES_WIDTH, 400.0f);
 	ui->settings.bounds = nk_rect(320.0f, 60.0f, 520.0f, 560.0f);
 	ui->diagnostics_bounds = nk_rect(320.0f, 80.0f, 640.0f, 470.0f);
+	ui->object_browser_bounds = nk_rect(12.0f, 140.0f, 380.0f, 560.0f);
+	ui->object_browser_category = -1;
 	ui->sky_bounds = nk_rect(360.0f, 60.0f, 520.0f, 700.0f);
 	ui->world_bounds = nk_rect(400.0f, 60.0f, 300.0f, 160.0f);
 	ui->sky_brush_kilometers = 1.5f;
@@ -335,7 +348,8 @@ void ui_show_message(ui_t *ui, const char *message, double time_seconds)
 bool ui_close_windows(ui_t *ui)
 {
 	bool any = ui->available && !ui->hidden
-		&& (ui->settings.open || ui->diagnostics_open || ui->sky_open || ui->world_open || ui->maps_mode != UI_MAPS_CLOSED);
+		&& (ui->settings.open || ui->diagnostics_open || ui->sky_open || ui->world_open || ui->maps_mode != UI_MAPS_CLOSED
+			|| ui->object_browser_open);
 
 	if (any)
 	{
@@ -344,6 +358,10 @@ bool ui_close_windows(ui_t *ui)
 		if (ui->maps_mode != UI_MAPS_CLOSED)
 		{
 			ui->maps_mode = UI_MAPS_CLOSED;
+		}
+		else if (ui->object_browser_open)
+		{
+			ui->object_browser_open = false;
 		}
 		else if (ui->world_open)
 		{
@@ -687,6 +705,11 @@ static void object_options(ui_t *ui, const ui_view_t *view)
 		items[i] = names[i];
 	}
 	tools->object_category = SDL_clamp(tools->object_category, 0, types->category_count - 1);
+	nk_layout_row_dynamic(context, ROW_HEIGHT - 4.0f, 1);
+	if (nk_button_label(context, ui->object_browser_open ? "Close the browser" : "Browse (pictures)..."))
+	{
+		ui->object_browser_open = !ui->object_browser_open;
+	}
 	nk_layout_row(context, NK_DYNAMIC, ROW_HEIGHT - 4.0f, 2, (const float[]){ 0.38f, 0.62f });
 	nk_label(context, "Category", NK_TEXT_LEFT);
 	category = nk_combo(context, items, types->category_count, tools->object_category, (int)(ROW_HEIGHT - 4.0f),
@@ -1258,6 +1281,10 @@ static void menu_bar(ui_t *ui, const ui_view_t *view)
 		if (nk_menu_item_label(context, "Sky...", NK_TEXT_LEFT))
 		{
 			ui->sky_open = !ui->sky_open;
+		}
+		if (nk_menu_item_label(context, "Objects (browser)...", NK_TEXT_LEFT))
+		{
+			ui->object_browser_open = !ui->object_browser_open;
 		}
 		if (nk_menu_item_label(context, "Diagnostics...", NK_TEXT_LEFT))
 		{
@@ -2246,6 +2273,151 @@ static void world_window(ui_t *ui, const ui_view_t *view)
 
 // ---------------------------------------------------------------------------
 // Diagnostics
+
+// The object browser: every placeable type's picture, by category and
+// name; a click picks it for the Object tool (and takes that tool). Kept
+// over the other windows while open
+#define BROWSER_CELL 84.0f
+
+static bool browser_shows(const ui_t *ui, const object_type_t *type)
+{
+	if (type->model < 0 || type->module_type >= 0)
+	{
+		return false;
+	}
+	if (ui->object_browser_category >= 0 && type->category != ui->object_browser_category)
+	{
+		return false;
+	}
+	return ui->object_search[0] == '\0' || SDL_strcasestr(type->name, ui->object_search) != NULL;
+}
+
+static void object_browser_window(ui_t *ui, const ui_view_t *view)
+{
+	struct nk_context *context = &ui->backend.context;
+	const object_types_t *types = view->object_types;
+	tool_state_t *tools = view->tools;
+	nk_flags flags = NK_WINDOW_BORDER | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE | NK_WINDOW_TITLE | NK_WINDOW_CLOSABLE;
+	const char *physics_names[] = { "only drawn", "plant (no body)", "fixed body", "loose body" };
+
+	if (!ui->object_browser_open || types == NULL)
+	{
+		return;
+	}
+	if (nk_window_is_hidden(context, OBJECT_BROWSER_WINDOW) && nk_window_find(context, OBJECT_BROWSER_WINDOW) != NULL)
+	{
+		nk_window_show(context, OBJECT_BROWSER_WINDOW, NK_SHOWN);
+	}
+	if (nk_begin(context, OBJECT_BROWSER_WINDOW, ui->object_browser_bounds, flags))
+	{
+		float width = nk_window_get_content_region_size(context).x;
+		int columns = SDL_max((int)(width / (BROWSER_CELL + context->style.window.spacing.x)), 1);
+		int shown[OBJECT_TYPES_MAX];
+		int shown_count = 0;
+
+		ui->object_browser_bounds = nk_window_get_bounds(context);
+		// The name looked for, the category
+		nk_layout_row(context, NK_DYNAMIC, ROW_HEIGHT - 4.0f, 2, (const float[]){ 0.2f, 0.8f });
+		nk_label(context, "Search", NK_TEXT_LEFT);
+		nk_edit_string_zero_terminated(context, NK_EDIT_FIELD | NK_EDIT_SIG_ENTER, ui->object_search, (int)sizeof(ui->object_search),
+			nk_filter_default);
+		nk_layout_row_dynamic(context, SMALL_ROW_HEIGHT, 4);
+		if (nk_select_label(context, "All", NK_TEXT_CENTERED, ui->object_browser_category < 0))
+		{
+			ui->object_browser_category = -1;
+		}
+		for (int c = 0; c < types->category_count; c++)
+		{
+			char name[OBJECT_CATEGORY_NAME_LENGTH];
+
+			display_name(types->categories[c], name, sizeof(name));
+			if (nk_select_label(context, name, NK_TEXT_CENTERED, ui->object_browser_category == c))
+			{
+				ui->object_browser_category = c;
+			}
+		}
+		for (int t = 0; t < types->type_count && shown_count < OBJECT_TYPES_MAX; t++)
+		{
+			if (browser_shows(ui, &types->types[t]))
+			{
+				shown[shown_count++] = t;
+			}
+		}
+		// The pictures, a row of them then their names
+		for (int first = 0; first < shown_count; first += columns)
+		{
+			int last = SDL_min(first + columns, shown_count);
+
+			nk_layout_row_static(context, BROWSER_CELL, (int)BROWSER_CELL, columns);
+			for (int k = first; k < last; k++)
+			{
+				const object_type_t *type = &types->types[shown[k]];
+				SDL_GPUTexture *picture = type->model < view->object_thumbnail_count ? view->object_thumbnails[type->model] : NULL;
+				struct nk_rect cell = nk_widget_bounds(context);
+				bool selected = tools->object_type == shown[k];
+				char tooltip[96];
+				bool clicked;
+
+				SDL_snprintf(tooltip, sizeof(tooltip), "%s: %s", type->name, physics_names[type->physics]);
+				tooltip_if_hovered(context, tooltip);
+				clicked = picture != NULL ? nk_button_image(context, nk_image_ptr(picture)) : nk_button_label(context, "...");
+				if (selected)
+				{
+					nk_stroke_rect(nk_window_get_canvas(context), cell, 3.0f, 2.0f, context->style.selectable.text_hover);
+				}
+				if (clicked)
+				{
+					tools->object_type = shown[k];
+					tools->object_category = type->category;
+					tools->current_tool = TOOL_OBJECT;
+				}
+			}
+			nk_layout_row_static(context, SMALL_ROW_HEIGHT, (int)BROWSER_CELL, columns);
+			for (int k = first; k < last; k++)
+			{
+				char name[OBJECT_TYPE_NAME_LENGTH];
+
+				display_name(types->types[shown[k]].name, name, sizeof(name));
+				nk_label(context, name, NK_TEXT_CENTERED);
+			}
+		}
+		if (shown_count == 0)
+		{
+			nk_layout_row_dynamic(context, SMALL_ROW_HEIGHT, 1);
+			nk_label(context, "No object of that name here", NK_TEXT_LEFT);
+		}
+		// The one picked: what it is, how it is placed
+		if (tools->object_type >= 0 && tools->object_type < types->type_count)
+		{
+			const object_type_t *type = &types->types[tools->object_type];
+			char line[128];
+			nk_bool awake = tools->object_awake;
+
+			section_label(ui, "Picked");
+			nk_layout_row_dynamic(context, SMALL_ROW_HEIGHT, 1);
+			SDL_snprintf(line, sizeof(line), "%s: %s", type->name, physics_names[type->physics]);
+			nk_label(context, line, NK_TEXT_LEFT);
+			nk_checkbox_label(context, "Loose (settles, rolls)", &awake);
+			tools->object_awake = awake;
+		}
+	}
+	else
+	{
+		ui->object_browser_open = false;
+	}
+	nk_end(context);
+	if (nk_window_is_hidden(context, OBJECT_BROWSER_WINDOW))
+	{
+		ui->object_browser_open = false;
+	}
+	// Over the rest: back on top whenever nothing else is being worked
+	// (no button held, no field being typed in)
+	else if (ui->object_browser_open && !nk_window_is_active(context, OBJECT_BROWSER_WINDOW) && !nk_item_is_any_active(context)
+		&& !context->input.mouse.buttons[NK_BUTTON_LEFT].down && !context->input.mouse.buttons[NK_BUTTON_RIGHT].down)
+	{
+		nk_window_set_focus(context, OBJECT_BROWSER_WINDOW);
+	}
+}
 
 static void diagnostics_window(ui_t *ui)
 {
@@ -3330,6 +3502,7 @@ void ui_update(ui_t *ui, const ui_view_t *view, double time_seconds)
 	world_window(ui, view);
 	inspector_window(ui, view);
 	maps_window(ui, view);
+	object_browser_window(ui, view);
 	message_window(ui, time_seconds);
 	pick_window(ui, view);
 	console_window(ui, view);

@@ -55,6 +55,10 @@ vec3 impostor_plant_direction(ivec2 frame)
 	return vec3(cos(elevation) * cos(azimuth), sin(elevation), cos(elevation) * sin(azimuth));
 }
 
+// The editor's pictures (impostor_make_thumbnail): from three quarters,
+// somewhat above
+#define IMPOSTOR_THUMBNAIL_DIRECTION vec3(0.55, 0.42, 0.72)
+
 // Where a point of a picture (-1..1 on its axes) lies in an atlas of grid
 // pictures across and down
 vec2 impostor_atlas_uv(ivec2 frame, vec2 on_picture, vec2 grid)

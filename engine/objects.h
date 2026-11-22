@@ -186,6 +186,13 @@ typedef struct
 	SDL_GPUTexture *impostor_arrays[2][2];
 	int impostor_first_draw;       // the impostors' draws, after every material's
 	int impostor_draw_count;
+	// The editor's pictures of the models (its object browser), a texture a
+	// model (NULL: not made yet, or could not be), made a few a frame once
+	// wanted (objects_update_thumbnails)
+	bool thumbnails_wanted;
+	SDL_GPUTexture **thumbnails;
+	int thumbnail_capacity;
+	int thumbnails_made;           // models looked at so far (they are made in order)
 	SDL_GPUBuffer *impostor_index_buffer;  // a square: two triangles
 
 	// The buildings' textures' level of detail bias this frame (the TAA's
@@ -805,6 +812,10 @@ void objects_prepare(objects_t *objects, const camera_t *camera);
 // Makes (or lets go of) the models' impostors when they changed: outside
 // the frames (between gpu_end_frame and the next gpu_begin_frame)
 void objects_update_impostors(objects_t *objects);
+
+// The editor's pictures of the models, a few a frame once thumbnails_wanted
+// (between frames: baking waits for the GPU)
+void objects_update_thumbnails(objects_t *objects);
 
 // Draws what objects_prepare found, in the scene's pass (its scene block
 // already pushed). variation_texture is the terrain's noise texture, used
