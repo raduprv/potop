@@ -17,7 +17,7 @@ layout(set = TEXTURE_SET, binding = 2) uniform sampler2D flow_texture;     // RG
 
 layout(std140, set = UNIFORM_SET, binding = 1) uniform water_block
 {
-	ivec2 unused_origin;            // (once the chunk's origin: now per instance, water.vert's chunk_origin)
+	ivec2 debug_and_step;           // x: the fragment shader's debug flags; y: cells between this draw's vertices (its level of detail)
 	int map_size;
 	float cell_size;
 	vec4 thin_highlight;            // on (1/0), film depth, thin depth (meters), moving speed (m/s): F6
@@ -175,6 +175,39 @@ void main()
 			if (level <= ground)
 			{
 				bank_level = max(bank_level, level);
+			}
+		}
+	}
+
+	// A coarser level of detail: the triangles join us to the vertices step
+	// cells away, not to our neighbors. A dry vertex on a canyon's wall whose
+	// near cells hold no water would sit on the ground high up while the
+	// river's vertex below it is wet: the triangle between laid the river up
+	// half the wall. Their water counts as round us too
+	int step = max(debug_and_step.y, 1);
+
+	if (step > 1)
+	{
+		for (int dy = -1; dy <= 1; dy++)
+		{
+			for (int dx = -1; dx <= 1; dx++)
+			{
+				if (dx == 0 && dy == 0)
+				{
+					continue;
+				}
+				float level = wet_level(cell + ivec2(dx, dy) * step);
+
+				if (level < -1e8)
+				{
+					continue;
+				}
+				highest_level = max(highest_level, level);
+				lowest_level = min(lowest_level, level);
+				if (level <= ground)
+				{
+					bank_level = max(bank_level, level);
+				}
 			}
 		}
 	}

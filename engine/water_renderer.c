@@ -11,7 +11,7 @@
 // water_block in data/shaders/water.vert and water.frag (std140)
 typedef struct
 {
-	int32_t debug_flags[2];        // x: render.water_debug (water_surface.glsl); y unused
+	int32_t debug_flags[2];        // x: render.water_debug (water_surface.glsl); y: the vertex shader's: cells between this draw's vertices
 	int32_t map_size;
 	float cell_size;
 	float thin_highlight[4];
@@ -676,13 +676,16 @@ void water_renderer_draw(water_renderer_t *renderer, SDL_GPURenderPass *pass, co
 	{
 		SDL_GPUBufferBinding instance_binding = { renderer->instance_buffer, 0 };
 
-		SDL_PushGPUVertexUniformData(gpu.command_buffer, 1, &uniforms, sizeof(uniforms));
 		for (int level = 0; level < TERRAIN_LOD_LEVEL_COUNT; level++)
 		{
 			if (renderer->level_count[level] == 0)
 			{
 				continue;
 			}
+			// (its vertices' spacing: a bank vertex looks that far for the
+			// water its triangles reach)
+			uniforms.debug_flags[1] = 1 << level;
+			SDL_PushGPUVertexUniformData(gpu.command_buffer, 1, &uniforms, sizeof(uniforms));
 			instance_binding.offset = (uint32_t)(sizeof(int32_t) * 2 * (size_t)renderer->level_first[level]);
 			SDL_BindGPUVertexBuffers(pass, 1, &instance_binding, 1);
 			SDL_DrawGPUIndexedPrimitives(pass, (uint32_t)terrain_renderer->lod_index_count[level], (uint32_t)renderer->level_count[level],
