@@ -274,6 +274,9 @@ void world_follow_settings(world_t *world);
 void world_apply_render_settings(world_t *world);
 // The vegetation grown anew (what was put by hand stays)
 void world_regrow(world_t *world);
+// The same for the categories whose bits are set in category_mask (the
+// others stay as they are)
+void world_regrow_categories(world_t *world, uint32_t category_mask);
 
 void world_touch_water(world_t *world);
 

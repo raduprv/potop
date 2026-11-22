@@ -28,6 +28,10 @@
 // Adds the vegetation of the whole map. Objects already there (houses)
 // keep their footprints free. water may be NULL.
 void populate_map(objects_t *objects, const terrain_t *terrain, const water_t *water, const objects_settings_t *settings);
+// The same for the types of the categories whose bits are set in
+// category_mask (what is already there keeps its footprint)
+void populate_map_categories(objects_t *objects, const terrain_t *terrain, const water_t *water, const objects_settings_t *settings,
+	uint32_t category_mask);
 
 // One application of the planting brush lasting 'seconds'; returns how
 // many objects it planted

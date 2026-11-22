@@ -2209,6 +2209,16 @@ static void report_actor_events(testbed_t *game)
 	}
 }
 
+// The plants grown anew over the whole map (every category but the rocks),
+// or the rocks placed anew; the others stay
+static void regrow_some(testbed_t *game, bool rocks)
+{
+	int rock_category = object_types_find_category(&game->potop->world.objects.types, "rocks");
+	uint32_t rock_mask = rock_category >= 0 && rock_category < 32 ? 1u << rock_category : 0u;
+
+	world_regrow_categories(&game->potop->world, rocks ? rock_mask : ~rock_mask);
+}
+
 static void handle_requests(testbed_t *game)
 {
 	input_state_t *input = &game->input;
@@ -2328,7 +2338,7 @@ static void handle_requests(testbed_t *game)
 	}
 	if (input->request_repopulate)
 	{
-		world_regrow(&game->potop->world);
+		regrow_some(game, false);
 	}
 	if (input->request_remove_objects)
 	{
@@ -3791,11 +3801,11 @@ static void handle_ui_requests(testbed_t *game)
 	}
 	if (requests->apply_objects || requests->regrow)
 	{
-		objects_clear(&game->potop->world.objects, true);
-		// (the water as it stands now: the willows and reeds go by it)
-		water_gpu_sync(&game->potop->world.water, &game->potop->world.terrain);
-		populate_map(&game->potop->world.objects, &game->potop->world.terrain, &game->potop->world.water, &game->potop->settings.objects);
-		material_map_restamp(&game->potop->world.terrain, &game->potop->world.objects);
+		world_regrow(&game->potop->world);
+	}
+	else if (requests->regrow_plants || requests->regrow_rocks)
+	{
+		regrow_some(game, requests->regrow_rocks);
 	}
 	if (requests->remove_objects)
 	{

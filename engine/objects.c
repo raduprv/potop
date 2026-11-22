@@ -2307,8 +2307,6 @@ bool objects_remove_nearest(objects_t *objects, float x, float z, float radius)
 
 void objects_clear(objects_t *objects, bool only_spawned)
 {
-	uint8_t *remove;
-
 	objects->regrow_known = false;
 	if (!only_spawned)
 	{
@@ -2322,6 +2320,14 @@ void objects_clear(objects_t *objects, bool only_spawned)
 		objects->near_shadow_dirty = true;
 		return;
 	}
+	objects_clear_spawned(objects, UINT32_MAX);
+}
+
+void objects_clear_spawned(objects_t *objects, uint32_t category_mask)
+{
+	uint8_t *remove;
+
+	objects->regrow_known = false;
 	if (objects->instance_count == 0)
 	{
 		return;
@@ -2333,7 +2339,10 @@ void objects_clear(objects_t *objects, bool only_spawned)
 	}
 	for (int i = 0; i < objects->instance_count; i++)
 	{
-		remove[i] = objects->types.types[objects->instances[i].type].spawn_per_hectare > 0.0f && objects->instances[i].group == 0 ? 1 : 0;
+		const object_type_t *type = &objects->types.types[objects->instances[i].type];
+
+		remove[i] = type->spawn_per_hectare > 0.0f && objects->instances[i].group == 0 && type->category >= 0 && type->category < 32
+			&& (category_mask & (1u << type->category)) != 0 ? 1 : 0;
 	}
 	compact(objects, remove);
 	SDL_free(remove);

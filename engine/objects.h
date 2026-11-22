@@ -772,6 +772,9 @@ bool objects_remove_nearest(objects_t *objects, float x, float z, float radius);
 // Removes all objects (with only_spawned, only the vegetation: objects of
 // types the map is populated with that belong to no layout)
 void objects_clear(objects_t *objects, bool only_spawned);
+// Removes the vegetation (as objects_clear's only_spawned) of the categories
+// whose bits are set in category_mask
+void objects_clear_spawned(objects_t *objects, uint32_t category_mask);
 
 // Sorts the objects into the grid if anything was added or removed
 void objects_sort(objects_t *objects);

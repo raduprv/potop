@@ -1348,8 +1348,15 @@ static void menu_bar(ui_t *ui, const ui_view_t *view)
 		{
 			ui->sketch_open = true;
 		}
-		tooltip_if_hovered(context, "Removes the vegetation, rocks, dead wood and grows them again by the ground and the water as they are now (villages stay)");
-		if (nk_menu_item_label(context, "Grow the vegetation anew (V)", NK_TEXT_LEFT))
+		if (nk_menu_item_label(context, "Grow the plants anew (V)", NK_TEXT_LEFT))
+		{
+			ui->requests.regrow_plants = true;
+		}
+		if (nk_menu_item_label(context, "Place the rocks anew", NK_TEXT_LEFT))
+		{
+			ui->requests.regrow_rocks = true;
+		}
+		if (nk_menu_item_label(context, "Grow both anew", NK_TEXT_LEFT))
 		{
 			ui->requests.regrow = true;
 		}
@@ -1749,9 +1756,13 @@ static void context_bar(ui_t *ui, const ui_view_t *view)
 				}
 			}
 			bar_gap(ui);
-			if (bar_button(ui, "Grow the whole map anew", "Removes the vegetation, rocks, dead wood and grows them again by the ground and the water as they are now (V; villages stay)"))
+			if (bar_button(ui, "Grow the plants anew", "Every plant off the whole map, grown again by the ground and the water as they are now (V; the rocks and villages stay)"))
 			{
-				ui->requests.regrow = true;
+				ui->requests.regrow_plants = true;
+			}
+			if (bar_button(ui, "Rocks anew", "Every rock off the whole map, placed again (the plants and villages stay)"))
+			{
+				ui->requests.regrow_rocks = true;
 			}
 			break;
 		}

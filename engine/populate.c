@@ -547,6 +547,18 @@ static uint64_t cell_seed(uint32_t seed, int type, int i, int j)
 
 void populate_map(objects_t *objects, const terrain_t *terrain, const water_t *water, const objects_settings_t *settings)
 {
+	populate_map_categories(objects, terrain, water, settings, UINT32_MAX);
+}
+
+// Whether the type's category is one of the mask's
+static bool category_wanted(const object_type_t *type, uint32_t category_mask)
+{
+	return type->category >= 0 && type->category < 32 && (category_mask & (1u << type->category)) != 0;
+}
+
+void populate_map_categories(objects_t *objects, const terrain_t *terrain, const water_t *water, const objects_settings_t *settings,
+	uint32_t category_mask)
+{
 	populate_context_t context;
 	uint64_t start = SDL_GetPerformanceCounter();
 	int placed_total = 0;
@@ -569,7 +581,7 @@ void populate_map(objects_t *objects, const terrain_t *terrain, const water_t *w
 	{
 		const object_type_t *type = &objects->types.types[t];
 
-		if (type->spawn_per_hectare <= 0.0f)
+		if (type->spawn_per_hectare <= 0.0f || !category_wanted(type, category_mask))
 		{
 			continue;
 		}
@@ -614,7 +626,7 @@ void populate_map(objects_t *objects, const terrain_t *terrain, const water_t *w
 		const field_t *patch = NULL;
 		int placed = 0;
 
-		if (base_probability <= 0.0f || type->model < 0)
+		if (base_probability <= 0.0f || type->model < 0 || !category_wanted(type, category_mask))
 		{
 			continue;
 		}

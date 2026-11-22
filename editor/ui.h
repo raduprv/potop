@@ -136,6 +136,8 @@ typedef struct
 	bool apply_render;             // textures, shadow maps, vsync
 	bool apply_objects;            // vegetation density: grow it anew
 	bool regrow;
+	bool regrow_plants;            // ...only the plants (every category but the rocks)
+	bool regrow_rocks;             // ...only the rocks
 	bool remove_objects;
 	bool save_settings;
 	bool restore_settings;         // back to the values of settings.ini

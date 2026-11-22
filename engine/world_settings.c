@@ -145,9 +145,14 @@ void world_apply_render_settings(world_t *world)
 
 void world_regrow(world_t *world)
 {
-	objects_clear(&world->objects, true);
+	world_regrow_categories(world, UINT32_MAX);
+}
+
+void world_regrow_categories(world_t *world, uint32_t category_mask)
+{
+	objects_clear_spawned(&world->objects, category_mask);
 	// (the water as it stands now: the willows and reeds go by it)
 	water_gpu_sync(&world->water, &world->terrain);
-	populate_map(&world->objects, &world->terrain, &world->water, &world->settings->objects);
+	populate_map_categories(&world->objects, &world->terrain, &world->water, &world->settings->objects, category_mask);
 	material_map_restamp(&world->terrain, &world->objects);
 }

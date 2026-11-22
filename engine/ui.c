@@ -2187,7 +2187,7 @@ static void settings_window(ui_t *ui, const ui_view_t *view)
 			{
 				heading_row(ui, "Whole map", false);
 				nk_layout_row_dynamic(context, ROW_HEIGHT, 2);
-				tooltip_if_hovered(context, "Removes the vegetation and grows it again (V)");
+				tooltip_if_hovered(context, "Removes the vegetation and the rocks and grows them again");
 				if (nk_button_label(context, "Grow anew"))
 				{
 					ui->requests.regrow = true;
