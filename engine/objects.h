@@ -178,6 +178,7 @@ typedef struct
 	// The culling's switch to impostors: the projection's focal length
 	// times the scene's height in pixels, over a picture's (0: none)
 	float impostor_factor;
+	float plant_impostor_factor;   // the same for the plants' (objects.plant_impostor_pixels)
 	SDL_GPUGraphicsPipeline *impostor_pipeline;
 	// Every impostor's atlases, a layer each, in arrays by kind (0: the
 	// hemisphere's grid, 1: a plant's), albedo then normal: all of them

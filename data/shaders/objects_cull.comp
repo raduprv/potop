@@ -157,7 +157,7 @@ layout(std140, set = UNIFORM_SET, binding = 0) uniform cull_block
 	// first (the shadow maps: their objects at least so coarse); w the share of a shuffled foliage drawn at level 3 (halfway at 2)
 	vec4 lod;
 	vec4 lod_pixels;               // a model's height on screen (pixels) below which it is drawn at levels 1, 2, 3; w: a prop's levels' error (pixels, objects.prop_lod_pixels)
-	vec4 debug;                    // x: 1 the camera's pass keeps the boxes it hid (occlusion_buffer)
+	vec4 debug;                    // x: 1 the camera's pass keeps the boxes it hid (occlusion_buffer); y: impostor_factor for the plants' (their pictures larger)
 	ivec4 work;                    // x: the objects looked at, y: the ranges, z: where the strays start in the order, w: where the ranges start in cell_words
 	ivec4 water;                   // x: where the cells' dry bits start in cell_words, y: 1 if they are there (the camera's pass); z: 1 the far map leaves out the plants
 	ivec4 hiz_levels[16];          // the pyramid's levels (hiz_level_table): where each starts in hiz_depths, its width, its height
@@ -372,8 +372,10 @@ bool visible(uint slot, out uint model, out float fade, out bool impostor, out u
 		if (impostor_factor > 0.0 && (cell_word & FLAG_TUMBLES) == 0u)
 		{
 			float impostor_radius = models[MODEL_WORDS * model + 1u].w * placement.w;
+			// (a plant's impostor: its look below 0, objects.c's tables)
+			float factor = models[MODEL_WORDS * model + 4u].w < 0.0 ? debug.y : impostor_factor;
 
-			impostor = impostor_radius > 0.0 && impostor_radius * impostor_factor < distance;
+			impostor = impostor_radius > 0.0 && impostor_radius * factor < distance;
 		}
 	}
 	// Its level of detail: the smaller it is on screen, the coarser (the

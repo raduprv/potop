@@ -302,6 +302,8 @@ static const ui_setting_t ui_settings[] = {
 		"The grown plants (trees, bushes) far away as pictures too: still, in their summer look (off: their levels of detail all the way)", false },
 	{ TAB_OBJECTS, "objects", "impostor_pixels", "Pictures from", 16, 512, 4, EFFECT_LIVE, "%.0f px", NULL,
 		"Objects smaller than this on screen are drawn as pictures (their pictures are 64 px: above that they are a little soft)", false },
+	{ TAB_OBJECTS, "objects", "plant_impostor_pixels", "Plants' pictures from", 16, 512, 4, EFFECT_LIVE, "%.0f px", NULL,
+		"The plants as pictures once smaller than this on screen: their pictures are 128 px (the rest's 64), sharp up to that", false },
 	{ TAB_OBJECTS, "objects", "lod", "Fewer branches far away", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
 		"Trees made by potop_plant lose their finest branches, then the next, the smaller they are on screen (only the trunk and the foliage stay)", false },
 	{ TAB_OBJECTS, "objects", "lod_distance_scale", "Branches as far as", 0.25f, 4, 0.05f, EFFECT_LIVE, "x%.2f", NULL,

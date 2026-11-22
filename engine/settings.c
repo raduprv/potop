@@ -316,6 +316,7 @@ static const setting_field_t setting_fields[] =
 	FIELD("objects", "show_impostors", SETTING_BOOL, objects.show_impostors),
 	FIELD("objects", "plant_impostors", SETTING_BOOL, objects.plant_impostors),
 	FIELD("objects", "impostor_pixels", SETTING_FLOAT, objects.impostor_pixels),
+	FIELD("objects", "plant_impostor_pixels", SETTING_FLOAT, objects.plant_impostor_pixels),
 	FIELD("objects", "lod", SETTING_BOOL, objects.lod),
 	FIELD("objects", "lod_distance_scale", SETTING_FLOAT, objects.lod_distance_scale),
 	FIELD("objects", "lod_foliage_kept", SETTING_FLOAT, objects.lod_foliage_kept),
@@ -584,6 +585,7 @@ void settings_set_defaults(settings_t *settings)
 	settings->objects.impostors = true;
 	settings->objects.plant_impostors = true;
 	settings->objects.impostor_pixels = 64.0f;
+	settings->objects.plant_impostor_pixels = 128.0f;
 	settings->objects.lod = true;
 	settings->objects.lod_distance_scale = 1.0f;
 	settings->objects.lod_foliage_kept = 1.0f;

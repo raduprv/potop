@@ -821,6 +821,8 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 
 			world->objects.impostor_factor = world->objects.impostors_everywhere ? 1e-6f
 				: camera->projection.m[5] * scene_pixels / SDL_max(world->settings->objects.impostor_pixels, 1.0f);
+			world->objects.plant_impostor_factor = world->objects.impostors_everywhere ? 1e-6f
+				: camera->projection.m[5] * scene_pixels / SDL_max(world->settings->objects.plant_impostor_pixels, 1.0f);
 			// The levels of detail: a model's height on screen in pixels is
 			// its height times this over its distance (half the focal length
 			// times the scene's height: m[5] is over half the screen)

@@ -561,6 +561,7 @@ typedef struct
 	// than this on screen (pixels across, 64; the pictures are
 	// IMPOSTOR_CELL_PIXELS: above that, a picture is seen enlarged)
 	float impostor_pixels;
+	float plant_impostor_pixels;   // the same for the plants, whose pictures are larger (IMPOSTOR_PLANT_CELL_PIXELS)
 	// Levels of detail (the trees tools/potop_plant makes): the smaller a
 	// tree is on screen, the fewer of its branches are drawn, the finest
 	// first, then the next; lod_distance_scale moves where (higher: farther

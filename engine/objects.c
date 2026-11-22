@@ -2864,7 +2864,7 @@ typedef struct
 	float hiz_size[4];
 	float lod[4];
 	float lod_pixels[4];
-	float debug[4];                    // x: 1 the camera's culling keeps the boxes it hid (objects_t.occlusion_shown)
+	float debug[4];                    // x: 1 the camera's culling keeps the boxes it hid (objects_t.occlusion_shown); y: impostor_factor for the plants'
 	int32_t work[4];                   // objects to look at (the ranges' total), the ranges, where the strays start in the order, where the ranges start in the cells' buffer (words)
 	int32_t water[4];                  // where the cells' dry bits start in the cells' buffer (words), 1 if they are there
 	int32_t hiz_levels[HIZ_MAX_LEVELS][4]; // the pyramid's levels (hiz_level_table)
@@ -4497,6 +4497,7 @@ static void cull_pass(objects_t *objects, pass_t pass, const frustum_t *frustum,
 		? objects->instances[objects->highlight_instance].gpu_slot : -1;
 	uniforms.fade_fraction = FADE_FRACTION;
 	uniforms.impostor_factor = pass == PASS_CAMERA && objects->impostors_enabled ? objects->impostor_factor : 0.0f;
+	uniforms.debug[1] = pass == PASS_CAMERA && objects->impostors_enabled ? objects->plant_impostor_factor : 0.0f;
 	// Levels of detail: the camera's by size on screen; the near shadow map
 	// at least level 1 (the finest branches' shadows are lost in the
 	// leaves'), the far one at level 2
