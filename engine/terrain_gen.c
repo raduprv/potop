@@ -329,55 +329,94 @@ static void carve_steep_faces(float *heights, int32_t size, float cell_size_mete
 // too (its talus is less steep); blades and spikes a few meters thick, walls
 // standing up with a hair's width on top, are worn down to rounded ridges
 #define EDGE_SLOPE 1.0f                 // meters a meter: the steepest crest kept as it is
-#define EDGE_PASSES 48
+#define EDGE_PASSES 400
 #define EDGE_SETTLED_METERS 0.01f       // a pass that moves nothing more than this ends them
+#define EDGE_TILE 64                    // only the tiles where something moved last pass (or next to them) go again
 
 static void smooth_sharp_edges(float *heights, int32_t size, float cell_size_meters)
 {
 	size_t cell_count = (size_t)size * (size_t)size;
+	int32_t tiles = (size + EDGE_TILE - 1) / EDGE_TILE;
 	float *next_heights = SDL_malloc(cell_count * sizeof(float));
+	uint8_t *moved_tiles = SDL_malloc((size_t)tiles * (size_t)tiles);
+	uint8_t *was_moved = SDL_malloc((size_t)tiles * (size_t)tiles);
 	float *current = heights;
 	float *next = next_heights;
 	float straight = EDGE_SLOPE * cell_size_meters;
 	float diagonal = straight * 1.41421356f;
 	int passes = 0;
 	double total_moved = 0.0;
+	Uint64 started = SDL_GetTicksNS();
 
-	if (next_heights == NULL)
+	if (next_heights == NULL || moved_tiles == NULL || was_moved == NULL)
 	{
+		SDL_free(next_heights);
+		SDL_free(moved_tiles);
+		SDL_free(was_moved);
 		return;
 	}
+	// (the first pass everywhere; the two buffers the same to start, so a
+	// tile skipped reads alike in both)
+	SDL_memcpy(next_heights, heights, cell_count * sizeof(float));
+	SDL_memset(moved_tiles, 1, (size_t)tiles * (size_t)tiles);
 	for (int pass = 0; pass < EDGE_PASSES; pass++)
 	{
 		float moved = 0.0f;
 		double moved_sum = 0.0;
 
-#pragma omp parallel for schedule(static) reduction(max:moved) reduction(+:moved_sum)
-		for (int32_t y = 0; y < size; y++)
+		SDL_memcpy(was_moved, moved_tiles, (size_t)tiles * (size_t)tiles);
+#pragma omp parallel for schedule(dynamic, 1) reduction(max:moved) reduction(+:moved_sum)
+		for (int32_t tile = 0; tile < tiles * tiles; tile++)
 		{
-			for (int32_t x = 0; x < size; x++)
-			{
-				size_t index = (size_t)y * (size_t)size + (size_t)x;
-				float height = current[index];
-				float limit = height;
+			int32_t tile_x = tile % tiles;
+			int32_t tile_y = tile / tiles;
+			bool wanted = false;
+			float tile_moved = 0.0f;
 
-				if (x > 0 && x < size - 1)
+			for (int32_t j = SDL_max(tile_y - 1, 0); j <= SDL_min(tile_y + 1, tiles - 1) && !wanted; j++)
+			{
+				for (int32_t i = SDL_max(tile_x - 1, 0); i <= SDL_min(tile_x + 1, tiles - 1); i++)
 				{
-					limit = SDL_min(limit, 0.5f * (current[index - 1] + current[index + 1]) + straight);
-				}
-				if (y > 0 && y < size - 1)
-				{
-					limit = SDL_min(limit, 0.5f * (current[index - (size_t)size] + current[index + (size_t)size]) + straight);
-					if (x > 0 && x < size - 1)
+					if (was_moved[j * tiles + i])
 					{
-						limit = SDL_min(limit, 0.5f * (current[index - (size_t)size - 1] + current[index + (size_t)size + 1]) + diagonal);
-						limit = SDL_min(limit, 0.5f * (current[index - (size_t)size + 1] + current[index + (size_t)size - 1]) + diagonal);
+						wanted = true;
+						break;
 					}
 				}
-				next[index] = limit;
-				moved = SDL_max(moved, height - limit);
-				moved_sum += (double)(height - limit);
 			}
+			if (!wanted)
+			{
+				moved_tiles[tile] = 0;
+				continue;
+			}
+			for (int32_t y = tile_y * EDGE_TILE; y < SDL_min((tile_y + 1) * EDGE_TILE, size); y++)
+			{
+				for (int32_t x = tile_x * EDGE_TILE; x < SDL_min((tile_x + 1) * EDGE_TILE, size); x++)
+				{
+					size_t index = (size_t)y * (size_t)size + (size_t)x;
+					float height = current[index];
+					float limit = height;
+
+					if (x > 0 && x < size - 1)
+					{
+						limit = SDL_min(limit, 0.5f * (current[index - 1] + current[index + 1]) + straight);
+					}
+					if (y > 0 && y < size - 1)
+					{
+						limit = SDL_min(limit, 0.5f * (current[index - (size_t)size] + current[index + (size_t)size]) + straight);
+						if (x > 0 && x < size - 1)
+						{
+							limit = SDL_min(limit, 0.5f * (current[index - (size_t)size - 1] + current[index + (size_t)size + 1]) + diagonal);
+							limit = SDL_min(limit, 0.5f * (current[index - (size_t)size + 1] + current[index + (size_t)size - 1]) + diagonal);
+						}
+					}
+					next[index] = limit;
+					tile_moved = SDL_max(tile_moved, height - limit);
+					moved_sum += (double)(height - limit);
+				}
+			}
+			moved_tiles[tile] = tile_moved > 0.0f ? 1 : 0;
+			moved = SDL_max(moved, tile_moved);
 		}
 		{
 			float *swap = current;
@@ -397,7 +436,10 @@ static void smooth_sharp_edges(float *heights, int32_t size, float cell_size_met
 		SDL_memcpy(heights, current, cell_count * sizeof(float));
 	}
 	SDL_free(next_heights);
-	SDL_Log("Sharp edges: %d passes, %.0f m3 taken off", passes, total_moved * (double)cell_size_meters * (double)cell_size_meters);
+	SDL_free(moved_tiles);
+	SDL_free(was_moved);
+	SDL_Log("Sharp edges: %d passes, %.0f m3 taken off, %.0f ms", passes, total_moved * (double)cell_size_meters * (double)cell_size_meters,
+		(double)(SDL_GetTicksNS() - started) / 1.0e6);
 }
 
 // Steepest height difference to a neighbor, in meters per meter
