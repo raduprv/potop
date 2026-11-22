@@ -312,6 +312,10 @@ typedef struct
 
 bool physics_cast_segment(physics_t *physics, const float from[3], const float to[3], physics_cast_t *hit_out);
 
+// An object's body gone at once (the editor takes it up: objects_t.carried_id
+// keeps it without one until it is put down)
+void physics_drop_body(physics_t *physics, objects_t *objects, int instance_index);
+
 // The bodies of the objects within radius of (x, z) wanted (an actor walks
 // there, a game's script): made soon (a few milliseconds a step), and kept
 void physics_request_bodies(physics_t *physics, const objects_t *objects, float x, float z, float radius);

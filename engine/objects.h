@@ -184,6 +184,9 @@ typedef struct
 	// hemisphere's grid, 1: a plant's), albedo then normal: all of them
 	// drawn in one call (draw_impostors)
 	SDL_GPUTexture *impostor_arrays[2][2];
+	// The editor's object in hand (its id; 0 none): no body while carried
+	// (physics_drop_body; made again where it is put down)
+	uint32_t carried_id;
 	int impostor_first_draw;       // the impostors' draws, after every material's
 	int impostor_draw_count;
 	// The editor's pictures of the models (its object browser), a texture a

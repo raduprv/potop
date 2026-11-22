@@ -1767,6 +1767,7 @@ static void carry_object(testbed_t *game, float frame_seconds)
 	if (game->carried_id != 0 && index < 0)
 	{
 		game->carried_id = 0;
+		objects->carried_id = 0;
 	}
 	if (index < 0)
 	{
@@ -1790,7 +1791,10 @@ static void carry_object(testbed_t *game, float frame_seconds)
 				game->carry_from_yaw = instance->yaw_radians;
 				game->carry_offset_x = tools->hover_valid ? instance->x - tools->hover_point.x : 0.0f;
 				game->carry_offset_z = tools->hover_valid ? instance->z - tools->hover_point.z : 0.0f;
-				// (out of the grid while it moves: drawn where it is set)
+				// (out of the grid while it moves: drawn where it is set; its
+				// body gone until it is put down)
+				objects->carried_id = instance->id;
+				physics_drop_body(&game->potop->world.physics, objects, pick.hits[i].instance);
 				objects_set_free(objects, pick.hits[i].instance, true);
 				break;
 			}
@@ -1807,6 +1811,7 @@ static void carry_object(testbed_t *game, float frame_seconds)
 			uint32_t id = game->carried_id;
 
 			game->carried_id = 0;
+			objects->carried_id = 0;
 			objects_set_free(objects, index, false);
 			potop_object_remove(game->potop, id);
 			return;
@@ -1816,6 +1821,7 @@ static void carry_object(testbed_t *game, float frame_seconds)
 		{
 			game->input.request_escape = false;
 			put_carried_where(objects, terrain, index, game->carry_from_x, game->carry_from_z, game->carry_from_yaw);
+			objects->carried_id = 0;
 			objects_set_free(objects, index, false);
 			objects_note_replaced(objects, index);
 			game->carried_id = 0;
@@ -1833,6 +1839,7 @@ static void carry_object(testbed_t *game, float frame_seconds)
 		if (game->input.apply_tool_pressed && !game->input.pointer_over_ui)
 		{
 			game->carried_id = 0;
+			objects->carried_id = 0;
 			objects_set_free(objects, index, false);
 			if (is_module && (instance->state & OBJECT_STATE_PART) == 0)
 			{
@@ -1860,6 +1867,19 @@ static void apply_object_tools(testbed_t *game, float frame_seconds)
 {
 	tool_state_t *tools = &game->tools;
 
+	// Another tool taken while an object is carried: put down where it is
+	if (game->carried_id != 0 && tools->current_tool != TOOL_OBJECT)
+	{
+		int index = objects_find_id(&game->potop->world.objects, game->carried_id);
+
+		game->carried_id = 0;
+		game->potop->world.objects.carried_id = 0;
+		if (index >= 0)
+		{
+			objects_set_free(&game->potop->world.objects, index, false);
+			objects_note_replaced(&game->potop->world.objects, index);
+		}
+	}
 	// The object tool every frame, held or not (a carried object follows
 	// the pointer; a right click lets go)
 	if (tools->current_tool == TOOL_OBJECT && game->input.water_action == WATER_ACTION_NONE)

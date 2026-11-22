@@ -896,6 +896,11 @@ static bool wants_body(const objects_t *objects, const object_instance_t *instan
 	{
 		return false;
 	}
+	// (carried by the editor's hand: none until it is put down)
+	if (objects->carried_id != 0 && instance->id == objects->carried_id)
+	{
+		return false;
+	}
 	// Destroyed and without a model: nothing left to collide with; gone
 	return !(instance->damage == OBJECT_DAMAGE_DESTROYED && type->destroyed_model < 0) && (instance->state & OBJECT_STATE_DEAD) == 0;
 }
@@ -3533,6 +3538,22 @@ bool physics_walker_ground(physics_t *physics, float x, float z, float feet_heig
 
 // ---------------------------------------------------------------------------
 // Queries for the projectiles
+
+void physics_drop_body(physics_t *physics, objects_t *objects, int instance_index)
+{
+	object_instance_t *instance;
+
+	if (instance_index < 0 || instance_index >= objects->instance_count)
+	{
+		return;
+	}
+	instance = &objects->instances[instance_index];
+	if (instance->body >= 0 && instance->body < physics->body_capacity && physics->bodies[instance->body].used)
+	{
+		destroy_body(physics, instance->body);
+	}
+	instance->body = -1;
+}
 
 bool physics_cast_segment(physics_t *physics, const float from[3], const float to[3], physics_cast_t *hit_out)
 {
