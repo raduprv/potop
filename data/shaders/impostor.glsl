@@ -40,10 +40,35 @@ void impostor_basis(vec3 direction, out vec3 right, out vec3 up)
 	up = cross(direction, right);
 }
 
-// Where a point of a picture (-1..1 on its axes) lies in the atlas
-vec2 impostor_atlas_uv(ivec2 frame, vec2 on_picture)
+// A plant's (impostors.h): IMPOSTOR_PLANT_PICTURES pictures, from level
+// up to nearly overhead, all from one side (azimuth 0: along +x), laid on
+// a 2 by 2 grid; drawn, the two nearest the eye's height are blended, the
+// plant turned so that their side faces the eye
+#define IMPOSTOR_PLANT_PICTURES 4
+#define IMPOSTOR_PLANT_HIGHEST_DEGREES 84.0
+
+float impostor_plant_elevation(int picture)
 {
-	return (vec2(frame) + vec2(0.5 + 0.5 * on_picture.x, 0.5 - 0.5 * on_picture.y)) / float(IMPOSTOR_GRID);
+	return radians(IMPOSTOR_PLANT_HIGHEST_DEGREES) * float(picture) / float(IMPOSTOR_PLANT_PICTURES - 1);
+}
+
+vec3 impostor_plant_direction(int picture, float azimuth)
+{
+	float elevation = impostor_plant_elevation(picture);
+
+	return vec3(cos(elevation) * cos(azimuth), sin(elevation), cos(elevation) * sin(azimuth));
+}
+
+ivec2 impostor_plant_frame(int picture)
+{
+	return ivec2(picture & 1, picture >> 1);
+}
+
+// Where a point of a picture (-1..1 on its axes) lies in an atlas of grid
+// pictures across
+vec2 impostor_atlas_uv(ivec2 frame, vec2 on_picture, float grid)
+{
+	return (vec2(frame) + vec2(0.5 + 0.5 * on_picture.x, 0.5 - 0.5 * on_picture.y)) / grid;
 }
 
 vec3 impostor_rotate(vec4 rotation, vec3 vector)

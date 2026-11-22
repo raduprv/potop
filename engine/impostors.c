@@ -8,7 +8,31 @@
 
 #include "miniz.h"
 
+// The largest atlas's bytes (the baker's targets and download)
 #define ATLAS_BYTES ((size_t)IMPOSTOR_ATLAS_PIXELS * IMPOSTOR_ATLAS_PIXELS * 4)
+
+// How a model's pictures are laid out: a plant's few, larger; the rest's
+// grid round the hemisphere
+typedef struct
+{
+	bool plant;
+	int grid;
+	int cell_pixels;
+	int atlas_pixels;
+	size_t atlas_bytes;
+} picture_layout_t;
+
+static picture_layout_t layout_for(const object_model_t *model)
+{
+	picture_layout_t layout;
+
+	layout.plant = model->plant_buffer != NULL;
+	layout.grid = layout.plant ? IMPOSTOR_PLANT_GRID : IMPOSTOR_GRID;
+	layout.cell_pixels = layout.plant ? IMPOSTOR_PLANT_CELL_PIXELS : IMPOSTOR_CELL_PIXELS;
+	layout.atlas_pixels = layout.grid * layout.cell_pixels;
+	layout.atlas_bytes = (size_t)layout.atlas_pixels * (size_t)layout.atlas_pixels * 4;
+	return layout;
+}
 
 // The cache file: this header, then the two atlases (color, then normal
 // and depth), compressed together
@@ -222,10 +246,10 @@ static uint64_t hash_bytes(uint64_t hash, const void *data, size_t size)
 
 // What the atlas is made from: the files (and when they were written), the
 // materials' flags, and how the pictures are taken
-static uint64_t cache_key(const object_model_t *model, const object_texture_cache_t *textures)
+static uint64_t cache_key(const object_model_t *model, const object_texture_cache_t *textures, const picture_layout_t *layout)
 {
 	uint64_t hash = 0xCBF29CE484222325ull;
-	uint32_t how[3] = { IMPOSTOR_VERSION, IMPOSTOR_GRID, IMPOSTOR_CELL_PIXELS };
+	uint32_t how[4] = { IMPOSTOR_VERSION, (uint32_t)layout->grid, (uint32_t)layout->cell_pixels, layout->plant ? 1u : 0u };
 
 	hash = hash_bytes(hash, how, sizeof(how));
 	hash = hash_bytes(hash, model->file_path, SDL_strlen(model->file_path));
@@ -271,12 +295,12 @@ static void cache_path(const object_model_t *model, char *path_out, size_t path_
 	file_io_data_path(relative, path_out, path_out_size);
 }
 
-static bool cache_load(const char *path, uint64_t key, uint8_t *atlases_out, float sphere_out[4])
+static bool cache_load(const char *path, uint64_t key, const picture_layout_t *layout, uint8_t *atlases_out, float sphere_out[4])
 {
 	size_t size = 0;
 	uint8_t *file = file_io_load_file(path, &size);
 	impostor_file_header_t header;
-	mz_ulong raw_bytes = (mz_ulong)(ATLAS_BYTES * 2);
+	mz_ulong raw_bytes = (mz_ulong)(layout->atlas_bytes * 2);
 	bool ok = false;
 
 	if (file == NULL)
@@ -286,11 +310,11 @@ static bool cache_load(const char *path, uint64_t key, uint8_t *atlases_out, flo
 	if (size >= sizeof(header))
 	{
 		SDL_memcpy(&header, file, sizeof(header));
-		ok = SDL_memcmp(header.magic, "PIMP", 4) == 0 && header.version == IMPOSTOR_VERSION && header.grid == IMPOSTOR_GRID
-			&& header.cell_pixels == IMPOSTOR_CELL_PIXELS && header.key == key && header.raw_bytes == ATLAS_BYTES * 2
+		ok = SDL_memcmp(header.magic, "PIMP", 4) == 0 && header.version == IMPOSTOR_VERSION && header.grid == (uint32_t)layout->grid
+			&& header.cell_pixels == (uint32_t)layout->cell_pixels && header.key == key && header.raw_bytes == layout->atlas_bytes * 2
 			&& sizeof(header) + header.compressed_bytes <= size
 			&& mz_uncompress(atlases_out, &raw_bytes, file + sizeof(header), header.compressed_bytes) == MZ_OK
-			&& raw_bytes == ATLAS_BYTES * 2;
+			&& raw_bytes == layout->atlas_bytes * 2;
 		if (ok)
 		{
 			SDL_memcpy(sphere_out, header.sphere, sizeof(header.sphere));
@@ -300,9 +324,9 @@ static bool cache_load(const char *path, uint64_t key, uint8_t *atlases_out, flo
 	return ok;
 }
 
-static void cache_save(const char *path, uint64_t key, const uint8_t *atlases, const float sphere[4])
+static void cache_save(const char *path, uint64_t key, const picture_layout_t *layout, const uint8_t *atlases, const float sphere[4])
 {
-	mz_ulong compressed_bytes = mz_compressBound((mz_ulong)(ATLAS_BYTES * 2));
+	mz_ulong compressed_bytes = mz_compressBound((mz_ulong)(layout->atlas_bytes * 2));
 	uint8_t *file = SDL_malloc(sizeof(impostor_file_header_t) + compressed_bytes);
 	impostor_file_header_t header;
 	char directory[512];
@@ -311,7 +335,7 @@ static void cache_save(const char *path, uint64_t key, const uint8_t *atlases, c
 	{
 		return;
 	}
-	if (mz_compress2(file + sizeof(header), &compressed_bytes, atlases, (mz_ulong)(ATLAS_BYTES * 2), 3) != MZ_OK)
+	if (mz_compress2(file + sizeof(header), &compressed_bytes, atlases, (mz_ulong)(layout->atlas_bytes * 2), 3) != MZ_OK)
 	{
 		SDL_free(file);
 		return;
@@ -319,12 +343,12 @@ static void cache_save(const char *path, uint64_t key, const uint8_t *atlases, c
 	SDL_zero(header);
 	SDL_memcpy(header.magic, "PIMP", 4);
 	header.version = IMPOSTOR_VERSION;
-	header.grid = IMPOSTOR_GRID;
-	header.cell_pixels = IMPOSTOR_CELL_PIXELS;
+	header.grid = (uint32_t)layout->grid;
+	header.cell_pixels = (uint32_t)layout->cell_pixels;
 	header.key = key;
 	SDL_memcpy(header.sphere, sphere, sizeof(header.sphere));
 	header.compressed_bytes = (uint32_t)compressed_bytes;
-	header.raw_bytes = (uint32_t)(ATLAS_BYTES * 2);
+	header.raw_bytes = (uint32_t)(layout->atlas_bytes * 2);
 	SDL_memcpy(file, &header, sizeof(header));
 	file_io_data_path("cache/impostors", directory, sizeof(directory));
 	SDL_CreateDirectory(directory);
@@ -340,7 +364,7 @@ static void cache_save(const char *path, uint64_t key, const uint8_t *atlases, c
 
 // Both atlases of the model, into atlases_out (color, then normal and
 // depth), straight from the GPU
-static bool bake(impostor_baker_t *baker, const object_model_t *model, const float sphere[4], uint8_t *atlases_out)
+static bool bake(impostor_baker_t *baker, const object_model_t *model, const picture_layout_t *layout, const float sphere[4], uint8_t *atlases_out)
 {
 	SDL_GPUCommandBuffer *command_buffer;
 	SDL_GPUFence *fence;
@@ -387,13 +411,13 @@ static bool bake(impostor_baker_t *baker, const object_model_t *model, const flo
 		SDL_BindGPUGraphicsPipeline(pass, baker->bake_pipeline);
 		SDL_BindGPUVertexBuffers(pass, 0, vertex_bindings, 2);
 		SDL_BindGPUIndexBuffer(pass, &index_binding, model->index_size);
-		for (int y = 0; y < IMPOSTOR_GRID; y++)
+		for (int y = 0; y < layout->grid; y++)
 		{
-			for (int x = 0; x < IMPOSTOR_GRID; x++)
+			for (int x = 0; x < layout->grid; x++)
 			{
-				SDL_GPUViewport viewport = { (float)(x * IMPOSTOR_CELL_PIXELS), (float)(y * IMPOSTOR_CELL_PIXELS), (float)IMPOSTOR_CELL_PIXELS,
-					(float)IMPOSTOR_CELL_PIXELS, 0.0f, 1.0f };
-				bake_vertex_uniforms_t vertex_uniforms = { { x, y, 0, 0 }, { sphere[0], sphere[1], sphere[2], sphere[3] } };
+				SDL_GPUViewport viewport = { (float)(x * layout->cell_pixels), (float)(y * layout->cell_pixels), (float)layout->cell_pixels,
+					(float)layout->cell_pixels, 0.0f, 1.0f };
+				bake_vertex_uniforms_t vertex_uniforms = { { x, y, layout->plant ? 1 : 0, 0 }, { sphere[0], sphere[1], sphere[2], sphere[3] } };
 
 				SDL_SetGPUViewport(pass, &viewport);
 				SDL_PushGPUVertexUniformData(command_buffer, 0, &vertex_uniforms, sizeof(vertex_uniforms));
@@ -423,12 +447,12 @@ static bool bake(impostor_baker_t *baker, const object_model_t *model, const flo
 
 			SDL_zero(source);
 			source.texture = baker->color_target;
-			source.w = IMPOSTOR_ATLAS_PIXELS;
-			source.h = IMPOSTOR_ATLAS_PIXELS;
+			source.w = (uint32_t)layout->atlas_pixels;
+			source.h = (uint32_t)layout->atlas_pixels;
 			source.d = 1;
 			SDL_zero(destination);
 			destination.transfer_buffer = baker->download;
-			destination.offset = (uint32_t)(ATLAS_BYTES * (size_t)mode);
+			destination.offset = (uint32_t)(layout->atlas_bytes * (size_t)mode);
 			SDL_DownloadFromGPUTexture(copy, &source, &destination);
 			SDL_EndGPUCopyPass(copy);
 		}
@@ -445,7 +469,7 @@ static bool bake(impostor_baker_t *baker, const object_model_t *model, const flo
 	{
 		return false;
 	}
-	SDL_memcpy(atlases_out, mapped, ATLAS_BYTES * 2);
+	SDL_memcpy(atlases_out, mapped, layout->atlas_bytes * 2);
 	SDL_UnmapGPUTransferBuffer(gpu.device, baker->download);
 	return true;
 }
@@ -453,25 +477,25 @@ static bool bake(impostor_baker_t *baker, const object_model_t *model, const flo
 // The empty texels get their covered neighbors' color and normal, so that
 // the mipmaps do not grow dark or flat fringes; the depth of an empty texel
 // stays in the middle
-static void bleed(uint8_t *atlases)
+static void bleed(uint8_t *atlases, const picture_layout_t *layout)
 {
 	uint8_t *albedo = atlases;
-	uint8_t *normal = atlases + ATLAS_BYTES;
-	size_t texels = (size_t)IMPOSTOR_ATLAS_PIXELS * IMPOSTOR_ATLAS_PIXELS;
+	uint8_t *normal = atlases + layout->atlas_bytes;
+	size_t texels = (size_t)layout->atlas_pixels * (size_t)layout->atlas_pixels;
 	uint8_t *depth = SDL_malloc(texels);
 
 	if (depth == NULL)
 	{
 		return;
 	}
-	object_texture_bleed_transparent_colors(albedo, IMPOSTOR_ATLAS_PIXELS, IMPOSTOR_ATLAS_PIXELS);
+	object_texture_bleed_transparent_colors(albedo, layout->atlas_pixels, layout->atlas_pixels);
 	// The normals bleed by the color's coverage: lent its alpha for it
 	for (size_t i = 0; i < texels; i++)
 	{
 		depth[i] = normal[i * 4 + 3];
 		normal[i * 4 + 3] = albedo[i * 4 + 3];
 	}
-	object_texture_bleed_transparent_colors(normal, IMPOSTOR_ATLAS_PIXELS, IMPOSTOR_ATLAS_PIXELS);
+	object_texture_bleed_transparent_colors(normal, layout->atlas_pixels, layout->atlas_pixels);
 	for (size_t i = 0; i < texels; i++)
 	{
 		normal[i * 4 + 3] = albedo[i * 4 + 3] >= 128 ? depth[i] : 128;
@@ -486,31 +510,32 @@ bool impostor_make(impostor_baker_t *baker, impostor_t *impostor, const object_m
 	char path[512];
 	uint64_t key;
 	bool from_cache;
+	picture_layout_t layout = layout_for(model);
 
 	SDL_zerop(impostor);
 	if (baker->bake_pipeline == NULL || gpu.device == NULL || gpu.command_buffer != NULL)
 	{
 		return false;
 	}
-	atlases = SDL_malloc(ATLAS_BYTES * 2);
+	atlases = SDL_malloc(layout.atlas_bytes * 2);
 	if (atlases == NULL)
 	{
 		return false;
 	}
-	key = cache_key(model, textures);
+	key = cache_key(model, textures, &layout);
 	cache_path(model, path, sizeof(path));
-	from_cache = cache_load(path, key, atlases, impostor->sphere);
+	from_cache = cache_load(path, key, &layout, atlases, impostor->sphere);
 	if (!from_cache)
 	{
 		bounding_sphere(model, impostor->sphere);
-		if (!bake(baker, model, impostor->sphere, atlases))
+		if (!bake(baker, model, &layout, impostor->sphere, atlases))
 		{
 			SDL_LogWarn(SDL_LOG_CATEGORY_RENDER, "Impostors: cannot bake '%s': %s", model->name, SDL_GetError());
 			SDL_free(atlases);
 			return false;
 		}
-		bleed(atlases);
-		cache_save(path, key, atlases, impostor->sphere);
+		bleed(atlases, &layout);
+		cache_save(path, key, &layout, atlases, impostor->sphere);
 		// Debugging: POTOP_IMPOSTOR_DUMP=<directory> saves each baked
 		// atlas as PNG pictures there (color, then normal and depth)
 		if (SDL_getenv("POTOP_IMPOSTOR_DUMP") != NULL)
@@ -519,9 +544,9 @@ bool impostor_make(impostor_baker_t *baker, impostor_t *impostor, const object_m
 			const char *base = SDL_strrchr(path, '/');
 
 			SDL_snprintf(dump, sizeof(dump), "%s/%s_color.png", SDL_getenv("POTOP_IMPOSTOR_DUMP"), base != NULL ? base + 1 : path);
-			screenshot_save(dump, atlases, IMPOSTOR_ATLAS_PIXELS, IMPOSTOR_ATLAS_PIXELS);
+			screenshot_save(dump, atlases, layout.atlas_pixels, layout.atlas_pixels);
 			SDL_snprintf(dump, sizeof(dump), "%s/%s_normal.png", SDL_getenv("POTOP_IMPOSTOR_DUMP"), base != NULL ? base + 1 : path);
-			screenshot_save(dump, atlases + ATLAS_BYTES, IMPOSTOR_ATLAS_PIXELS, IMPOSTOR_ATLAS_PIXELS);
+			screenshot_save(dump, atlases + layout.atlas_bytes, layout.atlas_pixels, layout.atlas_pixels);
 		}
 		baker->baked++;
 	}
@@ -540,8 +565,11 @@ bool impostor_make(impostor_baker_t *baker, impostor_t *impostor, const object_m
 		}
 		impostor->look[0] = triangles > 0 ? (float)cut_out / (float)triangles : 0.0f;
 	}
-	impostor->albedo = object_texture_upload(atlases, IMPOSTOR_ATLAS_PIXELS, IMPOSTOR_ATLAS_PIXELS);
-	impostor->normal = object_texture_upload(atlases + ATLAS_BYTES, IMPOSTOR_ATLAS_PIXELS, IMPOSTOR_ATLAS_PIXELS);
+	impostor->look[1] = layout.plant ? 1.0f : 0.0f;
+	impostor->look[2] = (float)layout.grid;
+	impostor->atlas_pixels = layout.atlas_pixels;
+	impostor->albedo = object_texture_upload(atlases, layout.atlas_pixels, layout.atlas_pixels);
+	impostor->normal = object_texture_upload(atlases + layout.atlas_bytes, layout.atlas_pixels, layout.atlas_pixels);
 	SDL_free(atlases);
 	baker->seconds += (double)(SDL_GetPerformanceCounter() - start) / (double)SDL_GetPerformanceFrequency();
 	if (impostor->albedo == NULL || impostor->normal == NULL)

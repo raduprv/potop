@@ -29,6 +29,11 @@
 #define IMPOSTOR_GRID 8                // pictures across the grid (impostor.glsl)
 #define IMPOSTOR_CELL_PIXELS 64        // each picture's size
 #define IMPOSTOR_ATLAS_PIXELS (IMPOSTOR_GRID * IMPOSTOR_CELL_PIXELS)
+// A plant's (a model with a plant buffer): round enough to need no pictures
+// from round it, only a few from lower to higher (IMPOSTOR_PLANT_PICTURES,
+// impostor.glsl), larger, on a smaller atlas; drawn turned to face the eye
+#define IMPOSTOR_PLANT_GRID 2
+#define IMPOSTOR_PLANT_CELL_PIXELS 128
 // Models with fewer triangles than this, or smaller (bounding sphere
 // radius), are cheaper drawn as they are
 #define IMPOSTOR_MINIMUM_TRIANGLES 150
@@ -45,7 +50,8 @@ typedef struct
 	SDL_GPUTexture *albedo;        // RGBA8, mipmapped: sRGB color, alpha covered
 	SDL_GPUTexture *normal;        // RGBA8, mipmapped: normal in the model's axes * 0.5 + 0.5 (half as long: leaves), alpha depth
 	float sphere[4];               // the model's bounding sphere: center, radius (model axes, meters at size 1)
-	float look[4];                 // x: how leafy, 0..1 (its triangles' share in cut out materials): lit like leaves
+	float look[4];                 // x: how leafy, 0..1 (its triangles' share in cut out materials): lit like leaves; y: a plant's (1); z: pictures across its grid
+	int atlas_pixels;              // its atlases' side
 } impostor_t;
 
 typedef struct

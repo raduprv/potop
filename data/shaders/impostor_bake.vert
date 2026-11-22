@@ -15,7 +15,7 @@ layout(location = 3) in vec4 model_tangent;
 
 layout(std140, set = UNIFORM_SET, binding = 0) uniform bake_block
 {
-	ivec4 frame;                   // xy: the picture in the grid
+	ivec4 frame;                   // xy: the picture in the grid; z: a plant's (impostor.glsl's plant pictures)
 	vec4 sphere;                   // the model's bounding sphere: center, radius (model units)
 };
 
@@ -25,7 +25,7 @@ layout(location = 2) out float tangent_size;
 
 void main()
 {
-	vec3 direction = impostor_frame_direction(frame.xy);
+	vec3 direction = frame.z != 0 ? impostor_plant_direction(frame.x + 2 * frame.y, 0.0) : impostor_frame_direction(frame.xy);
 	vec3 right;
 	vec3 up;
 	vec3 relative = model_position - sphere.xyz;

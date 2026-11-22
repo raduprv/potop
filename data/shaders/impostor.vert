@@ -23,7 +23,7 @@ layout(location = 2) in float instance_fade;
 layout(std140, set = UNIFORM_SET, binding = 1) uniform impostor_block
 {
 	vec4 sphere;                   // the model's bounding sphere: center, radius (model units)
-	vec4 look;                     // x: how leafy (0..1: lit like leaves, the light wrapping round)
+	vec4 look;                     // x: how leafy (0..1: lit like leaves, the light wrapping round); y: a plant's (impostor.glsl); z: pictures across its atlas
 };
 
 layout(location = 0) out vec3 world_position;            // on the square
@@ -39,6 +39,7 @@ layout(location = 9) flat out vec4 toward_eye;           // xyz: from the object
 layout(location = 10) flat out float leafy;
 layout(location = 12) out float haze;                    // how much the haze hides it (scene.glsl's haze_amount, per vertex: it changes slowly over a blade, a card, a picture)
 layout(location = 11) flat out vec4 sky_light;          // at its middle: the light sent back (rgb, onto a face up), the sky seen (a)
+layout(location = 13) flat out vec4 picture_turn;        // xy: cos, sin of the turn about up from the pictures' side to the eye's (a plant's; 1, 0 else); z: pictures across the atlas
 
 vec4 conjugate(vec4 quaternion)
 {
@@ -47,9 +48,8 @@ vec4 conjugate(vec4 quaternion)
 
 // A point of the square (model axes, in sphere radii from its center) on
 // a picture: where the ray from the eye through it meets the picture's plane
-vec2 on_picture(ivec2 frame, vec3 eye, vec3 point)
+vec2 on_picture_from(vec3 direction, vec3 eye, vec3 point)
 {
-	vec3 direction = impostor_frame_direction(frame);
 	vec3 right;
 	vec3 up;
 	vec3 along = eye - point;
@@ -62,6 +62,11 @@ vec2 on_picture(ivec2 frame, vec3 eye, vec3 point)
 		met = point - along * (dot(point, direction) / across);
 	}
 	return vec2(dot(met, right), dot(met, up));
+}
+
+vec2 on_picture(ivec2 frame, vec3 eye, vec3 point)
+{
+	return on_picture_from(impostor_frame_direction(frame), eye, point);
 }
 
 void main()
@@ -85,6 +90,29 @@ void main()
 		vec4 back = conjugate(instance_rotation);
 		vec3 eye = impostor_rotate(back, eye_position - center) / radius;
 		vec3 point = impostor_rotate(back, world_position - center) / radius;
+
+		picture_turn = vec4(1.0, 0.0, look.z, 0.0);
+		// A plant's: the two pictures nearest the eye's height, turned to
+		// its side
+		if (look.y > 0.5)
+		{
+			vec3 toward = normalize(eye);
+			float azimuth = atan(toward.z, toward.x);
+			float height = clamp(asin(clamp(toward.y, -1.0, 1.0)), 0.0, radians(IMPOSTOR_PLANT_HIGHEST_DEGREES));
+			float along = height / radians(IMPOSTOR_PLANT_HIGHEST_DEGREES) * float(IMPOSTOR_PLANT_PICTURES - 1);
+			int lower = min(int(floor(along)), IMPOSTOR_PLANT_PICTURES - 2);
+			float upper_share = clamp(along - float(lower), 0.0, 1.0);
+
+			frames_01 = ivec4(impostor_plant_frame(lower), impostor_plant_frame(lower + 1));
+			frame_2 = impostor_plant_frame(lower);
+			weights = vec3(1.0 - upper_share, upper_share, 0.0);
+			picture_point_0 = on_picture_from(impostor_plant_direction(lower, azimuth), eye, point);
+			picture_point_1 = on_picture_from(impostor_plant_direction(lower + 1, azimuth), eye, point);
+			picture_point_2 = picture_point_0;
+			picture_turn.xy = vec2(cos(azimuth), sin(azimuth));
+		}
+		else
+		{
 		vec2 grid = (impostor_hemi_encode(normalize(eye)) * 0.5 + 0.5) * float(IMPOSTOR_GRID - 1);
 		ivec2 base = clamp(ivec2(floor(grid)), ivec2(0), ivec2(IMPOSTOR_GRID - 2));
 		vec2 within = clamp(grid - vec2(base), 0.0, 1.0);
@@ -113,6 +141,7 @@ void main()
 		picture_point_0 = on_picture(frame_a, eye, point);
 		picture_point_1 = on_picture(frame_b, eye, point);
 		picture_point_2 = on_picture(frame_c, eye, point);
+		}
 	}
 	rotation = instance_rotation;
 	fade = instance_fade;
