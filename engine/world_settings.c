@@ -112,7 +112,11 @@ void world_follow_settings(world_t *world)
 		{
 			world->drawn_sun_azimuth = lit->sun_azimuth_degrees;
 			world->drawn_sun_elevation = lit->sun_elevation_degrees;
-			world->terrain.shadow_dirty = true;
+			// The near map only: the far one follows the light by its own
+			// steps (render.far_shadow_turn_degrees). Marked as the
+			// ground changing, the editor (which redraws the far map for
+			// edits) redrew it at every step of the day
+			world->near_shadow.needs_render = true;
 		}
 	}
 }
