@@ -313,6 +313,7 @@ static const setting_field_t setting_fields[] =
 	FIELD("objects", "density_scale", SETTING_FLOAT, objects.density_scale),
 	FIELD("objects", "draw_distance_scale", SETTING_FLOAT, objects.draw_distance_scale),
 	FIELD("objects", "impostors", SETTING_BOOL, objects.impostors),
+	FIELD("objects", "show_impostors", SETTING_BOOL, objects.show_impostors),
 	FIELD("objects", "impostor_pixels", SETTING_FLOAT, objects.impostor_pixels),
 	FIELD("objects", "lod", SETTING_BOOL, objects.lod),
 	FIELD("objects", "lod_distance_scale", SETTING_FLOAT, objects.lod_distance_scale),

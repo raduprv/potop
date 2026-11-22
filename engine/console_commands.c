@@ -634,7 +634,7 @@ void console_run_command(console_t *console, potop_t *potop, const char *line, c
 			}
 			else if (has_second && (SDL_strcmp(second, "show") == 0 || SDL_strcmp(second, "hide") == 0))
 			{
-				potop->world.objects.impostors_tinted = SDL_strcmp(second, "show") == 0;
+				potop->settings.objects.show_impostors = SDL_strcmp(second, "show") == 0;
 			}
 			SDL_Log("Impostors: %s%s", potop->world.objects.impostors_everywhere ? "everywhere" : "far away",
 				potop->settings.objects.impostors ? "" : " (but off: objects.impostors)");

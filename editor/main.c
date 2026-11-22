@@ -3677,7 +3677,7 @@ static void update_interface(testbed_t *game, double frame_seconds)
 	view.tips_last_month = &game->potop->settings.render.tips_last_month;
 	view.bloom_first_month = &game->potop->settings.render.bloom_first_month;
 	view.bloom_last_month = &game->potop->settings.render.bloom_last_month;
-	view.impostors_tinted = &game->potop->world.objects.impostors_tinted;
+	view.impostors_tinted = &game->potop->settings.objects.show_impostors;
 
 	view.near_shadow_off = &game->potop->world.near_shadow_off;
 	view.cloud_paint = &game->potop->world.cloud_paint;

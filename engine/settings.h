@@ -555,6 +555,7 @@ typedef struct
 	// Far away, the bigger models are drawn as pictures of themselves
 	// (impostors.h): much faster, the same at that size
 	bool impostors;
+	bool show_impostors;          // debugging: the objects drawn as impostors tinted magenta
 	// An object becomes its impostor once its bounding sphere is smaller
 	// than this on screen (pixels across, 64; the pictures are
 	// IMPOSTOR_CELL_PIXELS: above that, a picture is seen enlarged)
