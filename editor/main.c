@@ -2320,10 +2320,11 @@ static void update_hover(testbed_t *game, int pixel_width, int pixel_height)
 
 	game->tools.hover_valid = false;
 	game->pointer_ray_valid = false;
-	if (game->potop->camera.first_person || game->command_line.pick)
+	if ((game->potop->camera.first_person && game->tools.current_tool != TOOL_OBJECT) || game->command_line.pick)
 	{
 		// On foot the tools work where the walker looks: the middle of the
-		// screen (and --pick looks there too)
+		// screen (and --pick looks there too); the object tool where the
+		// pointer is, as from above
 		camera_pixel_ray(&game->potop->camera, 0.5f * (float)pixel_width, 0.5f * (float)pixel_height, pixel_width, pixel_height, &origin,
 			&direction);
 		game->tools.hover_valid = terrain_raycast(&game->potop->world.terrain, origin, direction, game->potop->camera.far_distance, &game->tools.hover_point);
@@ -4230,7 +4231,9 @@ static void run(testbed_t *game)
 		{
 			game->mouse_free = false;
 		}
-		pointer_free = game->potop->camera.first_person && (game->mouse_free || game->console.open);
+		// (the object tool on foot too: its clicks go where the pointer
+		// is, the eye stays put; the keys still walk)
+		pointer_free = game->potop->camera.first_person && (game->mouse_free || game->console.open || game->tools.current_tool == TOOL_OBJECT);
 		if (game->window != NULL && SDL_GetWindowRelativeMouseMode(game->window) != (game->potop->camera.first_person && !pointer_free))
 		{
 			SDL_SetWindowRelativeMouseMode(game->window, game->potop->camera.first_person && !pointer_free);
@@ -4290,7 +4293,7 @@ static void run(testbed_t *game)
 			}
 			else if (!ui_handle_event(&game->ui, &event))
 			{
-				if (pointer_free && event.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
+				if (pointer_free && event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && game->tools.current_tool != TOOL_OBJECT)
 				{
 					// A click on the world takes the pointer back (with the
 					// console open it does nothing)
