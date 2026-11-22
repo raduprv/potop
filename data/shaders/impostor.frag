@@ -150,8 +150,15 @@ void main()
 	vec3 shadow_point = position + sun_direction * 0.5;
 	vec4 shadow_position = light_view_projection * vec4(shadow_point, 1.0);
 	vec4 near_shadow_position = near_light_view_projection * vec4(shadow_point, 1.0);
-	float shadowed = sun_visibility(shadow_position, near_shadow_position) * cloud_light(position, sun_direction);
-	vec3 lit = albedo * (sun_color * diffuse * shadowed + (surroundings(normal) * sky_light.a + sky_light.rgb) + local_light(position, normal, leafy * 0.4));
+	// (leaves as plant.frag has them: the far map alone, a shadow taking
+	// 70% of the sun, not all)
+	float shadowed = mix(sun_visibility(shadow_position, near_shadow_position), mix(1.0, sun_visibility_far(shadow_position), 0.7), leafy)
+		* cloud_light(position, sun_direction);
+	// The sun through the leaves, seen against it (plant.frag's), yellower
+	// than what it lights
+	float through = pow(max(dot(-normalize(eye_position - position), sun_direction), 0.0), 3.0) * 0.45 * leafy;
+	vec3 lit = albedo * (sun_color * (diffuse + through * vec3(1.1, 1.15, 0.7)) * shadowed + (surroundings(normal) * sky_light.a + sky_light.rgb)
+		+ local_light(position, normal, leafy * 0.4));
 	float view_distance = length(position - eye_position);
 
 	lit = mix(lit, sky_color, haze);
