@@ -241,6 +241,7 @@ static const setting_field_t setting_fields[] =
 	FIELD("render", "debug_grass_freeze", SETTING_BOOL, render.debug_grass_freeze),
 	FIELD("render", "gpu_subgroups", SETTING_BOOL, render.gpu_subgroups),
 	FIELD("render", "debug_water_ripples", SETTING_INT, render.debug_water_ripples),
+	FIELD("render", "water_debug", SETTING_INT, render.water_debug),
 	FIELD("render", "water_depth_write", SETTING_BOOL, render.water_depth_write),
 	FIELD("render", "water_cull_back_faces", SETTING_BOOL, render.water_cull_back_faces),
 	FIELD("render", "underwater_visibility_meters", SETTING_FLOAT, render.underwater_visibility_meters),

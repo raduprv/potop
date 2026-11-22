@@ -46,7 +46,7 @@ layout(set = TEXTURE_SET, binding = 11) uniform sampler2D ripple_texture;       
 
 layout(std140, set = UNIFORM_SET, binding = 1) uniform water_block
 {
-	ivec2 unused_origin;            // (once the chunk's origin: now per instance, water.vert's chunk_origin)
+	ivec2 debug_flags;              // x: the water's debug bits (render.water_debug: WATER_DEBUG_ below); y unused
 	int map_size;
 	float cell_size;
 	vec4 thin_highlight;            // on (1/0), film depth, thin depth (meters), moving speed (m/s): F6
@@ -315,6 +315,21 @@ vec2 rain_ripple_slope(vec2 position, float clock)
 	return slope;
 }
 
+// Debugging (Settings, Debug, "Water debug"): parts of the surface left
+// out one by one, to tell what costs
+#define WATER_DEBUG_FLAT 1          // one color, nothing worked out (the mesh and the copy alone)
+#define WATER_DEBUG_NO_RIPPLES 2
+#define WATER_DEBUG_NO_SHADOWS 4    // the sun's two maps not looked up
+#define WATER_DEBUG_NO_CLOUD_LIGHT 8
+#define WATER_DEBUG_NO_SKY 16       // the sky mirrored as its plain color (no dome, no clouds)
+#define WATER_DEBUG_NO_ICE_SKY_SEEN 32
+#define WATER_DEBUG_NO_LOCAL_LIGHTS 64
+
+bool water_debug(int bit)
+{
+	return (debug_flags.x & bit) != 0;
+}
+
 void main()
 {
 #ifdef WATER_SPLIT_REFLECTIONS
@@ -325,7 +340,6 @@ void main()
 	float split_strength = 0.0;
 	vec3 split_sky = vec3(0.0);
 #endif
-	float clouds = cloud_light(world_position, sun_direction);
 	vec2 tile_edge_width = fwidth((world_position.xz / cell_size + 0.5) / 64.0) * 1.2;
 
 	// Debugging: thin water moving faster than the sleep speed in bright
@@ -348,6 +362,13 @@ void main()
 	{
 		discard;
 	}
+	if (water_debug(WATER_DEBUG_FLAT))
+	{
+		fragment_color = vec4(0.08, 0.25, 0.4, 1.0);
+		return;
+	}
+	// (after the dry cells are thrown out: they need none of it)
+	float clouds = water_debug(WATER_DEBUG_NO_CLOUD_LIGHT) ? 1.0 : cloud_light(world_position, sun_direction);
 
 	vec3 view_vector = eye_position - world_position;
 	float view_distance = length(view_vector);
@@ -360,7 +381,7 @@ void main()
 	float current = length(flow_velocity);
 	float ripple_strength = 0.18 * ice_parameters.y * (1.0 + min(current, 2.0) * 0.8) * min(water_depth * 4.0, 1.0)
 		* (1.0 - smoothstep(300.0, 1200.0, view_distance));
-	vec3 ripple = flowing_ripple_slope(world_position.xz, phases);
+	vec3 ripple = water_debug(WATER_DEBUG_NO_RIPPLES) ? vec3(0.0) : flowing_ripple_slope(world_position.xz, phases);
 	vec3 normal = normalize(normalize(surface_normal) + vec3(-ripple.x, 0.0, -ripple.y) * ripple_strength);
 	// How much the normal varies under this pixel: the ripples' own (the
 	// tile's levels of detail) and the change from pixel to pixel (the
@@ -373,7 +394,7 @@ void main()
 
 	// The ice: its thickness and the snow on it here (between the cells),
 	// its edge ragged; under it no ripples, only its own small bumps
-	vec2 ice_here = ice_parameters.x > 0.5 ? texture(ice_texture, (world_position.xz / cell_size + 0.5) / float(map_size)).rg : vec2(0.0);
+	vec2 ice_here = ice_parameters.x > 0.5 && !water_debug(WATER_DEBUG_NO_ICE_SKY_SEEN) ? texture(ice_texture, (world_position.xz / cell_size + 0.5) / float(map_size)).rg : vec2(0.0);
 	float ice_cover = 0.0;
 
 	if (ice_here.x > 0.001)
@@ -396,7 +417,7 @@ void main()
 		normal = normalize(normal + vec3(-slope.x, 0.0, -slope.y) * strength);
 	}
 
-	float visibility = sun_visibility(shadow_position, near_shadow_position) * clouds;
+	float visibility = (water_debug(WATER_DEBUG_NO_SHADOWS) ? 1.0 : sun_visibility(shadow_position, near_shadow_position)) * clouds;
 
 	// The surface seen from under water. Light from above bends at the
 	// surface: looking up within about 49 degrees of straight up you see the
@@ -430,15 +451,15 @@ void main()
 	body = mix(body, mud_color, mud);
 	// (the sky the surface sees: less in a crater, a narrow valley, under
 	// the trees; what it mirrors of the sky, and what lights the water)
-	float sky_share = sky_seen_above(world_position.xz, water_depth);
+	float sky_share = water_debug(WATER_DEBUG_NO_ICE_SKY_SEEN) ? 1.0 : sky_seen_above(world_position.xz, water_depth);
 	vec3 ambient = sky_color * ambient_intensity * sky_share;
 	vec3 body_lit = body * (sun_color * max(dot(normal, sun_direction), 0.0) * visibility * 0.6 + ambient * 1.4
-		+ local_light(world_position, normal, 0.3) * 0.6);
+		+ (water_debug(WATER_DEBUG_NO_LOCAL_LIGHTS) ? vec3(0.0) : local_light(world_position, normal, 0.3)) * 0.6);
 	// What the surface mirrors: the land and the trees where the ray finds
 	// them on screen (only where the mirror shows: a little of it looking
 	// straight down is not worth the march), the sky elsewhere
 	vec3 reflected = reflect(-view_direction, normal);
-	vec3 reflection = sky_reflection(reflected) * sky_share;
+	vec3 reflection = (water_debug(WATER_DEBUG_NO_SKY) ? sky_color : sky_reflection(reflected)) * sky_share;
 
 	// (far water mirrors the sky alone: no march)
 	float near_enough = 1.0 - smoothstep(reflection_range.x - reflection_range.y, reflection_range.x, view_distance);

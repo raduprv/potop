@@ -373,6 +373,7 @@ typedef struct
 	bool debug_far_shadow_off;     // the far shadow map neither drawn nor used (the Debug tab: where the frame's time goes)
 	bool debug_near_shadow_off;    // ... the near one
 	bool debug_far_shadow_no_plants; // the far shadow map drawn without the plants (trees, bushes, grass, crops: the Debug tab)
+	int32_t water_debug;           // parts of the water's surface left out, to tell what costs (water_surface.glsl's WATER_DEBUG_ bits)
 	int32_t debug_water_ripples;   // the water's ripples shown in colors (the Debug tab): 0 off, 1 slope, 2 normal, 3 variance, 4 glint alone
 	bool gpu_subgroups;           // the compute shaders' subgroup variants where the device has Vulkan 1.1 (gpu.h; the Debug tab, to compare)
 	bool debug_grass_freeze;       // the grass's scatter not run: the last frame's blades drawn again (the Debug tab: what the scatter costs)

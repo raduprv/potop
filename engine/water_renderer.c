@@ -11,7 +11,7 @@
 // water_block in data/shaders/water.vert and water.frag (std140)
 typedef struct
 {
-	int32_t chunk_origin[2];
+	int32_t debug_flags[2];        // x: render.water_debug (water_surface.glsl); y unused
 	int32_t map_size;
 	float cell_size;
 	float thin_highlight[4];
@@ -543,6 +543,7 @@ void water_renderer_draw(water_renderer_t *renderer, SDL_GPURenderPass *pass, co
 	uniforms.map_size = terrain->size;
 	uniforms.cell_size = terrain->cell_size_meters;
 	uniforms.thin_highlight[0] = renderer->highlight_thin ? 1.0f : 0.0f;
+	uniforms.debug_flags[0] = settings->water_debug;
 	uniforms.thin_highlight[1] = renderer->film_meters;
 	uniforms.thin_highlight[2] = renderer->thin_meters;
 	uniforms.thin_highlight[3] = renderer->moving_speed;
@@ -616,8 +617,6 @@ void water_renderer_draw(water_renderer_t *renderer, SDL_GPURenderPass *pass, co
 	{
 		SDL_GPUBufferBinding instance_binding = { renderer->instance_buffer, 0 };
 
-		uniforms.chunk_origin[0] = 0;
-		uniforms.chunk_origin[1] = 0;
 		SDL_PushGPUVertexUniformData(gpu.command_buffer, 1, &uniforms, sizeof(uniforms));
 		SDL_BindGPUVertexBuffers(pass, 1, &instance_binding, 1);
 		SDL_DrawGPUIndexedPrimitives(pass, (uint32_t)terrain_renderer->index_count, (uint32_t)renderer->instance_count, 0, 0, 0);
