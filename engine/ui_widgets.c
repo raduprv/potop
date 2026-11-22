@@ -6,6 +6,13 @@
 
 void ui_widget_tooltip(struct nk_context *context, const char *tooltip)
 {
+	// (a tooltip is a popup, and a popup cannot have one: inside a menu, a
+	// combo's list or a tooltip none is shown; Nuklear asserts, the program
+	// stops)
+	if (context->current != NULL && context->current->layout != NULL && ((int)context->current->layout->type & (int)NK_PANEL_SET_POPUP) != 0)
+	{
+		return;
+	}
 	if (tooltip != NULL && tooltip[0] != '\0' && nk_widget_is_hovered(context))
 	{
 		nk_tooltip(context, tooltip);

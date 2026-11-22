@@ -1,6 +1,7 @@
 // The game's user interface. See ui.h.
 
 #include "ui.h"
+#include "ui_widgets.h"
 
 #include "cloud_weather.h"
 #include "file_io.h"
@@ -520,10 +521,8 @@ static float text_width(ui_t *ui, const char *text)
 
 static void tooltip_if_hovered(struct nk_context *context, const char *tooltip)
 {
-	if (tooltip != NULL && tooltip[0] != '\0' && nk_widget_is_hovered(context))
-	{
-		nk_tooltip(context, tooltip);
-	}
+	// (ui_widget_tooltip's: none inside a popup)
+	ui_widget_tooltip(context, tooltip);
 }
 
 // Draws an icon into a widget's bounds: centered, or at the left followed
