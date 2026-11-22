@@ -260,6 +260,7 @@ typedef struct
 	// grabbed from its origin, where it stood and how it was turned (Escape
 	// puts it back), Q and E turning it (the camera's keys, taken)
 	uint32_t carried_id;
+	bool window_had_focus;         // the window had the keyboard once (then losing it holds the frames back)
 	float carry_offset_x;
 	float carry_offset_z;
 	float carry_from_x;
@@ -4541,13 +4542,26 @@ static void run(testbed_t *game)
 			}
 			game->input.request_quit = true;
 		}
-		// Hidden (minimized, covered), vsync often does not hold the loop
-		// back any more (hidden windows are not presented), so it would spin
-		// at full speed; sleep instead. Asked of the window itself, not of the
-		// focus events: a focus lost while a long job held the loop (a new map
-		// made) could leave it asleep at ten frames a second in front of you
+		bool background = false;
+
+		// Hidden (minimized, covered) or another window in front with the
+		// keyboard: held to simulation.background_frames_per_second (vsync
+		// often does not hold a hidden one back, and one behind needs few).
+		// Asked of the window itself each frame, not of the focus events: a
+		// focus lost while a long job held the loop (a new map made) could
+		// leave it asleep at ten frames a second in front of you
+		// (the focus only once it was had: a window that never gets it, the
+		// tests on a bare X server, runs free)
+		if ((SDL_GetWindowFlags(game->window) & SDL_WINDOW_INPUT_FOCUS) != 0)
+		{
+			game->window_had_focus = true;
+		}
 		if ((SDL_GetWindowFlags(game->window) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN | SDL_WINDOW_OCCLUDED)) != 0
-			&& game->command_line.screenshot_path == NULL)
+			|| (game->window_had_focus && (SDL_GetWindowFlags(game->window) & SDL_WINDOW_INPUT_FOCUS) == 0))
+		{
+			background = true;
+		}
+		if (background && game->command_line.screenshot_path == NULL)
 		{
 			double frame_used = (double)(SDL_GetPerformanceCounter() - frame_start) / counter_frequency;
 			double frame_wanted = 1.0 / (double)SDL_max(game->potop->settings.simulation.background_frames_per_second, 1.0f);
