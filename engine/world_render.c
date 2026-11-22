@@ -845,7 +845,7 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 		grass_prepare(&world->grass, camera, &world->lit_render, &world->settings->objects, &grass_world);
 		trace_mark("grass");
 		terrain_renderer_prepare_draw(&world->renderer, &world->terrain, camera, &world->lit_render);
-		water_renderer_prepare(&world->water_renderer, &world->water, &world->terrain, camera);
+		water_renderer_prepare(&world->water_renderer, &world->water, &world->terrain, camera, &world->lit_render);
 		gpu_flush_uploads();
 		trace_mark("uploads flushed");
 		world->scene_target.world_scene = true;

@@ -246,6 +246,12 @@ vec3_t terrain_renderer_sun_direction(const render_settings_t *settings);
 
 // Cloud shadow uniforms for the given time: parameters = coverage,
 // softness, strength, 1 / tiling; motion = wind offset x, z, cloud height.
+// The distance the terrain's first level of detail ends at (each next
+// level twice as far; 0: none), and the eye's height over the ground the
+// distances are measured with: the water takes its levels by them too
+float terrain_renderer_lod_base(const terrain_t *terrain, const render_settings_t *settings);
+float terrain_renderer_lod_eye_height(const terrain_t *terrain, const camera_t *camera);
+
 void terrain_renderer_cloud_uniforms(const render_settings_t *settings, float time_seconds, float parameters_out[4], float motion_out[3]);
 
 // Before the scene pass: the visible chunks found and their origins sent

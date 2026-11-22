@@ -61,12 +61,16 @@ typedef struct
 	bool drawing_split;            // water_renderer_draw draws with the split pipelines
 	int drawn_chunk_count;
 	// The chunks with water in view, their origins (cells, two int32 each):
-	// the per instance vertex buffer, one draw for them all
-	// (water_renderer_prepare, before the scene pass)
+	// the per instance vertex buffer, a run of it a level of detail (the
+	// terrain's distances), a draw a run (water_renderer_prepare, before
+	// the scene pass)
 	SDL_GPUBuffer *instance_buffer;
 	int32_t *instance_staging;
 	int instance_capacity;
 	int instance_count;
+	int level_first[TERRAIN_LOD_LEVEL_COUNT];
+	int level_count[TERRAIN_LOD_LEVEL_COUNT];
+	uint8_t *instance_levels;      // while they are sorted: room for the origins sorted, then each chunk's level
 	// F6: thin water in a loud color, for debugging: bright magenta where it
 	// moves faster than moving_speed (what keeps a tile awake), dark purple
 	// where it stands still, films too thin to flow in cyan. The game sets
@@ -103,7 +107,8 @@ bool water_renderer_visible(const water_t *water, const terrain_t *terrain, cons
 // Before the scene pass: the chunks with water in view found and their
 // origins sent up (a pass cannot send anything); water_renderer_draw draws
 // those
-void water_renderer_prepare(water_renderer_t *renderer, const water_t *water, const terrain_t *terrain, const camera_t *camera);
+void water_renderer_prepare(water_renderer_t *renderer, const water_t *water, const terrain_t *terrain, const camera_t *camera,
+	const render_settings_t *settings);
 
 // Copies the scene's color and depth for the reflections, between render
 // passes (paused). False if it could not (the water then mirrors the sky)

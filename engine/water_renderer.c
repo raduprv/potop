@@ -301,6 +301,8 @@ void water_renderer_destroy(water_renderer_t *renderer)
 		SDL_ReleaseGPUBuffer(gpu.device, renderer->instance_buffer);
 	}
 	SDL_free(renderer->instance_staging);
+	SDL_free(renderer->instance_levels);
+	renderer->instance_levels = NULL;
 	renderer->instance_buffer = NULL;
 	renderer->instance_staging = NULL;
 	renderer->instance_capacity = 0;
@@ -430,12 +432,19 @@ bool water_renderer_capture(water_renderer_t *renderer, SDL_GPUTexture *color_te
 	return true;
 }
 
-void water_renderer_prepare(water_renderer_t *renderer, const water_t *water, const terrain_t *terrain, const camera_t *camera)
+void water_renderer_prepare(water_renderer_t *renderer, const water_t *water, const terrain_t *terrain, const camera_t *camera,
+	const render_settings_t *settings)
 {
+	float chunk_extent = (float)TERRAIN_CHUNK_SIZE * terrain->cell_size_meters;
+	float lod_base = terrain_renderer_lod_base(terrain, settings);
+	float eye_height = terrain_renderer_lod_eye_height(terrain, camera);
+	int at[TERRAIN_LOD_LEVEL_COUNT];
 	frustum_t frustum = frustum_from_matrix(camera->view_projection);
 	int chunk_count = terrain->chunks_per_side * terrain->chunks_per_side;
 
 	renderer->instance_count = 0;
+	SDL_zeroa(renderer->level_first);
+	SDL_zeroa(renderer->level_count);
 	if (water_gpu_depth_texture(water) == NULL)
 	{
 		return;
@@ -460,6 +469,13 @@ void water_renderer_prepare(water_renderer_t *renderer, const water_t *water, co
 		{
 			return;
 		}
+		SDL_free(renderer->instance_levels);
+		renderer->instance_levels = SDL_malloc((size_t)chunk_count * (2 * sizeof(int32_t) + 1));
+		if (renderer->instance_levels == NULL)
+		{
+			renderer->instance_capacity = 0;
+			return;
+		}
 	}
 	// The water's own culling: the terrain's visible chunks are boxed by the
 	// ground alone, and water stands above it (looking up from under a
@@ -472,13 +488,56 @@ void water_renderer_prepare(water_renderer_t *renderer, const water_t *water, co
 			{
 				continue;
 			}
+			// Its level of detail as the terrain's would be (its nearest
+			// point, the eye at a fixed height): far water drawn at every
+			// vertex was thousands of triangles to a few pixels, and the
+			// surface's vertices are dear (water.vert reads a dozen cells
+			// round each)
+			int level = 0;
+
+			if (lod_base > 0.0f)
+			{
+				float minimum_x = (float)chunk_x * chunk_extent;
+				float minimum_z = (float)chunk_y * chunk_extent;
+				float outside_x = SDL_max(SDL_max(minimum_x - camera->eye_position.x, camera->eye_position.x - (minimum_x + chunk_extent)), 0.0f);
+				float outside_z = SDL_max(SDL_max(minimum_z - camera->eye_position.z, camera->eye_position.z - (minimum_z + chunk_extent)), 0.0f);
+				float nearest = SDL_sqrtf(outside_x * outside_x + outside_z * outside_z + eye_height * eye_height);
+				float threshold = lod_base;
+
+				while (level < TERRAIN_LOD_LEVEL_COUNT - 1 && nearest >= threshold)
+				{
+					level++;
+					threshold *= 2.0f;
+				}
+			}
 			renderer->instance_staging[2 * renderer->instance_count] = chunk_x * TERRAIN_CHUNK_SIZE;
 			renderer->instance_staging[2 * renderer->instance_count + 1] = chunk_y * TERRAIN_CHUNK_SIZE;
+			renderer->instance_levels[sizeof(int32_t) * 2 * (size_t)renderer->instance_capacity + (size_t)renderer->instance_count] = (uint8_t)level;
+			renderer->level_count[level]++;
 			renderer->instance_count++;
 		}
 	}
 	if (renderer->instance_count > 0)
 	{
+		// In runs by level (the origins sorted into the space after the
+		// levels, then back)
+		int32_t *sorted = (int32_t *)renderer->instance_levels;
+		uint8_t *levels = renderer->instance_levels + sizeof(int32_t) * 2 * (size_t)renderer->instance_capacity;
+
+		for (int level = 0, first = 0; level < TERRAIN_LOD_LEVEL_COUNT; level++)
+		{
+			renderer->level_first[level] = first;
+			at[level] = first;
+			first += renderer->level_count[level];
+		}
+		for (int i = 0; i < renderer->instance_count; i++)
+		{
+			int place = at[levels[i]]++;
+
+			sorted[2 * place] = renderer->instance_staging[2 * i];
+			sorted[2 * place + 1] = renderer->instance_staging[2 * i + 1];
+		}
+		SDL_memcpy(renderer->instance_staging, sorted, sizeof(int32_t) * 2 * (size_t)renderer->instance_count);
 		gpu_upload_buffer(renderer->instance_buffer, 0, renderer->instance_staging, sizeof(int32_t) * 2 * (size_t)renderer->instance_count);
 	}
 }
@@ -618,8 +677,17 @@ void water_renderer_draw(water_renderer_t *renderer, SDL_GPURenderPass *pass, co
 		SDL_GPUBufferBinding instance_binding = { renderer->instance_buffer, 0 };
 
 		SDL_PushGPUVertexUniformData(gpu.command_buffer, 1, &uniforms, sizeof(uniforms));
-		SDL_BindGPUVertexBuffers(pass, 1, &instance_binding, 1);
-		SDL_DrawGPUIndexedPrimitives(pass, (uint32_t)terrain_renderer->index_count, (uint32_t)renderer->instance_count, 0, 0, 0);
+		for (int level = 0; level < TERRAIN_LOD_LEVEL_COUNT; level++)
+		{
+			if (renderer->level_count[level] == 0)
+			{
+				continue;
+			}
+			instance_binding.offset = (uint32_t)(sizeof(int32_t) * 2 * (size_t)renderer->level_first[level]);
+			SDL_BindGPUVertexBuffers(pass, 1, &instance_binding, 1);
+			SDL_DrawGPUIndexedPrimitives(pass, (uint32_t)terrain_renderer->lod_index_count[level], (uint32_t)renderer->level_count[level],
+				(uint32_t)terrain_renderer->lod_index_offset[level], 0, 0);
+		}
 		renderer->drawn_chunk_count += renderer->instance_count;
 		frame_profile_count(FRAME_WATER_CHUNKS_DRAWN, renderer->instance_count);
 	}

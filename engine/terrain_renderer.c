@@ -1471,6 +1471,16 @@ static float lod_eye_height(const terrain_t *terrain, const camera_t *camera)
 	return SDL_max(camera->eye_position.y - terrain_sample_height_meters(terrain, camera->eye_position.x, camera->eye_position.z), 0.0f);
 }
 
+float terrain_renderer_lod_base(const terrain_t *terrain, const render_settings_t *settings)
+{
+	return lod_base_distance(terrain, settings);
+}
+
+float terrain_renderer_lod_eye_height(const terrain_t *terrain, const camera_t *camera)
+{
+	return lod_eye_height(terrain, camera);
+}
+
 #define VISIBLE_BLOCK_CHUNKS 8
 
 // The renderer's copy of the chunks' height ranges, and the blocks' (see
