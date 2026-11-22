@@ -748,7 +748,8 @@ done:
 #define LAKE_HOLDS TERRAIN_SKETCH_LAKE_HOLDS // the water no farther out than its hint is this (world.c), the land past the shore raised
                                         // over its surface all round by then: no wall of water where the land falls away
 #define LAKE_RIM_METERS 0.15f           // the shore eased to this much over the surface
-#define LAKE_EDGE_METERS 0.2f           // the water this deep at the shore, deepening from there
+#define LAKE_EDGE_METERS 0.2f
+#define LAKE_BANK_TALUS 1.5f            // the land by a lake at most this many times the talus slope up from its shore           // the water this deep at the shore, deepening from there
 
 static int compare_floats(const void *first, const void *second)
 {
@@ -913,7 +914,80 @@ static float sketch_grid_sample(const float *grid, float u, float v)
 
 // The lakes made: the hint worked out, the lakes found, the land shaped
 // round and under them (after the erosion, which would fill them)
-static void sink_lakes(float *heights, int32_t size, const terrain_settings_t *settings, const generation_noise_t *noise,
+// The land round the lakes no higher than a slope up from their shores
+// (LAKE_BANK_TALUS times the talus): bringing the land down to a lake's
+// surface beside it, after the thermal erosion, left its banks walls as
+// high as the mountain they cut, and between two channels of a river a
+// blade of it a few meters thick. On the sketch's grid: the water's texels
+// at their lake's surface, outwards by a two pass chamfer distance
+static void make_bank_caps(float *caps, const terrain_sketch_t *sketch, float texel_meters, float slope)
+{
+	const int32_t side = TERRAIN_SKETCH_SIZE;
+	float straight = texel_meters * slope;
+	float diagonal = straight * 1.41421356f;
+
+	for (int32_t y = 0; y < side; y++)
+	{
+		for (int32_t x = 0; x < side; x++)
+		{
+			size_t index = (size_t)y * (size_t)side + (size_t)x;
+			uint16_t label = sketch->lake_labels[index];
+
+			caps[index] = label > 0 && (int)label <= sketch->lake_count && sketch->lake_hint[index] >= LAKE_HOLDS
+				? sketch->lake_surfaces[label - 1] + LAKE_RIM_METERS : 1.0e6f;
+		}
+	}
+	for (int32_t y = 0; y < side; y++)
+	{
+		for (int32_t x = 0; x < side; x++)
+		{
+			float *cap = &caps[(size_t)y * (size_t)side + (size_t)x];
+
+			if (x > 0)
+			{
+				*cap = SDL_min(*cap, cap[-1] + straight);
+			}
+			if (y > 0)
+			{
+				*cap = SDL_min(*cap, cap[-side] + straight);
+				if (x > 0)
+				{
+					*cap = SDL_min(*cap, cap[-side - 1] + diagonal);
+				}
+				if (x < side - 1)
+				{
+					*cap = SDL_min(*cap, cap[-side + 1] + diagonal);
+				}
+			}
+		}
+	}
+	for (int32_t y = side - 1; y >= 0; y--)
+	{
+		for (int32_t x = side - 1; x >= 0; x--)
+		{
+			float *cap = &caps[(size_t)y * (size_t)side + (size_t)x];
+
+			if (x < side - 1)
+			{
+				*cap = SDL_min(*cap, cap[1] + straight);
+			}
+			if (y < side - 1)
+			{
+				*cap = SDL_min(*cap, cap[side] + straight);
+				if (x < side - 1)
+				{
+					*cap = SDL_min(*cap, cap[side + 1] + diagonal);
+				}
+				if (x > 0)
+				{
+					*cap = SDL_min(*cap, cap[side - 1] + diagonal);
+				}
+			}
+		}
+	}
+}
+
+static void sink_lakes(float *heights, int32_t size, float cell_size_meters, const terrain_settings_t *settings, const generation_noise_t *noise,
 	terrain_sketch_t *sketch)
 {
 	size_t texels = (size_t)TERRAIN_SKETCH_SIZE * TERRAIN_SKETCH_SIZE;
@@ -921,12 +995,13 @@ static void sink_lakes(float *heights, int32_t size, const terrain_settings_t *s
 	float *wide = SDL_malloc(texels * sizeof(float));
 	float *scratch = SDL_malloc(texels * sizeof(float));
 	float *other = SDL_malloc(texels * sizeof(float));
+	float *caps = SDL_malloc(texels * sizeof(float));
 	int32_t reach = SDL_max(2, (int32_t)SDL_lroundf((float)TERRAIN_SKETCH_SIZE * LAKE_HINT_SHARE));
 	float depth = SDL_max(sketch->land.lake_depth_meters, 0.5f);
 	float warp_frequency = SDL_max(settings->feature_count, 1.0f) * 4.0f;
 
 	sketch->lake_count = 0;
-	if (wide == NULL || scratch == NULL || other == NULL || sketch->lake_hint == NULL)
+	if (wide == NULL || scratch == NULL || other == NULL || caps == NULL || sketch->lake_hint == NULL)
 	{
 		goto done;
 	}
@@ -958,6 +1033,7 @@ static void sink_lakes(float *heights, int32_t size, const terrain_settings_t *s
 	{
 		goto done;
 	}
+	make_bank_caps(caps, sketch, (float)size * cell_size_meters / (float)TERRAIN_SKETCH_SIZE, settings->talus_slope * LAKE_BANK_TALUS);
 #pragma omp parallel for schedule(static)
 	for (int32_t y = 0; y < size; y++)
 	{
@@ -972,7 +1048,14 @@ static void sink_lakes(float *heights, int32_t size, const terrain_settings_t *s
 			float surface;
 			float bed;
 			float height = heights[index];
+			float cap = sketch_grid_sample(caps, u, v);
 
+			// (no wall over the water, no blade between its channels)
+			if (height > cap)
+			{
+				height = cap;
+				heights[index] = height;
+			}
 			if (lake < 0)
 			{
 				continue;
@@ -1003,6 +1086,7 @@ done:
 	SDL_free(wide);
 	SDL_free(scratch);
 	SDL_free(other);
+	SDL_free(caps);
 }
 
 // --- Erosion by the rain's droplets ---------------------------------------------------
@@ -1342,7 +1426,7 @@ bool terrain_generate_heights(float *heights, int32_t size, float cell_size_mete
 	// below the water, which ran out down the slopes)
 	if (sketch != NULL && terrain_sketch_painted(sketch))
 	{
-		sink_lakes(heights, size, settings, &noise, sketch);
+		sink_lakes(heights, size, cell_size_meters, settings, &noise, sketch);
 	}
 	return true;
 }
