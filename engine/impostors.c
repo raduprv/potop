@@ -16,17 +16,19 @@
 typedef struct
 {
 	bool plant;
+	int month_index;               // a plant's (0 January), its foliage's pictures of that month; -1 none
 	int grid;
 	int cell_pixels;
 	int atlas_pixels;
 	size_t atlas_bytes;
 } picture_layout_t;
 
-static picture_layout_t layout_for(const object_model_t *model)
+static picture_layout_t layout_for(const object_model_t *model, int month_index)
 {
 	picture_layout_t layout;
 
 	layout.plant = model->plant_buffer != NULL;
+	layout.month_index = layout.plant ? SDL_clamp(month_index, 0, 11) : -1;
 	layout.grid = layout.plant ? IMPOSTOR_PLANT_GRID : IMPOSTOR_GRID;
 	layout.cell_pixels = layout.plant ? IMPOSTOR_PLANT_CELL_PIXELS : IMPOSTOR_CELL_PIXELS;
 	layout.atlas_pixels = layout.grid * layout.cell_pixels;
@@ -48,10 +50,13 @@ typedef struct
 	uint32_t raw_bytes;
 } impostor_file_header_t;
 
+#define PLANT_MONTH_CELLS 32           // plant.glsl's
+
 typedef struct
 {
 	int32_t frame[4];
 	float sphere[4];
+	float month_offsets[PLANT_MONTH_CELLS][4]; // a plant's only (impostor_bake.glsl)
 } bake_vertex_uniforms_t;
 
 typedef struct
@@ -59,7 +64,8 @@ typedef struct
 	int32_t alpha_tested;
 	int32_t lighting_normals;
 	int32_t mode;
-	int32_t padding;
+	int32_t plant;
+	float foliage[4];
 } bake_fragment_uniforms_t;
 
 static const SDL_GPUVertexBufferDescription bake_vertex_buffers[2] =
@@ -73,6 +79,23 @@ static const SDL_GPUVertexAttribute bake_vertex_attributes[4] =
 	{ 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, sizeof(float) * 3 },
 	{ 2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, sizeof(float) * 6 },
 	{ 3, 1, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, 0 },
+};
+
+// A plant's: its plant buffer too (OBJECT_PLANT_VERTEX_FLOATS a vertex)
+static const SDL_GPUVertexBufferDescription plant_bake_vertex_buffers[3] =
+{
+	{ 0, sizeof(float) * 8, SDL_GPU_VERTEXINPUTRATE_VERTEX, 0 },
+	{ 1, sizeof(float) * 4, SDL_GPU_VERTEXINPUTRATE_VERTEX, 0 },
+	{ 2, sizeof(float) * 8, SDL_GPU_VERTEXINPUTRATE_VERTEX, 0 },  // plant data, then its snow (w: its month cell)
+};
+static const SDL_GPUVertexAttribute plant_bake_vertex_attributes[6] =
+{
+	{ 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, 0 },
+	{ 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, sizeof(float) * 3 },
+	{ 2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, sizeof(float) * 6 },
+	{ 3, 1, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, 0 },
+	{ 4, 2, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, 0 },
+	{ 5, 2, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, sizeof(float) * 4 },
 };
 
 bool impostor_baker_create(impostor_baker_t *baker)
@@ -104,6 +127,20 @@ bool impostor_baker_create(impostor_baker_t *baker)
 		info.depth_write = true;
 		info.color_format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
 		baker->bake_pipeline = gpu_make_pipeline(&info, "impostor baking");
+		{
+			SDL_GPUShader *plant_vertex = gpu_load_shader("impostor_bake_plant.vert", 0, 0, 1);
+
+			if (plant_vertex != NULL)
+			{
+				info.vertex_shader = plant_vertex;
+				info.vertex_buffers = plant_bake_vertex_buffers;
+				info.vertex_buffer_count = 3;
+				info.vertex_attributes = plant_bake_vertex_attributes;
+				info.vertex_attribute_count = 6;
+				baker->plant_bake_pipeline = gpu_make_pipeline(&info, "impostor baking (plants)");
+				SDL_ReleaseGPUShader(gpu.device, plant_vertex);
+			}
+		}
 	}
 	if (vertex != NULL)
 	{
@@ -121,7 +158,8 @@ bool impostor_baker_create(impostor_baker_t *baker)
 	download_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
 	download_info.size = (uint32_t)(ATLAS_BYTES * 2);
 	baker->download = SDL_CreateGPUTransferBuffer(gpu.device, &download_info);
-	if (baker->bake_pipeline == NULL || baker->color_target == NULL || baker->depth_target == NULL || baker->download == NULL)
+	if (baker->bake_pipeline == NULL || baker->plant_bake_pipeline == NULL || baker->color_target == NULL || baker->depth_target == NULL
+		|| baker->download == NULL)
 	{
 		SDL_LogError(SDL_LOG_CATEGORY_RENDER, "Impostors: cannot bake (%s); far objects are drawn whole", SDL_GetError());
 		impostor_baker_destroy(baker);
@@ -137,6 +175,10 @@ void impostor_baker_destroy(impostor_baker_t *baker)
 		if (baker->bake_pipeline != NULL)
 		{
 			SDL_ReleaseGPUGraphicsPipeline(gpu.device, baker->bake_pipeline);
+		}
+		if (baker->plant_bake_pipeline != NULL)
+		{
+			SDL_ReleaseGPUGraphicsPipeline(gpu.device, baker->plant_bake_pipeline);
 		}
 		if (baker->color_target != NULL)
 		{
@@ -249,7 +291,7 @@ static uint64_t hash_bytes(uint64_t hash, const void *data, size_t size)
 static uint64_t cache_key(const object_model_t *model, const object_texture_cache_t *textures, const picture_layout_t *layout)
 {
 	uint64_t hash = 0xCBF29CE484222325ull;
-	uint32_t how[4] = { IMPOSTOR_VERSION, (uint32_t)layout->grid, (uint32_t)layout->cell_pixels, layout->plant ? 1u : 0u };
+	int32_t how[5] = { IMPOSTOR_VERSION, layout->grid, layout->cell_pixels, layout->plant ? 1 : 0, layout->month_index };
 
 	hash = hash_bytes(hash, how, sizeof(how));
 	hash = hash_bytes(hash, model->file_path, SDL_strlen(model->file_path));
@@ -408,8 +450,18 @@ static bool bake(impostor_baker_t *baker, const object_model_t *model, const pic
 			SDL_CancelGPUCommandBuffer(command_buffer);
 			return false;
 		}
-		SDL_BindGPUGraphicsPipeline(pass, baker->bake_pipeline);
-		SDL_BindGPUVertexBuffers(pass, 0, vertex_bindings, 2);
+		if (layout->plant)
+		{
+			SDL_GPUBufferBinding plant_bindings[3] = { { model->vertex_buffer, 0 }, { model->tangent_buffer, 0 }, { model->plant_buffer, 0 } };
+
+			SDL_BindGPUGraphicsPipeline(pass, baker->plant_bake_pipeline);
+			SDL_BindGPUVertexBuffers(pass, 0, plant_bindings, 3);
+		}
+		else
+		{
+			SDL_BindGPUGraphicsPipeline(pass, baker->bake_pipeline);
+			SDL_BindGPUVertexBuffers(pass, 0, vertex_bindings, 2);
+		}
 		SDL_BindGPUIndexBuffer(pass, &index_binding, model->index_size);
 		for (int y = 0; y < layout->grid; y++)
 		{
@@ -417,15 +469,33 @@ static bool bake(impostor_baker_t *baker, const object_model_t *model, const pic
 			{
 				SDL_GPUViewport viewport = { (float)(x * layout->cell_pixels), (float)(y * layout->cell_pixels), (float)layout->cell_pixels,
 					(float)layout->cell_pixels, 0.0f, 1.0f };
-				bake_vertex_uniforms_t vertex_uniforms = { { x, y, layout->plant ? 1 : 0, 0 }, { sphere[0], sphere[1], sphere[2], sphere[3] } };
+				bake_vertex_uniforms_t vertex_uniforms;
 
+				SDL_zero(vertex_uniforms);
+				vertex_uniforms.frame[0] = x;
+				vertex_uniforms.frame[1] = y;
+				vertex_uniforms.frame[2] = layout->plant ? 1 : 0;
+				SDL_memcpy(vertex_uniforms.sphere, sphere, sizeof(vertex_uniforms.sphere));
+				// A plant's month cells (objects.c's plant_month_cells,
+				// the snow aside): each moved to that month's picture
+				if (layout->plant)
+				{
+					for (int c = 0; c < model->month_cell_count && c < PLANT_MONTH_CELLS; c++)
+					{
+						vertex_uniforms.month_offsets[c][0] = model->month_cells[c].month_offsets[layout->month_index][0];
+						vertex_uniforms.month_offsets[c][1] = model->month_cells[c].month_offsets[layout->month_index][1];
+						vertex_uniforms.frame[3] = c + 1;
+					}
+				}
 				SDL_SetGPUViewport(pass, &viewport);
-				SDL_PushGPUVertexUniformData(command_buffer, 0, &vertex_uniforms, sizeof(vertex_uniforms));
+				SDL_PushGPUVertexUniformData(command_buffer, 0, &vertex_uniforms,
+					layout->plant ? sizeof(vertex_uniforms) : sizeof(int32_t) * 4 + sizeof(float) * 4);
 				for (int k = 0; k < model->material_count; k++)
 				{
 					const object_material_t *material = &model->materials[k];
 					SDL_GPUTextureSamplerBinding texture_binding = { material->texture, gpu.linear_repeat };
-					bake_fragment_uniforms_t fragment_uniforms = { material->alpha_tested ? 1 : 0, material->lighting_normals ? 1 : 0, mode, 0 };
+					bake_fragment_uniforms_t fragment_uniforms = { material->alpha_tested ? 1 : 0, material->lighting_normals ? 1 : 0, mode,
+						layout->plant ? 1 : 0, { material->tips, 0.0f, 0.0f, 0.0f } };
 
 					// (a plant's baked snow: not in the picture, which is
 					// its look out of winter)
@@ -503,14 +573,15 @@ static void bleed(uint8_t *atlases, const picture_layout_t *layout)
 	SDL_free(depth);
 }
 
-bool impostor_make(impostor_baker_t *baker, impostor_t *impostor, const object_model_t *model, const object_texture_cache_t *textures)
+bool impostor_make(impostor_baker_t *baker, impostor_t *impostor, const object_model_t *model, const object_texture_cache_t *textures,
+	int month_index)
 {
 	uint64_t start = SDL_GetPerformanceCounter();
 	uint8_t *atlases;
 	char path[512];
 	uint64_t key;
 	bool from_cache;
-	picture_layout_t layout = layout_for(model);
+	picture_layout_t layout = layout_for(model, month_index);
 
 	SDL_zerop(impostor);
 	if (baker->bake_pipeline == NULL || gpu.device == NULL || gpu.command_buffer != NULL)
@@ -568,6 +639,7 @@ bool impostor_make(impostor_baker_t *baker, impostor_t *impostor, const object_m
 	impostor->look[1] = layout.plant ? 1.0f : 0.0f;
 	impostor->look[2] = (float)layout.grid;
 	impostor->atlas_pixels = layout.atlas_pixels;
+	impostor->month_index = layout.month_index;
 	impostor->albedo = object_texture_upload(atlases, layout.atlas_pixels, layout.atlas_pixels);
 	impostor->normal = object_texture_upload(atlases + layout.atlas_bytes, layout.atlas_pixels, layout.atlas_pixels);
 	SDL_free(atlases);

@@ -52,11 +52,13 @@ typedef struct
 	float sphere[4];               // the model's bounding sphere: center, radius (model axes, meters at size 1)
 	float look[4];                 // x: how leafy, 0..1 (its triangles' share in cut out materials): lit like leaves; y: a plant's (1); z: pictures across its grid
 	int atlas_pixels;              // its atlases' side
+	int month_index;               // a plant's: the month its foliage's pictures are of (0 January; -1 not a plant)
 } impostor_t;
 
 typedef struct
 {
 	SDL_GPUGraphicsPipeline *bake_pipeline;
+	SDL_GPUGraphicsPipeline *plant_bake_pipeline; // a plant's: its plant data too (impostor_bake_plant.vert)
 	SDL_GPUTexture *color_target;  // a whole atlas, baked into
 	SDL_GPUTexture *depth_target;
 	SDL_GPUTransferBuffer *download;
@@ -73,9 +75,11 @@ void impostor_baker_destroy(impostor_baker_t *baker);
 bool impostor_worth_one(const object_model_t *model);
 
 // The model's impostor, from the cache or baked (which waits for the GPU).
-// Outside a frame (between gpu_end_frame and gpu_begin_frame). False if it
-// could not be made (logged)
-bool impostor_make(impostor_baker_t *baker, impostor_t *impostor, const object_model_t *model, const object_texture_cache_t *textures);
+// Outside a frame (between gpu_end_frame and gpu_begin_frame). A plant's
+// foliage as it is in month_index (0 January). False if it could not be
+// made (logged)
+bool impostor_make(impostor_baker_t *baker, impostor_t *impostor, const object_model_t *model, const object_texture_cache_t *textures,
+	int month_index);
 void impostor_release(impostor_t *impostor);
 
 #endif

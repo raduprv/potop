@@ -14,12 +14,14 @@ layout(std140, set = UNIFORM_SET, binding = 0) uniform bake_material_block
 	int alpha_tested;
 	int lighting_normals;
 	int mode;                      // 0: the color, 1: the normal and depth
-	int padding;
+	int plant;                     // a plant's foliage: its cards tinted as plant.frag tints them
+	vec4 foliage;                  // x: its lighter tips (plant.frag's parameters.y)
 };
 
 layout(location = 0) in vec2 texture_uv;
 layout(location = 1) in vec3 normal;
 layout(location = 2) in float tangent_size;
+layout(location = 3) in vec4 card;                        // impostor_bake.glsl's
 
 layout(location = 0) out vec4 fragment_color;
 
@@ -47,10 +49,23 @@ void main()
 	}
 	if (mode == 0)
 	{
-		// The crown's depth shading (see object.frag), into the color
+		// The crown's depth shading (see object.frag), into the color: the
+		// model's takes half of it off the sun, all of it off the sky's
+		// light; the picture's is lit by both, the sun's most
 		float shade = alpha_tested != 0 && tangent_size > 1e-3 ? min(tangent_size, 1.5) : 1.0;
+		vec3 linear_color = pow(color.rgb, vec3(2.2)) * (0.375 + 0.625 * shade);
 
-		fragment_color = vec4(clamp(color.rgb * pow(shade, 1.0 / 2.2), 0.0, 1.0), 1.0);
+		// A plant's cards each their own shade, their tips lighter and
+		// yellower (plant.frag's)
+		if (plant != 0 && alpha_tested != 0)
+		{
+			float tip = smoothstep(0.5, 0.97, card.x) * foliage.x;
+			vec3 young = vec3(0.16, 0.34, 0.035) / 0.28 * dot(linear_color, vec3(0.2126, 0.7152, 0.0722)) * 1.25;
+
+			linear_color *= 0.88 + 0.24 * card.z;
+			linear_color = mix(linear_color, young, clamp(tip * 0.6, 0.0, 0.5));
+		}
+		fragment_color = vec4(clamp(pow(linear_color, vec3(1.0 / 2.2)), 0.0, 1.0), 1.0);
 	}
 	else
 	{

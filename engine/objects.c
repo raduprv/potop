@@ -783,10 +783,17 @@ void objects_update_impostors(objects_t *objects)
 	{
 		impostor_t *impostor = &objects->impostors[m];
 		bool wanted = wants_impostor(objects, m);
+		int month_index = season_month_index(objects->month);
 
+		// (a plant's of another month: its foliage's pictures are not
+		// those of now)
+		if (wanted && impostor->albedo != NULL && impostor->month_index >= 0 && impostor->month_index != month_index)
+		{
+			impostor_release(impostor);
+		}
 		if (wanted && impostor->albedo == NULL)
 		{
-			if (impostor_make(&objects->impostor_baker, impostor, &objects->models[m], &objects->textures))
+			if (impostor_make(&objects->impostor_baker, impostor, &objects->models[m], &objects->textures, month_index))
 			{
 				made++;
 			}

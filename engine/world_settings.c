@@ -83,6 +83,11 @@ void world_follow_settings(world_t *world)
 		world->objects.tips_last_month = SDL_clamp(SDL_roundf(world->settings->render.tips_last_month), 1.0f, 12.0f);
 		if (world->objects.month != month || world->objects.snow_first_month != snow_first || world->objects.snow_last_month != snow_last)
 		{
+			// (the plants' impostors are of a month: another, made again)
+			if (season_month_index(world->objects.month) != season_month_index(month))
+			{
+				world->objects.impostors_pending = true;
+			}
 			world->objects.month = month;
 			world->objects.snow_first_month = snow_first;
 			world->objects.snow_last_month = snow_last;
