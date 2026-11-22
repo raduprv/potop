@@ -793,7 +793,7 @@ void objects_update_impostors(objects_t *objects)
 		}
 		if (wanted && impostor->albedo == NULL)
 		{
-			if (impostor_make(&objects->impostor_baker, impostor, &objects->models[m], &objects->textures, month_index))
+			if (impostor_make(&objects->impostor_baker, impostor, &objects->models[m], &objects->textures, objects->month))
 			{
 				made++;
 			}

@@ -3,6 +3,12 @@
 #include "impostors.h"
 #include "file_io.h"
 #include "screenshot.h"
+#include "season.h"
+
+// objects.c's PLANT_AUTUMN_SPREAD: how far apart the trees are in their autumn
+#define IMPOSTOR_PLANT_AUTUMN_SPREAD 0.12f
+// Raise when a plant's pictures are made differently: only theirs are baked again
+#define IMPOSTOR_PLANT_BAKE_VERSION 2
 
 #include <SDL3/SDL.h>
 
@@ -17,6 +23,7 @@ typedef struct
 {
 	bool plant;
 	int month_index;               // a plant's (0 January), its foliage's pictures of that month; -1 none
+	float month;                   // ... and the month itself (season.h: 1 .. 13), for its autumn
 	int grid_x;                    // pictures across, down
 	int grid_y;
 	int cell_pixels;
@@ -25,12 +32,13 @@ typedef struct
 	size_t atlas_bytes;
 } picture_layout_t;
 
-static picture_layout_t layout_for(const object_model_t *model, int month_index)
+static picture_layout_t layout_for(const object_model_t *model, float month)
 {
 	picture_layout_t layout;
 
 	layout.plant = model->plant_buffer != NULL;
-	layout.month_index = layout.plant ? SDL_clamp(month_index, 0, 11) : -1;
+	layout.month_index = layout.plant ? season_month_index(month) : -1;
+	layout.month = month;
 	layout.grid_x = layout.plant ? IMPOSTOR_PLANT_AZIMUTHS : IMPOSTOR_GRID;
 	layout.grid_y = layout.plant ? IMPOSTOR_PLANT_ELEVATIONS : IMPOSTOR_GRID;
 	layout.cell_pixels = layout.plant ? IMPOSTOR_PLANT_CELL_PIXELS : IMPOSTOR_CELL_PIXELS;
@@ -60,7 +68,8 @@ typedef struct
 {
 	int32_t frame[4];
 	float sphere[4];
-	float month_offsets[PLANT_MONTH_CELLS][4]; // a plant's only (impostor_bake.glsl)
+	float season[4];               // a plant's only, from here (impostor_bake.glsl)
+	float month_offsets[PLANT_MONTH_CELLS][4];
 } bake_vertex_uniforms_t;
 
 typedef struct
@@ -70,6 +79,8 @@ typedef struct
 	int32_t mode;
 	int32_t plant;
 	float foliage[4];
+	float autumn_color_a[4];
+	float autumn_color_b[4];
 } bake_fragment_uniforms_t;
 
 static const SDL_GPUVertexBufferDescription bake_vertex_buffers[2] =
@@ -295,7 +306,7 @@ static uint64_t hash_bytes(uint64_t hash, const void *data, size_t size)
 static uint64_t cache_key(const object_model_t *model, const object_texture_cache_t *textures, const picture_layout_t *layout)
 {
 	uint64_t hash = 0xCBF29CE484222325ull;
-	int32_t how[6] = { IMPOSTOR_VERSION, layout->grid_x, layout->grid_y, layout->cell_pixels, layout->plant ? 1 : 0, layout->month_index };
+	int32_t how[6] = { IMPOSTOR_VERSION, layout->grid_x, layout->grid_y, layout->cell_pixels, layout->plant ? IMPOSTOR_PLANT_BAKE_VERSION : 0, layout->month_index };
 
 	hash = hash_bytes(hash, how, sizeof(how));
 	hash = hash_bytes(hash, model->file_path, SDL_strlen(model->file_path));
@@ -492,14 +503,12 @@ static bool bake(impostor_baker_t *baker, const object_model_t *model, const pic
 					}
 				}
 				SDL_SetGPUViewport(pass, &viewport);
-				SDL_PushGPUVertexUniformData(command_buffer, 0, &vertex_uniforms,
-					layout->plant ? sizeof(vertex_uniforms) : sizeof(int32_t) * 4 + sizeof(float) * 4);
 				for (int k = 0; k < model->material_count; k++)
 				{
 					const object_material_t *material = &model->materials[k];
 					SDL_GPUTextureSamplerBinding texture_binding = { material->texture, gpu.linear_repeat };
 					bake_fragment_uniforms_t fragment_uniforms = { material->alpha_tested ? 1 : 0, material->lighting_normals ? 1 : 0, mode,
-						layout->plant ? 1 : 0, { material->tips, 0.0f, 0.0f, 0.0f } };
+						layout->plant ? 1 : 0, { material->tips, 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f, 0.0f } };
 
 					// (a plant's baked snow: not in the picture, which is
 					// its look out of winter)
@@ -507,6 +516,24 @@ static bool bake(impostor_baker_t *baker, const object_model_t *model, const pic
 					{
 						continue;
 					}
+					// A plant's material in the month baked: how far into
+					// its autumn, how much it turns, whether it falls
+					// (objects.c's season for plant.vert)
+					if (layout->plant)
+					{
+						float first = material->autumn_first_month >= 1.0f ? material->autumn_first_month : 10.0f;
+						float last = material->autumn_last_month >= 1.0f ? material->autumn_last_month : 11.0f;
+						float leaves = material->leaves_month >= 1.0f ? material->leaves_month : 4.0f;
+
+						vertex_uniforms.season[0] = season_autumn(layout->month, first, last, leaves);
+						vertex_uniforms.season[1] = IMPOSTOR_PLANT_AUTUMN_SPREAD;
+						vertex_uniforms.season[2] = material->alpha_tested ? material->autumn : 0.0f;
+						vertex_uniforms.season[3] = material->alpha_tested ? material->falls : 0.0f;
+						SDL_memcpy(fragment_uniforms.autumn_color_a, material->autumn_colors[0], sizeof(float) * 3);
+						SDL_memcpy(fragment_uniforms.autumn_color_b, material->autumn_colors[1], sizeof(float) * 3);
+					}
+					SDL_PushGPUVertexUniformData(command_buffer, 0, &vertex_uniforms,
+						layout->plant ? sizeof(vertex_uniforms) : sizeof(int32_t) * 4 + sizeof(float) * 4);
 					SDL_BindGPUFragmentSamplers(pass, 0, &texture_binding, 1);
 					SDL_PushGPUFragmentUniformData(command_buffer, 0, &fragment_uniforms, sizeof(fragment_uniforms));
 					SDL_DrawGPUIndexedPrimitives(pass, (uint32_t)material->index_count, 1, (uint32_t)material->index_offset, 0, 0);
@@ -578,14 +605,14 @@ static void bleed(uint8_t *atlases, const picture_layout_t *layout)
 }
 
 bool impostor_make(impostor_baker_t *baker, impostor_t *impostor, const object_model_t *model, const object_texture_cache_t *textures,
-	int month_index)
+	float month)
 {
 	uint64_t start = SDL_GetPerformanceCounter();
 	uint8_t *atlases;
 	char path[512];
 	uint64_t key;
 	bool from_cache;
-	picture_layout_t layout = layout_for(model, month_index);
+	picture_layout_t layout = layout_for(model, month);
 
 	SDL_zerop(impostor);
 	if (baker->bake_pipeline == NULL || gpu.device == NULL || gpu.command_buffer != NULL)

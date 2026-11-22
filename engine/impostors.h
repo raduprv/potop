@@ -80,10 +80,10 @@ bool impostor_worth_one(const object_model_t *model);
 
 // The model's impostor, from the cache or baked (which waits for the GPU).
 // Outside a frame (between gpu_end_frame and gpu_begin_frame). A plant's
-// foliage as it is in month_index (0 January). False if it could not be
+// foliage as it is in month (season.h: its autumn, its pictures). False if it could not be
 // made (logged)
 bool impostor_make(impostor_baker_t *baker, impostor_t *impostor, const object_model_t *model, const object_texture_cache_t *textures,
-	int month_index);
+	float month);
 void impostor_release(impostor_t *impostor);
 
 #endif

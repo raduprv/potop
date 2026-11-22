@@ -20,6 +20,7 @@ layout(std140, set = UNIFORM_SET, binding = 0) uniform bake_block
 	ivec4 frame;                   // xy: the picture in the grid; z: a plant's (impostor.glsl's plant pictures); w: its month cells (plant.glsl)
 	vec4 sphere;                   // the model's bounding sphere: center, radius (model units)
 #ifdef PLANT_BAKE
+	vec4 season;                   // the material's (plant.glsl's), for the month baked
 	vec4 month_offsets[PLANT_MONTH_CELLS];
 #endif
 };
@@ -28,6 +29,7 @@ layout(location = 0) out vec2 texture_uv;
 layout(location = 1) out vec3 normal;
 layout(location = 2) out float tangent_size;
 layout(location = 3) out vec4 card;                       // a plant's plant_data (none: no tip, its own shade the middle)
+layout(location = 4) out float turned;                    // how far its card has turned to its autumn color (plant.glsl)
 
 void main()
 {
@@ -39,12 +41,23 @@ void main()
 	impostor_basis(direction, right, up);
 	texture_uv = model_uv;
 	card = vec4(0.0, 0.0, 0.5, 0.0);
+	turned = 0.0;
 #ifdef PLANT_BAKE
 	{
 		int cell = plant_cell_of(plant_snow.w);
+		// (a tree of the middle of the season's spread: plant_autumn_of
+		// with its own share a half)
+		float tree_autumn = season.x * (1.0 + 2.0 * season.y) - season.y;
 
 		texture_uv = plant_month_uv(model_uv, cell, month_offsets[clamp(cell, 0, PLANT_MONTH_CELLS - 1)], frame.w, 0.0, plant_data.z);
 		card = plant_data;
+		turned = plant_card_turned(season, tree_autumn, plant_data);
+		// A fallen card (its blossom, its leaf): not in the picture
+		if (plant_card_fallen(season, tree_autumn, plant_data))
+		{
+			gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+			return;
+		}
 	}
 #endif
 	normal = model_normal;

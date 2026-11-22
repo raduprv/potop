@@ -16,12 +16,15 @@ layout(std140, set = UNIFORM_SET, binding = 0) uniform bake_material_block
 	int mode;                      // 0: the color, 1: the normal and depth
 	int plant;                     // a plant's foliage: its cards tinted as plant.frag tints them
 	vec4 foliage;                  // x: its lighter tips (plant.frag's parameters.y)
+	vec4 autumn_color_a;           // its autumn's colors (plant.frag's)
+	vec4 autumn_color_b;
 };
 
 layout(location = 0) in vec2 texture_uv;
 layout(location = 1) in vec3 normal;
 layout(location = 2) in float tangent_size;
 layout(location = 3) in vec4 card;                        // impostor_bake.glsl's
+layout(location = 4) in float turned;
 
 layout(location = 0) out vec4 fragment_color;
 
@@ -64,6 +67,16 @@ void main()
 
 			linear_color *= 0.88 + 0.24 * card.z;
 			linear_color = mix(linear_color, young, clamp(tip * 0.6, 0.0, 0.5));
+			// Its autumn color, keeping the picture's light and dark
+			if (turned > 0.0)
+			{
+				vec3 autumn = mix(autumn_color_a.rgb, autumn_color_b.rgb, fract(card.z * 13.7));
+				float lightness = dot(linear_color, vec3(0.2126, 0.7152, 0.0722));
+				vec3 recolored = autumn * (lightness / max(dot(autumn, vec3(0.2126, 0.7152, 0.0722)), 0.01));
+
+				recolored = mix(recolored, vec3(dot(recolored, vec3(0.2126, 0.7152, 0.0722))), 0.2);
+				linear_color = mix(linear_color, recolored, clamp(turned, 0.0, 1.0));
+			}
 		}
 		fragment_color = vec4(clamp(pow(linear_color, vec3(1.0 / 2.2)), 0.0, 1.0), 1.0);
 	}
