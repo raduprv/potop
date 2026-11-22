@@ -563,6 +563,97 @@ static void round_crests(float *heights, int32_t size, float cell_size_meters, f
 	SDL_Log("Crests rounded over %.0f m: %.0f ms", (double)rounding_meters, (double)(SDL_GetTicksNS() - started) / 1.0e6);
 }
 
+// Ledges on the steep faces: the land there drawn into steps by its height,
+// a shelf nearly flat over LEDGE_SHELF_SHARE of each step, a steeper riser
+// (a band of cliff) up to the next. The shelves 3 to 6 m wide from place to
+// place, so the steps as high as that takes on the face's slope (the
+// mountains' faces are steep: at 2 to 8 meters a meter a step of a fixed 10 m
+// left shelves a meter wide); tilted a little (their heights shifted by a
+// slow noise), and only in patches (a noise over some tens of meters, more of
+// them the more ledges asked): short shelves that come and go, not rings
+// round the mountain like a rice terrace. Only where the land is steep (its
+// slope smoothed over some meters, past LEDGE_SLOPE_FROM), not on the plains
+#define LEDGE_SHELF_SHARE 0.6f
+#define LEDGE_SLOPE_FROM 0.6f           // meters a meter: no ledges below this...
+#define LEDGE_SLOPE_FULL 0.9f           // ...whole ones from this
+#define LEDGE_PATCH_METERS 70.0f        // the patches' size
+#define LEDGE_SMOOTH_METERS 10.0f       // the slope read over this (gullies and ribs left out; the steps' heights change slowly)
+#define LEDGE_STEP_MINIMUM 5.0f
+#define LEDGE_STEP_MAXIMUM 40.0f
+
+static void carve_ledges(float *heights, int32_t size, float cell_size_meters, float amount, const generation_noise_t *noise)
+{
+	size_t cell_count = (size_t)size * (size_t)size;
+	int32_t reach = SDL_max(1, (int32_t)SDL_lroundf(LEDGE_SMOOTH_METERS / SDL_max(cell_size_meters, 0.01f)));
+	float *smoothed;
+	float *scratch;
+	int64_t ledge_cells = 0;
+	Uint64 started = SDL_GetTicksNS();
+
+	if (amount <= 0.0f)
+	{
+		return;
+	}
+	smoothed = SDL_malloc(cell_count * sizeof(float));
+	scratch = SDL_malloc(cell_count * sizeof(float));
+	if (smoothed == NULL || scratch == NULL)
+	{
+		SDL_free(smoothed);
+		SDL_free(scratch);
+		return;
+	}
+	box_blur_rows(heights, scratch, size, reach);
+	box_blur_columns(scratch, smoothed, size, reach);
+#pragma omp parallel for schedule(static) reduction(+:ledge_cells)
+	for (int32_t y = 0; y < size; y++)
+	{
+		for (int32_t x = 0; x < size; x++)
+		{
+			size_t index = (size_t)y * (size_t)size + (size_t)x;
+			float world_x = (float)x * cell_size_meters;
+			float world_z = (float)y * cell_size_meters;
+			float slope = wide_local_slope(smoothed, size, x, y, cell_size_meters, reach);
+			float steep = smoothstep_float(LEDGE_SLOPE_FROM, LEDGE_SLOPE_FULL, slope);
+			float patch;
+			float step;
+			float shifted;
+			float place;
+			float base;
+			float within;
+			float rise;
+			float stepped;
+
+			if (steep <= 0.0f)
+			{
+				continue;
+			}
+			patch = noise_fbm(&noise->gullies, world_x / LEDGE_PATCH_METERS + 211.0f, world_z / LEDGE_PATCH_METERS - 97.0f, 3, 0.5f);
+			patch = smoothstep_float(0.45f - amount * 0.9f, 0.6f - amount * 0.9f, patch);
+			if (patch <= 0.0f)
+			{
+				continue;
+			}
+			step = (3.0f + 3.0f * (0.5f + 0.5f * noise_fbm(&noise->gullies, world_x / 300.0f - 41.0f, world_z / 300.0f + 77.0f, 2, 0.5f)))
+				* slope / LEDGE_SHELF_SHARE;
+			step = clamp_float(step, LEDGE_STEP_MINIMUM, LEDGE_STEP_MAXIMUM);
+			shifted = heights[index] + 0.6f * step * noise_fbm(&noise->gullies, world_x / 180.0f + 5.0f, world_z / 180.0f + 133.0f, 2, 0.5f);
+			place = shifted / step;
+			base = SDL_floorf(place);
+			within = place - base;
+			// (the shelf at the step's foot, then the riser eased up to the
+			// next: what was over the shelf cut back into the face)
+			rise = within < LEDGE_SHELF_SHARE ? 0.0f : smoothstep_float(LEDGE_SHELF_SHARE, 1.0f, within);
+			stepped = heights[index] - (within - rise) * step;
+			heights[index] = lerp_float(heights[index], stepped, steep * patch);
+			ledge_cells += within < LEDGE_SHELF_SHARE && steep * patch > 0.5f ? 1 : 0;
+		}
+	}
+	SDL_free(smoothed);
+	SDL_free(scratch);
+	SDL_Log("Ledges: %.1f%% of the land on shelves, %.0f ms", 100.0 * (double)ledge_cells / (double)cell_count,
+		(double)(SDL_GetTicksNS() - started) / 1.0e6);
+}
+
 static soil_type_t classify_soil(const generation_noise_t *noise, const terrain_settings_t *settings,
 	float height_fraction, float slope, float u, float v)
 {
@@ -1602,6 +1693,9 @@ bool terrain_generate_heights(float *heights, int32_t size, float cell_size_mete
 	if ((steps & TERRAIN_HEIGHTS_FINISH) != 0 && sketch != NULL)
 	{
 		smooth_sharp_edges(heights, size, cell_size_meters);
+		// 8. Its ledges, after all that: the rounding and the edges'
+		// filter would wear a shelf a few meters wide back into the face
+		carve_ledges(heights, size, cell_size_meters, settings->ledges, &noise);
 	}
 	return true;
 }
@@ -1667,8 +1761,13 @@ void terrain_generate(terrain_t *terrain, const terrain_settings_t *settings, co
 				float patches = noise_fbm(&noise.soil_variation, u * 90.0f + 13.0f, v * 90.0f - 7.0f, 3, 0.5f) * 0.5f + 0.5f;
 				float high = smoothstep_float(settings->rock_height_fraction, 1.0f, height_fraction);
 				float pocket = gentle * (0.55f + 0.6f * patches) * settings->mountain_soil_pockets * 2.0f * (1.0f - 0.7f * high);
+				// (a new map from the sketch: a shelf, flat from cell to cell
+				// and gentle over a few, holds soil whatever the patches:
+				// the ledges are there for the trees)
+				bool shelf = sketch != NULL && slope < settings->rock_slope * 0.5f
+					&& wide_local_slope(heights, size, x, y, terrain->cell_size_meters, bedrock_reach) < settings->rock_slope * 0.8f;
 
-				if (pocket > 0.75f)
+				if (pocket > 0.75f || shelf)
 				{
 					soil = SOIL_EARTH;
 					pocket_count++;

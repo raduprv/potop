@@ -3211,6 +3211,7 @@ static void sketch_settings(const testbed_t *game, terrain_settings_t *settings_
 	settings_out->max_height_meters = SDL_max(game->ui.sketch_max_height, 1.0f);
 	settings_out->erosion_droplets = SDL_max(game->ui.sketch_erosion, 0.0f);
 	settings_out->crest_rounding_meters = SDL_max(game->ui.sketch_crest_rounding, 0.0f);
+	settings_out->ledges = SDL_clamp(game->ui.sketch_ledges, 0.0f, 1.0f);
 	*seed_out = ui_sketch_seed(&game->ui);
 	if (*seed_out == 0)
 	{
@@ -3284,6 +3285,7 @@ static bool generate_from_sketch(testbed_t *game, bool preview, const char *name
 	terrain->max_height_meters = settings.max_height_meters;
 	terrain->erosion_droplets = settings.erosion_droplets;
 	terrain->crest_rounding_meters = settings.crest_rounding_meters;
+	terrain->ledges = settings.ledges;
 	game->potop->world.generation_sketch = &game->sketch;
 	{
 		// (a preview is for the land: nothing grown on it, which takes the
@@ -3364,9 +3366,9 @@ static void save_sketch_file(testbed_t *game, const char *name)
 	{
 		length = SDL_snprintf(text, sizeof(text),
 			"; The sketch window's map fields with this sketch\nseed = %s\nsize_cells = %d\ncell_size_meters = %.3f\nmax_height_meters = %.1f\n"
-			"erosion_droplets = %.2f\ncrest_rounding_meters = %.1f\n",
+			"erosion_droplets = %.2f\ncrest_rounding_meters = %.1f\nledges = %.2f\n",
 			game->ui.sketch_seed_input, ui_sketch_size(&game->ui), (double)game->ui.sketch_cell_meters, (double)game->ui.sketch_max_height,
-			(double)game->ui.sketch_erosion, (double)game->ui.sketch_crest_rounding);
+			(double)game->ui.sketch_erosion, (double)game->ui.sketch_crest_rounding, (double)game->ui.sketch_ledges);
 		SDL_snprintf(path, sizeof(path), "%s" SKETCH_LIBRARY_INFO_FILE, folder);
 		saved = file_io_save_file(path, text, (size_t)SDL_clamp(length, 0, (int)sizeof(text) - 1));
 	}
@@ -3436,6 +3438,10 @@ static void load_sketch_file(testbed_t *game, const char *name)
 				else if (SDL_strcmp(key, "crest_rounding_meters") == 0)
 				{
 					game->ui.sketch_crest_rounding = (float)SDL_atof(value);
+				}
+				else if (SDL_strcmp(key, "ledges") == 0)
+				{
+					game->ui.sketch_ledges = (float)SDL_atof(value);
 				}
 			}
 			line = &text[i + 1];
@@ -3621,6 +3627,7 @@ static void sketch_command(void *user, const char *arguments)
 		game->ui.sketch_max_height = game->potop->settings.terrain.max_height_meters;
 		game->ui.sketch_erosion = game->potop->settings.terrain.erosion_droplets;
 		game->ui.sketch_crest_rounding = game->potop->settings.terrain.crest_rounding_meters;
+		game->ui.sketch_ledges = game->potop->settings.terrain.ledges;
 		SDL_snprintf(game->ui.sketch_seed_input, sizeof(game->ui.sketch_seed_input), "%u", terrain->seed);
 		game->ui.sketch_brush_meters = SDL_max((float)ui_sketch_size(&game->ui) * terrain->cell_size_meters * 0.06f, 20.0f);
 		if (game->project_name[0] != '\0')
