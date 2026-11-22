@@ -2,6 +2,7 @@
 // world_apply_render_settings, world_regrow)
 
 #include "world.h"
+#include "water_gpu.h"
 
 #include <SDL3/SDL.h>
 
@@ -145,6 +146,8 @@ void world_apply_render_settings(world_t *world)
 void world_regrow(world_t *world)
 {
 	objects_clear(&world->objects, true);
+	// (the water as it stands now: the willows and reeds go by it)
+	water_gpu_sync(&world->water, &world->terrain);
 	populate_map(&world->objects, &world->terrain, &world->water, &world->settings->objects);
 	material_map_restamp(&world->terrain, &world->objects);
 }
