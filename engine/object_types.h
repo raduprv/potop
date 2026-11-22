@@ -212,6 +212,20 @@ typedef struct
 	// map is repopulated or planted after it has water)
 	float spawn_water_minimum_meters;
 	float spawn_water_maximum_meters;
+	// Water nearby (water deeper than a hand): water_near only this close to
+	// it, likelier the closer (willows, reeds); water_far at least this far
+	// (0: either ignored)
+	float spawn_water_near_meters;
+	float spawn_water_far_meters;
+	// Neighbors: only where spawn_near_count objects of that category
+	// (placed before it: objects.ini's order) stand within spawn_near_meters,
+	// likelier up to that many (ferns under trees); !category only where
+	// fewer do (clearings)
+	char spawn_near[OBJECT_CATEGORY_NAME_LENGTH];
+	bool spawn_near_inverted;
+	float spawn_near_meters;
+	float spawn_near_count;
+	int near_category;             // resolved after loading, -1 none
 } object_type_t;
 
 typedef struct

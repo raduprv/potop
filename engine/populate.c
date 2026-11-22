@@ -19,6 +19,10 @@
 // in noise units
 #define PATCH_EDGE_LOW 0.45f
 #define PATCH_EDGE_HIGH 0.55f
+// Water deeper than this counts as water for spawn_water_near/far
+#define NEAR_WATER_DEPTH_METERS 0.1f
+// Distances to water are kept up to this far
+#define WATER_DISTANCE_LIMIT_METERS 1000.0f
 
 typedef struct
 {
@@ -34,6 +38,10 @@ typedef struct
 	uint8_t *occupied;             // footprints, one byte per occupancy cell
 	int occupancy_size;
 	field_t valley;                // -1 ridge .. 1 valley bottom
+	field_t water_distance;        // meters to the nearest water (made when a type asks)
+	bool water_distance_made;
+	uint16_t *near_counts[OBJECT_CATEGORIES_MAX]; // objects placed in each field cell, for the categories a spawn_near names
+	int near_size;
 	char patch_names[MAXIMUM_PATCHES][OBJECT_CATEGORY_NAME_LENGTH];
 	field_t patches[MAXIMUM_PATCHES]; // 0..1, inside a patch above one half
 	int patch_count;
@@ -319,11 +327,193 @@ static const field_t *patch_field(populate_context_t *context, const object_type
 	return field;
 }
 
+// Distance to water: the field cells holding any water deeper than a hand
+// at 0, the others by a two pass chamfer distance (in meters)
+static bool compute_water_distance(populate_context_t *context)
+{
+	field_t *field = &context->water_distance;
+	const water_t *water = context->water;
+	int size;
+	const float straight = FIELD_CELL_METERS;
+	const float diagonal = FIELD_CELL_METERS * 1.41421356f;
+
+	context->water_distance_made = true;
+	if (!field_create(field, context->map_meters))
+	{
+		return false;
+	}
+	size = field->size;
+	#pragma omp parallel for schedule(dynamic, 8)
+	for (int j = 0; j < size; j++)
+	{
+		for (int i = 0; i < size; i++)
+		{
+			bool wet = false;
+
+			if (water != NULL && water->depth != NULL)
+			{
+				int32_t first_x = clamp_int((int32_t)((float)i * FIELD_CELL_METERS / water->cell_size_meters), 0, water->size - 1);
+				int32_t first_y = clamp_int((int32_t)((float)j * FIELD_CELL_METERS / water->cell_size_meters), 0, water->size - 1);
+				int32_t last_x = clamp_int((int32_t)((float)(i + 1) * FIELD_CELL_METERS / water->cell_size_meters) - 1, first_x, water->size - 1);
+				int32_t last_y = clamp_int((int32_t)((float)(j + 1) * FIELD_CELL_METERS / water->cell_size_meters) - 1, first_y, water->size - 1);
+				int32_t deep = (int32_t)(NEAR_WATER_DEPTH_METERS * (float)TERRAIN_HEIGHT_UNITS_PER_METER);
+
+				for (int32_t y = first_y; y <= last_y && !wet; y++)
+				{
+					for (int32_t x = first_x; x <= last_x; x++)
+					{
+						if (water->depth[y * water->size + x] > deep)
+						{
+							wet = true;
+							break;
+						}
+					}
+				}
+			}
+			field->values[j * size + i] = wet ? 0.0f : WATER_DISTANCE_LIMIT_METERS;
+		}
+	}
+	for (int j = 0; j < size; j++)
+	{
+		for (int i = 0; i < size; i++)
+		{
+			float *value = &field->values[j * size + i];
+
+			if (i > 0)
+			{
+				*value = SDL_min(*value, field->values[j * size + i - 1] + straight);
+			}
+			if (j > 0)
+			{
+				*value = SDL_min(*value, field->values[(j - 1) * size + i] + straight);
+				if (i > 0)
+				{
+					*value = SDL_min(*value, field->values[(j - 1) * size + i - 1] + diagonal);
+				}
+				if (i < size - 1)
+				{
+					*value = SDL_min(*value, field->values[(j - 1) * size + i + 1] + diagonal);
+				}
+			}
+		}
+	}
+	for (int j = size - 1; j >= 0; j--)
+	{
+		for (int i = size - 1; i >= 0; i--)
+		{
+			float *value = &field->values[j * size + i];
+
+			if (i < size - 1)
+			{
+				*value = SDL_min(*value, field->values[j * size + i + 1] + straight);
+			}
+			if (j < size - 1)
+			{
+				*value = SDL_min(*value, field->values[(j + 1) * size + i] + straight);
+				if (i < size - 1)
+				{
+					*value = SDL_min(*value, field->values[(j + 1) * size + i + 1] + diagonal);
+				}
+				if (i > 0)
+				{
+					*value = SDL_min(*value, field->values[(j + 1) * size + i - 1] + diagonal);
+				}
+			}
+		}
+	}
+	return true;
+}
+
+// The water rules' share at a spot of distance meters from water: 0 outside
+// them, up to 2 right by the water for the near ones (about one on average)
+static float water_near_factor(const object_type_t *type, float distance)
+{
+	float factor = 1.0f;
+
+	if (type->spawn_water_far_meters > 0.0f && distance < type->spawn_water_far_meters)
+	{
+		return 0.0f;
+	}
+	if (type->spawn_water_near_meters > 0.0f)
+	{
+		if (distance > type->spawn_water_near_meters)
+		{
+			return 0.0f;
+		}
+		factor = 2.0f * (1.0f - distance / type->spawn_water_near_meters);
+	}
+	return factor;
+}
+
+// The neighbors rule's share for count neighbors: 0..1
+static float neighbors_factor(const object_type_t *type, float count)
+{
+	float enough = SDL_clamp(count / SDL_max(type->spawn_near_count, 0.01f), 0.0f, 1.0f);
+
+	return type->spawn_near_inverted ? 1.0f - enough : enough;
+}
+
+// Objects of the category within radius of a spot, from the field cells
+// whose middles are within it
+static float near_count_at(const populate_context_t *context, const uint16_t *counts, float x, float z, float radius)
+{
+	int size = context->near_size;
+	int center_x = (int)(x / FIELD_CELL_METERS);
+	int center_z = (int)(z / FIELD_CELL_METERS);
+	int reach = (int)SDL_ceilf(radius / FIELD_CELL_METERS);
+	float limit = (radius + 0.5f * FIELD_CELL_METERS) * (radius + 0.5f * FIELD_CELL_METERS);
+	int count = 0;
+
+	for (int j = SDL_max(center_z - reach, 0); j <= SDL_min(center_z + reach, size - 1); j++)
+	{
+		for (int i = SDL_max(center_x - reach, 0); i <= SDL_min(center_x + reach, size - 1); i++)
+		{
+			float offset_x = ((float)i + 0.5f) * FIELD_CELL_METERS - x;
+			float offset_z = ((float)j + 0.5f) * FIELD_CELL_METERS - z;
+
+			if (offset_x * offset_x + offset_z * offset_z <= limit)
+			{
+				count += counts[j * size + i];
+			}
+		}
+	}
+	return (float)count;
+}
+
+static void near_count_add(populate_context_t *context, int category, float x, float z)
+{
+	uint16_t *counts = category >= 0 && category < OBJECT_CATEGORIES_MAX ? context->near_counts[category] : NULL;
+	int i = (int)(x / FIELD_CELL_METERS);
+	int j = (int)(z / FIELD_CELL_METERS);
+
+	if (counts != NULL && i >= 0 && j >= 0 && i < context->near_size && j < context->near_size && counts[j * context->near_size + i] < UINT16_MAX)
+	{
+		counts[j * context->near_size + i]++;
+	}
+}
+
 // How much more (or less) likely the type is at the spot than on average;
 // 0 if it cannot grow there at all
 static float placement_factor(populate_context_t *context, const object_type_t *type, const field_t *patch, float x, float z)
 {
 	float factor = 1.0f;
+
+	if (type->spawn_water_near_meters > 0.0f || type->spawn_water_far_meters > 0.0f)
+	{
+		factor *= context->water_distance.values != NULL ? water_near_factor(type, field_sample(&context->water_distance, x, z)) : 0.0f;
+		if (factor <= 0.0f)
+		{
+			return 0.0f;
+		}
+	}
+	if (type->spawn_near[0] != '\0' && type->near_category >= 0 && context->near_counts[type->near_category] != NULL)
+	{
+		factor *= neighbors_factor(type, near_count_at(context, context->near_counts[type->near_category], x, z, type->spawn_near_meters));
+		if (factor <= 0.0f)
+		{
+			return 0.0f;
+		}
+	}
 
 	if (patch != NULL && type->spawn_clustering > 0.0f)
 	{
@@ -373,6 +563,25 @@ void populate_map(objects_t *objects, const terrain_t *terrain, const water_t *w
 		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Out of memory populating the map");
 		goto done;
 	}
+	// The distances to water and the neighbor counts, if a type asks
+	context.near_size = context.valley.size;
+	for (int t = 0; t < objects->types.type_count; t++)
+	{
+		const object_type_t *type = &objects->types.types[t];
+
+		if (type->spawn_per_hectare <= 0.0f)
+		{
+			continue;
+		}
+		if ((type->spawn_water_near_meters > 0.0f || type->spawn_water_far_meters > 0.0f) && !context.water_distance_made)
+		{
+			compute_water_distance(&context);
+		}
+		if (type->near_category >= 0 && type->near_category < OBJECT_CATEGORIES_MAX && context.near_counts[type->near_category] == NULL)
+		{
+			context.near_counts[type->near_category] = SDL_calloc((size_t)context.near_size * (size_t)context.near_size, sizeof(uint16_t));
+		}
+	}
 	// What is already there keeps its footprint
 	for (int k = 0; k < objects->instance_count; k++)
 	{
@@ -390,6 +599,7 @@ void populate_map(objects_t *objects, const terrain_t *terrain, const water_t *w
 		{
 			occupancy_mark(&context, instance->x, instance->z, footprint);
 		}
+		near_count_add(&context, type->category, instance->x, instance->z);
 	}
 
 	for (int t = 0; t < objects->types.type_count; t++)
@@ -400,7 +610,7 @@ void populate_map(objects_t *objects, const terrain_t *terrain, const water_t *w
 		float base_probability = type->spawn_per_hectare * 1e-4f * SDL_max(settings->density_scale, 0.0f) * spacing * spacing;
 		// No spot is more likely than this: candidates above it are
 		// rejected before anything is looked up
-		float best_factor = (1.0f + type->spawn_clustering) * (1.0f + SDL_fabsf(type->spawn_valley_preference));
+		float best_factor = (1.0f + type->spawn_clustering) * (1.0f + SDL_fabsf(type->spawn_valley_preference)) * (type->spawn_water_near_meters > 0.0f ? 2.0f : 1.0f);
 		const field_t *patch = NULL;
 		int placed = 0;
 
@@ -456,6 +666,7 @@ void populate_map(objects_t *objects, const terrain_t *terrain, const water_t *w
 					{
 						occupancy_mark(&context, x, z, footprint);
 					}
+					near_count_add(&context, type->category, x, z);
 					placed++;
 				}
 			}
@@ -470,6 +681,11 @@ void populate_map(objects_t *objects, const terrain_t *terrain, const water_t *w
 done:
 	SDL_free(context.occupied);
 	SDL_free(context.valley.values);
+	SDL_free(context.water_distance.values);
+	for (int c = 0; c < OBJECT_CATEGORIES_MAX; c++)
+	{
+		SDL_free(context.near_counts[c]);
+	}
 	for (int p = 0; p < context.patch_count; p++)
 	{
 		SDL_free(context.patches[p].values);
@@ -576,6 +792,39 @@ static bool count_visitor(void *user_data, const object_instance_t *instance)
 	return true;
 }
 
+// Meters to the nearest water deeper than a hand, searched up to limit
+// meters away (limit + 1 if none is)
+static float brush_water_distance(const water_t *water, float x, float z, float limit)
+{
+	float best = limit + 1.0f;
+	int32_t reach;
+	int32_t center_x;
+	int32_t center_y;
+	int32_t deep = (int32_t)(NEAR_WATER_DEPTH_METERS * (float)TERRAIN_HEIGHT_UNITS_PER_METER);
+
+	if (water == NULL || water->depth == NULL)
+	{
+		return best;
+	}
+	reach = (int32_t)SDL_ceilf(limit / water->cell_size_meters);
+	center_x = (int32_t)(x / water->cell_size_meters);
+	center_y = (int32_t)(z / water->cell_size_meters);
+	for (int32_t y = SDL_max(center_y - reach, 0); y <= SDL_min(center_y + reach, water->size - 1); y++)
+	{
+		for (int32_t cell_x = SDL_max(center_x - reach, 0); cell_x <= SDL_min(center_x + reach, water->size - 1); cell_x++)
+		{
+			if (water->depth[y * water->size + cell_x] > deep)
+			{
+				float offset_x = ((float)cell_x + 0.5f) * water->cell_size_meters - x;
+				float offset_z = ((float)y + 0.5f) * water->cell_size_meters - z;
+
+				best = SDL_min(best, SDL_sqrtf(offset_x * offset_x + offset_z * offset_z));
+			}
+		}
+	}
+	return best;
+}
+
 int populate_brush(objects_t *objects, const terrain_t *terrain, const water_t *water, const objects_settings_t *settings,
 	int category, float center_x, float center_z, float radius, float seconds, random_t *random)
 {
@@ -647,6 +896,26 @@ int populate_brush(objects_t *objects, const terrain_t *terrain, const water_t *
 		if (!ground_allows(type, terrain, water, x, z, true))
 		{
 			continue;
+		}
+		// The water nearby and the neighbors (as likely as when populating)
+		if (type->spawn_water_near_meters > 0.0f || type->spawn_water_far_meters > 0.0f)
+		{
+			float distance = brush_water_distance(water, x, z, SDL_max(type->spawn_water_near_meters, type->spawn_water_far_meters));
+
+			if (random_float(random) * 2.0f >= water_near_factor(type, distance) * (type->spawn_water_near_meters > 0.0f ? 1.0f : 2.0f))
+			{
+				continue;
+			}
+		}
+		if (type->near_category >= 0)
+		{
+			count_query_t query = { objects, type->near_category, x, z, type->spawn_near_meters, 0 };
+
+			visit_neighborhood(objects, x, z, type->spawn_near_meters, count_visitor, &query);
+			if (random_float(random) >= neighbors_factor(type, (float)query.count))
+			{
+				continue;
+			}
 		}
 		objects_random_placement(objects, chosen, random_float(random), random_float(random), &yaw, &scale);
 		if (!brush_spot_free(objects, x, z, type->footprint_meters * scale))

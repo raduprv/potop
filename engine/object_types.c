@@ -63,6 +63,8 @@ static void set_compiled_defaults(object_types_t *types)
 	defaults->spawn_valley_minimum = -1.0f;
 	defaults->spawn_water_minimum_meters = 0.0f;
 	defaults->spawn_water_maximum_meters = 0.02f;
+	defaults->spawn_near_meters = 10.0f;
+	defaults->spawn_near_count = 1.0f;
 	SDL_strlcpy(types->default_category, "misc", sizeof(types->default_category));
 }
 
@@ -602,6 +604,29 @@ static bool apply_key(object_types_t *types, object_type_t *type, bool in_defaul
 	{
 		return parse_float(value, &type->spawn_water_maximum_meters);
 	}
+	if (SDL_strcmp(key, "spawn_water_near_meters") == 0)
+	{
+		return parse_float(value, &type->spawn_water_near_meters);
+	}
+	if (SDL_strcmp(key, "spawn_water_far_meters") == 0)
+	{
+		return parse_float(value, &type->spawn_water_far_meters);
+	}
+	if (SDL_strcmp(key, "spawn_near") == 0)
+	{
+		// A leading '!' grows where they are not
+		type->spawn_near_inverted = value[0] == '!';
+		SDL_strlcpy(type->spawn_near, value + (type->spawn_near_inverted ? 1 : 0), sizeof(type->spawn_near));
+		return true;
+	}
+	if (SDL_strcmp(key, "spawn_near_meters") == 0)
+	{
+		return parse_float(value, &type->spawn_near_meters);
+	}
+	if (SDL_strcmp(key, "spawn_near_count") == 0)
+	{
+		return parse_float(value, &type->spawn_near_count);
+	}
 	return false;
 }
 
@@ -832,6 +857,11 @@ bool object_types_load(object_types_t *types)
 		if (type->harvest_change_object[0] != '\0' && type->harvest_change_type < 0)
 		{
 			SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "objects.ini: %s: unknown harvest_change_object '%s'", type->name, type->harvest_change_object);
+		}
+		type->near_category = type->spawn_near[0] != '\0' ? object_types_find_category(types, type->spawn_near) : -1;
+		if (type->spawn_near[0] != '\0' && type->near_category < 0)
+		{
+			SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "objects.ini: %s: unknown spawn_near category '%s'", type->name, type->spawn_near);
 		}
 		type->harvest_times = SDL_max(type->harvest_times, 1);
 		type->harvest_count_maximum = SDL_max(type->harvest_count_maximum, type->harvest_count_minimum);

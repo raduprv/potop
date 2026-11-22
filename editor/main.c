@@ -3792,6 +3792,8 @@ static void handle_ui_requests(testbed_t *game)
 	if (requests->apply_objects || requests->regrow)
 	{
 		objects_clear(&game->potop->world.objects, true);
+		// (the water as it stands now: the willows and reeds go by it)
+		water_gpu_sync(&game->potop->world.water, &game->potop->world.terrain);
 		populate_map(&game->potop->world.objects, &game->potop->world.terrain, &game->potop->world.water, &game->potop->settings.objects);
 		material_map_restamp(&game->potop->world.terrain, &game->potop->world.objects);
 	}
