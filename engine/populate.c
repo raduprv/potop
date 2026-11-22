@@ -547,7 +547,7 @@ static uint64_t cell_seed(uint32_t seed, int type, int i, int j)
 
 void populate_map(objects_t *objects, const terrain_t *terrain, const water_t *water, const objects_settings_t *settings)
 {
-	populate_map_categories(objects, terrain, water, settings, UINT32_MAX);
+	populate_map_categories(objects, terrain, water, settings, UINT32_MAX, 0);
 }
 
 // Whether the type's category is one of the mask's
@@ -557,7 +557,7 @@ static bool category_wanted(const object_type_t *type, uint32_t category_mask)
 }
 
 void populate_map_categories(objects_t *objects, const terrain_t *terrain, const water_t *water, const objects_settings_t *settings,
-	uint32_t category_mask)
+	uint32_t category_mask, uint32_t variation)
 {
 	populate_context_t context;
 	uint64_t start = SDL_GetPerformanceCounter();
@@ -646,7 +646,7 @@ void populate_map_categories(objects_t *objects, const terrain_t *terrain, const
 				float scale;
 				float footprint;
 
-				random_seed(&random, cell_seed(terrain->seed, t, i, j));
+				random_seed(&random, cell_seed(terrain->seed + variation * 0x6F4A7C15u, t, i, j));
 				chance = random_float(&random);
 				if (chance >= base_probability * best_factor)
 				{

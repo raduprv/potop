@@ -29,9 +29,11 @@
 // keep their footprints free. water may be NULL.
 void populate_map(objects_t *objects, const terrain_t *terrain, const water_t *water, const objects_settings_t *settings);
 // The same for the types of the categories whose bits are set in
-// category_mask (what is already there keeps its footprint)
+// category_mask (what is already there keeps its footprint); variation 0
+// places them as populate_map does (by the map's seed), any other number
+// elsewhere (the forests' patches stay where they are)
 void populate_map_categories(objects_t *objects, const terrain_t *terrain, const water_t *water, const objects_settings_t *settings,
-	uint32_t category_mask);
+	uint32_t category_mask, uint32_t variation);
 
 // One application of the planting brush lasting 'seconds'; returns how
 // many objects it planted

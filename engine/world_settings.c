@@ -153,6 +153,8 @@ void world_regrow_categories(world_t *world, uint32_t category_mask)
 	objects_clear_spawned(&world->objects, category_mask);
 	// (the water as it stands now: the willows and reeds go by it)
 	water_gpu_sync(&world->water, &world->terrain);
-	populate_map_categories(&world->objects, &world->terrain, &world->water, &world->settings->objects, category_mask);
+	// (each time elsewhere: the same seed grew the same trees again)
+	world->regrow_count++;
+	populate_map_categories(&world->objects, &world->terrain, &world->water, &world->settings->objects, category_mask, world->regrow_count);
 	material_map_restamp(&world->terrain, &world->objects);
 }

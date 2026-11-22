@@ -84,6 +84,7 @@ typedef struct
 	noise_context_t sculpt_ridges;
 	bool sculpt_noise_ready;
 	uint32_t sculpt_noise_seed;
+	uint32_t regrow_count;         // world_regrow_categories': each a new variation of the vegetation
 	float *sculpt_scratch;
 	int32_t sculpt_scratch_capacity;
 	double water_copy_milliseconds; // this frame's water copies to and from the GPU (diagnostics)
