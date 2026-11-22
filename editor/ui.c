@@ -710,10 +710,23 @@ static void object_options(ui_t *ui, const ui_view_t *view)
 	{
 		ui->object_browser_open = !ui->object_browser_open;
 	}
-	nk_layout_row(context, NK_DYNAMIC, ROW_HEIGHT - 4.0f, 2, (const float[]){ 0.38f, 0.62f });
-	nk_label(context, "Category", NK_TEXT_LEFT);
-	category = nk_combo(context, items, types->category_count, tools->object_category, (int)(ROW_HEIGHT - 4.0f),
-		nk_vec2(nk_widget_width(context), 320.0f));
+	// The categories as buttons, three a row: these options are shown in
+	// the bar's drop-down, and a drop-down cannot hold another (Nuklear
+	// asserts, the program stops)
+	category = tools->object_category;
+	section_label(ui, "Category");
+	for (int i = 0; i < types->category_count; i++)
+	{
+		if (i % 3 == 0)
+		{
+			nk_layout_row_dynamic(context, SMALL_ROW_HEIGHT, 3);
+		}
+		if (nk_select_label(context, items[i], NK_TEXT_CENTERED, i == tools->object_category))
+		{
+			category = i;
+		}
+	}
+	section_label(ui, "Type");
 	if (category != tools->object_category || tools->object_type < 0 || tools->object_type >= types->type_count
 		|| types->types[tools->object_type].category != category)
 	{

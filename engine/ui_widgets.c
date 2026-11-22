@@ -131,6 +131,30 @@ bool ui_widget_choice(struct nk_context *context, const char *label, int32_t *va
 	nk_layout_row(context, NK_DYNAMIC, UI_ROW_HEIGHT - 4.0f, 2, (const float[]){ 0.38f, 0.62f });
 	ui_widget_tooltip(context, tooltip);
 	nk_label(context, label, NK_TEXT_LEFT);
+	// Inside a drop-down (the editor's bar): the choices as buttons, as a
+	// drop-down cannot hold another
+	if (context->current != NULL && context->current->layout != NULL && ((int)context->current->layout->type & (int)NK_PANEL_SET_POPUP) != 0)
+	{
+		int chosen = selected;
+
+		for (int i = 0; i < count; i++)
+		{
+			if (i % 3 == 0)
+			{
+				nk_layout_row_dynamic(context, UI_ROW_HEIGHT - 4.0f, 3);
+			}
+			if (nk_select_label(context, items[i], NK_TEXT_CENTERED, i == selected))
+			{
+				chosen = i;
+			}
+		}
+		if (chosen != selected)
+		{
+			*value = values[chosen];
+			return true;
+		}
+		return false;
+	}
 	if (selected < 0)
 	{
 		// A value from the ini file that is not in the list: shown as is
