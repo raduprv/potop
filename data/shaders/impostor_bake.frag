@@ -84,6 +84,8 @@ void main()
 	}
 	else
 	{
-		fragment_color = vec4(facing_normal * 0.5 + 0.5, gl_FragCoord.z);
+		// (a plant's leaves a quarter as long: impostor.frag tells them from
+		// its bark by it, a texel at a time)
+		fragment_color = vec4(facing_normal * (plant != 0 && alpha_tested != 0 ? 0.125 : 0.5) + 0.5, gl_FragCoord.z);
 	}
 }

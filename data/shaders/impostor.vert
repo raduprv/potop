@@ -167,7 +167,8 @@ void main()
 	rotation = instance_rotation;
 	fade = instance_fade;
 	toward_eye = vec4(eye_direction, radius);
-	leafy = look.x;
+	// (a plant's: told a texel at a time, impostor.frag)
+	leafy = look.y > 0.5 ? -1.0 : look.x;
 	haze = clamp(haze_amount(world_position), 0.0, 1.0);
 	// Drawn at the sphere's near side (the same square on the screen,
 	// moved towards the eye along the rays: the attributes stay those of

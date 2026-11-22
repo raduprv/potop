@@ -8,7 +8,7 @@
 // objects.c's PLANT_AUTUMN_SPREAD: how far apart the trees are in their autumn
 #define IMPOSTOR_PLANT_AUTUMN_SPREAD 0.12f
 // Raise when a plant's pictures are made differently: only theirs are baked again
-#define IMPOSTOR_PLANT_BAKE_VERSION 3
+#define IMPOSTOR_PLANT_BAKE_VERSION 4
 
 #include <SDL3/SDL.h>
 

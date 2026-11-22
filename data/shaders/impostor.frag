@@ -133,6 +133,10 @@ void main()
 	normal_depth /= max(coverage, 1e-4);
 
 	vec3 normal = impostor_rotate(rotation, normal_depth.xyz / max(length(normal_depth.xyz), 1e-4));
+	// How much of it is leaves: a plant's here (its leaves' normals baked a
+	// quarter as long as its bark's), the rest's the model's share. A bush
+	// half bark was lit half as bark, dark against the sun
+	float leaf = leafy < 0.0 ? clamp((1.0 - length(normal_depth.xyz)) / 0.75, 0.0, 1.0) : leafy;
 	// The pictures' depth: 0 the sphere's near side, 1 its far side
 	vec3 position = world_position + toward_eye.xyz * (0.5 - normal_depth.w) * 2.0 * toward_eye.w;
 	vec4 clip = world_to_clip(position);
@@ -141,7 +145,7 @@ void main()
 
 	vec3 albedo = pow(color, vec3(2.2));
 	float facing_sun = dot(normal, sun_direction);
-	float diffuse = mix(max(facing_sun, 0.0), max(facing_sun * 0.6 + 0.4, 0.0) + 0.35 * max(-facing_sun, 0.0), leafy);   // (plant.frag's LEAF_SUN_THROUGH)
+	float diffuse = mix(max(facing_sun, 0.0), max(facing_sun * 0.6 + 0.4, 0.0) + 0.35 * max(-facing_sun, 0.0), leaf);   // (plant.frag's LEAF_SUN_THROUGH)
 	// The shadow maps hold the real model: looked up a little towards the
 	// sun, so the pictures' rough depth does not shadow itself
 	vec3 shadow_point = position + sun_direction * 0.5;
@@ -149,13 +153,13 @@ void main()
 	vec4 near_shadow_position = near_light_view_projection * vec4(shadow_point, 1.0);
 	// (leaves as plant.frag has them: the far map alone, a shadow taking
 	// 70% of the sun, not all)
-	float shadowed = mix(sun_visibility(shadow_position, near_shadow_position), mix(1.0, sun_visibility_far(shadow_position), 0.7), leafy)
+	float shadowed = mix(sun_visibility(shadow_position, near_shadow_position), mix(1.0, sun_visibility_far(shadow_position), 0.7), leaf)
 		* cloud_light(position, sun_direction);
 	// The sun through the leaves, seen against it (plant.frag's), yellower
 	// than what it lights
-	float through = pow(max(dot(-normalize(eye_position - position), sun_direction), 0.0), 3.0) * 0.45 * leafy;
+	float through = pow(max(dot(-normalize(eye_position - position), sun_direction), 0.0), 3.0) * 0.45 * leaf;
 	vec3 lit = albedo * (sun_color * (diffuse + through * vec3(1.1, 1.15, 0.7)) * shadowed + (surroundings(normal) * sky_light.a + sky_light.rgb)
-		+ local_light(position, normal, leafy * 0.4));
+		+ local_light(position, normal, leaf * 0.4));
 	float view_distance = length(position - eye_position);
 
 	lit = mix(lit, sky_color, haze);
