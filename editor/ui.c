@@ -1348,6 +1348,11 @@ static void menu_bar(ui_t *ui, const ui_view_t *view)
 		{
 			ui->sketch_open = true;
 		}
+		tooltip_if_hovered(context, "Removes the vegetation, rocks, dead wood and grows them again by the ground and the water as they are now (villages stay)");
+		if (nk_menu_item_label(context, "Grow the vegetation anew (V)", NK_TEXT_LEFT))
+		{
+			ui->requests.regrow = true;
+		}
 		nk_menu_end(context);
 	}
 	nk_layout_row_push(context, bar_width(ui, "Bake"));
@@ -1742,6 +1747,11 @@ static void context_bar(ui_t *ui, const ui_view_t *view)
 				{
 					tools->plant_category = category;
 				}
+			}
+			bar_gap(ui);
+			if (bar_button(ui, "Grow the whole map anew", "Removes the vegetation, rocks, dead wood and grows them again by the ground and the water as they are now (V; villages stay)"))
+			{
+				ui->requests.regrow = true;
 			}
 			break;
 		}
