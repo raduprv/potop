@@ -321,6 +321,85 @@ static void carve_steep_faces(float *heights, int32_t size, float cell_size_mete
 	SDL_free(original);
 }
 
+// The sharp edges taken off: a cell higher over the mean of two opposite
+// neighbors (along x, z and both diagonals) than a crest whose sides fall
+// EDGE_SLOPE meters a meter would be is brought down to that; over and over,
+// till nothing moves (or EDGE_PASSES). Planes and even slopes are left as
+// they are (their mean is their middle), crests the thermal erosion leaves
+// too (its talus is less steep); blades and spikes a few meters thick, walls
+// standing up with a hair's width on top, are worn down to rounded ridges
+#define EDGE_SLOPE 1.0f                 // meters a meter: the steepest crest kept as it is
+#define EDGE_PASSES 48
+#define EDGE_SETTLED_METERS 0.01f       // a pass that moves nothing more than this ends them
+
+static void smooth_sharp_edges(float *heights, int32_t size, float cell_size_meters)
+{
+	size_t cell_count = (size_t)size * (size_t)size;
+	float *next_heights = SDL_malloc(cell_count * sizeof(float));
+	float *current = heights;
+	float *next = next_heights;
+	float straight = EDGE_SLOPE * cell_size_meters;
+	float diagonal = straight * 1.41421356f;
+	int passes = 0;
+	double total_moved = 0.0;
+
+	if (next_heights == NULL)
+	{
+		return;
+	}
+	for (int pass = 0; pass < EDGE_PASSES; pass++)
+	{
+		float moved = 0.0f;
+		double moved_sum = 0.0;
+
+#pragma omp parallel for schedule(static) reduction(max:moved) reduction(+:moved_sum)
+		for (int32_t y = 0; y < size; y++)
+		{
+			for (int32_t x = 0; x < size; x++)
+			{
+				size_t index = (size_t)y * (size_t)size + (size_t)x;
+				float height = current[index];
+				float limit = height;
+
+				if (x > 0 && x < size - 1)
+				{
+					limit = SDL_min(limit, 0.5f * (current[index - 1] + current[index + 1]) + straight);
+				}
+				if (y > 0 && y < size - 1)
+				{
+					limit = SDL_min(limit, 0.5f * (current[index - (size_t)size] + current[index + (size_t)size]) + straight);
+					if (x > 0 && x < size - 1)
+					{
+						limit = SDL_min(limit, 0.5f * (current[index - (size_t)size - 1] + current[index + (size_t)size + 1]) + diagonal);
+						limit = SDL_min(limit, 0.5f * (current[index - (size_t)size + 1] + current[index + (size_t)size - 1]) + diagonal);
+					}
+				}
+				next[index] = limit;
+				moved = SDL_max(moved, height - limit);
+				moved_sum += (double)(height - limit);
+			}
+		}
+		{
+			float *swap = current;
+
+			current = next;
+			next = swap;
+		}
+		passes++;
+		total_moved += moved_sum;
+		if (moved < EDGE_SETTLED_METERS)
+		{
+			break;
+		}
+	}
+	if (current != heights)
+	{
+		SDL_memcpy(heights, current, cell_count * sizeof(float));
+	}
+	SDL_free(next_heights);
+	SDL_Log("Sharp edges: %d passes, %.0f m3 taken off", passes, total_moved * (double)cell_size_meters * (double)cell_size_meters);
+}
+
 // Steepest height difference to a neighbor, in meters per meter
 static float local_slope(const float *heights, int32_t size, int32_t x, int32_t y, float cell_size_meters)
 {
@@ -1427,6 +1506,13 @@ bool terrain_generate_heights(float *heights, int32_t size, float cell_size_mete
 	if (sketch != NULL && terrain_sketch_painted(sketch))
 	{
 		sink_lakes(heights, size, cell_size_meters, settings, &noise, sketch);
+	}
+
+	// 7. A new map from the sketch: its sharp edges taken off, whatever
+	// left them (blades, spikes)
+	if ((steps & TERRAIN_HEIGHTS_FINISH) != 0 && sketch != NULL)
+	{
+		smooth_sharp_edges(heights, size, cell_size_meters);
 	}
 	return true;
 }
