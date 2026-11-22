@@ -29,11 +29,14 @@
 #define IMPOSTOR_GRID 8                // pictures across the grid (impostor.glsl)
 #define IMPOSTOR_CELL_PIXELS 64        // each picture's size
 #define IMPOSTOR_ATLAS_PIXELS (IMPOSTOR_GRID * IMPOSTOR_CELL_PIXELS)
-// A plant's (a model with a plant buffer): round enough to need no pictures
-// from round it, only a few from lower to higher (IMPOSTOR_PLANT_PICTURES,
-// impostor.glsl), larger, on a smaller atlas; drawn turned to face the eye
-#define IMPOSTOR_PLANT_GRID 2
+// A plant's (a model with a plant buffer): pictures larger, from round it
+// at a few heights only (impostor.glsl): a row a height, a column a side
+#define IMPOSTOR_PLANT_AZIMUTHS 8      // impostor.glsl's
+#define IMPOSTOR_PLANT_ELEVATIONS 3
 #define IMPOSTOR_PLANT_CELL_PIXELS 128
+// The baker's targets: the largest atlas of either
+#define IMPOSTOR_BAKE_WIDTH (IMPOSTOR_PLANT_AZIMUTHS * IMPOSTOR_PLANT_CELL_PIXELS)
+#define IMPOSTOR_BAKE_HEIGHT IMPOSTOR_ATLAS_PIXELS
 // Models with fewer triangles than this, or smaller (bounding sphere
 // radius), are cheaper drawn as they are
 #define IMPOSTOR_MINIMUM_TRIANGLES 150
@@ -50,8 +53,9 @@ typedef struct
 	SDL_GPUTexture *albedo;        // RGBA8, mipmapped: sRGB color, alpha covered
 	SDL_GPUTexture *normal;        // RGBA8, mipmapped: normal in the model's axes * 0.5 + 0.5 (half as long: leaves), alpha depth
 	float sphere[4];               // the model's bounding sphere: center, radius (model axes, meters at size 1)
-	float look[4];                 // x: how leafy, 0..1 (its triangles' share in cut out materials): lit like leaves; y: a plant's (1); z: pictures across its grid
-	int atlas_pixels;              // its atlases' side
+	float look[4];                 // x: how leafy, 0..1 (its triangles' share in cut out materials): lit like leaves; y: a plant's (1); z, w: pictures across, down its atlas
+	int atlas_width;               // its atlases' size
+	int atlas_height;
 	int month_index;               // a plant's: the month its foliage's pictures are of (0 January; -1 not a plant)
 } impostor_t;
 

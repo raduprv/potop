@@ -813,7 +813,7 @@ void objects_update_impostors(objects_t *objects)
 		for (int m = 0; m < objects->model_count; m++)
 		{
 			total += objects->impostors[m].albedo != NULL ? 1 : 0;
-			texels += objects->impostors[m].albedo != NULL ? (double)objects->impostors[m].atlas_pixels * objects->impostors[m].atlas_pixels : 0.0;
+			texels += objects->impostors[m].albedo != NULL ? (double)objects->impostors[m].atlas_width * objects->impostors[m].atlas_height : 0.0;
 		}
 		SDL_Log("Impostors: %d made (%d baked, %d from the cache) in %.2f s; %d models have one (%.0f MB)", made,
 			objects->impostor_baker.baked - baked_before, objects->impostor_baker.loaded - loaded_before,

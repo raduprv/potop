@@ -31,7 +31,7 @@ layout(location = 3) out vec4 card;                       // a plant's plant_dat
 
 void main()
 {
-	vec3 direction = frame.z != 0 ? impostor_plant_direction(frame.x + 2 * frame.y, 0.0) : impostor_frame_direction(frame.xy);
+	vec3 direction = frame.z != 0 ? impostor_plant_direction(frame.xy) : impostor_frame_direction(frame.xy);
 	vec3 right;
 	vec3 up;
 	vec3 relative = model_position - sphere.xyz;

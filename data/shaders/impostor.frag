@@ -42,7 +42,7 @@ layout(location = 9) flat in vec4 toward_eye;
 layout(location = 10) flat in float leafy;
 layout(location = 12) in float haze;                     // impostor.vert's haze_amount
 layout(location = 11) flat in vec4 sky_light;           // impostor.vert's: the light sent back (rgb), the sky seen (a)
-layout(location = 13) flat in vec4 picture_turn;         // impostor.vert
+layout(location = 13) flat in vec2 picture_grid;         // impostor.vert
 
 layout(std140, set = UNIFORM_SET, binding = 1) uniform impostor_draw_block
 {
@@ -95,8 +95,8 @@ void main()
 	float atlas_size = float(textureSize(albedo_atlas, 0).x);
 	// The mip level, from how fast the first picture's point moves across
 	// the pixels (the three move alike)
-	vec2 texel_ddx = dFdx(picture_point_0) * 0.5 * atlas_size / picture_turn.z;
-	vec2 texel_ddy = dFdy(picture_point_0) * 0.5 * atlas_size / picture_turn.z;
+	vec2 texel_ddx = dFdx(picture_point_0) * 0.5 * atlas_size / picture_grid.x;
+	vec2 texel_ddy = dFdy(picture_point_0) * 0.5 * atlas_size / picture_grid.x;
 	float lod = clamp(0.5 * log2(max(dot(texel_ddx, texel_ddx), dot(texel_ddy, texel_ddy))), 0.0, IMPOSTOR_MAXIMUM_LOD);
 	float coverage = 0.0;
 	vec3 color = vec3(0.0);
@@ -112,7 +112,7 @@ void main()
 		{
 			continue;
 		}
-		vec2 uv = impostor_atlas_uv(frames[k], points[k], picture_turn.z);
+		vec2 uv = impostor_atlas_uv(frames[k], points[k], picture_grid);
 		vec4 albedo_sample = textureLod(albedo_atlas, uv, lod);
 		vec4 normal_sample = textureLod(normal_atlas, uv, lod);
 		float weight = weights[k] * albedo_sample.a;
@@ -130,12 +130,7 @@ void main()
 	color /= max(coverage, 1e-4);
 	normal_depth /= max(coverage, 1e-4);
 
-	vec3 normal = normal_depth.xyz / max(length(normal_depth.xyz), 1e-4);
-
-	// (a plant's pictures, all from one side, turned to the eye's: their
-	// normals with them)
-	normal = vec3(normal.x * picture_turn.x - normal.z * picture_turn.y, normal.y, normal.x * picture_turn.y + normal.z * picture_turn.x);
-	normal = impostor_rotate(rotation, normal);
+	vec3 normal = impostor_rotate(rotation, normal_depth.xyz / max(length(normal_depth.xyz), 1e-4));
 	// The pictures' depth: 0 the sphere's near side, 1 its far side
 	vec3 position = world_position + toward_eye.xyz * (0.5 - normal_depth.w) * 2.0 * toward_eye.w;
 	vec4 clip = world_to_clip(position);

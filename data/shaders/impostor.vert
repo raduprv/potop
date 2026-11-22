@@ -23,7 +23,7 @@ layout(location = 2) in float instance_fade;
 layout(std140, set = UNIFORM_SET, binding = 1) uniform impostor_block
 {
 	vec4 sphere;                   // the model's bounding sphere: center, radius (model units)
-	vec4 look;                     // x: how leafy (0..1: lit like leaves, the light wrapping round); y: a plant's (impostor.glsl); z: pictures across its atlas
+	vec4 look;                     // x: how leafy (0..1: lit like leaves, the light wrapping round); y: a plant's (impostor.glsl); z, w: pictures across, down its atlas
 };
 
 layout(location = 0) out vec3 world_position;            // on the square
@@ -39,7 +39,7 @@ layout(location = 9) flat out vec4 toward_eye;           // xyz: from the object
 layout(location = 10) flat out float leafy;
 layout(location = 12) out float haze;                    // how much the haze hides it (scene.glsl's haze_amount, per vertex: it changes slowly over a blade, a card, a picture)
 layout(location = 11) flat out vec4 sky_light;          // at its middle: the light sent back (rgb, onto a face up), the sky seen (a)
-layout(location = 13) flat out vec4 picture_turn;        // xy: cos, sin of the turn about up from the pictures' side to the eye's (a plant's; 1, 0 else); z: pictures across the atlas
+layout(location = 13) flat out vec2 picture_grid;        // pictures across, down the atlas
 
 vec4 conjugate(vec4 quaternion)
 {
@@ -91,56 +91,73 @@ void main()
 		vec3 eye = impostor_rotate(back, eye_position - center) / radius;
 		vec3 point = impostor_rotate(back, world_position - center) / radius;
 
-		picture_turn = vec4(1.0, 0.0, look.z, 0.0);
-		// A plant's: the two pictures nearest the eye's height, turned to
-		// its side
+		picture_grid = look.zw;
+		// A plant's: the three pictures round the eye's side and height
+		// (its columns going round)
 		if (look.y > 0.5)
 		{
 			vec3 toward = normalize(eye);
 			float azimuth = atan(toward.z, toward.x);
 			float height = clamp(asin(clamp(toward.y, -1.0, 1.0)), 0.0, radians(IMPOSTOR_PLANT_HIGHEST_DEGREES));
-			float along = height / radians(IMPOSTOR_PLANT_HIGHEST_DEGREES) * float(IMPOSTOR_PLANT_PICTURES - 1);
-			int lower = min(int(floor(along)), IMPOSTOR_PLANT_PICTURES - 2);
-			float upper_share = clamp(along - float(lower), 0.0, 1.0);
+			vec2 place = vec2(fract(azimuth / 6.2831853 + 1.0) * float(IMPOSTOR_PLANT_AZIMUTHS),
+				height / radians(IMPOSTOR_PLANT_HIGHEST_DEGREES) * float(IMPOSTOR_PLANT_ELEVATIONS - 1));
+			ivec2 base = ivec2(min(int(floor(place.x)), IMPOSTOR_PLANT_AZIMUTHS - 1), min(int(floor(place.y)), IMPOSTOR_PLANT_ELEVATIONS - 2));
+			vec2 within = clamp(place - vec2(base), 0.0, 1.0);
+			int next_x = (base.x + 1) % IMPOSTOR_PLANT_AZIMUTHS;
+			ivec2 frame_a;
+			ivec2 frame_b;
+			ivec2 frame_c;
 
-			frames_01 = ivec4(impostor_plant_frame(lower), impostor_plant_frame(lower + 1));
-			frame_2 = impostor_plant_frame(lower);
-			weights = vec3(1.0 - upper_share, upper_share, 0.0);
-			picture_point_0 = on_picture_from(impostor_plant_direction(lower, azimuth), eye, point);
-			picture_point_1 = on_picture_from(impostor_plant_direction(lower + 1, azimuth), eye, point);
-			picture_point_2 = picture_point_0;
-			picture_turn.xy = vec2(cos(azimuth), sin(azimuth));
+			if (within.x + within.y < 1.0)
+			{
+				frame_a = base;
+				frame_b = ivec2(next_x, base.y);
+				frame_c = ivec2(base.x, base.y + 1);
+				weights = vec3(1.0 - within.x - within.y, within.x, within.y);
+			}
+			else
+			{
+				frame_a = ivec2(next_x, base.y + 1);
+				frame_b = ivec2(base.x, base.y + 1);
+				frame_c = ivec2(next_x, base.y);
+				weights = vec3(within.x + within.y - 1.0, 1.0 - within.x, 1.0 - within.y);
+			}
+			frames_01 = ivec4(frame_a, frame_b);
+			frame_2 = frame_c;
+			picture_point_0 = on_picture_from(impostor_plant_direction(frame_a), eye, point);
+			picture_point_1 = on_picture_from(impostor_plant_direction(frame_b), eye, point);
+			picture_point_2 = on_picture_from(impostor_plant_direction(frame_c), eye, point);
 		}
 		else
 		{
-		vec2 grid = (impostor_hemi_encode(normalize(eye)) * 0.5 + 0.5) * float(IMPOSTOR_GRID - 1);
-		ivec2 base = clamp(ivec2(floor(grid)), ivec2(0), ivec2(IMPOSTOR_GRID - 2));
-		vec2 within = clamp(grid - vec2(base), 0.0, 1.0);
-		ivec2 frame_a;
-		ivec2 frame_b;
-		ivec2 frame_c;
+			vec2 grid = (impostor_hemi_encode(normalize(eye)) * 0.5 + 0.5) * float(IMPOSTOR_GRID - 1);
+			ivec2 base = clamp(ivec2(floor(grid)), ivec2(0), ivec2(IMPOSTOR_GRID - 2));
+			vec2 within = clamp(grid - vec2(base), 0.0, 1.0);
+			ivec2 frame_a;
+			ivec2 frame_b;
+			ivec2 frame_c;
 
-		// The grid's square cut in two triangles: the three corners of the
-		// one the eye is in, weighted by where in it
-		if (within.x + within.y < 1.0)
-		{
-			frame_a = base;
-			frame_b = base + ivec2(1, 0);
-			frame_c = base + ivec2(0, 1);
-			weights = vec3(1.0 - within.x - within.y, within.x, within.y);
-		}
-		else
-		{
-			frame_a = base + ivec2(1, 1);
-			frame_b = base + ivec2(0, 1);
-			frame_c = base + ivec2(1, 0);
-			weights = vec3(within.x + within.y - 1.0, 1.0 - within.x, 1.0 - within.y);
-		}
-		frames_01 = ivec4(frame_a, frame_b);
-		frame_2 = frame_c;
-		picture_point_0 = on_picture(frame_a, eye, point);
-		picture_point_1 = on_picture(frame_b, eye, point);
-		picture_point_2 = on_picture(frame_c, eye, point);
+			// The grid's square cut in two triangles: the three corners of the
+			// one the eye is in, weighted by where in it
+			if (within.x + within.y < 1.0)
+			{
+				frame_a = base;
+				frame_b = base + ivec2(1, 0);
+				frame_c = base + ivec2(0, 1);
+				weights = vec3(1.0 - within.x - within.y, within.x, within.y);
+			}
+			else
+			{
+				frame_a = base + ivec2(1, 1);
+				frame_b = base + ivec2(0, 1);
+				frame_c = base + ivec2(1, 0);
+				weights = vec3(within.x + within.y - 1.0, 1.0 - within.x, 1.0 - within.y);
+			}
+			frames_01 = ivec4(frame_a, frame_b);
+			frame_2 = frame_c;
+			picture_point_0 = on_picture(frame_a, eye, point);
+			picture_point_1 = on_picture(frame_b, eye, point);
+			picture_point_2 = on_picture(frame_c, eye, point);
 		}
 	}
 	rotation = instance_rotation;
