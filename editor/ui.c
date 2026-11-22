@@ -888,6 +888,7 @@ static void brush_options(ui_t *ui, const ui_view_t *view)
 					tools->layout == layout))
 				{
 					tools->layout = layout;
+					tools->layout_in_hand = true;
 				}
 			}
 			break;

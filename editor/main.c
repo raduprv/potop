@@ -1860,6 +1860,33 @@ static void apply_object_tools(testbed_t *game, float frame_seconds)
 {
 	tool_state_t *tools = &game->tools;
 
+	// The object tool every frame, held or not (a carried object follows
+	// the pointer; a right click lets go)
+	if (tools->current_tool == TOOL_OBJECT && game->input.water_action == WATER_ACTION_NONE)
+	{
+		// Something in hand: placed by a click (then none), let go of by a
+		// right one; else one standing there taken up, carried, put down
+		if (tools->object_in_hand && game->carried_id == 0)
+		{
+			if (game->input.apply_tool_pressed && tools->hover_valid && !game->input.pointer_over_ui)
+			{
+				place_chosen_object(game, tools->hover_point);
+				tools->object_in_hand = false;
+			}
+			if (game->input.right_clicked)
+			{
+				tools->object_in_hand = false;
+			}
+			return;
+		}
+		carry_object(game, frame_seconds);
+		return;
+	}
+	// A layout let go of by a right click
+	if (tools->current_tool == TOOL_LAYOUT && game->input.right_clicked)
+	{
+		tools->layout_in_hand = false;
+	}
 	if (!game->input.apply_tool_held || !tools->hover_valid || game->input.water_action != WATER_ACTION_NONE)
 	{
 		return;
@@ -1870,25 +1897,6 @@ static void apply_object_tools(testbed_t *game, float frame_seconds)
 		{
 			potop_edit_toggle_spring(game->potop, tools->hover_point.x, tools->hover_point.z);
 		}
-		return;
-	}
-	if (tools->current_tool == TOOL_OBJECT)
-	{
-		// Something in hand: placed by a click, let go of by a right one;
-		// else one standing there taken up, carried, put down
-		if (tools->object_in_hand && game->carried_id == 0)
-		{
-			if (game->input.apply_tool_pressed)
-			{
-				place_chosen_object(game, tools->hover_point);
-			}
-			if (game->input.right_clicked)
-			{
-				tools->object_in_hand = false;
-			}
-			return;
-		}
-		carry_object(game, frame_seconds);
 		return;
 	}
 	if (tools->current_tool == TOOL_EFFECT)
@@ -1917,10 +1925,11 @@ static void apply_object_tools(testbed_t *game, float frame_seconds)
 	}
 	if (tools->current_tool == TOOL_LAYOUT)
 	{
-		// One per click
-		if (game->input.apply_tool_pressed)
+		// One per click, then none in hand (pick it again for another)
+		if (game->input.apply_tool_pressed && tools->layout_in_hand)
 		{
 			potop_edit_place_layout(game->potop, tools->layout, tools->hover_point.x, tools->hover_point.z);
+			tools->layout_in_hand = false;
 		}
 		return;
 	}
@@ -2185,6 +2194,7 @@ static void handle_requests(testbed_t *game)
 			game->tools.layout = (game->tools.layout + 1) % game->potop->world.layouts.count;
 		}
 		game->tools.layout = clamp_int(game->tools.layout, 0, game->potop->world.layouts.count - 1);
+		game->tools.layout_in_hand = true;
 		game->tools.current_tool = TOOL_LAYOUT;
 	}
 	if (input->request_remove_layout && game->tools.hover_valid && game->carried_id == 0)
@@ -2379,7 +2389,13 @@ static void describe_tool(const testbed_t *game, char *text_out, size_t text_out
 				(double)tools->brush_radius_meters);
 			break;
 		case TOOL_LAYOUT:
-			SDL_snprintf(text_out, text_out_size, "place %s", game->potop->world.layouts.count > 0 ? game->potop->world.layouts.layouts[tools->layout].name : "nothing");
+			if (!tools->layout_in_hand)
+			{
+				SDL_strlcpy(text_out, "layout: pick one to place it", text_out_size);
+				break;
+			}
+			SDL_snprintf(text_out, text_out_size, "place %s (right click: let go of it)", game->potop->world.layouts.count > 0
+				? game->potop->world.layouts.layouts[tools->layout].name : "nothing");
 			break;
 		case TOOL_STAMP:
 			SDL_snprintf(text_out, text_out_size, "stamp %s %.1f m (%s), r = %.0f m", stamps_name(tools->current_stamp),
@@ -2698,7 +2714,7 @@ static void render_frame(testbed_t *game, int pixel_width, int pixel_height)
 		brush.radius = game->tools.brush_radius_meters;
 		if (game->tools.current_tool == TOOL_LAYOUT && game->potop->world.layouts.count > 0)
 		{
-			brush.radius = game->potop->world.layouts.layouts[game->tools.layout].footprint_meters;
+			brush.radius = game->tools.layout_in_hand ? game->potop->world.layouts.layouts[game->tools.layout].footprint_meters : 0.0f;
 		}
 		if (game->tools.current_tool == TOOL_SPRING || game->tools.current_tool == TOOL_REMOVE_LAYOUT)
 		{
