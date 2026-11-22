@@ -522,6 +522,47 @@ static void box_blur_columns(const float *source, float *destination, int32_t si
 	}
 }
 
+// The crests and peaks rounded over about rounding_meters: the land no
+// higher than itself smoothed (three box blurs, about a bell as wide), so
+// what bulges (a crest, a peak, a cliff's top) takes the smooth shape and
+// what is even or hollow (slopes, valleys, the lakes' beds) stays as it is
+static void round_crests(float *heights, int32_t size, float cell_size_meters, float rounding_meters)
+{
+	size_t cell_count = (size_t)size * (size_t)size;
+	int32_t reach = (int32_t)SDL_lroundf(rounding_meters * 0.5f / SDL_max(cell_size_meters, 0.01f));
+	float *smoothed;
+	float *scratch;
+	Uint64 started = SDL_GetTicksNS();
+
+	if (reach < 1)
+	{
+		return;
+	}
+	smoothed = SDL_malloc(cell_count * sizeof(float));
+	scratch = SDL_malloc(cell_count * sizeof(float));
+	if (smoothed == NULL || scratch == NULL)
+	{
+		SDL_free(smoothed);
+		SDL_free(scratch);
+		return;
+	}
+	box_blur_rows(heights, scratch, size, reach);
+	box_blur_columns(scratch, smoothed, size, reach);
+	for (int pass = 0; pass < 2; pass++)
+	{
+		box_blur_rows(smoothed, scratch, size, reach);
+		box_blur_columns(scratch, smoothed, size, reach);
+	}
+#pragma omp parallel for schedule(static)
+	for (int64_t i = 0; i < (int64_t)cell_count; i++)
+	{
+		heights[i] = SDL_min(heights[i], smoothed[i]);
+	}
+	SDL_free(smoothed);
+	SDL_free(scratch);
+	SDL_Log("Crests rounded over %.0f m: %.0f ms", (double)rounding_meters, (double)(SDL_GetTicksNS() - started) / 1.0e6);
+}
+
 static soil_type_t classify_soil(const generation_noise_t *noise, const terrain_settings_t *settings,
 	float height_fraction, float slope, float u, float v)
 {
@@ -1540,6 +1581,12 @@ bool terrain_generate_heights(float *heights, int32_t size, float cell_size_mete
 			apply_thermal_erosion(heights, size, cell_size_meters, settings);
 		}
 		carve_steep_faces(heights, size, cell_size_meters, settings, &noise);
+		// (a new map from the sketch: its crests rounded, before the lakes,
+		// whose shores' lips would sink under their water)
+		if (sketch != NULL)
+		{
+			round_crests(heights, size, cell_size_meters, settings->crest_rounding_meters);
+		}
 	}
 
 	// 6. The sketch's lakes, last: their surfaces under their shores as the

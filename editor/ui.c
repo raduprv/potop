@@ -3112,6 +3112,7 @@ static void sketch_fill_fields(ui_t *ui, const ui_view_t *view)
 		: terrain->cell_size_meters;
 	ui->sketch_max_height = terrain->max_height_meters;
 	ui->sketch_erosion = terrain->erosion_droplets;
+	ui->sketch_crest_rounding = terrain->crest_rounding_meters;
 	SDL_snprintf(ui->sketch_seed_input, sizeof(ui->sketch_seed_input), "%u", view->seed);
 	if (view->project_name[0] != '\0')
 	{
@@ -3257,6 +3258,8 @@ static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
 	slider_row(ui, "Cell", &ui->sketch_cell_meters, 0.25f, 4.0f, 0.25f, "%.2f m", "How big a cell of the map is");
 	slider_row(ui, "Highest", &ui->sketch_max_height, 20.0f, 1500.0f, 10.0f, "%.0f m", "How high the highest ground may be");
 	slider_row(ui, "Erosion", &ui->sketch_erosion, 0.0f, 4.0f, 0.1f, "%.1f", "How much the rain wears the land when it is made (0: none)");
+	slider_row(ui, "Round crests", &ui->sketch_crest_rounding, 0.0f, 40.0f, 1.0f, "%.0f m",
+		"The crests and peaks rounded over about this many meters (0: only blades and spikes worn down)");
 	nk_layout_row_dynamic(context, SMALL_ROW_HEIGHT, 1);
 	SDL_snprintf(line, sizeof(line), "%.1f x %.1f km", (double)(map_meters * 0.001f), (double)(map_meters * 0.001f));
 	nk_label(context, line, NK_TEXT_LEFT);

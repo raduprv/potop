@@ -57,6 +57,9 @@ typedef struct
 	// Steep slopes' gullies and buttresses, carved when the map is made
 	// (meters deep; 0: none)
 	float gully_depth_meters;
+	// A new map from the sketch: its crests rounded over about this many
+	// meters (one with 45 degree sides; 0: only blades and spikes worn down)
+	float crest_rounding_meters;
 	// How much soil stays on the rock in pockets (ledges, the tops of
 	// buttresses, gentler bits up a mountain: earth, so grass and trees grow
 	// there; 0: bare rock as the slope and height say)
