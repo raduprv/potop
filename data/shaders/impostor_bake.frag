@@ -30,7 +30,9 @@ layout(location = 0) out vec4 fragment_color;
 
 void main()
 {
-	vec4 color = texture(color_texture, texture_uv);
+	// A level finer than the picture's own (its texels are seen again
+	// through the atlas' mipmaps: filtered twice, the leaves blurred)
+	vec4 color = texture(color_texture, texture_uv, -1.0);
 	vec3 facing_normal = normalize(normal);
 
 	if (alpha_tested != 0)
@@ -39,7 +41,7 @@ void main()
 		vec2 texel_position = texture_uv * vec2(textureSize(color_texture, 0));
 		vec2 texel_ddx = dFdx(texel_position);
 		vec2 texel_ddy = dFdy(texel_position);
-		float mip_level = max(0.0, 0.5 * log2(max(dot(texel_ddx, texel_ddx), dot(texel_ddy, texel_ddy))));
+		float mip_level = max(0.0, 0.5 * log2(max(dot(texel_ddx, texel_ddx), dot(texel_ddy, texel_ddy))) - 1.0);
 
 		if (color.a * (1.0 + 0.25 * mip_level) < 0.5)
 		{

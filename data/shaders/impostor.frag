@@ -97,7 +97,9 @@ void main()
 	// the pixels (the three move alike)
 	vec2 texel_ddx = dFdx(picture_point_0) * 0.5 * atlas_size / picture_grid.x;
 	vec2 texel_ddy = dFdy(picture_point_0) * 0.5 * atlas_size / picture_grid.x;
-	float lod = clamp(0.5 * log2(max(dot(texel_ddx, texel_ddx), dot(texel_ddy, texel_ddy))), 0.0, IMPOSTOR_MAXIMUM_LOD);
+	// (half a level sharper: a picture shrunk to its size on the screen,
+	// as the model would be drawn there, not blurred past it)
+	float lod = clamp(0.5 * log2(max(dot(texel_ddx, texel_ddx), dot(texel_ddy, texel_ddy))) - 0.5, 0.0, IMPOSTOR_MAXIMUM_LOD);
 	float coverage = 0.0;
 	vec3 color = vec3(0.0);
 	vec4 normal_depth = vec4(0.0);

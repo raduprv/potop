@@ -122,6 +122,10 @@ void main()
 				frame_c = ivec2(next_x, base.y);
 				weights = vec3(within.x + within.y - 1.0, 1.0 - within.x, 1.0 - within.y);
 			}
+			// (the nearest picture weighed more: its sides 45 degrees
+			// apart, three blended evenly were a blur of ghosts)
+			weights *= weights;
+			weights /= max(weights.x + weights.y + weights.z, 1e-4);
 			frames_01 = ivec4(frame_a, frame_b);
 			frame_2 = frame_c;
 			picture_point_0 = on_picture_from(impostor_plant_direction(frame_a), eye, point);
