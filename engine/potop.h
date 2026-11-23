@@ -420,7 +420,8 @@ bool potop_actor_walk_straight(potop_t *potop, uint32_t id, const float (*points
 bool potop_actor_wander(potop_t *potop, uint32_t id, float heading_radians, float share);
 // Whether its way heading so is free for meters past its nose: no body
 // (the physics' shapes, along its middle and both sides), no other there
-// now or in half a second
+// now or in half a second, and, for one on the ground, no bank steeper
+// than it climbs and no water deeper than it wades
 bool potop_actor_heading_free(potop_t *potop, uint32_t id, float heading_radians, float meters);
 // The same, ending on the last point within a few centimeters (a worker
 // onto his place) and turned at once to face_yaw_radians there; a point a

@@ -18,7 +18,22 @@ static const float THINK_SECONDS = 0.15f;
 // Its wandering: each walk this far (least, most), turned at most this much
 // from the way it went before; and how long it stands between walks
 static const float WANDER_LEAST_METERS = 10.0f;
-static const float WANDER_MOST_METERS = 25.0f;
+// Its strolls (wander.c): it looks a little farther ahead than a cow in
+// a yard, turns round a tree in its way, and goes on 13 to 32 s (10 to
+// 25 m at its walk)
+static const wander_style_t BEAR_STROLL = {
+	.look_meters = 3.0f,
+	.drift_chance = 0.05f,
+	.drift_degrees = 10.0f,
+	.search_degrees = 60.0f,
+	.speed_share = 1.0f,
+	.back_seconds = 0.8f,
+	.back_share = 0.35f,
+	.give_up_seconds = 1.0f,
+	.backs_most = 2,
+	.least_seconds = 13.0f,
+	.most_seconds = 32.0f,
+};
 static const float WANDER_TURN_RADIANS = 1.0f;
 // Where it wants to go is no place for it (deep water): the nearest
 // place by it that is, this far off at the most (go_to); none: it waits a
@@ -115,8 +130,19 @@ static void set_state(bear_mind_t *bear, bear_state_t state)
 	bear->going = false;
 }
 
+// A stroll over (or broken off for something else)
+static void stop_stroll(potop_t *potop, bear_mind_t *bear)
+{
+	if (bear->strolling)
+	{
+		wander_stop(&bear->stroll, potop, bear->actor_id);
+		bear->strolling = false;
+	}
+}
+
 static void stand(potop_t *potop, bear_mind_t *bear)
 {
+	stop_stroll(potop, bear);
 	potop_actor_stop(potop, bear->actor_id);
 	potop_actor_set_running(potop, bear->actor_id, false);
 	bear->going = false;
@@ -140,6 +166,7 @@ static void go_to(game_t *game, potop_t *potop, bear_mind_t *bear, float x, floa
 	{
 		return;
 	}
+	stop_stroll(potop, bear);
 	if (potop_actor_stand_near(potop, bear->actor_id, x, z, GO_NEAR_METERS, &near_x, &near_z))
 	{
 		potop_actor_set_running(potop, bear->actor_id, running);
@@ -326,13 +353,14 @@ static void think(game_t *game, potop_t *potop, bear_mind_t *bear, const potop_a
 				break;
 			}
 			// Wandering: a walk, a stand, another walk; by day now and then a rest
-			if (bear->going && !arrived(bear, actor))
+			if (bear->strolling || (bear->going && !arrived(bear, actor)))
 			{
 				break;
 			}
-			if (bear->going)
+			if (bear->going || bear->stroll_over)
 			{
 				bear->going = false;
+				bear->stroll_over = false;
 				bear->stand_seconds = random_between(game, STAND_SECONDS_LEAST, STAND_SECONDS_MOST);
 				bear->state_seconds = 0.0f;
 				potop_actor_play(potop, bear->actor_id, random_unit(game) < 0.5f ? "idle_break" : "eat");
@@ -358,26 +386,28 @@ static void think(game_t *game, potop_t *potop, bear_mind_t *bear, const potop_a
 				}
 			}
 			{
-				// A short way on, about the way it was going (away from the
-				// player it made out)
-				float x = actor->x;
-				float z = actor->z;
+				// A stroll, about the way it was going (not towards the
+				// player it made out): no way searched, it goes on and
+				// looks ahead, round what is there (wander.c)
+				float heading = bear->wander_heading;
 
 				for (int attempt = 0; attempt < 4; attempt++)
 				{
-					float heading = bear->wander_heading + random_between(game, -WANDER_TURN_RADIANS, WANDER_TURN_RADIANS)
-						+ (float)attempt * 1.6f;
-					float length = random_between(game, WANDER_LEAST_METERS, WANDER_MOST_METERS);
+					float x;
+					float z;
 
-					x = actor->x + SDL_sinf(heading) * length;
-					z = actor->z + SDL_cosf(heading) * length;
+					heading = bear->wander_heading + random_between(game, -WANDER_TURN_RADIANS, WANDER_TURN_RADIANS) + (float)attempt * 1.6f;
+					x = actor->x + SDL_sinf(heading) * WANDER_LEAST_METERS;
+					z = actor->z + SDL_cosf(heading) * WANDER_LEAST_METERS;
 					if (!knows_player || distance_squared_2d(x, z, camera->walker_x, camera->walker_z) > KNOWN_KEEP_AWAY_METERS * KNOWN_KEEP_AWAY_METERS)
 					{
-						bear->wander_heading = heading;
 						break;
 					}
 				}
-				go_to(game, potop, bear, x, z, false, POTOP_EFFORT_STROLL);
+				bear->wander_heading = heading;
+				potop_actor_set_running(potop, bear->actor_id, false);
+				wander_start(&bear->stroll, potop, bear->actor_id, &BEAR_STROLL, heading);
+				bear->strolling = true;
 			}
 			break;
 		case BEAR_ALERT:
@@ -598,6 +628,17 @@ void game_update_bears(game_t *game, potop_t *potop, float seconds)
 		bear_mind_t *bear = &game->bears[i];
 		potop_actor_info_t actor;
 
+		// (its stroll: broken off when its mind is on something else;
+		// looked ahead on each frame's time, over when it is)
+		if (bear->strolling && bear->state != BEAR_WANDER)
+		{
+			stop_stroll(potop, bear);
+		}
+		if (bear->strolling && !wander_update(&bear->stroll, game, potop, bear->actor_id, &BEAR_STROLL, seconds))
+		{
+			bear->strolling = false;
+			bear->stroll_over = true;
+		}
 		bear->think_in -= seconds;
 		bear->unthought_seconds += seconds;
 		if (bear->think_in > 0.0f)

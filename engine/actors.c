@@ -2873,6 +2873,8 @@ static bool steer(const actors_t *actors, actor_t *actor, float wanted, float se
 
 #define WANDER_PREDICT_SECONDS 0.5f    // another that goes: where it will be in this long counts too
 #define WANDER_SIDE_SHARE 0.85f        // its sides' lines: this share of its half width out
+#define WANDER_ON_GROUND_METERS 0.3f   // it stands on the ground itself: within this of the terrain
+#define WANDER_GROUND_STEP_METERS 1.0f // the ground ahead looked at this far apart
 #define WANDER_HOLD_SECONDS 0.5f       // its step blocked: it stands this long before it tries again
 
 // Whether a point (another's middle, of radius) is across the stretch
@@ -2940,6 +2942,44 @@ static bool heading_free_for(const actors_t *actors, const actor_t *actor, float
 					return false;
 				}
 			}
+		}
+	}
+	// The ground ahead, for one that stands on it (not on a bridge, a
+	// floor: the ground under those is not its way): a meter at a time,
+	// no rise or drop steeper than it climbs, no water deeper than it
+	// wades (a wanderer goes round a bank and a pond, it does not find a
+	// way over them)
+	if (actors->look_terrain != NULL && SDL_fabsf(actor->y - terrain_sample_height_meters(actors->look_terrain, actor->x, actor->z))
+		< WANDER_ON_GROUND_METERS)
+	{
+		navigation_agent_t agent = agent_of(type);
+		float before = terrain_sample_height_meters(actors->look_terrain, actor->x, actor->z);
+		float along = 0.0f;
+
+		while (along < length)
+		{
+			float step = SDL_min(WANDER_GROUND_STEP_METERS, length - along);
+			float x;
+			float z;
+			float height;
+			float depth = 0.0f;
+			float velocity_x;
+			float velocity_z;
+
+			along += step;
+			x = actor->x + direction_x * along;
+			z = actor->z + direction_z * along;
+			height = terrain_sample_height_meters(actors->look_terrain, x, z);
+			if (SDL_fabsf(height - before) > agent.maximum_slope * step + agent.step_meters)
+			{
+				return false;
+			}
+			if (actors->look_water != NULL && water_sample(actors->look_water, x, z, &depth, &velocity_x, &velocity_z)
+				&& depth > agent.wade_depth_meters)
+			{
+				return false;
+			}
+			before = height;
 		}
 	}
 	// Others on the ground: where they are, and where they will be

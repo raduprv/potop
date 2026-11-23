@@ -138,6 +138,8 @@ bool world_create(world_t *world)
 	world->actors.log_paths = true;
 	world->actors.objects = &world->objects;
 	world->actors.physics = &world->physics;
+	world->actors.look_terrain = &world->terrain;
+	world->actors.look_water = &world->water;
 	world_progress(world, "Physics", 0.96f);
 	if (!physics_create(&world->physics, &world->objects, &world->settings->physics))
 	{

@@ -229,6 +229,14 @@ along the rectangle's edge; refused for a fifth of a second, its way is
 searched again from where it stands. The height under its feet is the
 terrain's, or the rectangle's on an object.
 
+A bear's strolls search no way at all (Nov 24 2026): it goes on the way
+it faces and looks ahead every tenth of a second, as the cows in a yard
+do (game/wander.c), round what is there: bodies (trees, stones, fences:
+the physics' shapes), the others, and, on the ground, a bank steeper
+than it climbs or water deeper than it wades (those two are new, and the
+yard animals' too). A way is searched when it goes somewhere: to the
+shade to rest, after a noise, off from a shot, after the player.
+
 How far a way is looked for is the game's to say, per creature
 (`potop_actor_set_effort`): with all its effort a search goes as far as
 it can and gives a part of the way if that is all there is (one after

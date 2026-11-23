@@ -483,6 +483,10 @@ typedef struct
 	// walking straight (actors_walk_straight), its shapes as they are, not
 	// the path finding's grid of meters
 	struct physics_s *physics;
+	// The ground and the water, for a wanderer's look ahead
+	// (actors_heading_free); NULL: not looked at
+	const terrain_t *look_terrain;
+	const water_t *look_water;
 	actor_event_t events[ACTOR_EVENT_QUEUE_SIZE];
 	int event_first;
 	int event_count;

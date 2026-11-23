@@ -23,63 +23,6 @@
 #define GAME_WORKERS_MAX 32
 #define GAME_ANIMALS_MAX 384
 
-// What the player did this frame, as the game needs it (the application
-// reads the keys)
-// What a bear is about (bear.c)
-typedef enum
-{
-	BEAR_WANDER = 0,               // walking about (a short way at a time) and standing
-	BEAR_REST,                     // by day, asleep in the shade
-	BEAR_ALERT,                    // heard or glimpsed something: stands and looks
-	BEAR_INVESTIGATE,              // goes to see what it was
-	BEAR_WARN,                     // someone too near: it growls
-	BEAR_ATTACK,                   // provoked: after them
-	BEAR_FLEE,                     // badly hurt: away
-	BEAR_STATE_COUNT
-} bear_state_t;
-
-typedef struct
-{
-	uint32_t actor_id;
-	bear_state_t state;
-	float state_seconds;           // in this state
-	float think_in;                // till it thinks again
-	float unthought_seconds;       // since it last thought
-	float wander_heading;          // radians: which way it has been wandering (it keeps on roughly so)
-	bool going;                    // on its way to goal
-	float goal_x;
-	float goal_z;
-	float stand_seconds;           // wandering: standing this long between walks
-	float rest_seconds;            // resting this long
-	bool asleep;
-	float sleep_seconds;
-	float suspicion;               // 0..1: grows as it sees the player, fades
-	bool has_interest;             // what it looks at, goes to see
-	float interest_x;
-	float interest_z;
-	double last_seen_seconds;
-	double knows_player_until;     // it has made the player out (seen clearly, growled at): it does not go to see it again till then
-	double heard_until;            // the noises before this it heard already
-	bool provoked;
-	float attack_seconds;          // till its next blow
-	float far_seconds;             // attacking: how long they have been far
-	double go_again_at;            // nowhere it could stand near where it wanted to go: it tries again from then
-} bear_mind_t;
-
-// What a farm animal is about (animals.c)
-typedef enum
-{
-	ANIMAL_ROAM = 0,               // about its ground: a walk, a bite, a stand
-	ANIMAL_BUSY,                   // eating, or a stretch (an action playing)
-	ANIMAL_GOING_IN,               // the evening: its way in (to a hole, a stall)
-	ANIMAL_GOING_DOWN,             // lying down (its clip), then asleep
-	ANIMAL_ASLEEP,
-	ANIMAL_GETTING_UP,             // the morning: up (its clip), then out
-	ANIMAL_GOING_OUT,              // from a stall the way back out
-	ANIMAL_DEAD,                   // killed: it lies there a while, then is taken off (another comes later)
-	ANIMAL_STATE_COUNT
-} animal_state_t;
-
 // The boredom walk (wander.c): nowhere to go, it just goes on. Every
 // WANDER_TICK_SECONDS it looks ahead: free, it keeps on, now and then a
 // little to one side if that is free too; not free, a little to one side
@@ -119,6 +62,68 @@ typedef struct
 	float stuck_seconds;
 	uint32_t random;               // its own dice
 } wander_t;
+
+// What the player did this frame, as the game needs it (the application
+// reads the keys)
+// What a bear is about (bear.c)
+typedef enum
+{
+	BEAR_WANDER = 0,               // walking about (a short way at a time) and standing
+	BEAR_REST,                     // by day, asleep in the shade
+	BEAR_ALERT,                    // heard or glimpsed something: stands and looks
+	BEAR_INVESTIGATE,              // goes to see what it was
+	BEAR_WARN,                     // someone too near: it growls
+	BEAR_ATTACK,                   // provoked: after them
+	BEAR_FLEE,                     // badly hurt: away
+	BEAR_STATE_COUNT
+} bear_state_t;
+
+typedef struct
+{
+	uint32_t actor_id;
+	bear_state_t state;
+	float state_seconds;           // in this state
+	float think_in;                // till it thinks again
+	float unthought_seconds;       // since it last thought
+	float wander_heading;          // radians: which way it has been wandering (it keeps on roughly so)
+	// Its strolls: no way searched, it goes on and looks ahead (wander.c),
+	// round what is there
+	wander_t stroll;
+	bool strolling;
+	bool stroll_over;              // just ended: it stands a while, as after a walk
+	bool going;                    // on its way to goal
+	float goal_x;
+	float goal_z;
+	float stand_seconds;           // wandering: standing this long between walks
+	float rest_seconds;            // resting this long
+	bool asleep;
+	float sleep_seconds;
+	float suspicion;               // 0..1: grows as it sees the player, fades
+	bool has_interest;             // what it looks at, goes to see
+	float interest_x;
+	float interest_z;
+	double last_seen_seconds;
+	double knows_player_until;     // it has made the player out (seen clearly, growled at): it does not go to see it again till then
+	double heard_until;            // the noises before this it heard already
+	bool provoked;
+	float attack_seconds;          // till its next blow
+	float far_seconds;             // attacking: how long they have been far
+	double go_again_at;            // nowhere it could stand near where it wanted to go: it tries again from then
+} bear_mind_t;
+
+// What a farm animal is about (animals.c)
+typedef enum
+{
+	ANIMAL_ROAM = 0,               // about its ground: a walk, a bite, a stand
+	ANIMAL_BUSY,                   // eating, or a stretch (an action playing)
+	ANIMAL_GOING_IN,               // the evening: its way in (to a hole, a stall)
+	ANIMAL_GOING_DOWN,             // lying down (its clip), then asleep
+	ANIMAL_ASLEEP,
+	ANIMAL_GETTING_UP,             // the morning: up (its clip), then out
+	ANIMAL_GOING_OUT,              // from a stall the way back out
+	ANIMAL_DEAD,                   // killed: it lies there a while, then is taken off (another comes later)
+	ANIMAL_STATE_COUNT
+} animal_state_t;
 
 // Where it keeps to: its home's area spot ("yard"), or round a point (one
 // free about the land: no home)
