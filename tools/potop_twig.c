@@ -841,32 +841,64 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 			last_x = x;
 			last_y = y;
 		}
-		// Its knobs (where needles fell), standing out of its sides, if its
-		// bark has them
+		// Its knobs (where needles fell), if its bark has them: on its rim
+		// standing out of its outline, on its face as little rounds; each
+		// darker towards its foot, a shadow under it
 		{
 			const paint_t *own = shoot->bark != NULL ? shoot->bark : bark;
-			float step = shoot->radius * 1.0f;
+			paint_t knob = *own;
+			paint_t shade = { .shadow = 0.35f, .tip_from = 1.0f };
+			float step = shoot->radius * 0.9f;
 
+			knob.bumps = 0.0f;
+			knob.rough = 0.2f;
+			for (int k = 0; k < 3; k++)
+			{
+				knob.tip[k] = own->light[k] * 1.05f;
+				knob.dark[k] = own->dark[k] * 0.55f;
+				knob.light[k] = own->light[k] * 0.62f;
+			}
+			knob.tip_from = 0.0f;
 			for (float t = 0.04f; own->bumps > 0.0f && t < 0.96f; t += step / shoot->length)
 			{
 				float x;
 				float y;
 				float knob_heading;
 				float radius = shoot->radius * mixf(1.0f, shoot->taper > 0.0f ? shoot->taper : 0.45f, t);
-				float side = (hash_unit((int)(t * 1000.0f), i) < 0.5f) ? 1.0f : -1.0f;
-				float out = side * 1.1f;
+				float where = hash_unit((int)(t * 1000.0f), i * 7 + 3) * 2.0f - 1.0f;
+				float side = where >= 0.0f ? 1.0f : -1.0f;
+				float out = side * 1.0f;
+				float size = radius * mixf(0.18f, 0.3f, hash_unit(i, (int)(t * 613.0f)));
+				float foot_x;
+				float foot_y;
+				float tip_x;
+				float tip_y;
 
-				if (hash_unit(i, (int)(t * 977.0f)) < 0.2f)
+				if (hash_unit(i, (int)(t * 977.0f)) < 0.15f)
 				{
 					continue;
 				}
 				shoot_point(shoot, t, &x, &y, &knob_heading);
-				x += cosf(knob_heading) * side * radius * 0.7f;
-				y += sinf(knob_heading) * side * radius * 0.7f;
-				draw_segment(canvas, x, y, radius * 0.5f, x + sinf(knob_heading + out) * radius * 0.5f, y - cosf(knob_heading + out) * radius * 0.5f,
-					radius * 0.38f, 0.3f, 0.3f, own);
+				// (across its face: anywhere from one rim to the other; on the
+				// rim it points out, on the face along the shoot, seen end on)
+				foot_x = x + cosf(knob_heading) * where * radius * 0.85f;
+				foot_y = y + sinf(knob_heading) * where * radius * 0.85f;
+				if (fabsf(where) > 0.75f)
+				{
+					tip_x = foot_x + sinf(knob_heading + out) * size * 1.4f;
+					tip_y = foot_y - cosf(knob_heading + out) * size * 1.4f;
+				}
+				else
+				{
+					tip_x = foot_x + sinf(knob_heading) * size * 0.9f;
+					tip_y = foot_y - cosf(knob_heading) * size * 0.9f;
+				}
+				draw_segment(canvas, foot_x + size * 0.6f, foot_y + size * 0.6f, size * 1.3f, tip_x + size * 0.6f, tip_y + size * 0.6f, size,
+					0.0f, 1.0f, &shade);
+				draw_segment(canvas, foot_x, foot_y, size, tip_x, tip_y, size * 0.7f, 0.0f, 1.0f, &knob);
 			}
 		}
+
 	}
 	draw_needles(canvas, needles, count, style, true);
 	// The buds at the shoots' tips, in the brushes' middles over them
@@ -896,7 +928,7 @@ static void draw_pine(canvas_t *canvas, random_t *random)
 	needle_style_t style = {
 		.length_low = 0.17f, .length_high = 0.23f, .radius = 0.0046f,
 		.angle_low = 1.1f, .angle_high = 1.45f, .curl = 0.55f,
-		.per_bundle = 2, .bundles_per_unit = 240.0f, .crowding = 1.3f, .bare = 0.08f, .brush = 1.2f,
+		.per_bundle = 2, .bundles_per_unit = 165.0f, .crowding = 1.3f, .bare = 0.08f, .brush = 1.2f,
 		.greens = {
 			{ .dark = { 0.16f, 0.21f, 0.12f }, .light = { 0.40f, 0.47f, 0.29f }, .tip = { 0.40f, 0.46f, 0.28f }, .tip_from = 1.0f },
 			{ .dark = { 0.20f, 0.24f, 0.13f }, .light = { 0.48f, 0.52f, 0.31f }, .tip = { 0.47f, 0.51f, 0.30f }, .tip_from = 1.0f } },
@@ -934,7 +966,7 @@ static void draw_pine(canvas_t *canvas, random_t *random)
 
 	// The stem, its needles from a little under half way up
 	shoots[count++] = (shoot_t){ .fx = 0.5f, .fy = canvas->tall - 0.02f, .angle = random_range(random, 0.08f, 0.18f) * first_side,
-		.bend = -first_side * random_range(random, 0.15f, 0.3f), .length = canvas->tall * 0.86f, .radius = 0.024f, .scale = 1.0f, .taper = 0.4f,
+		.bend = -first_side * random_range(random, 0.15f, 0.3f), .length = canvas->tall * 0.86f, .radius = 0.032f, .scale = 1.0f, .taper = 0.4f,
 		.needles_from = 0.55f, .crook = 0.14f, .phase = random_range(random, 0.0f, 6.0f) };
 	// The shoots, alternately, the lower longer, up and out
 	for (int i = 0; i < sides && count < 10; i++)
@@ -945,7 +977,7 @@ static void draw_pine(canvas_t *canvas, random_t *random)
 
 		shoot_point(&shoots[0], along, &x, &y, &heading);
 		shoots[count++] = (shoot_t){ .fx = x, .fy = y, .angle = heading + side * random_range(random, 0.75f, 0.95f),
-			.bend = -side * random_range(random, 0.1f, 0.25f), .length = length, .radius = 0.011f, .scale = 0.95f, .taper = 0.55f,
+			.bend = -side * random_range(random, 0.1f, 0.25f), .length = length, .radius = 0.014f, .scale = 0.95f, .taper = 0.55f,
 			.needles_from = 0.28f, .crook = 0.18f, .phase = random_range(random, 0.0f, 6.0f) };
 	}
 	draw_twig(canvas, random, &style, &stem_bark, &bud, shoots, count);
