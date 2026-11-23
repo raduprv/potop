@@ -5,7 +5,7 @@
 
 kind = mountain_pine
 seed = 7
-height = 0
+height = 2.8
 output = data/objects/mountain_pine.pobj
 atlas = 
 
@@ -15,11 +15,11 @@ twig = plant_plans/twigs/mountain_pine_1.png
 twig = plant_plans/twigs/mountain_pine_2.png
 twig = plant_plans/twigs/mountain_pine_3.png
 
-leaf_size = 0
+leaf_size = 0.76
 leaves_per_branch = -1
 branches =
 branch_length = 0
-twig_scale = 0
+twig_scale = 3.7
 twig_share = 0.7
 loose_leaves = 0
 crown_start = -1
@@ -85,9 +85,9 @@ tips = -1
 autumn = -1
 falls = -1
 snow_sag = -1
-sway = -1
-flutter = -1
-stiffness = -1
+sway = 0.00703744
+flutter = 0.0580001
+stiffness = 0.93
 
 fruit_shape = sphere
 fruit_size = 0.03, 0
