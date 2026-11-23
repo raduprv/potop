@@ -250,6 +250,7 @@ typedef struct
 	float needles_from;            // its needles from this far along (0: the style's)
 	float crook;                   // how crooked (its heading wanders by up to this many radians)
 	float phase;                   // (where its wander starts)
+	const paint_t *bark;           // its own bark (NULL: the twig's)
 } shoot_t;
 
 // A shoot's point and heading as far along it as t, its crooks in
@@ -354,7 +355,9 @@ static int add_shoot_needles(needle_t *needles, int count, random_t *random, con
 			needle->x = x + random_range(random, -0.004f, 0.004f);
 			needle->y = y;
 			needle->angle = heading + (side >= 0.0f ? spread : -spread);
-			needle->length = random_range(random, style->length_low, style->length_high) * scale * mixf(0.8f, 1.05f, t);
+			// (one pointing at us or away is seen shorter)
+			needle->length = random_range(random, style->length_low, style->length_high) * scale * mixf(0.8f, 1.05f, t)
+				* (1.0f - 0.55f * fabsf(cosf(around)) * sinf(fminf(spread / (0.35f + 0.65f * fabsf(side)), 1.5f)));
 			needle->curl = (side >= 0.0f ? -1.0f : 1.0f) * style->curl * random_range(random, 0.5f, 1.5f);
 			needle->radius = style->radius * scale * random_range(random, 0.85f, 1.15f);
 			needle->depth = cosf(around);
@@ -493,7 +496,8 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 			shoot_point(shoot, t, &x, &y, &heading);
 			float taper = shoot->taper > 0.0f ? shoot->taper : 0.45f;
 
-			draw_segment(canvas, last_x, last_y, shoot->radius * mixf(1.0f, taper, t0), x, y, shoot->radius * mixf(1.0f, taper, t), t0, t, bark);
+			draw_segment(canvas, last_x, last_y, shoot->radius * mixf(1.0f, taper, t0), x, y, shoot->radius * mixf(1.0f, taper, t), t0, t,
+				shoot->bark != NULL ? shoot->bark : bark);
 			last_x = x;
 			last_y = y;
 		}
@@ -508,66 +512,53 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 	free(needles);
 }
 
-// A mountain pine's branch tip: a stout stem out of the cut, forking into a
-// few branches (and those once more), every shoot ending in a tuft of long
-// needles in pairs round its bud, wide at the tuft's foot, closing towards
-// the tip: brushes on bare scaly branches
+// A mountain pine's twig: a scaly stem up the middle, shoots out of it both
+// ways, every shoot (the stem's top too) clothed nearly all along in stiff
+// needles in pairs, pointing forward round it like a bottle brush, a brown
+// bud at its tip; the reddish brown shoot showing between the needles
 static void draw_pine(canvas_t *canvas, random_t *random)
 {
 	needle_style_t style = {
-		.length_low = 0.14f, .length_high = 0.2f, .radius = 0.0032f,
-		.angle_low = 0.5f, .angle_high = 1.85f, .curl = 0.15f,
-		.per_bundle = 2, .bundles_per_unit = 330.0f, .crowding = 1.6f, .bare = 0.45f, .brush = 2.6f,
+		.length_low = 0.13f, .length_high = 0.18f, .radius = 0.0052f,
+		.angle_low = 1.0f, .angle_high = 1.55f, .curl = 0.15f,
+		.per_bundle = 2, .bundles_per_unit = 480.0f, .crowding = 1.3f, .bare = 0.08f, .brush = 2.0f,
 		.greens = {
-			{ .dark = { 0.06f, 0.10f, 0.05f }, .light = { 0.25f, 0.36f, 0.17f }, .tip = { 0.34f, 0.41f, 0.22f }, .tip_from = 0.85f },
-			{ .dark = { 0.07f, 0.12f, 0.06f }, .light = { 0.30f, 0.41f, 0.20f }, .tip = { 0.39f, 0.45f, 0.25f }, .tip_from = 0.85f } },
-		.behind_dark = 0.6f, .spread_taper = 0.3f, .brightness_spread = 0.22f,
+			{ .dark = { 0.09f, 0.12f, 0.06f }, .light = { 0.36f, 0.42f, 0.24f }, .tip = { 0.46f, 0.50f, 0.31f }, .tip_from = 0.75f },
+			{ .dark = { 0.11f, 0.14f, 0.07f }, .light = { 0.41f, 0.47f, 0.28f }, .tip = { 0.50f, 0.54f, 0.34f }, .tip_from = 0.75f } },
+		.behind_dark = 0.5f, .spread_taper = 0.5f, .brightness_spread = 0.25f,
 	};
-	paint_t bark = { .dark = { 0.14f, 0.12f, 0.10f }, .light = { 0.47f, 0.42f, 0.37f }, .tip = { 0.38f, 0.32f, 0.24f }, .tip_from = 0.9f,
-		.rough = 0.95f };
-	paint_t bud = { .dark = { 0.22f, 0.15f, 0.10f }, .light = { 0.46f, 0.36f, 0.26f }, .tip = { 0.52f, 0.46f, 0.38f }, .tip_from = 0.5f };
-	shoot_t shoots[16];
+	// (the shoots reddish brown, the stem below grey brown and scaly)
+	paint_t shoot_bark = { .dark = { 0.22f, 0.11f, 0.06f }, .light = { 0.55f, 0.32f, 0.20f }, .tip = { 0.50f, 0.30f, 0.18f }, .tip_from = 1.0f,
+		.rough = 0.5f };
+	paint_t stem_bark = { .dark = { 0.22f, 0.15f, 0.10f }, .light = { 0.58f, 0.46f, 0.34f }, .tip = { 0.52f, 0.33f, 0.21f }, .tip_from = 0.55f,
+		.rough = 0.6f };
+	paint_t bud = { .dark = { 0.25f, 0.13f, 0.07f }, .light = { 0.60f, 0.38f, 0.24f }, .tip = { 0.55f, 0.40f, 0.28f }, .tip_from = 0.6f,
+		.rough = 0.6f };
+	shoot_t shoots[10];
 	int count = 0;
-	int branches = 4 + (random_float(random) < 0.5f ? 1 : 0);
+	int sides = 5;
 	float x;
 	float y;
 	float heading;
+	float first_side = random_float(random) < 0.5f ? 1.0f : -1.0f;
 
-	// The stem out of the cut, going on as the leader (its needles only at
-	// its top)
-	shoots[count++] = (shoot_t){ .fx = 0.5f, .fy = canvas->tall - 0.02f, .angle = random_range(random, -0.08f, 0.08f),
-		.bend = random_range(random, -0.15f, 0.15f), .length = 0.85f, .radius = 0.03f, .scale = 1.0f, .taper = 0.3f, .needles_from = 0.72f,
-		.crook = 0.05f, .phase = random_range(random, 0.0f, 6.0f) };
-	// Its branches, both ways from low on it, reaching far out, turning up
-	for (int i = 0; i < branches && count < 14; i++)
+	// The stem, its needles from a little under half way up
+	shoots[count++] = (shoot_t){ .fx = 0.5f, .fy = canvas->tall - 0.02f, .angle = random_range(random, 0.08f, 0.18f) * first_side,
+		.bend = -first_side * random_range(random, 0.15f, 0.3f), .length = canvas->tall * 0.86f, .radius = 0.024f, .scale = 1.0f, .taper = 0.4f,
+		.needles_from = 0.55f, .crook = 0.04f, .phase = random_range(random, 0.0f, 6.0f) };
+	// The shoots, alternately, the lower longer, up and out
+	for (int i = 0; i < sides && count < 10; i++)
 	{
-		float along = 0.24f + 0.44f * ((float)i + random_range(random, 0.0f, 0.7f)) / (float)branches;
-		float side = (i % 2 == 0) == (random_float(random) < 0.5f) ? 1.0f : -1.0f;
-		float out = random_range(random, 0.9f, 1.4f) * (1.0f - 0.45f * along);
-		float length = random_range(random, 0.5f, 0.64f) * (1.0f - 0.4f * along);
-		int parent;
+		float along = 0.14f + 0.5f * ((float)i + random_range(random, 0.0f, 0.3f)) / (float)sides;
+		float side = (i % 2 == 0) ? first_side : -first_side;
+		float length = random_range(random, 0.42f, 0.5f) * (1.0f - 0.45f * along) * canvas->tall * 0.66f;
 
 		shoot_point(&shoots[0], along, &x, &y, &heading);
-		parent = count;
-		shoots[count++] = (shoot_t){ .fx = x, .fy = y, .angle = heading + side * out, .bend = -side * random_range(random, 0.3f, 0.6f),
-			.length = length, .radius = 0.016f * (1.0f - 0.4f * along), .scale = 0.95f, .taper = 0.4f, .needles_from = 0.58f,
-			.crook = 0.12f, .phase = random_range(random, 0.0f, 6.0f) };
-		// (a fork of it, once in a while: a shorter shoot out of its middle)
-		if (random_float(random) < 0.65f && count < 15)
-		{
-			float fork_side = random_float(random) < 0.5f ? 1.0f : -1.0f;
-			float fx;
-			float fy;
-			float fork_heading;
-
-			shoot_point(&shoots[parent], random_range(random, 0.35f, 0.55f), &fx, &fy, &fork_heading);
-			shoots[count++] = (shoot_t){ .fx = fx, .fy = fy, .angle = fork_heading + fork_side * random_range(random, 0.45f, 0.8f),
-				.bend = -fork_side * random_range(random, 0.2f, 0.4f), .length = length * random_range(random, 0.5f, 0.65f),
-				.radius = shoots[parent].radius * 0.6f, .scale = 0.9f, .taper = 0.45f, .needles_from = 0.4f,
-				.crook = 0.1f, .phase = random_range(random, 0.0f, 6.0f) };
-		}
+		shoots[count++] = (shoot_t){ .fx = x, .fy = y, .angle = heading + side * random_range(random, 0.75f, 0.95f),
+			.bend = -side * random_range(random, 0.1f, 0.25f), .length = length, .radius = 0.011f, .scale = 0.95f, .taper = 0.55f,
+			.needles_from = 0.28f, .crook = 0.04f, .phase = random_range(random, 0.0f, 6.0f), .bark = &shoot_bark };
 	}
-	draw_twig(canvas, random, &style, &bark, &bud, shoots, count);
+	draw_twig(canvas, random, &style, &stem_bark, &bud, shoots, count);
 }
 
 static void draw_juniper(canvas_t *canvas, random_t *random)
@@ -1026,6 +1017,29 @@ static bool finish(const canvas_t *canvas, int width, int height, const char *pa
 		}
 		out[i * 4 + 3] = (uint8_t)lroundf(clampf(alpha < 1e-5f ? 0.0f : alpha, 0.0f, 1.0f) * 255.0f);
 	}
+	// The clear rows over the twig cut off (a few kept): the picture as
+	// tall as the twig, its foot where it was
+	{
+		int first = 0;
+
+		while (first < height - 1)
+		{
+			bool empty = true;
+
+			for (int x = 0; x < width && empty; x++)
+			{
+				empty = out[((size_t)first * (size_t)width + (size_t)x) * 4 + 3] == 0;
+			}
+			if (!empty)
+			{
+				break;
+			}
+			first++;
+		}
+		first = first > 4 ? first - 4 : 0;
+		memmove(out, out + (size_t)first * (size_t)width * 4, (size_t)(height - first) * (size_t)width * 4);
+		height -= first;
+	}
 	file = fopen(path, "wb");
 	ok = file != NULL && stbi_write_png_to_func(write_to_file, file, width, height, 4, out, width * 4) != 0;
 	if (file != NULL)
@@ -1073,7 +1087,7 @@ int main(int argument_count, char **arguments)
 	}
 	// (as tall as the kind's twig is: the pine's branch tip square,
 	// the juniper's twig twice as tall as wide)
-	canvas.tall = strcmp(kind, "pine") == 0 ? 1.0f : 2.0f;
+	canvas.tall = strcmp(kind, "pine") == 0 ? 1.75f : 2.0f;
 	canvas.width = width * SUPERSAMPLE;
 	canvas.height = (int)lroundf((float)width * canvas.tall) * SUPERSAMPLE;
 	canvas.scale = (float)canvas.width;
@@ -1116,6 +1130,6 @@ int main(int argument_count, char **arguments)
 		return 1;
 	}
 	free(canvas.pixels);
-	printf("potop_twig: %s (%s, seed %u, %d x %d)\n", path, kind, seed, width, canvas.height / SUPERSAMPLE);
+	printf("potop_twig: %s (%s, seed %u, %d wide)\n", path, kind, seed, width);
 	return 0;
 }
