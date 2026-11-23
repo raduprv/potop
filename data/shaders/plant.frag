@@ -259,10 +259,13 @@ void main()
 				// (more where the sky is hidden: deep in a wood, in a hollow)
 				* (1.0 + MOSS_IN_SHADE * sky_hidden_above(world_position.xz, world_position.y - texelFetch(ground_height_texture,
 					clamp(ivec2(floor(world_position.xz / ground_map.y + 0.5)), ivec2(0), ivec2(int(ground_map.x) - 1)), 0).x));
-			// A fresh, saturated moss green (linear), lighter and darker in patches
-			vec3 moss = vec3(0.09, 0.24, 0.025) * (0.7 + 0.6 * patches);
+			// A dull dark olive (linear; real moss on bark is about as dark
+			// as the bark, not lighter: a bright green glows in the sun),
+			// lighter and darker in patches, never all over the bark (its
+			// grain shows through)
+			vec3 moss = vec3(0.035, 0.055, 0.018) * (0.75 + 0.5 * patches);
 
-			albedo = mix(albedo, moss, clamp(amount * 1.6, 0.0, 0.95));
+			albedo = mix(albedo, moss, clamp(amount * 1.1, 0.0, 0.7));
 		}
 		diffuse = max(dot(normal, sun_direction), 0.0);
 	}
