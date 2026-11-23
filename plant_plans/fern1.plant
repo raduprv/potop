@@ -10,7 +10,7 @@ output = data/objects/fern1.pobj
 atlas = 
 
 bark_meters = 1.1
-leaf = tree_leaves_dev/fern_1.png
+leaf = plant_plans/twigs/fern_broad.png
 
 leaf_size = 1.51
 leaves_per_branch = -1

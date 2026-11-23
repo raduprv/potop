@@ -607,6 +607,269 @@ static void draw_juniper(canvas_t *canvas, random_t *random)
 	draw_twig(canvas, random, &style, &bark, NULL, shoots, count);
 }
 
+// --- Ferns ------------------------------------------------------------------------------
+
+// A leaf's color and how it is marked
+typedef struct
+{
+	float base[3];                 // its blade
+	float vein[3];                 // along its middle
+	float edge[3];                 // towards its rim
+	float vein_width;              // of the half width
+	float mottle;                  // the fine unevenness (0: none)
+	float costa[3];                // a pinna's midrib
+} blade_paint_t;
+
+// A flat blade from (bx, by) heading at angle (radians, 0 up the picture,
+// positive to the right) length long, at most half_width wide each side,
+// bent by curl over it: its outline round at the foot, pointed at the tip
+// (sharpness), its rim cut into teeth (teeth of them each side, tooth deep,
+// of the half width, the teeth leaning towards the tip). Drawn over what is
+// there; the tip's side of a tooth sloped, its foot's side steep
+static void draw_blade(canvas_t *canvas, float bx, float by, float angle, float length, float half_width, float curl, int teeth, float tooth,
+	float foot_width, const blade_paint_t *paint)
+{
+	float s = canvas->scale;
+	float reach = (length + half_width) * s + 2.0f;
+	int left = (int)floorf(bx * s - reach);
+	int right = (int)ceilf(bx * s + reach);
+	int top = (int)floorf(by * s - reach);
+	int bottom = (int)ceilf(by * s + reach);
+	float along_x = sinf(angle);
+	float along_y = -cosf(angle);
+
+	left = left < 0 ? 0 : left;
+	top = top < 0 ? 0 : top;
+	right = right >= canvas->width ? canvas->width - 1 : right;
+	bottom = bottom >= canvas->height ? canvas->height - 1 : bottom;
+	for (int y = top; y <= bottom; y++)
+	{
+		for (int x = left; x <= right; x++)
+		{
+			float px = ((float)x + 0.5f) / s - bx;
+			float py = ((float)y + 0.5f) / s - by;
+			float u = px * along_x + py * along_y;
+			float v = px * along_y * -1.0f * -1.0f;
+			float t;
+			float bend;
+			float width;
+			float across;
+			float coverage;
+			float color[3];
+			float *pixel;
+
+			// (across: to the right of the heading; the curl shifts the
+			// midline sideways as a parabola along it)
+			v = px * -along_y + py * along_x;
+			if (u < 0.0f || u > length)
+			{
+				continue;
+			}
+			t = u / length;
+			bend = curl * length * t * t * 0.5f;
+			v -= bend;
+			// The outline: a foot this wide, swelling, then narrowing to
+			// the tip
+			width = half_width * (foot_width + (1.0f - foot_width) * sinf(PI_F * fminf(t * 1.6f, 1.0f) * 0.5f)) * powf(fmaxf(1.0f - t, 0.0f), 0.55f);
+			if (teeth > 0 && tooth > 0.0f)
+			{
+				float phase = t * (float)teeth;
+				float within = phase - floorf(phase);
+
+				// (a saw's tooth: rising slowly towards the tip, dropping back)
+				width *= 1.0f - tooth * (1.0f - within) * (1.0f - within);
+			}
+			coverage = clampf((width - fabsf(v)) * s + 0.5f, 0.0f, 1.0f);
+			if (coverage <= 0.0f)
+			{
+				continue;
+			}
+			across = fabsf(v) / fmaxf(width, 1e-5f);
+			for (int k = 0; k < 3; k++)
+			{
+				color[k] = mixf(paint->base[k], paint->edge[k], clampf((across - 0.6f) / 0.4f, 0.0f, 1.0f));
+				if (across < paint->vein_width)
+				{
+					color[k] = mixf(color[k], paint->vein[k], 1.0f - across / paint->vein_width);
+				}
+			}
+			if (paint->mottle > 0.0f)
+			{
+				float grain = value_noise((float)x / 3.0f, (float)y / 3.0f) * 0.6f + value_noise((float)x / 9.0f, (float)y / 9.0f) * 0.4f;
+				// (the side veins: fine lines slanting out towards the tip)
+				float side = fabsf(sinf((u * 1.0f - fabsf(v) * 0.9f) / fmaxf(half_width, 1e-4f) * 9.0f));
+
+				for (int k = 0; k < 3; k++)
+				{
+					color[k] *= 1.0f + paint->mottle * ((grain - 0.5f) * 0.9f + (side > 0.92f ? 0.25f : 0.0f));
+				}
+			}
+			pixel = &canvas->pixels[((size_t)y * (size_t)canvas->width + (size_t)x) * 4];
+			for (int k = 0; k < 3; k++)
+			{
+				pixel[k] = color[k] * coverage + pixel[k] * (1.0f - coverage);
+			}
+			pixel[3] = coverage + pixel[3] * (1.0f - coverage);
+		}
+	}
+}
+
+// A cubic curve's point and heading (radians, 0 up the picture)
+static void cubic_at(const float points[4][2], float t, float *x, float *y, float *heading)
+{
+	float u = 1.0f - t;
+	float dx = 3.0f * u * u * (points[1][0] - points[0][0]) + 6.0f * u * t * (points[2][0] - points[1][0]) + 3.0f * t * t * (points[3][0] - points[2][0]);
+	float dy = 3.0f * u * u * (points[1][1] - points[0][1]) + 6.0f * u * t * (points[2][1] - points[1][1]) + 3.0f * t * t * (points[3][1] - points[2][1]);
+
+	*x = u * u * u * points[0][0] + 3.0f * u * u * t * points[1][0] + 3.0f * u * t * t * points[2][0] + t * t * t * points[3][0];
+	*y = u * u * u * points[0][1] + 3.0f * u * u * t * points[1][1] + 3.0f * u * t * t * points[2][1] + t * t * t * points[3][1];
+	*heading = atan2f(dx, -dy);
+}
+
+typedef struct
+{
+	float rachis[4][2];            // the frond's stalk, foot to tip (a cubic curve)
+	float pinnae_from;             // along it, the lowest pinnae
+	int pairs;                     // pinnae each side
+	float pinna_length;            // the longest's
+	float longest_at;              // along the pinnae, where they are longest (0: the lowest)
+	float pinna_angle;             // out from the stalk, radians, at the foot ...
+	float pinna_angle_tip;         // ... and at the tip
+	float pinna_curl;              // a pinna curving towards the frond's tip
+	float segment_length;          // a pinnule's length, of its pinna's length at its foot
+	float segment_spacing;         // pinnules along a pinna, of their length
+	float segment_angle;           // out from the pinna, radians
+	float joined;                  // 0: the pinnules apart (twice divided); 1: lobes of one blade (once divided)
+	int teeth;                     // on each side of a pinnule
+	float tooth;
+	float stalk_radius;
+	blade_paint_t leaf;
+	paint_t stalk;
+} fern_style_t;
+
+static void draw_pinna(canvas_t *canvas, random_t *random, const fern_style_t *style, float bx, float by, float angle, float length, float side)
+{
+	float segment = style->segment_length * length;
+	float step = segment * style->segment_spacing;
+	paint_t costa = { .tip_from = 1.0f };
+	float t = step * 0.6f / length;
+
+	// Its wing: the blade the pinnules sit on (narrow when they are apart,
+	// broad when they are lobes of it)
+	draw_blade(canvas, bx, by, angle, length, segment * mixf(0.18f, 0.55f, style->joined), side * style->pinna_curl, 0, 0.0f, 0.6f, &style->leaf);
+	// Its pinnules both ways along it, shorter towards its tip
+	while (t < 0.86f)
+	{
+		float curl_shift = side * style->pinna_curl * length * t * t * 0.5f;
+		float px = bx + sinf(angle) * length * t + cosf(angle) * curl_shift;
+		float py = by - cosf(angle) * length * t + sinf(angle) * curl_shift;
+		float heading = angle + side * style->pinna_curl * t;
+		float size = segment * (1.0f - 0.8f * t) * random_range(random, 0.92f, 1.06f);
+
+		for (int k = -1; k <= 1; k += 2)
+		{
+			float out = heading + (float)k * style->segment_angle * random_range(random, 0.92f, 1.08f);
+			float half = size * mixf(0.34f, 0.42f, style->joined);
+
+			draw_blade(canvas, px, py, out, size, half, (float)k * -0.25f, style->teeth, style->tooth, mixf(0.4f, 0.9f, style->joined), &style->leaf);
+		}
+		t += step * (1.0f - 0.55f * t) / length;
+	}
+	// The tip: one toothed blade where the pinnules run together
+	draw_blade(canvas, bx + sinf(angle) * length * 0.72f + cosf(angle) * side * style->pinna_curl * length * 0.26f,
+		by - cosf(angle) * length * 0.72f + sinf(angle) * side * style->pinna_curl * length * 0.26f,
+		angle + side * style->pinna_curl * 0.72f, length * 0.3f, segment * 0.32f, side * style->pinna_curl * 0.5f, 5, style->tooth * 0.8f, 0.9f,
+		&style->leaf);
+	// Its midrib over them, a darker green than the stalk
+	for (int k = 0; k < 3; k++)
+	{
+		costa.dark[k] = style->leaf.costa[k] * 0.7f;
+		costa.light[k] = style->leaf.costa[k] * 1.15f;
+	}
+	draw_curve(canvas, bx, by, bx + sinf(angle) * length * 0.5f, by - cosf(angle) * length * 0.5f,
+		bx + sinf(angle) * length * 0.95f + cosf(angle) * side * style->pinna_curl * length * 0.45f,
+		by - cosf(angle) * length * 0.95f + sinf(angle) * side * style->pinna_curl * length * 0.45f,
+		style->stalk_radius * 0.6f, style->stalk_radius * 0.12f, &costa);
+}
+
+static void draw_fern(canvas_t *canvas, random_t *random, const fern_style_t *style)
+{
+	float x;
+	float y;
+	float heading;
+	const int pieces = 40;
+	float last_x = style->rachis[0][0];
+	float last_y = style->rachis[0][1];
+
+	// The pinnae, the lowest first (those higher up over them, as on the
+	// pictures), both sides a little apart along the stalk
+	for (int i = 0; i < style->pairs; i++)
+	{
+		for (int k = -1; k <= 1; k += 2)
+		{
+			float place = ((float)i + (k > 0 ? 0.5f : 0.0f)) / (float)style->pairs;
+			// (closer together towards the tip)
+			float t = style->pinnae_from + (1.0f - style->pinnae_from) * powf(place, 0.85f) * 0.97f;
+			float longest = style->longest_at;
+			float size = place < longest ? mixf(0.82f, 1.0f, place / fmaxf(longest, 1e-3f))
+				: mixf(1.0f, 0.13f, powf((place - longest) / (1.0f - longest), 1.15f));
+			float out = mixf(style->pinna_angle, style->pinna_angle_tip, place);
+
+			cubic_at(style->rachis, t, &x, &y, &heading);
+			draw_pinna(canvas, random, style, x, y, heading + (float)k * out * random_range(random, 0.95f, 1.05f),
+				style->pinna_length * size * random_range(random, 0.94f, 1.04f), -(float)k);
+		}
+	}
+	// The stalk over them, thinning to the tip
+	for (int p = 1; p <= pieces; p++)
+	{
+		float t = (float)p / (float)pieces;
+		float t0 = (float)(p - 1) / (float)pieces;
+
+		cubic_at(style->rachis, t, &x, &y, &heading);
+		draw_segment(canvas, last_x, last_y, style->stalk_radius * mixf(1.0f, 0.15f, t0), x, y, style->stalk_radius * mixf(1.0f, 0.15f, t), t0, t,
+			&style->stalk);
+		last_x = x;
+		last_y = y;
+	}
+}
+
+// Twice divided, broad (the first reference: pinnae of separate toothed
+// pinnules, the frond lanceolate, its tip leaning right)
+static void draw_fern_broad(canvas_t *canvas, random_t *random)
+{
+	fern_style_t style = {
+		.rachis = { { 0.58f, 1.98f }, { 0.42f, 1.35f }, { 0.52f, 0.5f }, { 0.86f, 0.04f } },
+		.pinnae_from = 0.14f, .pairs = 12, .pinna_length = 0.5f, .longest_at = 0.12f,
+		.pinna_angle = 1.15f, .pinna_angle_tip = 0.8f, .pinna_curl = 0.18f,
+		.segment_length = 0.24f, .segment_spacing = 0.5f, .segment_angle = 1.0f, .joined = 0.15f,
+		.teeth = 7, .tooth = 0.22f, .stalk_radius = 0.0085f,
+		.leaf = { .base = { 0.31f, 0.46f, 0.12f }, .vein = { 0.19f, 0.32f, 0.07f }, .edge = { 0.22f, 0.36f, 0.09f }, .vein_width = 0.09f,
+			.mottle = 0.22f, .costa = { 0.24f, 0.38f, 0.09f } },
+		.stalk = { .dark = { 0.30f, 0.40f, 0.12f }, .light = { 0.55f, 0.65f, 0.24f }, .tip = { 0.40f, 0.52f, 0.16f }, .tip_from = 0.8f },
+	};
+
+	draw_fern(canvas, random, &style);
+}
+
+// Once divided and lobed (the second: pinnae cut into toothed lobes, the
+// frond narrowing to a long tip curving left; darker, olive)
+static void draw_fern_narrow(canvas_t *canvas, random_t *random)
+{
+	fern_style_t style = {
+		.rachis = { { 0.47f, 1.98f }, { 0.46f, 1.4f }, { 0.66f, 0.7f }, { 0.27f, 0.03f } },
+		.pinnae_from = 0.15f, .pairs = 12, .pinna_length = 0.46f, .longest_at = 0.08f,
+		.pinna_angle = 1.38f, .pinna_angle_tip = 0.9f, .pinna_curl = 0.45f,
+		.segment_length = 0.23f, .segment_spacing = 0.45f, .segment_angle = 0.95f, .joined = 0.55f,
+		.teeth = 4, .tooth = 0.22f, .stalk_radius = 0.0085f,
+		.leaf = { .base = { 0.33f, 0.42f, 0.11f }, .vein = { 0.22f, 0.29f, 0.07f }, .edge = { 0.26f, 0.33f, 0.08f }, .vein_width = 0.08f,
+			.mottle = 0.2f, .costa = { 0.30f, 0.34f, 0.10f } },
+		.stalk = { .dark = { 0.32f, 0.36f, 0.10f }, .light = { 0.55f, 0.58f, 0.22f }, .tip = { 0.40f, 0.44f, 0.14f }, .tip_from = 0.8f },
+	};
+
+	draw_fern(canvas, random, &style);
+}
+
 // --- Out --------------------------------------------------------------------------------
 
 static void write_to_file(void *context, void *data, int size)
@@ -770,7 +1033,7 @@ int main(int argument_count, char **arguments)
 	}
 	if (kind == NULL || path == NULL || width < 16 || width > 4096)
 	{
-		fprintf(stderr, "Usage: potop_twig [--width W] [--seed N] pine|juniper OUT.png\n");
+		fprintf(stderr, "Usage: potop_twig [--width W] [--seed N] pine|juniper|fern|fern_lobed OUT.png\n");
 		return 1;
 	}
 	// (as tall as the kind's twig is: the pine's branch tip square,
@@ -797,9 +1060,17 @@ int main(int argument_count, char **arguments)
 	{
 		draw_juniper(&canvas, &random);
 	}
+	else if (strcmp(kind, "fern") == 0)
+	{
+		draw_fern_broad(&canvas, &random);
+	}
+	else if (strcmp(kind, "fern_lobed") == 0)
+	{
+		draw_fern_narrow(&canvas, &random);
+	}
 	else
 	{
-		fprintf(stderr, "potop_twig: no kind '%s' (pine, juniper)\n", kind);
+		fprintf(stderr, "potop_twig: no kind '%s' (pine, juniper, fern, fern_lobed)\n", kind);
 		free(canvas.pixels);
 		return 1;
 	}
