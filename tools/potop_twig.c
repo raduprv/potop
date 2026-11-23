@@ -625,7 +625,7 @@ static int add_shoot_needles(needle_t *needles, int count, random_t *random, con
 			// (a pine's pair: from one sheath, a little apart)
 			// (in order: the bundles round the shoot by the golden angle, as
 			// they grow, a little jitter)
-			float first = mixf(random_range(random, 0.0f, 2.0f * PI_F), (float)bundle_index * 2.39996f + random_range(random, -0.3f, 0.3f), style->order);
+			float first = mixf(random_range(random, 0.0f, 2.0f * PI_F), (float)bundle_index * 2.39996f + random_range(random, -0.15f, 0.15f), style->order);
 			float around = style->pairs_together ? (k == 0 ? first : bundle_around + mixf(random_range(random, 0.25f, 0.55f), 0.4f, style->order))
 				: first + (float)k * 2.0f * PI_F / (float)style->per_bundle;
 
@@ -954,13 +954,13 @@ static void draw_pine(canvas_t *canvas, random_t *random)
 	needle_style_t style = {
 		.length_low = 0.17f, .length_high = 0.23f, .radius = 0.0046f,
 		.angle_low = 1.2f, .angle_high = 1.55f, .curl = 0.6f,
-		.per_bundle = 2, .bundles_per_unit = 165.0f, .crowding = 1.3f, .bare = 0.08f, .brush = 1.2f,
+		.per_bundle = 2, .bundles_per_unit = 125.0f, .crowding = 1.1f, .bare = 0.08f, .brush = 0.6f,
 		.greens = {
 			{ .dark = { 0.16f, 0.21f, 0.12f }, .light = { 0.40f, 0.47f, 0.29f }, .tip = { 0.40f, 0.46f, 0.28f }, .tip_from = 1.0f },
 			{ .dark = { 0.20f, 0.24f, 0.13f }, .light = { 0.48f, 0.52f, 0.31f }, .tip = { 0.47f, 0.51f, 0.30f }, .tip_from = 1.0f } },
 		.behind_dark = 0.25f, .spread_taper = 0.65f, .brightness_spread = 0.18f,
 		.pairs_together = true, .rim = 0.12f, .gloss = 0.14f, .shadow = 0.14f, .tip_radius = 0.35f,
-		.unevenness = 0.25f, .dry_share = 0.03f, .broken_share = 0.02f, .order = 0.85f,
+		.unevenness = 0.15f, .dry_share = 0.03f, .broken_share = 0.02f, .order = 0.97f,
 		.sheath = { .dark = { 0.18f, 0.11f, 0.07f }, .light = { 0.42f, 0.28f, 0.18f }, .tip = { 0.40f, 0.30f, 0.20f }, .tip_from = 0.5f },
 		.foot_pale = { 0.46f, 0.50f, 0.31f },
 	};
