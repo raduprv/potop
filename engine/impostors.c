@@ -261,6 +261,27 @@ static void bounding_sphere(const object_model_t *model, float sphere_out[4])
 
 		farthest = 0.5f * SDL_sqrtf(dx * dx + dy * dy + dz * dz);
 	}
+	// (all it draws inside too: a plant's hull is only its stems, its
+	// foliage reaching past them, a sprawling shrub's far past; the
+	// pictures were cut at the hull's sphere. Its drawn box's corners, the
+	// farthest a vertex of it can be)
+	for (int corner = 0; corner < 8; corner++)
+	{
+		float x = (corner & 1) ? model->bounds_maximum.x : model->bounds_minimum.x;
+		float y = (corner & 2) ? model->bounds_maximum.y : model->bounds_minimum.y;
+		float z = (corner & 4) ? model->bounds_maximum.z : model->bounds_minimum.z;
+		float dx = x - sphere_out[0];
+		float dy = y - sphere_out[1];
+		float dz = z - sphere_out[2];
+		float distance = SDL_sqrtf(dx * dx + dy * dy + dz * dz);
+
+		// (only when the drawn box is well past the hull: a corner of a box
+		// round a round crown is farther than anything in it)
+		if (distance > farthest * 1.15f)
+		{
+			farthest = SDL_max(farthest, distance * 0.92f);
+		}
+	}
 	sphere_out[3] = SDL_max(farthest, 0.01f);
 }
 
@@ -311,6 +332,13 @@ static uint64_t cache_key(const object_model_t *model, const object_texture_cach
 	int32_t how[6] = { IMPOSTOR_VERSION, layout->grid_x, layout->grid_y, layout->cell_pixels, layout->plant ? IMPOSTOR_PLANT_BAKE_VERSION : 0, layout->month_index };
 
 	hash = hash_bytes(hash, how, sizeof(how));
+	// (the pictures are framed by the model's sphere: a new one, new pictures)
+	{
+		float sphere[4];
+
+		bounding_sphere(model, sphere);
+		hash = hash_bytes(hash, sphere, sizeof(sphere));
+	}
 	hash = hash_bytes(hash, model->file_path, SDL_strlen(model->file_path));
 	hash = hash_bytes(hash, &model->file_time, sizeof(model->file_time));
 	for (int k = 0; k < model->material_count; k++)
