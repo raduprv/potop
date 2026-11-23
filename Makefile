@@ -166,7 +166,7 @@ build/miniz_implementation.o: CFLAGS += -w
 
 # Desktop tools: not part of the game, never shipped with it
 TOOLS = tools/potop_convert tools/potop_plant tools/plant_editor tools/potop_prop tools/prop_editor tools/house_editor tools/cloud_bake tools/potop_texture \
-	tools/potop_house tools/house_view tools/potop_module
+	tools/potop_house tools/house_view tools/potop_module tools/potop_twig
 
 tools: $(TOOLS)
 
@@ -200,6 +200,10 @@ tools/potop_module: tools/potop_module.c engine/module_file.c engine/module_file
 # The ground's textures made from nothing (tools/potop_texture.c)
 tools/potop_texture: tools/potop_texture.c build/stb_implementation.o
 	$(CC) $(filter-out -MMD -MP,$(CFLAGS)) -O2 -fopenmp -Wno-format-truncation -Itools -o $@ tools/potop_texture.c build/stb_implementation.o -lm
+
+# Conifers' twig pictures drawn from nothing (tools/potop_twig.c)
+tools/potop_twig: tools/potop_twig.c build/stb_implementation.o
+	$(CC) $(filter-out -MMD -MP,$(CFLAGS)) -O2 -fopenmp -Wno-format-truncation -Itools -o $@ tools/potop_twig.c build/stb_implementation.o -lm
 
 # The BC7 encoder (tools/potop_plant's atlases), third party C
 build/bc7enc.o: third_party/bc7enc/bc7enc.c third_party/bc7enc/bc7enc.h | build

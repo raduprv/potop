@@ -396,6 +396,21 @@ static const plant_kind_t kinds[] =
 		.moss = 0.00f, .tips = 0.50f, .autumn_colors = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } }, .autumn = 0.0f, .falls = false,
 		.snow_sag = 0.020f,
 	},
+	{
+		// Jneapan (mountain pine, Pinus mugo): many crooked stems out of
+		// the ground, lying out low and turning up, few branches, the
+		// needles in brushes at their ends: a low dome on the rocks
+		.name = "mountain_pine", .shape = SHAPE_TREE, .atlas = "conifers", .height_meters = 1.8f, .stems = 7, .stem_lean_degrees = 66.0f,
+		.levels = 2, .trunk_radius_ratio = 0.035f, .taper = 0.25f, .bend = 0.4f, .crown_start = 0.2f,
+		.children = { 12, 6, 0 }, .length_ratio = { 0.36f, 0.5f, 0.0f }, .down_degrees = { 58.0f, 45.0f, 0.0f },
+		.down_spread_degrees = 15.0f, .reach = { 0.3f, 0.2f, 0.0f }, .child_radius_ratio = 0.55f, .crown = CROWN_DOME,
+		.child_start = 0.2f, .leaves_per_branch = 5, .leaf_size = 0.45f,
+		.twig_scale = 1.4f, .side_twigs = 2.5f, .tip_twig = true, .twig_flat = 0.15f, .fruit_hang = FRUIT_OUT, .fruit_zone = FRUIT_OUTER,
+		.droop = 0.01f, .tip_lift = 0.45f, .collar = 0.15f, .root_flare = 0.1f, .leaves_from = 0.2f,
+		.fork_height = 0.0f, .extra_stem_chance = 0.4f, .gnarl = 0.4f, .kinks = 0.25f, .lean_length = 0.55f, .straighten = 0.6f,
+		.moss = 0.20f, .tips = 0.60f, .autumn_colors = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } }, .autumn = 0.0f, .falls = false,
+		.snow_sag = 0.020f,
+	},
 	// Fruit trees of the plum's family (Prunus)
 	{
 		// Cires: tall, a leader up the middle, the branches in tiers, reaching up

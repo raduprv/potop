@@ -11,7 +11,7 @@
 //   --save-recipe FILE               writes the recipe the options make (and grows the plant too)
 //   --all DIR                        (after --data) grows every recipe in DIR again (DIR/*.plant, each to its output)
 //                                    and nothing else: after the tool changes, the plants as it makes them now
-//   --kind K                         oak, birch, willow, weeping_willow, pollard_willow, bush; spruce, fir, pine, thuja, juniper;
+//   --kind K                         oak, birch, willow, weeping_willow, pollard_willow, bush; spruce, fir, pine, thuja, juniper, mountain_pine;
 //                                    cherry, plum, sour_cherry
 //                                    (trees: the conifers' or the broadleaved's atlas; deciduous and conifer: oak, spruce);
 //                                    tuft, rosette, fern, flower (small plants: small_plants)
@@ -80,7 +80,7 @@ static void usage(void)
 		"Usage: potop_plant [--recipe FILE] [options] [data/objects/name.pobj]\n"
 		"  --recipe FILE           a recipe to start from (plant_plans/); --save-recipe FILE writes one\n"
 		"  --all DIR               grows every recipe in DIR again (DIR/*.plant), and nothing else\n"
-		"  --kind K                trees: oak, birch, willow, weeping_willow, pollard_willow, bush; spruce, fir, pine, thuja, juniper; cherry, plum, sour_cherry\n"
+		"  --kind K                trees: oak, birch, willow, weeping_willow, pollard_willow, bush; spruce, fir, pine, thuja, juniper, mountain_pine; cherry, plum, sour_cherry\n"
 		"                          small plants: tuft, rosette, fern, flower (oak; deciduous = oak, conifer = spruce)\n"
 		"  --seed N                which one of the kind (1)\n"
 		"  --height M              meters, about\n"
@@ -322,7 +322,7 @@ int main(int argument_count, char **arguments)
 		{
 			if (plant_kind_find(value) < 0)
 			{
-				fprintf(stderr, "No kind '%s' (oak, birch, willow, weeping_willow, pollard_willow, bush, spruce, fir, pine, thuja, juniper, cherry, plum, sour_cherry, tuft, rosette, fern, flower, mushroom)\n", value);
+				fprintf(stderr, "No kind '%s' (oak, birch, willow, weeping_willow, pollard_willow, bush, spruce, fir, pine, thuja, juniper, mountain_pine, cherry, plum, sour_cherry, tuft, rosette, fern, flower, mushroom)\n", value);
 				return 1;
 			}
 			snprintf(recipe.kind, sizeof(recipe.kind), "%s", value);
