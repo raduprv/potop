@@ -1774,6 +1774,12 @@ typedef struct
 	uint8_t bark_level;
 	uint8_t *bark_levels;
 	size_t bark_levels_capacity;
+	// Each foliage triangle's rank in thinning (0 kept longest), set before
+	// it is added: a needle cone's strips ranked so that any first share of
+	// them is spread evenly round it (finish_lods)
+	uint8_t foliage_rank;
+	uint8_t *foliage_ranks;
+	size_t foliage_ranks_capacity;
 	// What each vertex is on the plant (object_file_plant_vertex_t), one per
 	// vertex: the next ones added take plant_along, plant_random and
 	// plant_extra (their height and a card's place in the crown are filled
@@ -1859,6 +1865,17 @@ static void add_triangle(mesh_t *mesh, int material, uint32_t a, uint32_t b, uin
 			mesh->bark_levels = checked_realloc(mesh->bark_levels, mesh->bark_levels_capacity);
 		}
 		mesh->bark_levels[triangle] = mesh->bark_level;
+	}
+	if (material == MATERIAL_FOLIAGE)
+	{
+		size_t triangle = mesh->index_count[material] / 3 - 1;
+
+		if (triangle >= mesh->foliage_ranks_capacity)
+		{
+			mesh->foliage_ranks_capacity = mesh->foliage_ranks_capacity > 0 ? mesh->foliage_ranks_capacity * 2 : 4096;
+			mesh->foliage_ranks = checked_realloc(mesh->foliage_ranks, mesh->foliage_ranks_capacity);
+		}
+		mesh->foliage_ranks[triangle] = mesh->foliage_rank;
 	}
 }
 
@@ -2748,9 +2765,47 @@ static void add_needle_cone(plant_t *plant, vec3 foot, vec3 axis, float shoot_ra
 	int strips = plant->kind->brush_strips;
 	vec3 u = rotated(perpendicular(axis), axis, random_between(0.0f, 2.0f * PI_F));
 	vec3 w = cross(axis, u);
+	int order[32];
+	bool taken[32];
 
-	for (int i = 0; i < strips; i++)
+	// The order the levels of detail thin them in: each next the farthest
+	// round from those before it, so that any first share of them is
+	// spread evenly round the shoot (not all gone from one side)
+	memset(taken, 0, sizeof(taken));
+	order[0] = 0;
+	taken[0] = true;
+	for (int k = 1; k < strips; k++)
 	{
+		int best = 0;
+		int best_distance = -1;
+
+		for (int i = 0; i < strips; i++)
+		{
+			int nearest = strips;
+
+			if (taken[i])
+			{
+				continue;
+			}
+			for (int j = 0; j < k; j++)
+			{
+				int apart = abs(i - order[j]);
+
+				apart = apart < strips - apart ? apart : strips - apart;
+				nearest = apart < nearest ? apart : nearest;
+			}
+			if (nearest > best_distance)
+			{
+				best_distance = nearest;
+				best = i;
+			}
+		}
+		order[k] = best;
+		taken[best] = true;
+	}
+	for (int k = 0; k < strips; k++)
+	{
+		int i = order[k];
 		const cell_place_t *place = &plant->twigs[random_index(plant->twig_count)];
 		float angle = ((float)i + random_between(-0.3f, 0.3f)) / (float)strips * 2.0f * PI_F;
 		vec3 out = add(scale(u, cosf(angle)), scale(w, sinf(angle)));
@@ -2759,8 +2814,10 @@ static void add_needle_cone(plant_t *plant, vec3 foot, vec3 axis, float shoot_ra
 		vec3 along = normalized(add(scale(axis, cosf(here_spread)), scale(out, sinf(here_spread))));
 		vec3 across = cross(axis, out);
 
+		plant->mesh.foliage_rank = (uint8_t)k;
 		add_card(&plant->mesh, add(foot, scale(out, shoot_radius)), scale(along, length), scale(across, length * place->aspect), normal, place);
 	}
+	plant->mesh.foliage_rank = 0;
 }
 
 // One shoot with its needles (kind brushes): a thin bark tube, bare low
@@ -6344,7 +6401,26 @@ static void finish_lods(mesh_t *mesh)
 	{
 		size_t cards = mesh->index_count[MATERIAL_FOLIAGE] / 6;
 		uint32_t *indices = mesh->indices[MATERIAL_FOLIAGE];
+		uint8_t *vertex_ranks = NULL;
 
+		// The ranks (needle cones' strips) by vertex, before the shuffle
+		// moves the triangles away from theirs
+		if (mesh->foliage_ranks != NULL)
+		{
+			bool any = false;
+
+			vertex_ranks = calloc(mesh->vertex_count > 0 ? mesh->vertex_count : 1, 1);
+			for (size_t t = 0; t < mesh->index_count[MATERIAL_FOLIAGE] / 3; t++)
+			{
+				vertex_ranks[indices[t * 3]] = mesh->foliage_ranks[t];
+				any = any || mesh->foliage_ranks[t] != 0;
+			}
+			if (!any)
+			{
+				free(vertex_ranks);
+				vertex_ranks = NULL;
+			}
+		}
 		if (cards > 1 && mesh->index_count[MATERIAL_FOLIAGE] % 6 == 0)
 		{
 			for (size_t c = cards - 1; c > 0; c--)
@@ -6358,7 +6434,42 @@ static void finish_lods(mesh_t *mesh)
 				memcpy(&indices[other * 6], swap, sizeof(swap));
 			}
 			mesh->shuffled[MATERIAL_FOLIAGE] = true;
+			// Ranked cards (needle cones' strips): by their ranks, still
+			// shuffled within each, so that a first share keeps every
+			// cone, thinned evenly round it
+			if (vertex_ranks != NULL)
+			{
+				size_t rank_count[256];
+				size_t start[256];
+				size_t running = 0;
+				uint8_t *card_ranks = checked_realloc(NULL, cards);
+				uint32_t *sorted = checked_realloc(NULL, cards * 6 * sizeof(uint32_t));
+
+				memset(rank_count, 0, sizeof(rank_count));
+				// (each card its own vertices: its rank by its first one's)
+				for (size_t c = 0; c < cards; c++)
+				{
+					card_ranks[c] = vertex_ranks[indices[c * 6]];
+				}
+				for (size_t c = 0; c < cards; c++)
+				{
+					rank_count[card_ranks[c]]++;
+				}
+				for (int r = 0; r < 256; r++)
+				{
+					start[r] = running;
+					running += rank_count[r];
+				}
+				for (size_t c = 0; c < cards; c++)
+				{
+					memcpy(&sorted[start[card_ranks[c]]++ * 6], &indices[c * 6], 6 * sizeof(uint32_t));
+				}
+				memcpy(indices, sorted, cards * 6 * sizeof(uint32_t));
+				free(sorted);
+				free(card_ranks);
+			}
 		}
+		free(vertex_ranks);
 	}
 	if (mesh->index_count[MATERIAL_FRUIT] > 0)
 	{
@@ -7572,6 +7683,7 @@ bool plant_grow(const plant_recipe_t *recipe, const plant_atlas_t *atlas, plant_
 		plant_error("Nothing grew (no leaves or heads for this kind?)\n");
 		free(plant.mesh.snow_vertices);
 		free(plant.mesh.bark_levels);
+		free(plant.mesh.foliage_ranks);
 		free(plant.mesh.plant_vertices);
 		for (int m = 0; m < MATERIAL_COUNT; m++)
 		{
@@ -7595,6 +7707,8 @@ bool plant_grow(const plant_recipe_t *recipe, const plant_atlas_t *atlas, plant_
 	}
 	free(plant.mesh.bark_levels);
 	plant.mesh.bark_levels = NULL;
+	free(plant.mesh.foliage_ranks);
+	plant.mesh.foliage_ranks = NULL;
 	// Each vertex's height on the plant (0 its foot .. 1 its top)
 	{
 		float bottom = plant.mesh.minimum.y;
