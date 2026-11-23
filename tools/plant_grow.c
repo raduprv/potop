@@ -203,6 +203,9 @@ typedef struct
 	// as it grew up): this many to a stem, bare, thin, mostly broken short,
 	// the longer the nearer the crown
 	float dead_branches;
+	// The trunk kept straight the way it set out (0: it wanders with bend
+	// and gnarl; 1: straight, a conifer's)
+	float trunk_upright;
 	// Stems grown together: one trunk up to fork_height (of the height),
 	// then stems parting (0: apart from the ground); one stem more than
 	// stems by this chance (by the seed)
@@ -339,7 +342,7 @@ static const plant_kind_t kinds[] =
 		.down_spread_degrees = 6.0f, .reach = { 0.05f, -0.12f, 0.0f }, .child_radius_ratio = 0.35f, .crown = CROWN_CONE,
 		.child_start = 0.05f, .leaves_per_branch = 5, .leaf_size = 0.45f,
 		.twig_scale = 1.7f, .side_twigs = 4.0f, .tip_twig = true, .twig_flat = 0.35f, .fruit_hang = FRUIT_DOWN, .fruit_zone = FRUIT_TOP,
-		.droop = 0.05f, .tip_lift = 0.5f, .collar = 0.1f, .root_flare = 0.3f, .leaves_from = 0.3f,
+		.droop = 0.05f, .tip_lift = 0.5f, .collar = 0.1f, .root_flare = 0.3f, .leaves_from = 0.3f, .trunk_upright = 1.0f,
 		.fork_height = 0.4f, .extra_stem_chance = 0.02f, .gnarl = 0.03f, .kinks = 0.0f, .lean_length = 0.3f, .straighten = 0.8f,
 		.moss = 0.50f, .tips = 1.00f, .autumn_colors = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } }, .autumn = 0.0f, .falls = false,
 		.snow_sag = 0.070f,
@@ -352,7 +355,7 @@ static const plant_kind_t kinds[] =
 		.down_spread_degrees = 4.0f, .reach = { 0.02f, 0.0f, 0.0f }, .child_radius_ratio = 0.35f, .crown = CROWN_CONE,
 		.child_start = 0.05f, .leaves_per_branch = 5, .leaf_size = 0.45f,
 		.twig_scale = 1.8f, .side_twigs = 4.0f, .tip_twig = true, .twig_flat = 0.85f, .fruit_hang = FRUIT_UP, .fruit_zone = FRUIT_TOP,
-		.droop = 0.02f, .tip_lift = 0.2f, .collar = 0.1f, .root_flare = 0.3f, .leaves_from = 0.25f,
+		.droop = 0.02f, .tip_lift = 0.2f, .collar = 0.1f, .root_flare = 0.3f, .leaves_from = 0.25f, .trunk_upright = 1.0f,
 		.fork_height = 0.4f, .extra_stem_chance = 0.02f, .gnarl = 0.03f, .kinks = 0.0f, .lean_length = 0.3f, .straighten = 0.8f,
 		.moss = 0.50f, .tips = 1.00f, .autumn_colors = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } }, .autumn = 0.0f, .falls = false,
 		.snow_sag = 0.060f,
@@ -367,7 +370,7 @@ static const plant_kind_t kinds[] =
 		.down_spread_degrees = 4.0f, .reach = { 0.02f, 0.0f, 0.0f }, .child_radius_ratio = 0.35f, .crown = CROWN_CONE,
 		.child_start = 0.05f, .leaves_per_branch = 5, .leaf_size = 0.45f,
 		.twig_scale = 1.1f, .side_twigs = 0.0f, .tip_twig = false, .twig_flat = 1.0f, .branch_cards = true, .fruit_hang = FRUIT_UP, .fruit_zone = FRUIT_TOP,
-		.droop = 0.04f, .tip_lift = 0.3f, .collar = 0.1f, .root_flare = 0.3f, .leaves_from = 0.25f,
+		.droop = 0.04f, .tip_lift = 0.3f, .collar = 0.1f, .root_flare = 0.3f, .leaves_from = 0.25f, .trunk_upright = 1.0f,
 		.fork_height = 0.4f, .extra_stem_chance = 0.02f, .gnarl = 0.03f, .kinks = 0.0f, .lean_length = 0.3f, .straighten = 0.8f,
 		.moss = 0.50f, .tips = 1.00f, .autumn_colors = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } }, .autumn = 0.0f, .falls = false,
 		.snow_sag = 0.060f,
@@ -380,7 +383,7 @@ static const plant_kind_t kinds[] =
 		.down_spread_degrees = 12.0f, .reach = { 0.1f, 0.08f, 0.0f }, .child_radius_ratio = 0.45f, .crown = CROWN_DOME,
 		.child_start = 0.25f, .leaves_per_branch = 5, .leaf_size = 0.45f,
 		.twig_scale = 1.6f, .side_twigs = 2.0f, .tip_twig = true, .twig_flat = 0.2f, .fruit_hang = FRUIT_OUT, .fruit_zone = FRUIT_OUTER,
-		.droop = 0.01f, .tip_lift = 0.15f, .collar = 0.15f, .root_flare = 0.25f, .leaves_from = 0.0f,
+		.droop = 0.01f, .tip_lift = 0.15f, .collar = 0.15f, .root_flare = 0.25f, .leaves_from = 0.0f, .trunk_upright = 0.5f,
 		.fork_height = 0.5f, .extra_stem_chance = 0.05f, .gnarl = 0.25f, .kinks = 0.15f, .lean_length = 0.3f, .straighten = 0.8f,
 		.moss = 0.40f, .tips = 0.80f, .autumn_colors = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } }, .autumn = 0.0f, .falls = false,
 		.snow_sag = 0.050f,
@@ -397,7 +400,7 @@ static const plant_kind_t kinds[] =
 		.down_spread_degrees = 18.0f, .reach = { 0.07f, 0.12f, 0.0f }, .child_radius_ratio = 0.5f, .crown = CROWN_DOME,
 		.child_start = 0.4f, .leaves_per_branch = 5, .leaf_size = 0.5f,
 		.twig_scale = 1.8f, .side_twigs = 0.7f, .tip_twig = true, .twig_flat = 0.15f, .fruit_hang = FRUIT_OUT, .fruit_zone = FRUIT_OUTER,
-		.droop = 0.012f, .tip_lift = 0.35f, .collar = 0.25f, .root_flare = 0.3f, .leaves_from = 0.62f, .dead_branches = 24.0f,
+		.droop = 0.012f, .tip_lift = 0.35f, .collar = 0.25f, .root_flare = 0.3f, .leaves_from = 0.62f, .trunk_upright = 0.6f, .dead_branches = 24.0f,
 		.fork_height = 0.75f, .extra_stem_chance = 0.04f, .gnarl = 0.3f, .kinks = 0.35f, .lean_length = 0.3f, .straighten = 0.8f,
 		.moss = 0.30f, .tips = 0.70f, .autumn_colors = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } }, .autumn = 0.0f, .falls = false,
 		.snow_sag = 0.040f,
@@ -410,7 +413,7 @@ static const plant_kind_t kinds[] =
 		.down_spread_degrees = 8.0f, .reach = { 0.15f, 0.05f, 0.0f }, .child_radius_ratio = 0.4f, .crown = CROWN_COLUMN,
 		.child_start = 0.05f, .leaves_per_branch = 5, .leaf_size = 0.3f,
 		.twig_scale = 1.6f, .side_twigs = 5.0f, .tip_twig = true, .twig_flat = 0.0f, .fruit_hang = FRUIT_UP, .fruit_zone = FRUIT_TOP,
-		.droop = 0.005f, .tip_lift = 0.0f, .collar = 0.05f, .root_flare = 0.1f, .leaves_from = 0.0f,
+		.droop = 0.005f, .tip_lift = 0.0f, .collar = 0.05f, .root_flare = 0.1f, .leaves_from = 0.0f, .trunk_upright = 1.0f,
 		.fork_height = 0.1f, .extra_stem_chance = 0.1f, .gnarl = 0.05f, .kinks = 0.0f, .lean_length = 0.3f, .straighten = 0.8f,
 		.moss = 0.20f, .tips = 0.60f, .autumn_colors = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } }, .autumn = 0.0f, .falls = false,
 		.snow_sag = 0.030f,
@@ -2294,6 +2297,9 @@ typedef struct
 	float u1;
 	vec3 part;
 	float knob;
+	// A trunk kept to the way it set out (its random bend and gnarl pulled
+	// back, per meter): a conifer's leader grows straight up
+	float upright;
 	bool trunk;
 } branch_shape_t;
 
@@ -2386,6 +2392,10 @@ static void trace_shaped_branch(branch_t *branch, vec3 start, vec3 direction, fl
 		{
 			// A crooked trunk still grows up, on the whole
 			heading = normalized(add(heading, v3(0.0f, 3.0f * step / fmaxf(length, 0.5f), 0.0f)));
+		}
+		if (!leaning && shape != NULL && shape->trunk && shape->upright > 0.0f)
+		{
+			heading = normalized(add(heading, scale(direction, shape->upright * 1.5f * step)));
 		}
 		// Turned away from the branches that leave it here
 		while (shape != NULL && kink < shape->kink_count && shape->kink_t[kink] <= (float)(i + 1) / (float)segments)
@@ -3986,6 +3996,7 @@ static void grow(plant_t *plant, int level, vec3 start, vec3 direction, float le
 	shape.gnarl = kind->gnarl * (level > 0 && kind->gnarl_branches > 0.0f ? kind->gnarl_branches : 1.0f);
 	shape.kink_radians = level > 0 || plant->kinked_trunk ? kind->kinks * 0.6f : 0.0f;
 	shape.knob = level == 0 ? kind->knob : 0.0f;
+	shape.upright = level == 0 ? kind->trunk_upright : 0.0f;
 	shape.thinnest = kind->thinnest_radius;
 	// Where the branches out of this one leave it: round it by the golden
 	// angle, from where the crown starts (on the trunk) or a little way
@@ -6768,6 +6779,7 @@ plant_fruit_zone_t plant_kind_fruit_zone(int kind) { return kind_at(kind)->fruit
 float plant_kind_crown_start(int kind) { return kind_at(kind)->crown_start; }
 float plant_kind_leaves_from(int kind) { return kind_at(kind)->leaves_from; }
 float plant_kind_dead_branches(int kind) { return kind_at(kind)->dead_branches; }
+float plant_kind_trunk_upright(int kind) { return kind_at(kind)->trunk_upright; }
 float plant_kind_droop(int kind) { return kind_at(kind)->droop; }
 float plant_kind_trunk_thickness(int kind) { return kind_at(kind)->trunk_radius_ratio; }
 float plant_kind_trunk_taper(int kind) { return kind_at(kind)->trunk_taper > 0.0f ? kind_at(kind)->trunk_taper : kind_at(kind)->taper; }
@@ -6844,6 +6856,7 @@ void plant_recipe_defaults(plant_recipe_t *recipe)
 	recipe->crown_start = -1.0f;
 	recipe->leaves_from = -1.0f;
 	recipe->dead_branches = -1.0f;
+	recipe->trunk_upright = -1.0f;
 	recipe->droop = -1.0f;
 	recipe->trunk_thickness = -1.0f;
 	recipe->trunk_taper = -1.0f;
@@ -7095,6 +7108,7 @@ bool plant_recipe_load(plant_recipe_t *recipe, const char *path)
 		else if (strcmp(key, "crown_start") == 0) { recipe->crown_start = strtof(value, NULL); }
 		else if (strcmp(key, "leaves_from") == 0) { recipe->leaves_from = strtof(value, NULL); }
 		else if (strcmp(key, "dead_branches") == 0) { recipe->dead_branches = strtof(value, NULL); }
+		else if (strcmp(key, "trunk_upright") == 0) { recipe->trunk_upright = strtof(value, NULL); }
 		else if (strcmp(key, "droop") == 0) { recipe->droop = strtof(value, NULL); }
 		else if (strcmp(key, "trunk_thickness") == 0) { recipe->trunk_thickness = strtof(value, NULL); }
 		else if (strcmp(key, "trunk_taper") == 0) { recipe->trunk_taper = strtof(value, NULL); }
@@ -7254,7 +7268,7 @@ bool plant_recipe_save(const plant_recipe_t *recipe, const char *path)
 	fprintf(file, "curved_twigs = %d\n", recipe->curved_twigs ? 1 : 0);
 	fprintf(file, "brushes = %d\n", recipe->brushes ? 1 : 0);
 	fprintf(file, "brush_strips = %d\nbrush_spacing = %g\n", recipe->brush_strips, (double)recipe->brush_spacing);
-	fprintf(file, "dead_branches = %g\n", (double)recipe->dead_branches);
+	fprintf(file, "dead_branches = %g\ntrunk_upright = %g\n", (double)recipe->dead_branches, (double)recipe->trunk_upright);
 	fprintf(file, "snow_bake = %d\n", recipe->snow_bake ? 1 : 0);
 	fprintf(file, "trunk_thickness = %g\ntrunk_taper = %g\nbranch_thickness = %g\nbranch_taper = %g\nthinnest_branch = %g\n",
 		(double)recipe->trunk_thickness, (double)recipe->trunk_taper, (double)recipe->branch_thickness, (double)recipe->branch_taper,
@@ -7579,6 +7593,10 @@ bool plant_grow(const plant_recipe_t *recipe, const plant_atlas_t *atlas, plant_
 	if (recipe->crown_start >= 0.0f)
 	{
 		kind.crown_start = fminf(recipe->crown_start, 0.95f);
+	}
+	if (recipe->trunk_upright >= 0.0f)
+	{
+		kind.trunk_upright = fminf(recipe->trunk_upright, 3.0f);
 	}
 	if (recipe->dead_branches >= 0.0f)
 	{
