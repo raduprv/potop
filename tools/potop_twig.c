@@ -630,7 +630,7 @@ static int add_shoot_needles(needle_t *needles, int count, random_t *random, con
 			}
 			float side = sinf(around);
 			float tuft = clampf((t - style->bare) / fmaxf(1.0f - style->bare, 0.01f), 0.0f, 1.0f);
-			float spread = random_range(random, style->angle_low, style->angle_high) * (0.35f + 0.65f * fabsf(side))
+			float spread = random_range(random, style->angle_low, style->angle_high) * (0.55f + 0.45f * fabsf(side))
 				* mixf(1.0f, style->spread_taper > 0.0f ? style->spread_taper : 1.0f, tuft);
 
 			needle->x = x + random_range(random, -0.004f, 0.004f);
@@ -638,7 +638,7 @@ static int add_shoot_needles(needle_t *needles, int count, random_t *random, con
 			needle->angle = heading + (side >= 0.0f ? spread : -spread);
 			// (one pointing at us or away is seen shorter)
 			needle->length = random_range(random, style->length_low, style->length_high) * scale * mixf(0.8f, 1.05f, t)
-				* (1.0f - 0.55f * fabsf(cosf(around)) * sinf(fminf(spread / (0.35f + 0.65f * fabsf(side)), 1.5f)));
+				* (1.0f - 0.55f * fabsf(cosf(around)) * sinf(fminf(spread / (0.55f + 0.45f * fabsf(side)), 1.5f)));
 			needle->curl = (side >= 0.0f ? -1.0f : 1.0f) * style->curl * random_range(random, 0.5f, 1.5f)
 				+ random_range(random, -0.5f, 0.5f) * style->unevenness;
 			needle->radius = style->radius * scale * random_range(random, 0.85f, 1.15f) * (1.0f + random_range(random, -0.35f, 0.25f) * style->unevenness);
@@ -848,7 +848,7 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 			const paint_t *own = shoot->bark != NULL ? shoot->bark : bark;
 			paint_t knob = *own;
 			paint_t shade = { .shadow = 0.35f, .tip_from = 1.0f };
-			float step = shoot->radius * 0.9f;
+			float step = shoot->radius * 0.45f;
 
 			knob.bumps = 0.0f;
 			knob.rough = 0.2f;
@@ -865,7 +865,9 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 				float y;
 				float knob_heading;
 				float radius = shoot->radius * mixf(1.0f, shoot->taper > 0.0f ? shoot->taper : 0.45f, t);
-				float where = hash_unit((int)(t * 1000.0f), i * 7 + 3) * 2.0f - 1.0f;
+				// (more of them towards the rims, where they show most)
+				float spot = hash_unit((int)(t * 1000.0f), i * 7 + 3) * 2.0f - 1.0f;
+				float where = (spot >= 0.0f ? 1.0f : -1.0f) * powf(fabsf(spot), 0.6f);
 				float side = where >= 0.0f ? 1.0f : -1.0f;
 				float out = side * 1.0f;
 				float size = radius * mixf(0.18f, 0.3f, hash_unit(i, (int)(t * 613.0f)));
@@ -874,7 +876,7 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 				float tip_x;
 				float tip_y;
 
-				if (hash_unit(i, (int)(t * 977.0f)) < 0.15f)
+				if (hash_unit(i, (int)(t * 977.0f)) < 0.05f)
 				{
 					continue;
 				}
@@ -895,7 +897,21 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 				}
 				draw_segment(canvas, foot_x + size * 0.6f, foot_y + size * 0.6f, size * 1.3f, tip_x + size * 0.6f, tip_y + size * 0.6f, size,
 					0.0f, 1.0f, &shade);
-				draw_segment(canvas, foot_x, foot_y, size, tip_x, tip_y, size * 0.7f, 0.0f, 1.0f, &knob);
+				// (lumpy: two or three pieces of it, each a little off and
+				// its own size)
+				for (int piece = 0; piece < 3; piece++)
+				{
+					float jitter_x = (hash_unit(i * 31 + piece, (int)(t * 1777.0f)) - 0.5f) * size * 1.1f;
+					float jitter_y = (hash_unit(i * 17 + piece, (int)(t * 2333.0f)) - 0.5f) * size * 1.1f;
+					float piece_size = size * mixf(0.5f, 1.0f, hash_unit(piece * 7 + i, (int)(t * 911.0f)));
+
+					if (piece == 2 && hash_unit(i, (int)(t * 1291.0f)) < 0.5f)
+					{
+						break;
+					}
+					draw_segment(canvas, foot_x + jitter_x, foot_y + jitter_y, piece_size, tip_x + jitter_x * 0.6f, tip_y + jitter_y * 0.6f,
+						piece_size * mixf(0.4f, 0.8f, hash_unit(piece, (int)(t * 733.0f) + i)), 0.0f, 1.0f, &knob);
+				}
 			}
 		}
 
@@ -929,12 +945,12 @@ static void draw_pine(canvas_t *canvas, random_t *random)
 {
 	needle_style_t style = {
 		.length_low = 0.17f, .length_high = 0.23f, .radius = 0.0046f,
-		.angle_low = 1.1f, .angle_high = 1.45f, .curl = 0.55f,
+		.angle_low = 1.2f, .angle_high = 1.55f, .curl = 0.6f,
 		.per_bundle = 2, .bundles_per_unit = 165.0f, .crowding = 1.3f, .bare = 0.08f, .brush = 1.2f,
 		.greens = {
 			{ .dark = { 0.16f, 0.21f, 0.12f }, .light = { 0.40f, 0.47f, 0.29f }, .tip = { 0.40f, 0.46f, 0.28f }, .tip_from = 1.0f },
 			{ .dark = { 0.20f, 0.24f, 0.13f }, .light = { 0.48f, 0.52f, 0.31f }, .tip = { 0.47f, 0.51f, 0.30f }, .tip_from = 1.0f } },
-		.behind_dark = 0.25f, .spread_taper = 0.5f, .brightness_spread = 0.3f,
+		.behind_dark = 0.25f, .spread_taper = 0.65f, .brightness_spread = 0.3f,
 		.pairs_together = true, .rim = 0.12f, .gloss = 0.14f, .shadow = 0.14f, .tip_radius = 0.35f,
 		.unevenness = 0.55f, .dry_share = 0.04f, .broken_share = 0.03f,
 		.sheath = { .dark = { 0.18f, 0.11f, 0.07f }, .light = { 0.42f, 0.28f, 0.18f }, .tip = { 0.40f, 0.30f, 0.20f }, .tip_from = 0.5f },
