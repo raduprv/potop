@@ -569,13 +569,13 @@ static void round_crests(float *heights, int32_t size, float cell_size_meters, f
 // its upper side, filled out on its lower, flat across its inner part and
 // eased back to the face round it (no edges). The soil pass gives such a
 // flat patch earth, so the trees take it
-#define SHELF_SPACING_FEW 140.0f        // meters between the points at the least shelves...
-#define SHELF_SPACING_MOST 35.0f        // ...and at the most
+#define SHELF_SPACING_FEW 60.0f         // meters between the points at the least shelves...
+#define SHELF_SPACING_MOST 12.0f        // ...and at the most
 #define SHELF_RADIUS_LEAST 4.0f         // a shelf's radius, meters, from...
 #define SHELF_RADIUS_MOST 10.0f         // ...to
 #define SHELF_FLAT_SHARE 0.55f          // the share of its radius flat
-#define SHELF_SLOPE_FROM 0.7f           // meters a meter (over a few): no shelf where gentler (it needs none)
-#define SHELF_SLOPE_TO 4.0f             // nor on a sheer face (the cut would be a wall)
+#define SHELF_SLOPE_FROM 0.5f           // meters a meter (over a few): no shelf where gentler (it needs none)
+#define SHELF_SLOPE_TO 6.0f             // nor on a sheer face (the cut would be a wall)
 #define SHELF_SLOPE_REACH_METERS 4.0f
 
 static uint32_t shelf_hash(uint32_t seed, int32_t x, int32_t y, uint32_t salt)
@@ -652,7 +652,8 @@ static void carve_shelves(float *heights, int32_t size, float cell_size_meters, 
 			count++;
 		}
 	}
-	SDL_Log("Shelves: %d, %.0f ms", count, (double)(SDL_GetTicksNS() - started) / 1.0e6);
+	SDL_Log("Shelves: %d (%.0f a square km), %.0f ms", count, (double)count / ((double)map_meters * (double)map_meters * 1.0e-6),
+		(double)(SDL_GetTicksNS() - started) / 1.0e6);
 }
 
 static soil_type_t classify_soil(const generation_noise_t *noise, const terrain_settings_t *settings,
