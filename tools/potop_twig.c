@@ -856,7 +856,7 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 			const paint_t *own = shoot->bark != NULL ? shoot->bark : bark;
 			paint_t knob = *own;
 			paint_t shade = { .shadow = 0.35f, .tip_from = 1.0f };
-			float step = shoot->radius * 0.45f;
+			float step = shoot->radius * 0.3f;
 
 			knob.bumps = 0.0f;
 			knob.rough = 0.2f;
@@ -867,15 +867,24 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 				knob.light[k] = own->light[k] * 0.62f;
 			}
 			knob.tip_from = 0.0f;
-			for (float t = 0.04f; own->bumps > 0.0f && t < 0.96f; t += step / shoot->length)
+			int knob_index = 0;
+
+			for (float t = 0.04f; own->bumps > 0.0f && t < 0.96f; t += step / shoot->length * mixf(0.8f, 1.2f, hash_unit(i * 13, knob_index)))
 			{
 				float x;
 				float y;
 				float knob_heading;
 				float radius = shoot->radius * mixf(1.0f, shoot->taper > 0.0f ? shoot->taper : 0.45f, t);
-				// (more of them towards the rims, where they show most)
-				float spot = hash_unit((int)(t * 1000.0f), i * 7 + 3) * 2.0f - 1.0f;
-				float where = (spot >= 0.0f ? 1.0f : -1.0f) * powf(fabsf(spot), 0.6f);
+				// (in a spiral round it, as the needles were: by the golden
+				// angle; those round its back unseen)
+				float around = (float)knob_index * 2.39996f + (hash_unit(knob_index, i * 5) - 0.5f) * 0.4f;
+				float where = sinf(around);
+
+				knob_index++;
+				if (cosf(around) < -0.25f)
+				{
+					continue;
+				}
 				float side = where >= 0.0f ? 1.0f : -1.0f;
 				float out = side * 1.0f;
 				float size = radius * mixf(0.18f, 0.3f, hash_unit(i, (int)(t * 613.0f)));
@@ -884,10 +893,7 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 				float tip_x;
 				float tip_y;
 
-				if (hash_unit(i, (int)(t * 977.0f)) < 0.05f)
-				{
-					continue;
-				}
+
 				shoot_point(shoot, t, &x, &y, &knob_heading);
 				// (across its face: anywhere from one rim to the other; on the
 				// rim it points out, on the face along the shoot, seen end on)
@@ -921,6 +927,26 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 						piece_size * mixf(0.4f, 0.8f, hash_unit(piece, (int)(t * 733.0f) + i)), 0.0f, 1.0f, &knob);
 				}
 			}
+			// Small cracks in it: thin dark lines along it, here and there
+			for (int crack = 0; own->bumps > 0.0f && crack < (int)(shoot->length / shoot->radius * 1.2f); crack++)
+			{
+				paint_t line = { .shadow = 0.55f, .tip_from = 1.0f };
+				float t = hash_unit(i * 41 + 7, crack);
+				float where = (hash_unit(crack, i * 3 + 11) * 2.0f - 1.0f) * 0.8f;
+				float long_ = shoot->radius * mixf(1.5f, 4.0f, hash_unit(crack * 3, i));
+				float x;
+				float y;
+				float heading;
+				float radius;
+				float tilt = (hash_unit(crack, i * 9) - 0.5f) * 0.5f;
+
+				shoot_point(shoot, t, &x, &y, &heading);
+				radius = shoot->radius * mixf(1.0f, shoot->taper > 0.0f ? shoot->taper : 0.45f, t);
+				x += cosf(heading) * where * radius;
+				y += sinf(heading) * where * radius;
+				draw_segment(canvas, x, y, radius * 0.07f, x + sinf(heading + tilt) * long_, y - cosf(heading + tilt) * long_, radius * 0.04f, 0.0f, 1.0f,
+					&line);
+			}
 		}
 
 	}
@@ -937,10 +963,10 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 			continue;
 		}
 		// (as big as a shoot's, whatever its stem)
-		float size = fminf(shoots[i].radius, 0.012f);
+		float size = fminf(shoots[i].radius, 0.012f) * 1.3f;
 
 		shoot_point(&shoots[i], 0.97f, &x, &y, &heading);
-		draw_segment(canvas, x, y, size * 1.3f, x + sinf(heading) * size * 5.0f, y - cosf(heading) * size * 5.0f, size * 0.4f, 0.0f, 1.0f, bud);
+		draw_segment(canvas, x, y, size * 1.3f, x + sinf(heading) * size * 5.5f, y - cosf(heading) * size * 5.5f, size * 0.4f, 0.0f, 1.0f, bud);
 	}
 	free(needles);
 }
