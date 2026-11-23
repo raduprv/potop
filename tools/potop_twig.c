@@ -975,7 +975,17 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 // ways, every shoot (the stem's top too) clothed nearly all along in stiff
 // needles in pairs, pointing forward round it like a bottle brush, a brown
 // bud at its tip; the reddish brown shoot showing between the needles
-static void draw_pine(canvas_t *canvas, random_t *random)
+// A mountain pine's needles, bark and buds (its twig's, its brush's, its
+// brush seen end on)
+typedef struct
+{
+	needle_style_t style;
+	needle_shape_t needle;
+	paint_t bark;
+	paint_t bud;
+} pine_parts_t;
+
+static void pine_parts(pine_parts_t *parts)
 {
 	needle_style_t style = {
 		.length_low = 0.187f, .length_high = 0.253f, .radius = 0.0046f,
@@ -993,7 +1003,7 @@ static void draw_pine(canvas_t *canvas, random_t *random)
 	// The needle: round, a little narrower at its foot, its tip rounded;
 	// pale yellowish at its foot, grey green along, a touch lighter at the
 	// tip, fine streaks along it, a soft gloss
-	static const needle_shape_t needle = {
+	needle_shape_t needle = {
 		.foot_narrow = 0.3f, .tip_round = 0.75f, .tip_length = 0.07f, .flat = 0.15f,
 		.foot = { 0.50f, 0.48f, 0.28f }, .middle = { 0.36f, 0.40f, 0.22f }, .tip = { 0.40f, 0.43f, 0.24f },
 		.foot_to = 0.12f, .tip_from = 0.82f,
@@ -1001,13 +1011,30 @@ static void draw_pine(canvas_t *canvas, random_t *random)
 		.streaks = 0.35f, .gloss = 0.7f, .shade = 0.45f,
 	};
 
-	style.shape = &needle;
 	// (the stem and its shoots one bark: grey brown, knobbly, reddish
 	// towards their tips)
-	paint_t stem_bark = { .dark = { 0.17f, 0.13f, 0.10f }, .light = { 0.48f, 0.40f, 0.32f }, .tip = { 0.38f, 0.30f, 0.22f }, .tip_from = 0.55f,
+	paint_t bark = { .dark = { 0.17f, 0.13f, 0.10f }, .light = { 0.48f, 0.40f, 0.32f }, .tip = { 0.38f, 0.30f, 0.22f }, .tip_from = 0.55f,
 		.rough = 0.45f, .bumps = 1.0f };
 	paint_t bud = { .dark = { 0.16f, 0.09f, 0.05f }, .light = { 0.46f, 0.30f, 0.19f }, .tip = { 0.50f, 0.40f, 0.30f }, .tip_from = 0.7f,
 		.rough = 0.9f };
+	parts->style = style;
+	parts->needle = needle;
+	parts->bark = bark;
+	parts->bud = bud;
+	parts->style.shape = &parts->needle;
+}
+
+static void draw_pine(canvas_t *canvas, random_t *random)
+{
+	static pine_parts_t parts;
+	needle_style_t style;
+	paint_t stem_bark;
+	paint_t bud;
+
+	pine_parts(&parts);
+	style = parts.style;
+	stem_bark = parts.bark;
+	bud = parts.bud;
 	shoot_t shoots[10];
 	int count = 0;
 	int sides = 5;
@@ -1033,6 +1060,89 @@ static void draw_pine(canvas_t *canvas, random_t *random)
 			.needles_from = 0.28f, .crook = 0.18f, .phase = random_range(random, 0.0f, 6.0f) };
 	}
 	draw_twig(canvas, random, &style, &stem_bark, &bud, shoots, count);
+}
+
+// A mountain pine's brush: one shoot, bare and knobbly low down, clothed
+// in its needles above, its bud at the tip: the plant grower stands three
+// of them round each shoot (a star) and a rosette (draw_pine_rosette) at
+// its end, so it is round from every side
+static void draw_pine_brush(canvas_t *canvas, random_t *random)
+{
+	static pine_parts_t parts;
+	needle_style_t style;
+	shoot_t shoot;
+
+	pine_parts(&parts);
+	style = parts.style;
+	// (one shoot the picture's length: its needles long beside it)
+	style.length_low = 0.36f;
+	style.length_high = 0.46f;
+	style.radius = 0.0072f;
+	style.bundles_per_unit = 80.0f;
+	style.brush = 1.6f;
+	shoot = (shoot_t){ .fx = 0.5f, .fy = canvas->tall - 0.02f, .angle = random_range(random, -0.04f, 0.04f),
+		.bend = random_range(random, -0.12f, 0.12f), .length = canvas->tall * 0.86f, .radius = 0.028f, .scale = 1.0f, .taper = 0.45f,
+		.needles_from = 0.36f, .crook = 0.1f, .phase = random_range(random, 0.0f, 6.0f) };
+	draw_twig(canvas, random, &style, &parts.bark, &parts.bud, &shoot, 1);
+}
+
+// The same brush seen end on, from its tip: its needles radiating round the
+// bud, those nearer the tip in front and shorter (they point more forward),
+// those further back behind and darker
+static void draw_pine_rosette(canvas_t *canvas, random_t *random)
+{
+	static pine_parts_t parts;
+	needle_t *needles = malloc(sizeof(needle_t) * NEEDLES_MAX);
+	int count = 0;
+	int bundles = 140;
+	float center = 0.5f;
+
+	if (needles == NULL)
+	{
+		return;
+	}
+	pine_parts(&parts);
+	parts.style.radius = 0.0085f;
+	parts.style.behind_dark = 0.45f;
+	canvas->fit = 1.0f;
+	canvas->foot_x = 0.5f;
+	canvas->foot_y = 0.5f;
+	for (int b = 0; b < bundles; b++)
+	{
+		// (along the shoot: 0 its needles' foot, 1 its tip)
+		float along = (float)b / (float)bundles;
+		float around = (float)b * 2.39996f + random_range(random, -0.15f, 0.15f);
+
+		for (int k = 0; k < 2 && count < NEEDLES_MAX; k++)
+		{
+			needle_t *needle = &needles[count++];
+			float heading_around = around + (k == 0 ? 0.0f : 0.4f);
+			// (how far out it points from the shoot: less near the tip)
+			float spread = random_range(random, 1.2f, 1.5f) * mixf(1.0f, 0.55f, along * along);
+			float length = random_range(random, 0.36f, 0.47f) * sinf(spread);
+			float start = random_range(random, 0.02f, 0.07f) * (1.0f - along * 0.5f);
+
+			memset(needle, 0, sizeof(*needle));
+			needle->x = center + sinf(heading_around) * start;
+			needle->y = center - cosf(heading_around) * start;
+			needle->angle = heading_around + random_range(random, -0.08f, 0.08f);
+			needle->length = length;
+			needle->curl = random_range(random, -0.25f, 0.25f);
+			needle->radius = parts.style.radius * random_range(random, 0.9f, 1.1f);
+			needle->depth = along * 2.0f - 1.0f;
+			needle->hue = random_float(random);
+			needle->brightness = 1.0f + random_range(random, -0.15f, 0.15f);
+			needle->dry = random_float(random) < 0.03f ? 0.85f : 1.0f;
+			needle->gloss = random_range(random, 0.4f, 1.0f);
+			needle->sheath = false;
+		}
+	}
+	qsort(needles, (size_t)count, sizeof(needle_t), compare_needles);
+	draw_needles(canvas, needles, count, &parts.style, false);
+	draw_needles(canvas, needles, count, &parts.style, true);
+	// The bud in the middle, seen end on: a round of scales
+	draw_segment(canvas, center, center, 0.045f, center + 0.004f, center - 0.004f, 0.04f, 0.0f, 1.0f, &parts.bud);
+	free(needles);
 }
 
 static void draw_juniper(canvas_t *canvas, random_t *random)
@@ -1556,7 +1666,7 @@ int main(int argument_count, char **arguments)
 	}
 	if (kind == NULL || path == NULL || width < 16 || width > 4096)
 	{
-		fprintf(stderr, "Usage: potop_twig [--width W] [--seed N] pine|juniper|fern|fern_lobed OUT.png\n");
+		fprintf(stderr, "Usage: potop_twig [--width W] [--seed N] pine|pine_brush|pine_rosette|juniper|fern|fern_lobed OUT.png\n");
 		return 1;
 	}
 	// (as tall as the kind's twig is: the pine's branch tip square,
@@ -1583,6 +1693,14 @@ int main(int argument_count, char **arguments)
 	{
 		draw_juniper(&canvas, &random);
 	}
+	else if (strcmp(kind, "pine_brush") == 0)
+	{
+		draw_pine_brush(&canvas, &random);
+	}
+	else if (strcmp(kind, "pine_rosette") == 0)
+	{
+		draw_pine_rosette(&canvas, &random);
+	}
 	else if (strcmp(kind, "fern") == 0)
 	{
 		draw_fern_broad(&canvas, &random);
@@ -1593,7 +1711,7 @@ int main(int argument_count, char **arguments)
 	}
 	else
 	{
-		fprintf(stderr, "potop_twig: no kind '%s' (pine, juniper, fern, fern_lobed)\n", kind);
+		fprintf(stderr, "potop_twig: no kind '%s' (pine, pine_brush, pine_rosette, juniper, fern, fern_lobed)\n", kind);
 		free(canvas.pixels);
 		return 1;
 	}

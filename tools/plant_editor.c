@@ -1215,6 +1215,13 @@ static void panel(editor_t *editor)
 				recipe->curved_twigs = curved != 0;
 			}
 			{
+				// (pines: twig pictures one brush side on, a head picture it end on)
+				nk_bool brushes = recipe->brushes ? nk_true : nk_false;
+
+				nk_checkbox_label(context, "Brushes in the round (pines)", &brushes);
+				recipe->brushes = brushes != 0;
+			}
+			{
 				// (whole boughs: fir_squares)
 				nk_bool baked = recipe->snow_bake ? nk_true : nk_false;
 

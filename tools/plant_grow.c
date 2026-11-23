@@ -177,6 +177,11 @@ typedef struct
 	float twig_meters;                  // a finest branch longer than this has twigs one after the other along it (0: one)
 	bool twig_curved;                   // one card each, arched across, drooping, a little twisted (add_curved_twig) instead of two crossed
 	bool branch_cards;                  // the finest branches are whole boughs, each a picture of one seen from above, along it (add_branch_card)
+	// Each twig a small spray of brushes in the round (a pine's): a leader
+	// and shoots round it, each brush three of the twig pictures (one
+	// shoot's, side on) crossed round its axis, its end a low cone of the
+	// head picture (the brush end on); not a flat picture of a twig
+	bool brushes;
 	fruit_hang_t fruit_hang;            // its fruit (--fruit): how it grows
 	fruit_zone_t fruit_zone;            // and where
 	// The branches' shape under their own weight: how far they bend down
@@ -2728,6 +2733,87 @@ static void add_curved_twig(mesh_t *mesh, vec3 base, vec3 along_unit, vec3 acros
 	shade_vertices(mesh, first, (uint32_t)((CURVED_TWIG_ALONG + 1) * columns), random_between(0.8f, 1.12f));
 }
 
+// One brush (kind brushes): three twig pictures crossed round its axis
+// (from any side two show, round), and at its end the head picture (the
+// brush end on) on a low cone opening back, so seen from its tip it is a
+// round rosette, not a star of three cards
+static void add_brush(plant_t *plant, vec3 foot, vec3 axis, float length, vec3 normal)
+{
+	mesh_t *mesh = &plant->mesh;
+	const cell_place_t *place = &plant->twigs[random_index(plant->twig_count)];
+	vec3 side = rotated(perpendicular(axis), axis, random_between(0.0f, PI_F));
+	float half_width = 0.5f * length * place->aspect;
+
+	for (int k = 0; k < 3; k++)
+	{
+		add_picture(mesh, foot, axis, rotated(side, axis, (float)k * PI_F / 3.0f), length, normal, place);
+	}
+	if (plant->head_count > 0)
+	{
+		const cell_place_t *rosette = &plant->heads[random_index(plant->head_count)];
+		// (the bud near the picture's top; the needles round it reach as
+		// far as the side pictures' half width)
+		vec3 tip = add(foot, scale(axis, length * 0.9f));
+		float radius = half_width * 0.8f;
+		vec3 apex = add(tip, scale(axis, radius * 0.15f));
+		vec3 ring_center = add(tip, scale(axis, -radius * 0.7f));
+		vec3 u = rotated(side, axis, random_between(0.0f, 2.0f * PI_F));
+		vec3 w = cross(axis, u);
+		float center_u = 0.5f * (rosette->uv[0] + rosette->uv[2]);
+		float center_v = 0.5f * (rosette->uv[1] + rosette->uv[3]);
+		float half_u = 0.5f * (rosette->uv[2] - rosette->uv[0]);
+		float half_v = 0.5f * (rosette->uv[3] - rosette->uv[1]);
+		const int segments = 8;
+		uint32_t first;
+		uint32_t center;
+
+		mesh->plant_random = hash_unit((uint32_t)mesh->vertex_count * 2654435761u + 17u);
+		mesh->plant_extra = 0.0f;
+		mesh->plant_along = 1.0f;
+		first = (uint32_t)mesh->vertex_count;
+		center = add_vertex(mesh, apex, normal, u, w, center_u, center_v);
+		mesh->plant_along = 0.6f;
+		for (int i = 0; i <= segments; i++)
+		{
+			float angle = (float)i / (float)segments * 2.0f * PI_F;
+			vec3 out = add(scale(u, cosf(angle)), scale(w, sinf(angle)));
+
+			add_vertex(mesh, add(ring_center, scale(out, radius)), normal, u, w, center_u + cosf(angle) * half_u, center_v + sinf(angle) * half_v);
+		}
+		for (int i = 0; i < segments; i++)
+		{
+			add_triangle(mesh, MATERIAL_FOLIAGE, center, center + 1 + (uint32_t)i, center + 2 + (uint32_t)i);
+		}
+		mesh->plant_along = 0.0f;
+		shade_vertices(mesh, first, (uint32_t)segments + 2, random_between(0.85f, 1.1f));
+	}
+}
+
+// A twig as a spray of brushes (kind brushes): its leader along it, and
+// shoots out of it round about (by the golden angle), the lower longer,
+// each a brush; their bare stalks are the brushes' own (the twig picture's
+// lower part)
+static void add_brush_twig(plant_t *plant, vec3 start, vec3 direction, float length, vec3 normal)
+{
+	int shoots = 2 + random_index(3);
+	float turn = random_between(0.0f, 2.0f * PI_F);
+	vec3 across;
+
+	// (a pine's shoots turn up at their ends: its candles)
+	direction = normalized(add(direction, v3(0.0f, 0.35f, 0.0f)));
+	across = perpendicular(direction);
+	add_brush(plant, start, direction, length, normal);
+	for (int i = 0; i < shoots; i++)
+	{
+		float t = 0.32f + 0.4f * ((float)i + random_between(0.0f, 0.6f)) / (float)shoots;
+		float out_angle = random_between(0.55f, 0.9f);
+		vec3 out = rotated(across, direction, turn + (float)i * 2.39996f);
+		vec3 heading = normalized(add(add(scale(direction, cosf(out_angle)), scale(out, sinf(out_angle))), v3(0.0f, 0.3f, 0.0f)));
+
+		add_brush(plant, add(start, scale(direction, length * t)), heading, length * random_between(0.5f, 0.68f) * (1.15f - 0.5f * t), normal);
+	}
+}
+
 static void add_twig(plant_t *plant, vec3 start, vec3 direction, float length)
 {
 	// Two cards crossed, so it shows from every side; the flatter the kind,
@@ -2760,6 +2846,12 @@ static void add_twig(plant_t *plant, vec3 start, vec3 direction, float length)
 	other = rotated(side, direction, between);
 	length *= plant->kind->twig_scale;
 	normal = crown_normal(plant, add(start, scale(direction, length * 0.5f)));
+	if (plant->kind->brushes)
+	{
+		add_brush_twig(plant, start, direction, length, normal);
+		fruit_along(plant, start, direction, length * 0.8f, 0.004f);
+		return;
+	}
 	if (plant->kind->twig_curved)
 	{
 		// One card: of the two, the one lying the flattest
@@ -6531,6 +6623,7 @@ void plant_recipe_defaults(plant_recipe_t *recipe)
 	recipe->leaves_per_branch = -1;
 	recipe->twig_share = 0.7f;
 	recipe->curved_twigs = false;
+	recipe->brushes = false;
 	recipe->snow_bake = false;
 	recipe->fruit_shape = PLANT_FRUIT_SPHERE;
 	recipe->fruit_length = 0.03f;
@@ -6807,6 +6900,7 @@ bool plant_recipe_load(plant_recipe_t *recipe, const char *path)
 		else if (strcmp(key, "stems") == 0) { recipe->stems = atoi(value); }
 		else if (strcmp(key, "twig_length") == 0) { recipe->twig_meters = strtof(value, NULL); }
 		else if (strcmp(key, "curved_twigs") == 0) { recipe->curved_twigs = atoi(value) != 0; }
+		else if (strcmp(key, "brushes") == 0) { recipe->brushes = atoi(value) != 0; }
 		else if (strcmp(key, "snow_bake") == 0) { recipe->snow_bake = atoi(value) != 0; }
 		else if (strcmp(key, "fork_height") == 0) { recipe->fork_height = strtof(value, NULL); }
 		else if (strcmp(key, "extra_stem_chance") == 0) { recipe->extra_stem_chance = strtof(value, NULL); }
@@ -6945,6 +7039,7 @@ bool plant_recipe_save(const plant_recipe_t *recipe, const char *path)
 		(double)recipe->root_flare);
 	fprintf(file, "twig_length = %g\n", (double)recipe->twig_meters);
 	fprintf(file, "curved_twigs = %d\n", recipe->curved_twigs ? 1 : 0);
+	fprintf(file, "brushes = %d\n", recipe->brushes ? 1 : 0);
 	fprintf(file, "snow_bake = %d\n", recipe->snow_bake ? 1 : 0);
 	fprintf(file, "trunk_thickness = %g\ntrunk_taper = %g\nbranch_thickness = %g\nbranch_taper = %g\nthinnest_branch = %g\n",
 		(double)recipe->trunk_thickness, (double)recipe->trunk_taper, (double)recipe->branch_thickness, (double)recipe->branch_taper,
@@ -7262,6 +7357,7 @@ bool plant_grow(const plant_recipe_t *recipe, const plant_atlas_t *atlas, plant_
 	}
 	// (a test, for now the fir's alone)
 	kind.twig_curved = recipe->curved_twigs && kind.name != NULL && strcmp(kind.name, "fir") == 0;
+	kind.brushes = kind.brushes || recipe->brushes;
 	// Below 0: the kind's
 	if (recipe->crown_start >= 0.0f)
 	{
