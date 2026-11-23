@@ -199,6 +199,10 @@ typedef struct
 	// Foliage only above this much of the plant's height (below it, the
 	// branches are bare but for their tips, a little way down)
 	float leaves_from;
+	// Dead branches on the bare trunk under the crown (a pine's, shaded out
+	// as it grew up): this many to a stem, bare, thin, mostly broken short,
+	// the longer the nearer the crown
+	float dead_branches;
 	// Stems grown together: one trunk up to fork_height (of the height),
 	// then stems parting (0: apart from the ground); one stem more than
 	// stems by this chance (by the seed)
@@ -380,6 +384,23 @@ static const plant_kind_t kinds[] =
 		.fork_height = 0.5f, .extra_stem_chance = 0.05f, .gnarl = 0.25f, .kinks = 0.15f, .lean_length = 0.3f, .straighten = 0.8f,
 		.moss = 0.40f, .tips = 0.80f, .autumn_colors = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } }, .autumn = 0.0f, .falls = false,
 		.snow_sag = 0.050f,
+	},
+	{
+		// Pin silvestru (Scots pine, Pinus sylvestris): grown up in a stand,
+		// a tall straight bare trunk with dead branches under the crown; the
+		// crown in its top third, irregular, rounded to flat on top, of few
+		// thick crooked branches reaching out and up, their needles in tufts
+		// at their ends (the branches bare towards the trunk)
+		.name = "scots_pine", .shape = SHAPE_TREE, .atlas = "conifers", .height_meters = 20.0f, .stems = 1, .stem_lean_degrees = 2.0f,
+		.levels = 2, .trunk_radius_ratio = 0.026f, .taper = 0.2f, .trunk_taper = 0.12f, .bend = 0.1f, .crown_start = 0.6f,
+		.children = { 11, 7, 0 }, .length_ratio = { 0.42f, 0.45f, 0.0f }, .down_degrees = { 72.0f, 45.0f, 0.0f },
+		.down_spread_degrees = 18.0f, .reach = { 0.07f, 0.12f, 0.0f }, .child_radius_ratio = 0.5f, .crown = CROWN_DOME,
+		.child_start = 0.4f, .leaves_per_branch = 5, .leaf_size = 0.5f,
+		.twig_scale = 1.8f, .side_twigs = 0.7f, .tip_twig = true, .twig_flat = 0.15f, .fruit_hang = FRUIT_OUT, .fruit_zone = FRUIT_OUTER,
+		.droop = 0.012f, .tip_lift = 0.35f, .collar = 0.25f, .root_flare = 0.3f, .leaves_from = 0.62f, .dead_branches = 24.0f,
+		.fork_height = 0.75f, .extra_stem_chance = 0.04f, .gnarl = 0.3f, .kinks = 0.35f, .lean_length = 0.3f, .straighten = 0.8f,
+		.moss = 0.30f, .tips = 0.70f, .autumn_colors = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } }, .autumn = 0.0f, .falls = false,
+		.snow_sag = 0.040f,
 	},
 	{
 		// Tuia: a narrow column, many short branches pointing up
@@ -3869,6 +3890,70 @@ static float crown_shape(const plant_t *plant, float t)
 	}
 }
 
+// The dead branches on a stem's bare part under the crown (kind
+// dead_branches): out round it by the golden angle, level or hanging a
+// little, thin and tapering, most broken short (the lower the shorter:
+// dead longer), a stub or two off the longer ones; no foliage. The
+// deepest level, so the levels of detail drop them first
+static void add_dead_branches(plant_t *plant, const branch_t *stem)
+{
+	const plant_kind_t *kind = plant->kind;
+	float top = fminf(plant->stem_crown_start, 0.97f);
+	int count = (int)(kind->dead_branches * top / fmaxf(kind->crown_start, 0.05f) + 0.5f);
+	float azimuth = random_between(0.0f, 2.0f * PI_F);
+	uint8_t level = plant->mesh.bark_level;
+
+	if (top < 0.08f)
+	{
+		return;
+	}
+	plant->mesh.bark_level = (uint8_t)(kind->levels > 0 ? kind->levels : 1);
+	for (int i = 0; i < count; i++)
+	{
+		float t = top * (0.12f + 0.88f * ((float)i + random_between(0.1f, 0.9f)) / (float)count);
+		float up_share = t / top;
+		vec3 point;
+		vec3 heading;
+		float stem_radius;
+		float length = plant->height * 0.17f * (0.3f + 0.7f * up_share) * (random_unit() < 0.45f ? random_between(0.15f, 0.5f) : random_between(0.6f, 1.0f));
+		float radius;
+		float down = random_between(80.0f, 105.0f) * PI_F / 180.0f;
+		vec3 out;
+		vec3 direction;
+		branch_t dead;
+
+		azimuth += (GOLDEN_ANGLE_DEGREES + random_between(-25.0f, 25.0f)) * PI_F / 180.0f;
+		branch_at(stem, t, &point, &heading, &stem_radius);
+		radius = fmaxf(fminf(stem_radius * 0.3f, length * 0.05f), 0.008f);
+		out = rotated(perpendicular(heading), heading, azimuth);
+		direction = normalized(add(scale(heading, cosf(down)), scale(out, sinf(down))));
+		trace_branch(&dead, add(point, scale(out, stem_radius * 0.7f)), direction, length, radius, 0.25f, 0.35f, -0.04f, fmaxf(0.15f, length / 5.0f));
+		add_tube(plant, &dead, radius < 0.012f ? 3 : 4, radius, MATERIAL_BARK);
+		// (a stub or two off the longer ones)
+		if (length > plant->height * 0.05f)
+		{
+			int stubs = 1 + random_index(2);
+
+			for (int k = 0; k < stubs; k++)
+			{
+				float along = random_between(0.35f, 0.8f);
+				vec3 stub_point;
+				vec3 stub_heading;
+				float stub_radius;
+				vec3 side;
+				branch_t stub;
+
+				branch_at(&dead, along, &stub_point, &stub_heading, &stub_radius);
+				side = rotated(perpendicular(stub_heading), stub_heading, random_between(0.0f, 2.0f * PI_F));
+				side = normalized(add(scale(stub_heading, 0.6f), side));
+				trace_branch(&stub, stub_point, side, length * random_between(0.1f, 0.25f), stub_radius * 0.6f, 0.3f, 0.3f, 0.0f, 1.0f);
+				add_tube(plant, &stub, 3, stub_radius * 0.6f, MATERIAL_BARK);
+			}
+		}
+	}
+	plant->mesh.bark_level = level;
+}
+
 // trunk: a trunk's (level 0) lean, its part of the whole trunk, its flare
 static void grow(plant_t *plant, int level, vec3 start, vec3 direction, float length, float radius, const branch_shape_t *trunk)
 {
@@ -3941,6 +4026,10 @@ static void grow(plant_t *plant, int level, vec3 start, vec3 direction, float le
 	}
 	plant->mesh.bark_level = (uint8_t)level;
 	add_tube(plant, &branch, sides, radius, level == 0 ? MATERIAL_TRUNK : MATERIAL_BARK);
+	if (level == 0 && kind->dead_branches > 0.0f)
+	{
+		add_dead_branches(plant, &branch);
+	}
 	if (level == 0 && !plant->crown_center_set)
 	{
 		// The light comes out from the crown's foot, on the (first) trunk
@@ -6678,6 +6767,7 @@ plant_fruit_hang_t plant_kind_fruit_hang(int kind) { return kind_at(kind)->fruit
 plant_fruit_zone_t plant_kind_fruit_zone(int kind) { return kind_at(kind)->fruit_zone; }
 float plant_kind_crown_start(int kind) { return kind_at(kind)->crown_start; }
 float plant_kind_leaves_from(int kind) { return kind_at(kind)->leaves_from; }
+float plant_kind_dead_branches(int kind) { return kind_at(kind)->dead_branches; }
 float plant_kind_droop(int kind) { return kind_at(kind)->droop; }
 float plant_kind_trunk_thickness(int kind) { return kind_at(kind)->trunk_radius_ratio; }
 float plant_kind_trunk_taper(int kind) { return kind_at(kind)->trunk_taper > 0.0f ? kind_at(kind)->trunk_taper : kind_at(kind)->taper; }
@@ -6753,6 +6843,7 @@ void plant_recipe_defaults(plant_recipe_t *recipe)
 	recipe->fruit_per_branch = 1.0f;
 	recipe->crown_start = -1.0f;
 	recipe->leaves_from = -1.0f;
+	recipe->dead_branches = -1.0f;
 	recipe->droop = -1.0f;
 	recipe->trunk_thickness = -1.0f;
 	recipe->trunk_taper = -1.0f;
@@ -7003,6 +7094,7 @@ bool plant_recipe_load(plant_recipe_t *recipe, const char *path)
 		else if (strcmp(key, "fruit_per_branch") == 0) { recipe->fruit_per_branch = strtof(value, NULL); }
 		else if (strcmp(key, "crown_start") == 0) { recipe->crown_start = strtof(value, NULL); }
 		else if (strcmp(key, "leaves_from") == 0) { recipe->leaves_from = strtof(value, NULL); }
+		else if (strcmp(key, "dead_branches") == 0) { recipe->dead_branches = strtof(value, NULL); }
 		else if (strcmp(key, "droop") == 0) { recipe->droop = strtof(value, NULL); }
 		else if (strcmp(key, "trunk_thickness") == 0) { recipe->trunk_thickness = strtof(value, NULL); }
 		else if (strcmp(key, "trunk_taper") == 0) { recipe->trunk_taper = strtof(value, NULL); }
@@ -7162,6 +7254,7 @@ bool plant_recipe_save(const plant_recipe_t *recipe, const char *path)
 	fprintf(file, "curved_twigs = %d\n", recipe->curved_twigs ? 1 : 0);
 	fprintf(file, "brushes = %d\n", recipe->brushes ? 1 : 0);
 	fprintf(file, "brush_strips = %d\nbrush_spacing = %g\n", recipe->brush_strips, (double)recipe->brush_spacing);
+	fprintf(file, "dead_branches = %g\n", (double)recipe->dead_branches);
 	fprintf(file, "snow_bake = %d\n", recipe->snow_bake ? 1 : 0);
 	fprintf(file, "trunk_thickness = %g\ntrunk_taper = %g\nbranch_thickness = %g\nbranch_taper = %g\nthinnest_branch = %g\n",
 		(double)recipe->trunk_thickness, (double)recipe->trunk_taper, (double)recipe->branch_thickness, (double)recipe->branch_taper,
@@ -7486,6 +7579,10 @@ bool plant_grow(const plant_recipe_t *recipe, const plant_atlas_t *atlas, plant_
 	if (recipe->crown_start >= 0.0f)
 	{
 		kind.crown_start = fminf(recipe->crown_start, 0.95f);
+	}
+	if (recipe->dead_branches >= 0.0f)
+	{
+		kind.dead_branches = fminf(recipe->dead_branches, 60.0f);
 	}
 	if (recipe->leaves_from >= 0.0f)
 	{

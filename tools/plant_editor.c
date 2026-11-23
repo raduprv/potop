@@ -1236,6 +1236,7 @@ static void panel(editor_t *editor)
 			nk_property_float(context, "Loose leaves per meter", 0.0f, &recipe->loose_leaves, 100.0f, 0.5f, 0.1f);
 			kind_setting(context, "Crown starts at (% of height)", &recipe->crown_start, plant_kind_crown_start(kind), 0.0f, 0.95f, 0.01f, 100.0f);
 			kind_setting(context, "Leaves from (% of height)", &recipe->leaves_from, plant_kind_leaves_from(kind), 0.0f, 0.95f, 0.01f, 100.0f);
+			kind_setting(context, "Dead branches under the crown", &recipe->dead_branches, plant_kind_dead_branches(kind), 0.0f, 60.0f, 1.0f, 1.0f);
 			kind_setting(context, "Branches droop (x100)", &recipe->droop, plant_kind_droop(kind), 0.0f, 0.5f, 0.005f, 100.0f);
 			kind_setting(context, "Tips turn up", &recipe->tip_lift, plant_kind_tip_lift(kind), 0.0f, 3.0f, 0.05f, 1.0f);
 			kind_setting(context, "Branch collar", &recipe->collar, plant_kind_collar(kind), 0.0f, 3.0f, 0.05f, 1.0f);
@@ -1281,6 +1282,7 @@ static void panel(editor_t *editor)
 			recipe->twig_scale = 0.0f;
 			recipe->crown_start = -1.0f;
 			recipe->leaves_from = -1.0f;
+			recipe->dead_branches = -1.0f;
 			recipe->droop = -1.0f;
 			recipe->trunk_thickness = -1.0f;
 			recipe->trunk_taper = -1.0f;
