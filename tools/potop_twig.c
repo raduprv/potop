@@ -89,6 +89,8 @@ typedef struct
 	float rim;                     // its rim this much darker (a needle's outline against those behind; 0: none)
 	float gloss;                   // a bright line along its lit side (0: none)
 	float shadow;                  // > 0: a shadow, not paint: what is under it darkened by this much, nothing added where clear
+	float foot[3];                 // towards its foot (a needle pale where it leaves its sheath) ...
+	float foot_to;                 // ... up to this far along (0: none)
 } paint_t;
 
 // Value noise over the drawing's pixels (bark): smooth, 0..1
@@ -181,6 +183,10 @@ static void draw_segment(canvas_t *canvas, float ax, float ay, float ra, float b
 				if (paint->tip_from < 1.0f && along > paint->tip_from)
 				{
 					color[k] = mixf(color[k], paint->tip[k], clampf((along - paint->tip_from) / (1.0f - paint->tip_from), 0.0f, 1.0f));
+				}
+				if (paint->foot_to > 0.0f && along < paint->foot_to)
+				{
+					color[k] = mixf(paint->foot[k], color[k], along / paint->foot_to);
 				}
 				if (paint->stripe_width > 0.0f && fabsf(across) < paint->stripe_width)
 				{
@@ -321,6 +327,9 @@ typedef struct
 	float depth;                   // -1 behind the shoot .. 1 in front (drawn in this order, darker behind)
 	float hue;                     // 0..1: which of the greens
 	float brightness;
+	float dry;                     // its tip dried brown, from this far along (1: green to its tip)
+	float gloss;                   // how glossy, of the style's
+	bool sheath;                   // the first of its pair: its sheath drawn at its foot
 } needle_t;
 
 static int compare_needles(const void *first, const void *second)
@@ -353,6 +362,11 @@ typedef struct
 	float gloss;                   // a bright line along each
 	float shadow;                  // each casts a shadow this dark on those behind it (0: none)
 	float tip_radius;              // a needle's half width at its tip, of its foot's (0: 0.15, sharp)
+	float unevenness;              // how much needles differ (thickness, length, curve), 0..1
+	float dry_share;               // the needles with dried tips
+	float broken_share;            // the needles broken short (a dry stub of a tip)
+	paint_t sheath;                // a pair's sheath at its foot (its tip_from 0: none)
+	float foot_pale[3];            // a needle's color where it leaves its sheath
 } needle_style_t;
 
 #define NEEDLES_MAX 20000
@@ -406,8 +420,18 @@ static int add_shoot_needles(needle_t *needles, int count, random_t *random, con
 			// (one pointing at us or away is seen shorter)
 			needle->length = random_range(random, style->length_low, style->length_high) * scale * mixf(0.8f, 1.05f, t)
 				* (1.0f - 0.55f * fabsf(cosf(around)) * sinf(fminf(spread / (0.35f + 0.65f * fabsf(side)), 1.5f)));
-			needle->curl = (side >= 0.0f ? -1.0f : 1.0f) * style->curl * random_range(random, 0.5f, 1.5f);
-			needle->radius = style->radius * scale * random_range(random, 0.85f, 1.15f);
+			needle->curl = (side >= 0.0f ? -1.0f : 1.0f) * style->curl * random_range(random, 0.5f, 1.5f)
+				+ random_range(random, -0.5f, 0.5f) * style->unevenness;
+			needle->radius = style->radius * scale * random_range(random, 0.85f, 1.15f) * (1.0f + random_range(random, -0.35f, 0.25f) * style->unevenness);
+			needle->length *= 1.0f + random_range(random, -0.3f, 0.15f) * style->unevenness;
+			needle->dry = random_float(random) < style->dry_share ? random_range(random, 0.72f, 0.92f) : 1.0f;
+			if (random_float(random) < style->broken_share)
+			{
+				needle->length *= random_range(random, 0.45f, 0.7f);
+				needle->dry = 0.8f;
+			}
+			needle->gloss = random_range(random, 0.2f, 1.2f);
+			needle->sheath = k == 0;
 			needle->depth = cosf(around);
 			needle->hue = random_float(random);
 			needle->brightness = 1.0f + random_range(random, -style->brightness_spread, style->brightness_spread);
@@ -430,7 +454,10 @@ static int add_shoot_needles(needle_t *needles, int count, random_t *random, con
 		needle->angle = heading + random_range(random, -0.55f, 0.55f) * fabsf(sinf(around));
 		needle->length = random_range(random, style->length_low, style->length_high) * scale * 0.9f;
 		needle->curl = random_range(random, -style->curl, style->curl);
-		needle->radius = style->radius * scale;
+		needle->radius = style->radius * scale * (1.0f + random_range(random, -0.3f, 0.2f) * style->unevenness);
+		needle->dry = 1.0f;
+		needle->gloss = random_range(random, 0.2f, 1.2f);
+		needle->sheath = false;
 		needle->depth = cosf(around);
 		needle->hue = random_float(random);
 		needle->brightness = 1.0f + random_range(random, -style->brightness_spread, style->brightness_spread);
@@ -475,19 +502,41 @@ static void draw_needles(canvas_t *canvas, needle_t *needles, int count, const n
 			paint.tip[k] *= darken;
 		}
 		paint.rim = style->rim;
-		paint.gloss = style->gloss;
+		paint.gloss = style->gloss * needle->gloss;
+		if (needle->dry < 1.0f)
+		{
+			// (a dried tip: brown, from where it dried)
+			paint.tip[0] = 0.42f * darken;
+			paint.tip[1] = 0.31f * darken;
+			paint.tip[2] = 0.18f * darken;
+			paint.tip_from = needle->dry;
+		}
+		if (style->foot_pale[1] > 0.0f)
+		{
+			for (int k = 0; k < 3; k++)
+			{
+				paint.foot[k] = style->foot_pale[k] * darken;
+			}
+			paint.foot_to = 0.12f;
+		}
 		if (style->shadow > 0.0f)
 		{
 			// (its shadow on what is behind it: down and to the right of
-			// it, away from the light, wider and soft)
+			// it, away from the light, wide and soft)
 			paint_t shade = { .shadow = style->shadow, .tip_from = 1.0f };
-			float offset = needle->radius * 1.6f;
+			float offset = needle->radius * 2.4f;
 
 			draw_curve(canvas, needle->x + offset, needle->y + offset, control_x + offset, control_y + offset, end_x + offset, end_y + offset,
-				needle->radius * 2.2f, needle->radius * 0.6f, &shade);
+				needle->radius * 3.2f, needle->radius * 1.2f, &shade);
 		}
 		draw_curve(canvas, needle->x, needle->y, control_x, control_y, end_x, end_y, needle->radius,
 			needle->radius * (style->tip_radius > 0.0f ? style->tip_radius : 0.15f), &paint);
+		if (needle->sheath && style->sheath.tip_from > 0.0f)
+		{
+			// (the pair's sheath: a short brown grey sleeve at their foot)
+			draw_segment(canvas, needle->x, needle->y, needle->radius * 1.05f, needle->x + sinf(needle->angle) * needle->radius * 2.2f,
+				needle->y - cosf(needle->angle) * needle->radius * 2.2f, needle->radius * 0.8f, 0.0f, 1.0f, &style->sheath);
+		}
 	}
 }
 
@@ -582,12 +631,15 @@ static void draw_pine(canvas_t *canvas, random_t *random)
 	needle_style_t style = {
 		.length_low = 0.17f, .length_high = 0.23f, .radius = 0.0068f,
 		.angle_low = 0.95f, .angle_high = 1.5f, .curl = 0.42f,
-		.per_bundle = 2, .bundles_per_unit = 220.0f, .crowding = 1.3f, .bare = 0.08f, .brush = 1.2f,
+		.per_bundle = 2, .bundles_per_unit = 270.0f, .crowding = 1.3f, .bare = 0.08f, .brush = 1.2f,
 		.greens = {
-			{ .dark = { 0.17f, 0.22f, 0.13f }, .light = { 0.40f, 0.47f, 0.30f }, .tip = { 0.47f, 0.52f, 0.34f }, .tip_from = 0.8f },
-			{ .dark = { 0.19f, 0.24f, 0.15f }, .light = { 0.45f, 0.51f, 0.34f }, .tip = { 0.51f, 0.56f, 0.38f }, .tip_from = 0.8f } },
-		.behind_dark = 0.5f, .spread_taper = 0.5f, .brightness_spread = 0.25f,
-		.pairs_together = true, .rim = 0.35f, .gloss = 0.25f, .shadow = 0.3f, .tip_radius = 0.25f,
+			{ .dark = { 0.16f, 0.21f, 0.12f }, .light = { 0.40f, 0.47f, 0.29f }, .tip = { 0.40f, 0.46f, 0.28f }, .tip_from = 1.0f },
+			{ .dark = { 0.20f, 0.24f, 0.13f }, .light = { 0.48f, 0.52f, 0.31f }, .tip = { 0.47f, 0.51f, 0.30f }, .tip_from = 1.0f } },
+		.behind_dark = 0.25f, .spread_taper = 0.5f, .brightness_spread = 0.3f,
+		.pairs_together = true, .rim = 0.12f, .gloss = 0.14f, .shadow = 0.14f, .tip_radius = 0.35f,
+		.unevenness = 1.0f, .dry_share = 0.06f, .broken_share = 0.04f,
+		.sheath = { .dark = { 0.18f, 0.11f, 0.07f }, .light = { 0.42f, 0.28f, 0.18f }, .tip = { 0.40f, 0.30f, 0.20f }, .tip_from = 0.5f },
+		.foot_pale = { 0.46f, 0.50f, 0.31f },
 	};
 	// (the shoots reddish brown, the stem below grey brown and scaly)
 	paint_t shoot_bark = { .dark = { 0.22f, 0.11f, 0.06f }, .light = { 0.55f, 0.32f, 0.20f }, .tip = { 0.50f, 0.30f, 0.18f }, .tip_from = 1.0f,
