@@ -86,6 +86,9 @@ typedef struct
 	float tip_from;                // along 0..1, the tip color from here
 	float rough;                   // bark: its scales and cracks (0: smooth)
 	float brightness;              // all of it this much brighter or darker (1: as it is; 0 counts as 1)
+	float rim;                     // its rim this much darker (a needle's outline against those behind; 0: none)
+	float gloss;                   // a bright line along its lit side (0: none)
+	float shadow;                  // > 0: a shadow, not paint: what is under it darkened by this much, nothing added where clear
 } paint_t;
 
 // Value noise over the drawing's pixels (bark): smooth, 0..1
@@ -203,6 +206,37 @@ static void draw_segment(canvas_t *canvas, float ax, float ay, float ra, float b
 				}
 			}
 			pixel = &canvas->pixels[((size_t)y * (size_t)canvas->width + (size_t)x) * 4];
+			if (paint->shadow > 0.0f)
+			{
+				// (soft: thinning to its rim)
+				float soft = coverage * (1.0f - fabsf(across));
+
+				for (int k = 0; k < 3; k++)
+				{
+					pixel[k] *= 1.0f - paint->shadow * soft;
+				}
+				continue;
+			}
+			if (paint->rim > 0.0f)
+			{
+				float edge = clampf((fabsf(across) - 0.55f) / 0.45f, 0.0f, 1.0f);
+
+				for (int k = 0; k < 3; k++)
+				{
+					color[k] *= 1.0f - paint->rim * edge * edge;
+				}
+			}
+			if (paint->gloss > 0.0f)
+			{
+				// (on the lit side, a little off the middle)
+				float lit = across * (light_side >= 0.0f ? 1.0f : -1.0f);
+				float line = clampf(1.0f - fabsf(lit - 0.35f) / 0.22f, 0.0f, 1.0f);
+
+				for (int k = 0; k < 3; k++)
+				{
+					color[k] = mixf(color[k], fminf(color[k] * 1.6f + 0.06f, 1.0f), paint->gloss * line);
+				}
+			}
 			for (int k = 0; k < 3; k++)
 			{
 				pixel[k] = color[k] * coverage + pixel[k] * (1.0f - coverage);
@@ -314,6 +348,11 @@ typedef struct
 	float behind_dark;             // the needles behind the shoot this much darker
 	float spread_taper;            // the needles near the shoot's tip spread this share as far as at the tuft's foot (0 counts as 1)
 	float brightness_spread;       // each needle give or take this much brighter
+	bool pairs_together;           // a bundle's needles side by side, a little apart (a pine's pairs), not round the shoot
+	float rim;                     // each needle's outline darker by this much (they stand apart)
+	float gloss;                   // a bright line along each
+	float shadow;                  // each casts a shadow this dark on those behind it (0: none)
+	float tip_radius;              // a needle's half width at its tip, of its foot's (0: 0.15, sharp)
 } needle_style_t;
 
 #define NEEDLES_MAX 20000
@@ -340,13 +379,22 @@ static int add_shoot_needles(needle_t *needles, int count, random_t *random, con
 		float y;
 		float heading;
 
+		float bundle_around = 0.0f;
+
 		shoot_point(shoot, t, &x, &y, &heading);
 		for (int k = 0; k < style->per_bundle; k++)
 		{
 			needle_t *needle = &needles[count++];
 			// (a bundle's needles round the shoot: seen from the side,
 			// some to the left, some to the right, some towards us)
-			float around = random_range(random, 0.0f, 2.0f * PI_F) + (float)k * 2.0f * PI_F / (float)style->per_bundle;
+			// (a pine's pair: from one sheath, a little apart)
+			float around = style->pairs_together ? (k == 0 ? random_range(random, 0.0f, 2.0f * PI_F) : bundle_around + random_range(random, 0.25f, 0.55f))
+				: random_range(random, 0.0f, 2.0f * PI_F) + (float)k * 2.0f * PI_F / (float)style->per_bundle;
+
+			if (k == 0)
+			{
+				bundle_around = around;
+			}
 			float side = sinf(around);
 			float tuft = clampf((t - style->bare) / fmaxf(1.0f - style->bare, 0.01f), 0.0f, 1.0f);
 			float spread = random_range(random, style->angle_low, style->angle_high) * (0.35f + 0.65f * fabsf(side))
@@ -426,7 +474,20 @@ static void draw_needles(canvas_t *canvas, needle_t *needles, int count, const n
 			paint.light[k] *= darken;
 			paint.tip[k] *= darken;
 		}
-		draw_curve(canvas, needle->x, needle->y, control_x, control_y, end_x, end_y, needle->radius, needle->radius * 0.15f, &paint);
+		paint.rim = style->rim;
+		paint.gloss = style->gloss;
+		if (style->shadow > 0.0f)
+		{
+			// (its shadow on what is behind it: down and to the right of
+			// it, away from the light, wider and soft)
+			paint_t shade = { .shadow = style->shadow, .tip_from = 1.0f };
+			float offset = needle->radius * 1.6f;
+
+			draw_curve(canvas, needle->x + offset, needle->y + offset, control_x + offset, control_y + offset, end_x + offset, end_y + offset,
+				needle->radius * 2.2f, needle->radius * 0.6f, &shade);
+		}
+		draw_curve(canvas, needle->x, needle->y, control_x, control_y, end_x, end_y, needle->radius,
+			needle->radius * (style->tip_radius > 0.0f ? style->tip_radius : 0.15f), &paint);
 	}
 }
 
@@ -519,13 +580,14 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 static void draw_pine(canvas_t *canvas, random_t *random)
 {
 	needle_style_t style = {
-		.length_low = 0.13f, .length_high = 0.18f, .radius = 0.0052f,
-		.angle_low = 1.0f, .angle_high = 1.55f, .curl = 0.15f,
-		.per_bundle = 2, .bundles_per_unit = 480.0f, .crowding = 1.3f, .bare = 0.08f, .brush = 2.0f,
+		.length_low = 0.17f, .length_high = 0.23f, .radius = 0.0068f,
+		.angle_low = 0.95f, .angle_high = 1.5f, .curl = 0.42f,
+		.per_bundle = 2, .bundles_per_unit = 220.0f, .crowding = 1.3f, .bare = 0.08f, .brush = 1.2f,
 		.greens = {
-			{ .dark = { 0.09f, 0.12f, 0.06f }, .light = { 0.36f, 0.42f, 0.24f }, .tip = { 0.46f, 0.50f, 0.31f }, .tip_from = 0.75f },
-			{ .dark = { 0.11f, 0.14f, 0.07f }, .light = { 0.41f, 0.47f, 0.28f }, .tip = { 0.50f, 0.54f, 0.34f }, .tip_from = 0.75f } },
+			{ .dark = { 0.17f, 0.22f, 0.13f }, .light = { 0.40f, 0.47f, 0.30f }, .tip = { 0.47f, 0.52f, 0.34f }, .tip_from = 0.8f },
+			{ .dark = { 0.19f, 0.24f, 0.15f }, .light = { 0.45f, 0.51f, 0.34f }, .tip = { 0.51f, 0.56f, 0.38f }, .tip_from = 0.8f } },
 		.behind_dark = 0.5f, .spread_taper = 0.5f, .brightness_spread = 0.25f,
+		.pairs_together = true, .rim = 0.35f, .gloss = 0.25f, .shadow = 0.3f, .tip_radius = 0.25f,
 	};
 	// (the shoots reddish brown, the stem below grey brown and scaly)
 	paint_t shoot_bark = { .dark = { 0.22f, 0.11f, 0.06f }, .light = { 0.55f, 0.32f, 0.20f }, .tip = { 0.50f, 0.30f, 0.18f }, .tip_from = 1.0f,
