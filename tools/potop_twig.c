@@ -91,6 +91,7 @@ typedef struct
 	float shadow;                  // > 0: a shadow, not paint: what is under it darkened by this much, nothing added where clear
 	float foot[3];                 // towards its foot (a needle pale where it leaves its sheath) ...
 	float foot_to;                 // ... up to this far along (0: none)
+	float bumps;                   // knobs on it (where needles fell: a pine's shoots and stem), 0: none
 } paint_t;
 
 // Value noise over the drawing's pixels (bark): smooth, 0..1
@@ -202,6 +203,19 @@ static void draw_segment(canvas_t *canvas, float ax, float ay, float ra, float b
 				for (int k = 0; k < 3; k++)
 				{
 					color[k] *= mixf(1.0f, (0.65f + 0.7f * block) * crack, paint->rough);
+				}
+			}
+			if (paint->bumps > 0.0f)
+			{
+				// (a knob: lit on its upper left, shaded on its lower right)
+				float here = value_noise((float)x / 11.0f, (float)y / 11.0f);
+				float upper = value_noise(((float)x - 3.0f) / 11.0f, ((float)y - 3.0f) / 11.0f);
+				float knob = clampf((here - 0.62f) / 0.12f, 0.0f, 1.0f);
+				float relief = clampf((upper - here) * 6.0f, -1.0f, 1.0f);
+
+				for (int k = 0; k < 3; k++)
+				{
+					color[k] *= 1.0f + paint->bumps * knob * (0.45f * -relief - 0.15f);
 				}
 			}
 			if (paint->brightness > 0.0f)
@@ -823,14 +837,49 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 			last_x = x;
 			last_y = y;
 		}
-		// (its bud at the tip)
-		if (bud != NULL && !shoot->bare)
+		// Its knobs (where needles fell), standing out of its sides, if its
+		// bark has them
 		{
-			draw_segment(canvas, last_x, last_y, shoot->radius * 0.9f, last_x + sinf(heading) * shoot->radius * 3.0f,
-				last_y - cosf(heading) * shoot->radius * 3.0f, shoot->radius * 0.3f, 0.0f, 1.0f, bud);
+			const paint_t *own = shoot->bark != NULL ? shoot->bark : bark;
+			float step = shoot->radius * 1.6f;
+
+			for (float t = 0.04f; own->bumps > 0.0f && t < 0.96f; t += step / shoot->length)
+			{
+				float x;
+				float y;
+				float knob_heading;
+				float radius = shoot->radius * mixf(1.0f, shoot->taper > 0.0f ? shoot->taper : 0.45f, t);
+				float side = (hash_unit((int)(t * 1000.0f), i) < 0.5f) ? 1.0f : -1.0f;
+				float out = side * 1.1f;
+
+				if (hash_unit(i, (int)(t * 977.0f)) < 0.45f)
+				{
+					continue;
+				}
+				shoot_point(shoot, t, &x, &y, &knob_heading);
+				x += cosf(knob_heading) * side * radius * 0.7f;
+				y += sinf(knob_heading) * side * radius * 0.7f;
+				draw_segment(canvas, x, y, radius * 0.38f, x + sinf(knob_heading + out) * radius * 0.55f, y - cosf(knob_heading + out) * radius * 0.55f,
+					radius * 0.22f, 0.3f, 0.3f, own);
+			}
 		}
 	}
 	draw_needles(canvas, needles, count, style, true);
+	// The buds at the shoots' tips, in the brushes' middles over them
+	for (int i = 0; i < shoot_count && bud != NULL; i++)
+	{
+		float x;
+		float y;
+		float heading;
+
+		if (shoots[i].bare)
+		{
+			continue;
+		}
+		shoot_point(&shoots[i], 0.97f, &x, &y, &heading);
+		draw_segment(canvas, x, y, shoots[i].radius * 1.3f, x + sinf(heading) * shoots[i].radius * 5.0f, y - cosf(heading) * shoots[i].radius * 5.0f,
+			shoots[i].radius * 0.4f, 0.0f, 1.0f, bud);
+	}
 	free(needles);
 }
 
@@ -841,15 +890,15 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 static void draw_pine(canvas_t *canvas, random_t *random)
 {
 	needle_style_t style = {
-		.length_low = 0.17f, .length_high = 0.23f, .radius = 0.0058f,
-		.angle_low = 0.95f, .angle_high = 1.5f, .curl = 0.42f,
-		.per_bundle = 2, .bundles_per_unit = 320.0f, .crowding = 1.3f, .bare = 0.08f, .brush = 1.2f,
+		.length_low = 0.17f, .length_high = 0.23f, .radius = 0.0046f,
+		.angle_low = 1.05f, .angle_high = 1.4f, .curl = 0.42f,
+		.per_bundle = 2, .bundles_per_unit = 380.0f, .crowding = 1.3f, .bare = 0.08f, .brush = 1.2f,
 		.greens = {
 			{ .dark = { 0.16f, 0.21f, 0.12f }, .light = { 0.40f, 0.47f, 0.29f }, .tip = { 0.40f, 0.46f, 0.28f }, .tip_from = 1.0f },
 			{ .dark = { 0.20f, 0.24f, 0.13f }, .light = { 0.48f, 0.52f, 0.31f }, .tip = { 0.47f, 0.51f, 0.30f }, .tip_from = 1.0f } },
 		.behind_dark = 0.25f, .spread_taper = 0.5f, .brightness_spread = 0.3f,
 		.pairs_together = true, .rim = 0.12f, .gloss = 0.14f, .shadow = 0.14f, .tip_radius = 0.35f,
-		.unevenness = 1.0f, .dry_share = 0.06f, .broken_share = 0.04f,
+		.unevenness = 0.55f, .dry_share = 0.04f, .broken_share = 0.03f,
 		.sheath = { .dark = { 0.18f, 0.11f, 0.07f }, .light = { 0.42f, 0.28f, 0.18f }, .tip = { 0.40f, 0.30f, 0.20f }, .tip_from = 0.5f },
 		.foot_pale = { 0.46f, 0.50f, 0.31f },
 	};
@@ -858,20 +907,20 @@ static void draw_pine(canvas_t *canvas, random_t *random)
 	// tip, fine streaks along it, a soft gloss
 	static const needle_shape_t needle = {
 		.foot_narrow = 0.3f, .tip_round = 0.75f, .tip_length = 0.07f, .flat = 0.15f,
-		.foot = { 0.52f, 0.52f, 0.32f }, .middle = { 0.36f, 0.43f, 0.27f }, .tip = { 0.41f, 0.46f, 0.29f },
+		.foot = { 0.50f, 0.48f, 0.28f }, .middle = { 0.36f, 0.40f, 0.22f }, .tip = { 0.40f, 0.43f, 0.24f },
 		.foot_to = 0.12f, .tip_from = 0.82f,
-		.stripes = 0.12f, .stripe_color = { 0.46f, 0.52f, 0.40f },
+		.stripes = 0.12f, .stripe_color = { 0.44f, 0.48f, 0.34f },
 		.streaks = 0.35f, .gloss = 0.7f, .shade = 0.45f,
 	};
 
 	style.shape = &needle;
 	// (the shoots reddish brown, the stem below grey brown and scaly)
 	paint_t shoot_bark = { .dark = { 0.22f, 0.11f, 0.06f }, .light = { 0.55f, 0.32f, 0.20f }, .tip = { 0.50f, 0.30f, 0.18f }, .tip_from = 1.0f,
-		.rough = 0.5f };
+		.rough = 0.4f, .bumps = 0.8f };
 	paint_t stem_bark = { .dark = { 0.22f, 0.15f, 0.10f }, .light = { 0.58f, 0.46f, 0.34f }, .tip = { 0.52f, 0.33f, 0.21f }, .tip_from = 0.55f,
-		.rough = 0.6f };
-	paint_t bud = { .dark = { 0.25f, 0.13f, 0.07f }, .light = { 0.60f, 0.38f, 0.24f }, .tip = { 0.55f, 0.40f, 0.28f }, .tip_from = 0.6f,
-		.rough = 0.6f };
+		.rough = 0.45f, .bumps = 1.0f };
+	paint_t bud = { .dark = { 0.16f, 0.09f, 0.05f }, .light = { 0.46f, 0.30f, 0.19f }, .tip = { 0.50f, 0.40f, 0.30f }, .tip_from = 0.7f,
+		.rough = 0.9f };
 	shoot_t shoots[10];
 	int count = 0;
 	int sides = 5;
