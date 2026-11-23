@@ -12,10 +12,9 @@ atlas =
 bark = data/textures/pine_bark_diff_1k.jpg | data/textures/pine_bark_nor_gl_1k.png | data/textures/pine_bark_arm_1k.png
 bark_meters = 1.5
 
-twig = plant_plans/twigs/mountain_pine_brush_1.png
-twig = plant_plans/twigs/mountain_pine_brush_2.png
-twig = plant_plans/twigs/mountain_pine_brush_3.png
-head = plant_plans/twigs/mountain_pine_rosette.png
+twig = plant_plans/twigs/mountain_pine_needles_1.png
+twig = plant_plans/twigs/mountain_pine_needles_2.png
+twig = plant_plans/twigs/mountain_pine_needles_3.png
 
 leaf_size = 0.76
 leaves_per_branch = -1

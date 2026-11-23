@@ -177,10 +177,10 @@ typedef struct
 	float twig_meters;                  // a finest branch longer than this has twigs one after the other along it (0: one)
 	bool twig_curved;                   // one card each, arched across, drooping, a little twisted (add_curved_twig) instead of two crossed
 	bool branch_cards;                  // the finest branches are whole boughs, each a picture of one seen from above, along it (add_branch_card)
-	// Each twig a small spray of brushes in the round (a pine's): a leader
-	// and shoots round it, each brush three of the twig pictures (one
-	// shoot's, side on) crossed round its axis, its end a low cone of the
-	// head picture (the brush end on); not a flat picture of a twig
+	// Each twig a small spray of real shoots (a pine's): a leader and shoots
+	// round it, each a thin bark tube with its needles in open cones round
+	// it, the shoot through their middles (the twig picture: needles
+	// standing side by side); no flat picture of a twig
 	bool brushes;
 	fruit_hang_t fruit_hang;            // its fruit (--fruit): how it grows
 	fruit_zone_t fruit_zone;            // and where
@@ -2733,79 +2733,113 @@ static void add_curved_twig(mesh_t *mesh, vec3 base, vec3 along_unit, vec3 acros
 	shade_vertices(mesh, first, (uint32_t)((CURVED_TWIG_ALONG + 1) * columns), random_between(0.8f, 1.12f));
 }
 
-// One brush (kind brushes): three twig pictures crossed round its axis
-// (from any side two show, round), and at its end the head picture (the
-// brush end on) on a low cone opening back, so seen from its tip it is a
-// round rosette, not a star of three cards
-static void add_brush(plant_t *plant, vec3 foot, vec3 axis, float length, vec3 normal)
+// One needle cone (kind brushes): a whorl of needles round a shoot as an
+// open cone, the shoot through its middle, its narrow end on the shoot at
+// foot, opening forward and out (spread from the shoot's way) needle_length
+// long; the twig picture (needles standing side by side, their feet at the
+// bottom) round it in sectors, each sector the whole picture. A little
+// tilted and turned each, so a row of them along a shoot is a brush, not a
+// stack of lampshades
+static void add_needle_cone(plant_t *plant, vec3 foot, vec3 axis, float shoot_radius, float needle_length, float spread, vec3 normal)
 {
 	mesh_t *mesh = &plant->mesh;
 	const cell_place_t *place = &plant->twigs[random_index(plant->twig_count)];
-	vec3 side = rotated(perpendicular(axis), axis, random_between(0.0f, PI_F));
-	float half_width = 0.5f * length * place->aspect;
+	const int sectors = 5;
+	vec3 tilted = normalized(add(axis, scale(random_direction(), 0.12f)));
+	vec3 u = rotated(perpendicular(tilted), tilted, random_between(0.0f, 2.0f * PI_F));
+	vec3 w = cross(tilted, u);
+	float reach = needle_length * sinf(spread);
+	float ahead = needle_length * cosf(spread);
+	uint32_t first = (uint32_t)mesh->vertex_count;
 
-	for (int k = 0; k < 3; k++)
+	mesh->plant_random = hash_unit((uint32_t)mesh->vertex_count * 2654435761u + 17u);
+	mesh->plant_extra = 0.0f;
+	// (two rows: a sector is a long thin trapezoid, its picture skewed
+	// across the diagonal of one quad)
+	for (int i = 0; i < sectors; i++)
 	{
-		add_picture(mesh, foot, axis, rotated(side, axis, (float)k * PI_F / 3.0f), length, normal, place);
+		float a0 = (float)i / (float)sectors * 2.0f * PI_F;
+		float a1 = (float)(i + 1) / (float)sectors * 2.0f * PI_F;
+		vec3 out0 = add(scale(u, cosf(a0)), scale(w, sinf(a0)));
+		vec3 out1 = add(scale(u, cosf(a1)), scale(w, sinf(a1)));
+		// (each sector's own reach: the outer edge a little ragged)
+		float ragged = random_between(0.9f, 1.05f);
+		vec3 along = normalized(add(scale(out0, reach), scale(tilted, ahead)));
+		const float rows[3] = { 0.0f, 0.3f, 1.0f };
+		uint32_t ring[3][2];
+
+		for (int r = 0; r < 3; r++)
+		{
+			float v = rows[r];
+			float out_meters = shoot_radius + reach * v * ragged;
+			float ahead_meters = ahead * v * ragged;
+			float picture_v = place->uv[3] + (place->uv[1] - place->uv[3]) * v;
+
+			mesh->plant_along = v;
+			ring[r][0] = add_vertex(mesh, add(add(foot, scale(out0, out_meters)), scale(tilted, ahead_meters)), normal, sub(out1, out0), along,
+				place->uv[0], picture_v);
+			ring[r][1] = add_vertex(mesh, add(add(foot, scale(out1, out_meters)), scale(tilted, ahead_meters)), normal, sub(out1, out0), along,
+				place->uv[2], picture_v);
+		}
+		for (int r = 0; r < 2; r++)
+		{
+			add_triangle(mesh, MATERIAL_FOLIAGE, ring[r][0], ring[r][1], ring[r + 1][1]);
+			add_triangle(mesh, MATERIAL_FOLIAGE, ring[r][0], ring[r + 1][1], ring[r + 1][0]);
+		}
 	}
-	if (plant->head_count > 0)
+	mesh->plant_along = 0.0f;
+	shade_vertices(mesh, first, (uint32_t)(sectors * 6), random_between(0.85f, 1.1f));
+}
+
+// One shoot with its needles (kind brushes): a thin bark tube, bare low
+// down, its needles in cones along its upper part, those nearer its tip
+// pointing more forward (closing round the bud)
+static void add_brush(plant_t *plant, vec3 foot, vec3 axis, float length, vec3 normal)
+{
+	branch_t shoot;
+	float radius = fmaxf(length * 0.02f, 0.002f);
+	float needle_length = length * 0.32f;
+	float needles_from = 0.38f;
+	uint8_t level = plant->mesh.bark_level;
+	int cones;
+
+	trace_branch(&shoot, foot, axis, length, radius, 0.5f, random_between(0.05f, 0.2f), 0.0f, length / 3.0f);
+	plant->mesh.bark_level = BARK_LEVEL_STALK;
+	add_tube(plant, &shoot, 4, radius, MATERIAL_BARK);
+	plant->mesh.bark_level = level;
+	// (a cone each half of a needle's length: gaps between, the shoot
+	// showing through, as a pine's)
+	cones = (int)ceilf((1.0f - needles_from) * length / (needle_length * 0.5f));
+	cones = cones < 3 ? 3 : (cones > 5 ? 5 : cones);
+	for (int i = 0; i < cones; i++)
 	{
-		const cell_place_t *rosette = &plant->heads[random_index(plant->head_count)];
-		// (the bud near the picture's top; the needles round it reach as
-		// far as the side pictures' half width)
-		vec3 tip = add(foot, scale(axis, length * 0.9f));
-		float radius = half_width * 0.8f;
-		vec3 apex = add(tip, scale(axis, radius * 0.15f));
-		vec3 ring_center = add(tip, scale(axis, -radius * 0.7f));
-		vec3 u = rotated(side, axis, random_between(0.0f, 2.0f * PI_F));
-		vec3 w = cross(axis, u);
-		float center_u = 0.5f * (rosette->uv[0] + rosette->uv[2]);
-		float center_v = 0.5f * (rosette->uv[1] + rosette->uv[3]);
-		float half_u = 0.5f * (rosette->uv[2] - rosette->uv[0]);
-		float half_v = 0.5f * (rosette->uv[3] - rosette->uv[1]);
-		const int segments = 8;
-		uint32_t first;
-		uint32_t center;
+		float t = needles_from + (0.97f - needles_from) * ((float)i + random_between(0.0f, 0.4f)) / (float)cones;
+		float near_tip = (float)i / (float)(cones - 1);
+		vec3 point;
+		vec3 heading;
+		float here_radius;
 
-		mesh->plant_random = hash_unit((uint32_t)mesh->vertex_count * 2654435761u + 17u);
-		mesh->plant_extra = 0.0f;
-		mesh->plant_along = 1.0f;
-		first = (uint32_t)mesh->vertex_count;
-		center = add_vertex(mesh, apex, normal, u, w, center_u, center_v);
-		mesh->plant_along = 0.6f;
-		for (int i = 0; i <= segments; i++)
-		{
-			float angle = (float)i / (float)segments * 2.0f * PI_F;
-			vec3 out = add(scale(u, cosf(angle)), scale(w, sinf(angle)));
-
-			add_vertex(mesh, add(ring_center, scale(out, radius)), normal, u, w, center_u + cosf(angle) * half_u, center_v + sinf(angle) * half_v);
-		}
-		for (int i = 0; i < segments; i++)
-		{
-			add_triangle(mesh, MATERIAL_FOLIAGE, center, center + 1 + (uint32_t)i, center + 2 + (uint32_t)i);
-		}
-		mesh->plant_along = 0.0f;
-		shade_vertices(mesh, first, (uint32_t)segments + 2, random_between(0.85f, 1.1f));
+		branch_at(&shoot, t, &point, &heading, &here_radius);
+		add_needle_cone(plant, point, heading, here_radius, needle_length * (1.0f - 0.25f * near_tip * near_tip),
+			random_between(0.8f, 1.0f) * (1.0f - 0.4f * near_tip * near_tip), normal);
 	}
 }
 
-// A twig as a spray of brushes (kind brushes): its leader along it, and
-// shoots out of it round about (by the golden angle), the lower longer,
-// each a brush; their bare stalks are the brushes' own (the twig picture's
-// lower part)
+// A twig as a spray of shoots (kind brushes): its leader along it, and
+// shoots out of it round about (by the golden angle), the lower longer, all
+// turning up at their ends (a pine's candles), each a brush
 static void add_brush_twig(plant_t *plant, vec3 start, vec3 direction, float length, vec3 normal)
 {
-	int shoots = 2 + random_index(3);
+	int shoots = 1 + random_index(3);
 	float turn = random_between(0.0f, 2.0f * PI_F);
 	vec3 across;
 
-	// (a pine's shoots turn up at their ends: its candles)
 	direction = normalized(add(direction, v3(0.0f, 0.35f, 0.0f)));
 	across = perpendicular(direction);
 	add_brush(plant, start, direction, length, normal);
 	for (int i = 0; i < shoots; i++)
 	{
-		float t = 0.32f + 0.4f * ((float)i + random_between(0.0f, 0.6f)) / (float)shoots;
+		float t = 0.25f + 0.35f * ((float)i + random_between(0.0f, 0.6f)) / (float)shoots;
 		float out_angle = random_between(0.55f, 0.9f);
 		vec3 out = rotated(across, direction, turn + (float)i * 2.39996f);
 		vec3 heading = normalized(add(add(scale(direction, cosf(out_angle)), scale(out, sinf(out_angle))), v3(0.0f, 0.3f, 0.0f)));

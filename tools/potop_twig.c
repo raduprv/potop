@@ -310,6 +310,9 @@ typedef struct
 	float streaks;                 // fine lines along it, lighter and darker (0: monochrome)
 	float gloss;                   // a soft bright band along its lit side
 	float shade;                   // how dark its shadowed side gets (0..1)
+	float cone_ratio;              // > 0: drawn to be wrapped on a cone whose foot ring is this share of its rim's: wider towards its foot by as
+	                               // much as the cone narrows there (as wide as half_width at its tip, at most cone_widest times that)
+	float cone_widest;
 } needle_shape_t;
 
 // One needle: from (ax, ay) along a curve through (cx, cy) to (bx, by),
@@ -399,6 +402,10 @@ static void draw_needle_shape(canvas_t *canvas, const needle_shape_t *shape, flo
 				// The outline: a narrower foot, full along, the tip a half
 				// round or drawn out
 				width = half_width * (1.0f - shape->foot_narrow * powf(fmaxf(1.0f - along / 0.12f, 0.0f), 2.0f));
+				if (shape->cone_ratio > 0.0f)
+				{
+					width *= fminf(1.0f / (shape->cone_ratio + (1.0f - shape->cone_ratio) * along), shape->cone_widest);
+				}
 				if (along > 1.0f - shape->tip_length)
 				{
 					float into = (along - (1.0f - shape->tip_length)) / fmaxf(shape->tip_length, 1e-3f);
@@ -1145,6 +1152,47 @@ static void draw_pine_rosette(canvas_t *canvas, random_t *random)
 	free(needles);
 }
 
+// A mountain pine's needles standing side by side, their feet at the
+// bottom, their tips at the top, in pairs a little apart, a gap between the
+// pairs: the plant grower wraps it round a shoot as open cones (kind
+// brushes), so each column of it is one needle seen along the cone
+static void draw_pine_needles(canvas_t *canvas, random_t *random)
+{
+	static pine_parts_t parts;
+	const int pairs = 7;
+
+	pine_parts(&parts);
+	// (wrapped on a cone a tenth as wide at its foot: wider there in the
+	// picture, as wide as a needle once wrapped; the feet run together)
+	parts.needle.cone_ratio = 0.12f;
+	parts.needle.cone_widest = 2.6f;
+	parts.needle.foot_narrow = 0.0f;
+	canvas->fit = 1.0f;
+	canvas->foot_x = 0.5f;
+	canvas->foot_y = canvas->tall;
+	for (int p = 0; p < pairs; p++)
+	{
+		float x = ((float)p + 0.5f + random_range(random, -0.15f, 0.15f)) / (float)pairs;
+
+		for (int k = 0; k < 2; k++)
+		{
+			float foot_x = x + (k == 0 ? -0.018f : 0.018f);
+			float lean = (k == 0 ? -0.06f : 0.06f) + random_range(random, -0.07f, 0.07f);
+			float curl = random_range(random, -0.18f, 0.18f);
+			float length = canvas->tall * random_range(random, 0.82f, 0.97f);
+			float foot_y = canvas->tall - 0.01f;
+			float control_x = foot_x + sinf(lean) * length * 0.5f;
+			float control_y = foot_y - cosf(lean) * length * 0.5f;
+			float end_x = control_x + sinf(lean + curl) * length * 0.5f;
+			float end_y = control_y - cosf(lean + curl) * length * 0.5f;
+			float dry = random_float(random) < 0.04f ? random_range(random, 0.75f, 0.9f) : 1.0f;
+
+			draw_needle_shape(canvas, &parts.needle, foot_x, foot_y, control_x, control_y, end_x, end_y, 0.0115f,
+				1.0f + random_range(random, -0.15f, 0.15f), random_range(random, -0.5f, 0.5f), dry, random_next(random));
+		}
+	}
+}
+
 static void draw_juniper(canvas_t *canvas, random_t *random)
 {
 	needle_style_t style = {
@@ -1666,7 +1714,7 @@ int main(int argument_count, char **arguments)
 	}
 	if (kind == NULL || path == NULL || width < 16 || width > 4096)
 	{
-		fprintf(stderr, "Usage: potop_twig [--width W] [--seed N] pine|pine_brush|pine_rosette|juniper|fern|fern_lobed OUT.png\n");
+		fprintf(stderr, "Usage: potop_twig [--width W] [--seed N] pine|pine_brush|pine_rosette|pine_needles|juniper|fern|fern_lobed OUT.png\n");
 		return 1;
 	}
 	// (as tall as the kind's twig is: the pine's branch tip square,
@@ -1701,6 +1749,10 @@ int main(int argument_count, char **arguments)
 	{
 		draw_pine_rosette(&canvas, &random);
 	}
+	else if (strcmp(kind, "pine_needles") == 0)
+	{
+		draw_pine_needles(&canvas, &random);
+	}
 	else if (strcmp(kind, "fern") == 0)
 	{
 		draw_fern_broad(&canvas, &random);
@@ -1711,7 +1763,7 @@ int main(int argument_count, char **arguments)
 	}
 	else
 	{
-		fprintf(stderr, "potop_twig: no kind '%s' (pine, pine_brush, pine_rosette, juniper, fern, fern_lobed)\n", kind);
+		fprintf(stderr, "potop_twig: no kind '%s' (pine, pine_brush, pine_rosette, pine_needles, juniper, fern, fern_lobed)\n", kind);
 		free(canvas.pixels);
 		return 1;
 	}
