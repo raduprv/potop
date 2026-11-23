@@ -278,6 +278,8 @@ typedef struct
 	float twig_share;                  // trees with twigs and leaves: the share of the finest branches that are twigs (0.7)
 	bool curved_twigs;                 // trees (for now the fir only): each twig one card, arched across and drooping, instead of two crossed
 	bool brushes;                      // trees (pines): each twig a spray of brushes in the round, its pictures one shoot side on, the head picture one end on
+	int brush_strips;                  // brushes: the narrow strips round each needle cone (10)
+	float brush_spacing;               // brushes: the gap between cones along a shoot, in needle lengths (0.5)
 	bool snow_bake;                    // trees of whole boughs (fir_squares): the winter's snow baked in (object_format.h, OBJECT_FILE_SNOW)
 	float loose_leaves;                // trees: leaves along the other branches too, per meter (0)
 	plant_fruit_shape_t fruit_shape;

@@ -182,6 +182,8 @@ typedef struct
 	// it, the shoot through their middles (the twig picture: needles
 	// standing side by side); no flat picture of a twig
 	bool brushes;
+	int brush_strips;                   // strips round each cone
+	float brush_spacing;                // cones along a shoot this many needle lengths apart
 	fruit_hang_t fruit_hang;            // its fruit (--fruit): how it grows
 	fruit_zone_t fruit_zone;            // and where
 	// The branches' shape under their own weight: how far they bend down
@@ -2743,7 +2745,7 @@ static void add_curved_twig(mesh_t *mesh, vec3 base, vec3 along_unit, vec3 acros
 // between real needles. Each a little off in its angles and length
 static void add_needle_cone(plant_t *plant, vec3 foot, vec3 axis, float shoot_radius, float needle_length, float spread, vec3 normal)
 {
-	const int strips = 10;
+	int strips = plant->kind->brush_strips;
 	vec3 u = rotated(perpendicular(axis), axis, random_between(0.0f, 2.0f * PI_F));
 	vec3 w = cross(axis, u);
 
@@ -2777,10 +2779,10 @@ static void add_brush(plant_t *plant, vec3 foot, vec3 axis, float length, vec3 n
 	plant->mesh.bark_level = BARK_LEVEL_STALK;
 	add_tube(plant, &shoot, 4, radius, MATERIAL_BARK);
 	plant->mesh.bark_level = level;
-	// (a cone each half of a needle's length: gaps between, the shoot
-	// showing through, as a pine's)
-	cones = (int)ceilf((1.0f - needles_from) * length / (needle_length * 0.5f));
-	cones = cones < 3 ? 3 : (cones > 5 ? 5 : cones);
+	// (a cone each brush_spacing of a needle's length, half by default:
+	// gaps between, the shoot showing through, as a pine's)
+	cones = (int)ceilf((1.0f - needles_from) * length / (needle_length * plant->kind->brush_spacing));
+	cones = cones < 2 ? 2 : (cones > 16 ? 16 : cones);
 	for (int i = 0; i < cones; i++)
 	{
 		float t = needles_from + (0.97f - needles_from) * ((float)i + random_between(0.0f, 0.4f)) / (float)cones;
@@ -6628,6 +6630,8 @@ void plant_recipe_defaults(plant_recipe_t *recipe)
 	recipe->twig_share = 0.7f;
 	recipe->curved_twigs = false;
 	recipe->brushes = false;
+	recipe->brush_strips = 10;
+	recipe->brush_spacing = 0.5f;
 	recipe->snow_bake = false;
 	recipe->fruit_shape = PLANT_FRUIT_SPHERE;
 	recipe->fruit_length = 0.03f;
@@ -6905,6 +6909,8 @@ bool plant_recipe_load(plant_recipe_t *recipe, const char *path)
 		else if (strcmp(key, "twig_length") == 0) { recipe->twig_meters = strtof(value, NULL); }
 		else if (strcmp(key, "curved_twigs") == 0) { recipe->curved_twigs = atoi(value) != 0; }
 		else if (strcmp(key, "brushes") == 0) { recipe->brushes = atoi(value) != 0; }
+		else if (strcmp(key, "brush_strips") == 0) { recipe->brush_strips = atoi(value); }
+		else if (strcmp(key, "brush_spacing") == 0) { recipe->brush_spacing = strtof(value, NULL); }
 		else if (strcmp(key, "snow_bake") == 0) { recipe->snow_bake = atoi(value) != 0; }
 		else if (strcmp(key, "fork_height") == 0) { recipe->fork_height = strtof(value, NULL); }
 		else if (strcmp(key, "extra_stem_chance") == 0) { recipe->extra_stem_chance = strtof(value, NULL); }
@@ -7044,6 +7050,7 @@ bool plant_recipe_save(const plant_recipe_t *recipe, const char *path)
 	fprintf(file, "twig_length = %g\n", (double)recipe->twig_meters);
 	fprintf(file, "curved_twigs = %d\n", recipe->curved_twigs ? 1 : 0);
 	fprintf(file, "brushes = %d\n", recipe->brushes ? 1 : 0);
+	fprintf(file, "brush_strips = %d\nbrush_spacing = %g\n", recipe->brush_strips, (double)recipe->brush_spacing);
 	fprintf(file, "snow_bake = %d\n", recipe->snow_bake ? 1 : 0);
 	fprintf(file, "trunk_thickness = %g\ntrunk_taper = %g\nbranch_thickness = %g\nbranch_taper = %g\nthinnest_branch = %g\n",
 		(double)recipe->trunk_thickness, (double)recipe->trunk_taper, (double)recipe->branch_thickness, (double)recipe->branch_taper,
@@ -7362,6 +7369,8 @@ bool plant_grow(const plant_recipe_t *recipe, const plant_atlas_t *atlas, plant_
 	// (a test, for now the fir's alone)
 	kind.twig_curved = recipe->curved_twigs && kind.name != NULL && strcmp(kind.name, "fir") == 0;
 	kind.brushes = kind.brushes || recipe->brushes;
+	kind.brush_strips = recipe->brush_strips < 3 ? 3 : (recipe->brush_strips > 32 ? 32 : recipe->brush_strips);
+	kind.brush_spacing = fminf(fmaxf(recipe->brush_spacing, 0.1f), 2.0f);
 	// Below 0: the kind's
 	if (recipe->crown_start >= 0.0f)
 	{

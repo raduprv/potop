@@ -1220,6 +1220,11 @@ static void panel(editor_t *editor)
 
 				nk_checkbox_label(context, "Brushes in the round (pines)", &brushes);
 				recipe->brushes = brushes != 0;
+				if (recipe->brushes)
+				{
+					nk_property_int(context, "  strips a cone", 3, &recipe->brush_strips, 32, 1, 0.2f);
+					nk_property_float(context, "  cones apart (needles)", 0.1f, &recipe->brush_spacing, 2.0f, 0.05f, 0.01f);
+				}
 			}
 			{
 				// (whole boughs: fir_squares)
