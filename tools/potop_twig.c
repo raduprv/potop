@@ -952,9 +952,9 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 static void draw_pine(canvas_t *canvas, random_t *random)
 {
 	needle_style_t style = {
-		.length_low = 0.17f, .length_high = 0.23f, .radius = 0.0046f,
+		.length_low = 0.187f, .length_high = 0.253f, .radius = 0.0046f,
 		.angle_low = 1.2f, .angle_high = 1.55f, .curl = 0.6f,
-		.per_bundle = 2, .bundles_per_unit = 125.0f, .crowding = 1.1f, .bare = 0.08f, .brush = 0.6f,
+		.per_bundle = 2, .bundles_per_unit = 144.0f, .crowding = 1.1f, .bare = 0.08f, .brush = 0.6f,
 		.greens = {
 			{ .dark = { 0.16f, 0.21f, 0.12f }, .light = { 0.40f, 0.47f, 0.29f }, .tip = { 0.40f, 0.46f, 0.28f }, .tip_from = 1.0f },
 			{ .dark = { 0.20f, 0.24f, 0.13f }, .light = { 0.48f, 0.52f, 0.31f }, .tip = { 0.47f, 0.51f, 0.30f }, .tip_from = 1.0f } },
