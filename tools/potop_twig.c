@@ -586,6 +586,7 @@ typedef struct
 	paint_t sheath;                // a pair's sheath at its foot (its tip_from 0: none)
 	float foot_pale[3];            // a needle's color where it leaves its sheath
 	const needle_shape_t *shape;   // the needles drawn in this outline and colors (NULL: as shaded strokes)
+	float order;                   // 0: bundles round the shoot at random; 1: evenly in a spiral (the golden angle), their angles and lengths alike
 } needle_style_t;
 
 #define NEEDLES_MAX 20000
@@ -604,6 +605,7 @@ static int add_shoot_needles(needle_t *needles, int count, random_t *random, con
 		own.bare = needles_from;
 	}
 	t = style->bare;
+	int bundle_index = 0;
 
 	while (t < 1.0f && count < NEEDLES_MAX - 16)
 	{
@@ -621,8 +623,11 @@ static int add_shoot_needles(needle_t *needles, int count, random_t *random, con
 			// (a bundle's needles round the shoot: seen from the side,
 			// some to the left, some to the right, some towards us)
 			// (a pine's pair: from one sheath, a little apart)
-			float around = style->pairs_together ? (k == 0 ? random_range(random, 0.0f, 2.0f * PI_F) : bundle_around + random_range(random, 0.25f, 0.55f))
-				: random_range(random, 0.0f, 2.0f * PI_F) + (float)k * 2.0f * PI_F / (float)style->per_bundle;
+			// (in order: the bundles round the shoot by the golden angle, as
+			// they grow, a little jitter)
+			float first = mixf(random_range(random, 0.0f, 2.0f * PI_F), (float)bundle_index * 2.39996f + random_range(random, -0.3f, 0.3f), style->order);
+			float around = style->pairs_together ? (k == 0 ? first : bundle_around + mixf(random_range(random, 0.25f, 0.55f), 0.4f, style->order))
+				: first + (float)k * 2.0f * PI_F / (float)style->per_bundle;
 
 			if (k == 0)
 			{
@@ -630,16 +635,18 @@ static int add_shoot_needles(needle_t *needles, int count, random_t *random, con
 			}
 			float side = sinf(around);
 			float tuft = clampf((t - style->bare) / fmaxf(1.0f - style->bare, 0.01f), 0.0f, 1.0f);
-			float spread = random_range(random, style->angle_low, style->angle_high) * (0.55f + 0.45f * fabsf(side))
+			float spread = mixf(random_range(random, style->angle_low, style->angle_high), 0.5f * (style->angle_low + style->angle_high)
+				+ random_range(random, -0.05f, 0.05f), style->order) * (0.55f + 0.45f * fabsf(side))
 				* mixf(1.0f, style->spread_taper > 0.0f ? style->spread_taper : 1.0f, tuft);
 
 			needle->x = x + random_range(random, -0.004f, 0.004f);
 			needle->y = y;
 			needle->angle = heading + (side >= 0.0f ? spread : -spread);
 			// (one pointing at us or away is seen shorter)
-			needle->length = random_range(random, style->length_low, style->length_high) * scale * mixf(0.8f, 1.05f, t)
+			needle->length = mixf(random_range(random, style->length_low, style->length_high), 0.5f * (style->length_low + style->length_high)
+				* random_range(random, 0.94f, 1.06f), style->order) * scale * mixf(0.8f, 1.05f, t)
 				* (1.0f - 0.55f * fabsf(cosf(around)) * sinf(fminf(spread / (0.55f + 0.45f * fabsf(side)), 1.5f)));
-			needle->curl = (side >= 0.0f ? -1.0f : 1.0f) * style->curl * random_range(random, 0.5f, 1.5f)
+			needle->curl = (side >= 0.0f ? -1.0f : 1.0f) * style->curl * mixf(random_range(random, 0.5f, 1.5f), random_range(random, 0.85f, 1.15f), style->order)
 				+ random_range(random, -0.5f, 0.5f) * style->unevenness;
 			needle->radius = style->radius * scale * random_range(random, 0.85f, 1.15f) * (1.0f + random_range(random, -0.35f, 0.25f) * style->unevenness);
 			needle->length *= 1.0f + random_range(random, -0.3f, 0.15f) * style->unevenness;
@@ -656,6 +663,7 @@ static int add_shoot_needles(needle_t *needles, int count, random_t *random, con
 			needle->brightness = 1.0f + random_range(random, -style->brightness_spread, style->brightness_spread);
 		}
 		t += 1.0f / fmaxf(density * length, 1.0f);
+		bundle_index++;
 	}
 	// The brush round the bud: needles from the last stretch, pointing on
 	for (int i = 0; i < (int)(style->brush * 20.0f) && count < NEEDLES_MAX; i++)
@@ -950,9 +958,9 @@ static void draw_pine(canvas_t *canvas, random_t *random)
 		.greens = {
 			{ .dark = { 0.16f, 0.21f, 0.12f }, .light = { 0.40f, 0.47f, 0.29f }, .tip = { 0.40f, 0.46f, 0.28f }, .tip_from = 1.0f },
 			{ .dark = { 0.20f, 0.24f, 0.13f }, .light = { 0.48f, 0.52f, 0.31f }, .tip = { 0.47f, 0.51f, 0.30f }, .tip_from = 1.0f } },
-		.behind_dark = 0.25f, .spread_taper = 0.65f, .brightness_spread = 0.3f,
+		.behind_dark = 0.25f, .spread_taper = 0.65f, .brightness_spread = 0.18f,
 		.pairs_together = true, .rim = 0.12f, .gloss = 0.14f, .shadow = 0.14f, .tip_radius = 0.35f,
-		.unevenness = 0.55f, .dry_share = 0.04f, .broken_share = 0.03f,
+		.unevenness = 0.25f, .dry_share = 0.03f, .broken_share = 0.02f, .order = 0.85f,
 		.sheath = { .dark = { 0.18f, 0.11f, 0.07f }, .light = { 0.42f, 0.28f, 0.18f }, .tip = { 0.40f, 0.30f, 0.20f }, .tip_from = 0.5f },
 		.foot_pale = { 0.46f, 0.50f, 0.31f },
 	};
