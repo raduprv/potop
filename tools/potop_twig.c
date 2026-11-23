@@ -1004,7 +1004,7 @@ static void draw_pine(canvas_t *canvas, random_t *random)
 	style.shape = &needle;
 	// (the stem and its shoots one bark: grey brown, knobbly, reddish
 	// towards their tips)
-	paint_t stem_bark = { .dark = { 0.22f, 0.15f, 0.10f }, .light = { 0.58f, 0.46f, 0.34f }, .tip = { 0.52f, 0.33f, 0.21f }, .tip_from = 0.55f,
+	paint_t stem_bark = { .dark = { 0.17f, 0.13f, 0.10f }, .light = { 0.48f, 0.40f, 0.32f }, .tip = { 0.38f, 0.30f, 0.22f }, .tip_from = 0.55f,
 		.rough = 0.45f, .bumps = 1.0f };
 	paint_t bud = { .dark = { 0.16f, 0.09f, 0.05f }, .light = { 0.46f, 0.30f, 0.19f }, .tip = { 0.50f, 0.40f, 0.30f }, .tip_from = 0.7f,
 		.rough = 0.9f };
@@ -1029,7 +1029,7 @@ static void draw_pine(canvas_t *canvas, random_t *random)
 
 		shoot_point(&shoots[0], along, &x, &y, &heading);
 		shoots[count++] = (shoot_t){ .fx = x, .fy = y, .angle = heading + side * random_range(random, 0.75f, 0.95f),
-			.bend = -side * random_range(random, 0.1f, 0.25f), .length = length, .radius = 0.014f, .scale = 0.95f, .taper = 0.55f,
+			.bend = -side * random_range(random, 0.1f, 0.25f), .length = length, .radius = 0.011f, .scale = 0.95f, .taper = 0.55f,
 			.needles_from = 0.28f, .crook = 0.18f, .phase = random_range(random, 0.0f, 6.0f) };
 	}
 	draw_twig(canvas, random, &style, &stem_bark, &bud, shoots, count);
