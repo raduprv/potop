@@ -869,7 +869,7 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 			knob.tip_from = 0.0f;
 			int knob_index = 0;
 
-			for (float t = 0.04f; own->bumps > 0.0f && t < 0.96f; t += step / shoot->length * mixf(0.8f, 1.2f, hash_unit(i * 13, knob_index)))
+			for (float t = 0.04f; own->bumps > 0.0f && t < 0.96f; t += step / shoot->length * mixf(0.5f, 1.5f, hash_unit(i * 13, knob_index)))
 			{
 				float x;
 				float y;
@@ -877,7 +877,7 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 				float radius = shoot->radius * mixf(1.0f, shoot->taper > 0.0f ? shoot->taper : 0.45f, t);
 				// (in a spiral round it, as the needles were: by the golden
 				// angle; those round its back unseen)
-				float around = (float)knob_index * 2.39996f + (hash_unit(knob_index, i * 5) - 0.5f) * 0.4f;
+				float around = (float)knob_index * 2.39996f + (hash_unit(knob_index, i * 5) - 0.5f) * 1.3f;
 				float where = sinf(around);
 
 				knob_index++;
