@@ -2733,62 +2733,32 @@ static void add_curved_twig(mesh_t *mesh, vec3 base, vec3 along_unit, vec3 acros
 	shade_vertices(mesh, first, (uint32_t)((CURVED_TWIG_ALONG + 1) * columns), random_between(0.8f, 1.12f));
 }
 
-// One needle cone (kind brushes): a whorl of needles round a shoot as an
-// open cone, the shoot through its middle, its narrow end on the shoot at
-// foot, opening forward and out (spread from the shoot's way) needle_length
-// long; the twig picture (needles standing side by side, their feet at the
-// bottom) round it in sectors, each sector the whole picture. A little
-// tilted and turned each, so a row of them along a shoot is a brush, not a
-// stack of lampshades
+// One needle cone (kind brushes): a whorl of needles round a shoot, the
+// shoot through its middle: narrow strips (the twig picture: a few needles
+// side by side, their feet at the bottom) from the shoot's surface, opening
+// forward and out (spread from the shoot's way), needle_length long, all
+// round it, so together they make an open cone. Strips, not a skin cut in
+// sectors: each keeps its picture's shape (a sector's trapezoid bent every
+// needle at its diagonal), and the gaps between them widen outwards as
+// between real needles. Each a little off in its angles and length
 static void add_needle_cone(plant_t *plant, vec3 foot, vec3 axis, float shoot_radius, float needle_length, float spread, vec3 normal)
 {
-	mesh_t *mesh = &plant->mesh;
-	const cell_place_t *place = &plant->twigs[random_index(plant->twig_count)];
-	const int sectors = 5;
-	vec3 tilted = normalized(add(axis, scale(random_direction(), 0.12f)));
-	vec3 u = rotated(perpendicular(tilted), tilted, random_between(0.0f, 2.0f * PI_F));
-	vec3 w = cross(tilted, u);
-	float reach = needle_length * sinf(spread);
-	float ahead = needle_length * cosf(spread);
-	uint32_t first = (uint32_t)mesh->vertex_count;
+	const int strips = 10;
+	vec3 u = rotated(perpendicular(axis), axis, random_between(0.0f, 2.0f * PI_F));
+	vec3 w = cross(axis, u);
 
-	mesh->plant_random = hash_unit((uint32_t)mesh->vertex_count * 2654435761u + 17u);
-	mesh->plant_extra = 0.0f;
-	// (two rows: a sector is a long thin trapezoid, its picture skewed
-	// across the diagonal of one quad)
-	for (int i = 0; i < sectors; i++)
+	for (int i = 0; i < strips; i++)
 	{
-		float a0 = (float)i / (float)sectors * 2.0f * PI_F;
-		float a1 = (float)(i + 1) / (float)sectors * 2.0f * PI_F;
-		vec3 out0 = add(scale(u, cosf(a0)), scale(w, sinf(a0)));
-		vec3 out1 = add(scale(u, cosf(a1)), scale(w, sinf(a1)));
-		// (each sector's own reach: the outer edge a little ragged)
-		float ragged = random_between(0.9f, 1.05f);
-		vec3 along = normalized(add(scale(out0, reach), scale(tilted, ahead)));
-		const float rows[3] = { 0.0f, 0.3f, 1.0f };
-		uint32_t ring[3][2];
+		const cell_place_t *place = &plant->twigs[random_index(plant->twig_count)];
+		float angle = ((float)i + random_between(-0.3f, 0.3f)) / (float)strips * 2.0f * PI_F;
+		vec3 out = add(scale(u, cosf(angle)), scale(w, sinf(angle)));
+		float here_spread = spread + random_between(-0.12f, 0.12f);
+		float length = needle_length * random_between(0.85f, 1.05f);
+		vec3 along = normalized(add(scale(axis, cosf(here_spread)), scale(out, sinf(here_spread))));
+		vec3 across = cross(axis, out);
 
-		for (int r = 0; r < 3; r++)
-		{
-			float v = rows[r];
-			float out_meters = shoot_radius + reach * v * ragged;
-			float ahead_meters = ahead * v * ragged;
-			float picture_v = place->uv[3] + (place->uv[1] - place->uv[3]) * v;
-
-			mesh->plant_along = v;
-			ring[r][0] = add_vertex(mesh, add(add(foot, scale(out0, out_meters)), scale(tilted, ahead_meters)), normal, sub(out1, out0), along,
-				place->uv[0], picture_v);
-			ring[r][1] = add_vertex(mesh, add(add(foot, scale(out1, out_meters)), scale(tilted, ahead_meters)), normal, sub(out1, out0), along,
-				place->uv[2], picture_v);
-		}
-		for (int r = 0; r < 2; r++)
-		{
-			add_triangle(mesh, MATERIAL_FOLIAGE, ring[r][0], ring[r][1], ring[r + 1][1]);
-			add_triangle(mesh, MATERIAL_FOLIAGE, ring[r][0], ring[r + 1][1], ring[r + 1][0]);
-		}
+		add_card(&plant->mesh, add(foot, scale(out, shoot_radius)), scale(along, length), scale(across, length * place->aspect), normal, place);
 	}
-	mesh->plant_along = 0.0f;
-	shade_vertices(mesh, first, (uint32_t)(sectors * 6), random_between(0.85f, 1.1f));
 }
 
 // One shoot with its needles (kind brushes): a thin bark tube, bare low

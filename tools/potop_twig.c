@@ -1152,44 +1152,33 @@ static void draw_pine_rosette(canvas_t *canvas, random_t *random)
 	free(needles);
 }
 
-// A mountain pine's needles standing side by side, their feet at the
-// bottom, their tips at the top, in pairs a little apart, a gap between the
-// pairs: the plant grower wraps it round a shoot as open cones (kind
-// brushes), so each column of it is one needle seen along the cone
+// A few of a mountain pine's needles side by side, their feet together at
+// the bottom, fanning a little: the plant grower stands strips of it round
+// a shoot as open cones (kind brushes)
 static void draw_pine_needles(canvas_t *canvas, random_t *random)
 {
 	static pine_parts_t parts;
-	const int pairs = 7;
+	const int count = 4;
 
 	pine_parts(&parts);
-	// (wrapped on a cone a tenth as wide at its foot: wider there in the
-	// picture, as wide as a needle once wrapped; the feet run together)
-	parts.needle.cone_ratio = 0.12f;
-	parts.needle.cone_widest = 2.6f;
-	parts.needle.foot_narrow = 0.0f;
 	canvas->fit = 1.0f;
 	canvas->foot_x = 0.5f;
 	canvas->foot_y = canvas->tall;
-	for (int p = 0; p < pairs; p++)
+	for (int k = 0; k < count; k++)
 	{
-		float x = ((float)p + 0.5f + random_range(random, -0.15f, 0.15f)) / (float)pairs;
+		float foot_x = 0.5f + ((float)k - 1.5f) * 0.075f + random_range(random, -0.02f, 0.02f);
+		float lean = ((float)k - 1.5f) * 0.03f + random_range(random, -0.02f, 0.02f);
+		float curl = random_range(random, -0.06f, 0.06f);
+		float length = canvas->tall * random_range(random, 0.86f, 0.98f);
+		float foot_y = canvas->tall - 0.02f;
+		float control_x = foot_x + sinf(lean) * length * 0.5f;
+		float control_y = foot_y - cosf(lean) * length * 0.5f;
+		float end_x = control_x + sinf(lean + curl) * length * 0.5f;
+		float end_y = control_y - cosf(lean + curl) * length * 0.5f;
+		float dry = random_float(random) < 0.05f ? random_range(random, 0.75f, 0.9f) : 1.0f;
 
-		for (int k = 0; k < 2; k++)
-		{
-			float foot_x = x + (k == 0 ? -0.018f : 0.018f);
-			float lean = (k == 0 ? -0.06f : 0.06f) + random_range(random, -0.07f, 0.07f);
-			float curl = random_range(random, -0.18f, 0.18f);
-			float length = canvas->tall * random_range(random, 0.82f, 0.97f);
-			float foot_y = canvas->tall - 0.01f;
-			float control_x = foot_x + sinf(lean) * length * 0.5f;
-			float control_y = foot_y - cosf(lean) * length * 0.5f;
-			float end_x = control_x + sinf(lean + curl) * length * 0.5f;
-			float end_y = control_y - cosf(lean + curl) * length * 0.5f;
-			float dry = random_float(random) < 0.04f ? random_range(random, 0.75f, 0.9f) : 1.0f;
-
-			draw_needle_shape(canvas, &parts.needle, foot_x, foot_y, control_x, control_y, end_x, end_y, 0.0115f,
-				1.0f + random_range(random, -0.15f, 0.15f), random_range(random, -0.5f, 0.5f), dry, random_next(random));
-		}
+		draw_needle_shape(canvas, &parts.needle, foot_x, foot_y, control_x, control_y, end_x, end_y, 0.06f,
+			1.0f + random_range(random, -0.15f, 0.15f), random_range(random, -0.5f, 0.5f), dry, random_next(random));
 	}
 }
 
@@ -1719,7 +1708,7 @@ int main(int argument_count, char **arguments)
 	}
 	// (as tall as the kind's twig is: the pine's branch tip square,
 	// the juniper's twig twice as tall as wide)
-	canvas.tall = strcmp(kind, "pine") == 0 ? 1.75f : 2.0f;
+	canvas.tall = strcmp(kind, "pine") == 0 ? 1.75f : (strcmp(kind, "pine_needles") == 0 ? 4.5f : 2.0f);
 	canvas.width = width * SUPERSAMPLE;
 	canvas.height = (int)lroundf((float)width * canvas.tall) * SUPERSAMPLE;
 	canvas.scale = (float)canvas.width;
