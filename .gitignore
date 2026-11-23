@@ -36,3 +36,4 @@
 *.o
 *.d
 __pycache__/
+plant_plans/twigs/
