@@ -149,6 +149,10 @@ typedef struct
 	// Trees
 	int stems;                          // trunks out of the ground (bushes have several)
 	float stem_lean_degrees;            // how far the stems lean out from upright
+	// The stems lie out each its own way (stem_lean_degrees from upright),
+	// for lean_length of their length, then turn up again (straighten), as
+	// the wind's lean does a trunk: a mountain pine's, a creeping shrub's
+	bool sprawl;
 	int levels;                         // branch levels under the trunk (1..MAX_LEVELS)
 	float trunk_radius_ratio;           // the trunk's radius at its foot, of the height
 	float taper;                        // a branch's radius at its tip, of its foot's
@@ -400,14 +404,14 @@ static const plant_kind_t kinds[] =
 		// Jneapan (mountain pine, Pinus mugo): many crooked stems out of
 		// the ground, lying out low and turning up, few branches, the
 		// needles in brushes at their ends: a low dome on the rocks
-		.name = "mountain_pine", .shape = SHAPE_TREE, .atlas = "conifers", .height_meters = 1.6f, .stems = 8, .stem_lean_degrees = 76.0f,
+		.name = "mountain_pine", .shape = SHAPE_TREE, .atlas = "conifers", .height_meters = 1.6f, .stems = 8, .stem_lean_degrees = 66.0f, .sprawl = true,
 		.levels = 2, .trunk_radius_ratio = 0.03f, .taper = 0.3f, .bend = 0.55f, .crown_start = 0.3f,
-		.children = { 8, 3, 0 }, .length_ratio = { 0.36f, 0.45f, 0.0f }, .down_degrees = { 50.0f, 35.0f, 0.0f },
+		.children = { 10, 4, 0 }, .length_ratio = { 0.34f, 0.45f, 0.0f }, .down_degrees = { 25.0f, 25.0f, 0.0f },
 		.down_spread_degrees = 10.0f, .reach = { 0.25f, 0.15f, 0.0f }, .child_radius_ratio = 0.55f, .crown = CROWN_DOME,
-		.child_start = 0.35f, .leaves_per_branch = 4, .leaf_size = 0.5f,
-		.twig_scale = 1.5f, .side_twigs = 1.2f, .tip_twig = true, .twig_flat = 0.2f, .fruit_hang = FRUIT_OUT, .fruit_zone = FRUIT_OUTER,
+		.child_start = 0.35f, .leaves_per_branch = 6, .leaf_size = 0.5f,
+		.twig_scale = 1.5f, .side_twigs = 2.0f, .tip_twig = true, .twig_flat = 0.2f, .fruit_hang = FRUIT_OUT, .fruit_zone = FRUIT_OUTER,
 		.droop = 0.01f, .tip_lift = 0.4f, .collar = 0.15f, .root_flare = 0.1f, .leaves_from = 0.4f,
-		.fork_height = 0.0f, .extra_stem_chance = 0.3f, .gnarl = 0.2f, .kinks = 0.1f, .lean_length = 0.6f, .straighten = 0.5f,
+		.fork_height = 0.0f, .extra_stem_chance = 0.3f, .gnarl = 0.2f, .kinks = 0.1f, .lean_length = 0.3f, .straighten = 0.9f,
 		.moss = 0.20f, .tips = 0.60f, .autumn_colors = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } }, .autumn = 0.0f, .falls = false,
 		.snow_sag = 0.020f,
 	},
@@ -3922,7 +3926,15 @@ static void grow_tree(plant_t *plant)
 		branch_shape_t stem = trunk;
 
 		stem.part = scale(out, tanf(spread));
-		if (trunk.lean_radians > 0.0f)
+		if (kind->sprawl && trunk.lean_radians <= 0.0f)
+		{
+			// (its own lean, its own way: out low, then up)
+			stem.lean_radians = spread;
+			stem.lean_toward = out;
+			stem.part = v3(0.0f, 0.0f, 0.0f);
+			direction = lean_heading(&stem, 0.0f);
+		}
+		else if (trunk.lean_radians > 0.0f)
 		{
 			direction = lean_heading(&stem, trunk.u0);
 		}
