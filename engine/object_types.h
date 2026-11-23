@@ -226,6 +226,10 @@ typedef struct
 	float spawn_near_meters;
 	float spawn_near_count;
 	int near_category;             // resolved after loading, -1 none
+	// On a shelf up the rock (a patch of soil with rock round it: the
+	// sketch maps' shelves, the rock's pockets) this much more likely than
+	// on average, whatever its patch and valley say (0: as anywhere else)
+	float spawn_shelves;
 } object_type_t;
 
 typedef struct

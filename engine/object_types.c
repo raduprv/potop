@@ -619,6 +619,10 @@ static bool apply_key(object_types_t *types, object_type_t *type, bool in_defaul
 		SDL_strlcpy(type->spawn_near, value + (type->spawn_near_inverted ? 1 : 0), sizeof(type->spawn_near));
 		return true;
 	}
+	if (SDL_strcmp(key, "spawn_shelves") == 0)
+	{
+		return parse_float(value, &type->spawn_shelves);
+	}
 	if (SDL_strcmp(key, "spawn_near_meters") == 0)
 	{
 		return parse_float(value, &type->spawn_near_meters);

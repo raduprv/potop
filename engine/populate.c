@@ -492,6 +492,33 @@ static void near_count_add(populate_context_t *context, int category, float x, f
 	}
 }
 
+// Whether the spot is a shelf up the rock: soil under it, rock round it
+// (at least three of eight points SHELF_ROCK_METERS away)
+#define SHELF_ROCK_METERS 9.0f
+
+static bool on_shelf(const terrain_t *terrain, float x, float z)
+{
+	int32_t cell_x;
+	int32_t cell_y;
+	int rock = 0;
+
+	if (!terrain_world_to_cell(terrain, x, z, &cell_x, &cell_y) || terrain->soil_types[terrain_index(terrain, cell_x, cell_y)] == SOIL_ROCK)
+	{
+		return false;
+	}
+	for (int k = 0; k < 8; k++)
+	{
+		float angle = (float)k * (MATH3D_PI / 4.0f);
+
+		if (terrain_world_to_cell(terrain, x + SDL_cosf(angle) * SHELF_ROCK_METERS, z + SDL_sinf(angle) * SHELF_ROCK_METERS, &cell_x, &cell_y)
+			&& terrain->soil_types[terrain_index(terrain, cell_x, cell_y)] == SOIL_ROCK)
+		{
+			rock++;
+		}
+	}
+	return rock >= 3;
+}
+
 // How much more (or less) likely the type is at the spot than on average;
 // 0 if it cannot grow there at all
 static float placement_factor(populate_context_t *context, const object_type_t *type, const field_t *patch, float x, float z)
@@ -515,6 +542,12 @@ static float placement_factor(populate_context_t *context, const object_type_t *
 		}
 	}
 
+	// (a shelf up the rock: as likely as the type says there, its patch and
+	// valley aside)
+	if (type->spawn_shelves > 0.0f && on_shelf(context->terrain, x, z))
+	{
+		return factor * type->spawn_shelves;
+	}
 	if (patch != NULL && type->spawn_clustering > 0.0f)
 	{
 		float inside = smoothstep_range(PATCH_EDGE_LOW, PATCH_EDGE_HIGH, field_sample(patch, x, z));
@@ -623,6 +656,7 @@ void populate_map_categories(objects_t *objects, const terrain_t *terrain, const
 		// No spot is more likely than this: candidates above it are
 		// rejected before anything is looked up
 		float best_factor = (1.0f + type->spawn_clustering) * (1.0f + SDL_fabsf(type->spawn_valley_preference)) * (type->spawn_water_near_meters > 0.0f ? 2.0f : 1.0f);
+		best_factor = SDL_max(best_factor, type->spawn_shelves * (type->spawn_water_near_meters > 0.0f ? 2.0f : 1.0f));
 		const field_t *patch = NULL;
 		int placed = 0;
 

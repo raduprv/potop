@@ -571,8 +571,8 @@ static void round_crests(float *heights, int32_t size, float cell_size_meters, f
 // flat patch earth, so the trees take it
 #define SHELF_SPACING_FEW 60.0f         // meters between the points at the least shelves...
 #define SHELF_SPACING_MOST 12.0f        // ...and at the most
-#define SHELF_RADIUS_LEAST 4.0f         // a shelf's radius, meters, from...
-#define SHELF_RADIUS_MOST 10.0f         // ...to
+#define SHELF_RADIUS_LEAST 7.0f         // a shelf's radius, meters, from...
+#define SHELF_RADIUS_MOST 16.0f         // ...to
 #define SHELF_FLAT_SHARE 0.55f          // the share of its radius flat
 #define SHELF_SLOPE_FROM 0.5f           // meters a meter (over a few): no shelf where gentler (it needs none)
 #define SHELF_SLOPE_TO 6.0f             // nor on a sheer face (the cut would be a wall)
