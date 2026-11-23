@@ -313,6 +313,12 @@ typedef struct
 	float cone_ratio;              // > 0: drawn to be wrapped on a cone whose foot ring is this share of its rim's: wider towards its foot by as
 	                               // much as the cone narrows there (as wide as half_width at its tip, at most cone_widest times that)
 	float cone_widest;
+	// Two toned: the half facing the light this color (a spruce's four
+	// sided needle: its lit face yellow green, a sharp ridge along its
+	// middle, the other face darker), 0: one color all round
+	float two_tone;
+	float light_side[3];
+	bool two_tone_fixed;           // the light half always the needle's right (its own color, not the light's: no light baked in)
 } needle_shape_t;
 
 // One needle: from (ax, ay) along a curve through (cx, cy) to (bx, by),
@@ -445,7 +451,7 @@ static void draw_needle_shape(canvas_t *canvas, const needle_shape_t *shape, flo
 							base = mixf(base, shape->tip[k], (along - shape->tip_from) / fmaxf(1.0f - shape->tip_from, 1e-3f));
 						}
 						// (towards yellow, its own)
-						base += hue_shift * (k == 0 ? 0.06f : (k == 1 ? 0.03f : -0.03f));
+						base += hue_shift * (k == 0 ? 0.06f : (k == 1 ? 0.03f : -0.03f)) * (shape->two_tone > 0.0f ? 1.4f : 1.0f);
 						if (along > dry)
 						{
 							float brown[3] = { 0.44f, 0.32f, 0.19f };
@@ -453,6 +459,18 @@ static void draw_needle_shape(canvas_t *canvas, const needle_shape_t *shape, flo
 							base = mixf(base, brown[k], clampf((along - dry) / 0.06f, 0.0f, 1.0f));
 						}
 						color[k] = base * lit * brightness;
+					}
+					if (shape->two_tone > 0.0f)
+					{
+						float lit_half = clampf((across * (shape->two_tone_fixed ? 1.0f : facing) + 0.1f) / 0.2f, 0.0f, 1.0f);
+
+						for (int k = 0; k < 3; k++)
+						{
+							float light = shape->light_side[k] + hue_shift * (k == 0 ? 0.08f : (k == 1 ? 0.04f : -0.03f));
+
+							color[k] = mixf(color[k] * (1.0f - 0.15f * shape->two_tone), light * brightness * mixf(0.85f, 1.0f, lit),
+								lit_half * shape->two_tone);
+						}
 					}
 					// Pale stripes along it
 					if (shape->stripes > 0.0f)
@@ -595,6 +613,11 @@ typedef struct
 	const needle_shape_t *shape;   // the needles drawn in this outline and colors (NULL: as shaded strokes)
 	float order;                   // 0: bundles round the shoot at random; 1: evenly in a spiral (the golden angle), their angles and lengths alike
 	float new_growth;              // the needles near each shoot's tip this much yellower (this year's growth; 0: none)
+	float flatten;                 // the needles pushed out to the shoot's two sides (seen from above, a comb; 0: all round it)
+	float front_from;              // only the needles this far towards us drawn over the shoots (0: all those in front of them)
+	float curl_outward;            // the needles away from a shoot's tip curve out (this much of curl; 0: all curve in), those at its tip in round the bud
+	float tip_shorter;             // the needles at a shoot's very tip this share shorter (0: as long as the rest)
+	bool alternate;                // each next needle on the other side of the shoot (the spiral seen side on: never two in a row on one side)
 } needle_style_t;
 
 #define NEEDLES_MAX 20000
@@ -641,6 +664,16 @@ static int add_shoot_needles(needle_t *needles, int count, random_t *random, con
 			{
 				bundle_around = around;
 			}
+			if (style->alternate && ((sinf(around) >= 0.0f) != (bundle_index % 2 == 0)))
+			{
+				// (mirrored to the side it is due on)
+				around = -around;
+			}
+			if (style->flatten > 0.0f)
+			{
+				// (pushed out to the sides: fewer towards us and away)
+				around = atan2f(sinf(around), cosf(around) * (1.0f - style->flatten));
+			}
 			float side = sinf(around);
 			float tuft = clampf((t - style->bare) / fmaxf(1.0f - style->bare, 0.01f), 0.0f, 1.0f);
 			float spread = mixf(random_range(random, style->angle_low, style->angle_high), 0.5f * (style->angle_low + style->angle_high)
@@ -652,10 +685,24 @@ static int add_shoot_needles(needle_t *needles, int count, random_t *random, con
 			needle->angle = heading + (side >= 0.0f ? spread : -spread);
 			// (one pointing at us or away is seen shorter)
 			needle->length = mixf(random_range(random, style->length_low, style->length_high), 0.5f * (style->length_low + style->length_high)
-				* random_range(random, 0.94f, 1.06f), style->order) * scale * mixf(0.8f, 1.05f, t)
+				* random_range(random, 0.94f, 1.06f), style->order) * scale * (style->tip_shorter > 0.0f ? 0.92f : mixf(0.8f, 1.05f, t))
 				* (1.0f - 0.55f * fabsf(cosf(around)) * sinf(fminf(spread / (0.55f + 0.45f * fabsf(side)), 1.5f)));
 			needle->curl = (side >= 0.0f ? -1.0f : 1.0f) * style->curl * mixf(random_range(random, 0.5f, 1.5f), random_range(random, 0.85f, 1.15f), style->order)
 				+ random_range(random, -0.5f, 0.5f) * style->unevenness;
+			if (style->tip_shorter > 0.0f)
+			{
+				// (shorter towards the tip: the youngest)
+				float near_tip = clampf((t - 0.55f) / 0.45f, 0.0f, 1.0f);
+
+				needle->length *= 1.0f - style->tip_shorter * near_tip * near_tip;
+			}
+			if (style->curl_outward > 0.0f)
+			{
+				// (out along the shoot, turning in towards its tip, round the bud)
+				float inward = clampf((t - 0.72f) / 0.2f, 0.0f, 1.0f);
+
+				needle->curl *= mixf(-style->curl_outward, 1.6f, inward);
+			}
 			needle->radius = style->radius * scale * random_range(random, 0.85f, 1.15f) * (1.0f + random_range(random, -0.35f, 0.25f) * style->unevenness);
 			needle->length *= 1.0f + random_range(random, -0.3f, 0.15f) * style->unevenness;
 			needle->dry = random_float(random) < style->dry_share ? random_range(random, 0.72f, 0.92f) : 1.0f;
@@ -673,7 +720,7 @@ static int add_shoot_needles(needle_t *needles, int count, random_t *random, con
 				// (this year's growth at the tip: yellower, lighter)
 				float young = clampf((t - 0.72f) / 0.22f, 0.0f, 1.0f);
 
-				needle->hue = fminf(needle->hue + young * young * style->new_growth, 1.4f);
+				needle->hue = fminf(needle->hue + young * young * style->new_growth, 2.2f);
 			}
 			needle->brightness = 1.0f + random_range(random, -style->brightness_spread, style->brightness_spread);
 		}
@@ -694,7 +741,7 @@ static int add_shoot_needles(needle_t *needles, int count, random_t *random, con
 		needle->x = x;
 		needle->y = y;
 		needle->angle = heading + random_range(random, -0.55f, 0.55f) * fabsf(sinf(around));
-		needle->length = random_range(random, style->length_low, style->length_high) * scale * 0.9f;
+		needle->length = random_range(random, style->length_low, style->length_high) * scale * 0.9f * (1.0f - style->tip_shorter);
 		needle->curl = random_range(random, -style->curl, style->curl);
 		needle->radius = style->radius * scale * (1.0f + random_range(random, -0.3f, 0.2f) * style->unevenness);
 		needle->dry = 1.0f;
@@ -721,7 +768,7 @@ static void draw_needles(canvas_t *canvas, needle_t *needles, int count, const n
 		paint_t paint;
 		float darken;
 
-		if ((needle->depth >= 0.0f) != front)
+		if ((needle->depth >= style->front_from) != front)
 		{
 			continue;
 		}
@@ -996,39 +1043,40 @@ static void draw_spruce(canvas_t *canvas, random_t *random)
 {
 	static needle_shape_t needle;
 	needle_style_t style = {
-		.length_low = 0.26f, .length_high = 0.32f, .radius = 0.011f,
-		.angle_low = 0.85f, .angle_high = 1.15f, .curl = 0.12f,
-		.per_bundle = 1, .bundles_per_unit = 105.0f, .crowding = 1.15f, .bare = 0.0f, .brush = 0.5f,
+		.length_low = 0.21f, .length_high = 0.25f, .radius = 0.0085f,
+		.angle_low = 0.95f, .angle_high = 1.15f, .curl = 0.3f,
+		.per_bundle = 1, .bundles_per_unit = 93.5f, .crowding = 0.65f, .bare = 0.0f, .brush = 0.15f,
 		.greens = {
-			{ .dark = { 0.09f, 0.18f, 0.08f }, .light = { 0.28f, 0.44f, 0.20f }, .tip = { 0.30f, 0.46f, 0.20f }, .tip_from = 1.0f },
-			{ .dark = { 0.12f, 0.21f, 0.08f }, .light = { 0.36f, 0.50f, 0.22f }, .tip = { 0.38f, 0.52f, 0.22f }, .tip_from = 1.0f } },
-		.behind_dark = 0.35f, .spread_taper = 0.7f, .brightness_spread = 0.15f,
-		.pairs_together = false, .rim = 0.18f, .gloss = 0.12f, .shadow = 0.16f, .tip_radius = 0.12f,
-		.unevenness = 0.12f, .dry_share = 0.01f, .broken_share = 0.01f, .order = 0.9f, .new_growth = 0.5f,
+			{ .dark = { 0.08f, 0.17f, 0.06f }, .light = { 0.30f, 0.48f, 0.18f }, .tip = { 0.38f, 0.52f, 0.18f }, .tip_from = 1.0f },
+			{ .dark = { 0.15f, 0.22f, 0.05f }, .light = { 0.48f, 0.58f, 0.20f }, .tip = { 0.52f, 0.60f, 0.20f }, .tip_from = 1.0f } },
+		.behind_dark = 0.18f, .spread_taper = 0.7f, .brightness_spread = 0.18f,
+		.pairs_together = false, .rim = 0.15f, .gloss = 0.0f, .shadow = 0.0f, .tip_radius = 0.3f,
+		.unevenness = 0.2f, .dry_share = 0.01f, .broken_share = 0.01f, .order = 1.0f, .new_growth = 1.5f, .flatten = 0.85f, .front_from = 0.0f, .curl_outward = 0.7f, .tip_shorter = 0.6f, .alternate = true,
 	};
 	// (four sided, so a light ridge along its middle, sharp, a little
 	// narrower at its foot; dark green, yellowish at its tip)
 	needle = (needle_shape_t){
-		.foot_narrow = 0.35f, .tip_round = 0.08f, .tip_length = 0.28f, .flat = 0.25f,
-		.foot = { 0.24f, 0.34f, 0.15f }, .middle = { 0.21f, 0.36f, 0.16f }, .tip = { 0.36f, 0.46f, 0.20f },
-		.foot_to = 0.1f, .tip_from = 0.85f,
-		.stripes = 0.25f, .stripe_color = { 0.30f, 0.44f, 0.24f },
-		.streaks = 0.3f, .gloss = 0.6f, .shade = 0.55f,
+		.foot_narrow = 0.35f, .tip_round = 0.55f, .tip_length = 0.2f, .flat = 0.0f,
+		.foot = { 0.30f, 0.36f, 0.14f }, .middle = { 0.17f, 0.32f, 0.11f }, .tip = { 0.46f, 0.54f, 0.18f },
+		.foot_to = 0.1f, .tip_from = 0.78f,
+		.stripes = 0.7f, .stripe_color = { 0.50f, 0.62f, 0.30f },
+		.streaks = 1.0f, .gloss = 0.0f, .shade = 0.0f,
+		.two_tone = 0.75f, .light_side = { 0.42f, 0.54f, 0.20f }, .two_tone_fixed = true,
 	};
 	style.shape = &needle;
 	// (the shoots orange brown with pegs where the needles stand; the stub
 	// greyer, older)
-	paint_t bark = { .dark = { 0.22f, 0.12f, 0.06f }, .light = { 0.62f, 0.40f, 0.20f }, .tip = { 0.55f, 0.36f, 0.18f }, .tip_from = 0.6f,
+	paint_t bark = { .dark = { 0.26f, 0.12f, 0.05f }, .light = { 0.70f, 0.42f, 0.20f }, .tip = { 0.55f, 0.36f, 0.18f }, .tip_from = 0.6f,
 		.rough = 0.35f, .bumps = 1.0f };
-	paint_t stub_bark = { .dark = { 0.18f, 0.12f, 0.08f }, .light = { 0.52f, 0.38f, 0.26f }, .tip = { 0.55f, 0.38f, 0.22f }, .tip_from = 0.7f,
+	paint_t stub_bark = { .dark = { 0.24f, 0.17f, 0.11f }, .light = { 0.66f, 0.52f, 0.38f }, .tip = { 0.55f, 0.38f, 0.22f }, .tip_from = 0.7f,
 		.rough = 0.8f, .bumps = 0.6f };
 	paint_t bud = { .dark = { 0.25f, 0.15f, 0.07f }, .light = { 0.62f, 0.44f, 0.24f }, .tip = { 0.60f, 0.46f, 0.28f }, .tip_from = 0.7f,
 		.rough = 0.8f };
 	shoot_t shoots[8];
 	int count = 0;
-	int sides = 3 + (random_float(random) < 0.5f ? 1 : 0);
+	int sides = 4 + (random_float(random) < 0.3f ? 1 : 0);
 	float first_side = random_float(random) < 0.5f ? 1.0f : -1.0f;
-	float stem_length = canvas->tall * 0.9f;
+	float stem_length = canvas->tall * 0.84f;
 	float stub = 0.09f;
 	float x;
 	float y;
@@ -1036,23 +1084,23 @@ static void draw_spruce(canvas_t *canvas, random_t *random)
 
 	// The stub at the foot, then the stem on from it
 	shoots[count++] = (shoot_t){ .fx = 0.5f, .fy = canvas->tall - 0.02f, .angle = random_range(random, -0.06f, 0.06f), .bend = 0.0f,
-		.length = stem_length * stub, .radius = 0.026f, .scale = 1.0f, .taper = 0.85f, .bare = true, .crook = 0.04f,
+		.length = stem_length * stub, .radius = 0.028f, .scale = 1.0f, .taper = 0.85f, .bare = true, .crook = 0.04f,
 		.phase = random_range(random, 0.0f, 6.0f), .bark = &stub_bark };
 	shoot_point(&shoots[0], 1.0f, &x, &y, &heading);
-	shoots[count++] = (shoot_t){ .fx = x, .fy = y, .angle = heading, .bend = random_range(random, -0.12f, 0.12f),
-		.length = stem_length * (1.0f - stub), .radius = 0.016f, .scale = 1.0f, .taper = 0.4f, .needles_from = 0.01f, .crook = 0.06f,
+	shoots[count++] = (shoot_t){ .fx = x, .fy = y, .angle = heading, .bend = random_range(random, -0.3f, 0.3f),
+		.length = stem_length * (1.0f - stub), .radius = 0.021f, .scale = 1.0f, .taper = 0.4f, .needles_from = 0.01f, .crook = 0.14f,
 		.phase = random_range(random, 0.0f, 6.0f) };
 	// The shoots, alternately, the lower longer, out and a little up
 	for (int i = 0; i < sides && count < 8; i++)
 	{
-		float along = 0.1f + 0.48f * ((float)i + random_range(random, 0.0f, 0.35f)) / (float)sides;
+		float along = 0.03f + 0.67f * ((float)i + random_range(random, 0.0f, 0.35f)) / (float)sides;
 		float side = (i % 2 == 0) ? first_side : -first_side;
-		float length = random_range(random, 0.34f, 0.42f) * (1.0f - 0.45f * along) * stem_length;
+		float length = random_range(random, 0.36f, 0.43f) * (1.0f - 0.45f * along) * stem_length;
 
 		shoot_point(&shoots[1], along, &x, &y, &heading);
-		shoots[count++] = (shoot_t){ .fx = x, .fy = y, .angle = heading + side * random_range(random, 0.6f, 0.8f),
-			.bend = -side * random_range(random, 0.15f, 0.3f), .length = length, .radius = 0.009f, .scale = 0.92f, .taper = 0.5f,
-			.needles_from = 0.02f, .crook = 0.08f, .phase = random_range(random, 0.0f, 6.0f) };
+		shoots[count++] = (shoot_t){ .fx = x, .fy = y, .angle = heading + side * random_range(random, 0.42f, 0.52f),
+			.bend = side * random_range(random, 0.3f, 0.45f), .length = length, .radius = 0.014f, .scale = 1.08f, .taper = 0.5f,
+			.needles_from = 0.02f, .crook = 0.16f, .phase = random_range(random, 0.0f, 6.0f) };
 	}
 	draw_twig(canvas, random, &style, &bark, NULL, shoots, count);
 	(void)bud;
