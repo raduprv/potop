@@ -62,7 +62,6 @@
 #define ACTOR_TYPES_MAX 64
 #define ACTOR_TYPE_NAME_LENGTH 48
 #define ACTOR_MAX_LEGS 8
-#define ACTOR_FINE_POINTS 12            // a fine way's points round a post (navigation_fine_path)
 #define ACTOR_IK_FEET_LENGTH 256
 
 // Steps between standing and walking (actor_type_t.gait_actions)
@@ -341,27 +340,11 @@ typedef struct
 	float jump_air_seconds;
 	float jump_rise_speed;
 	bool jump_replan;
-	// Its fine way round what its path's whole cells pass over (a post, a
-	// cell's corner): points over the quarter meters to the waypoint
-	// fine_for, made when its body has no straight way there or its steps
-	// were refused (navigation_fine_path);
-	// dropped when the path moves on or changes
-	float fine_path[ACTOR_FINE_POINTS][2];
-	int fine_count;
-	int fine_index;
-	int fine_for;
-	float fine_for_x;
-	float fine_for_z;
-	bool fine_to_waypoint;             // it ends by that waypoint: at its end the waypoint is reached
 	float guard_seconds;               // its steps refused this long
-	float fine_wait;                   // till it looks for a fine way again
-	bool search_again;                 // its steps refused with no fine way to take (the navigation follows its rectangles): a new search
-	int fine_failures;                 // fine ways looked for in a row and none found, where it is (FINE_FAILURES_MOST: no way, it gives up)
-	// Whether its body has the straight way to its waypoint (steer_point:
-	// not: a fine way at once), and the room for its turn's arc to where
-	// it steers for (move_actor, looked at every ARC_SECONDS: not: it
-	// turns on the spot first)
-	bool steer_blocked;
+	float search_wait;                 // till its way is searched again for refused steps
+	bool search_again;                 // its steps refused: its way searched again from where it stands
+	// The room for its turn's arc to where it steers for (move_actor,
+	// looked at every ARC_SECONDS: not: it turns on the spot first)
 	bool arc_clear;
 	float arc_seconds;
 	uint32_t path_generation;          // the navigation's generation when it last looked ahead

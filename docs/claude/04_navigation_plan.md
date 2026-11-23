@@ -389,12 +389,17 @@ are joined at all), a coarse graph for ways of kilometers.
     not call `navigation_update` (it was in world_render): they do
     now. small.py's push (`--push X,Z,IX,IZ@SECONDS`): a loose stone
     rolls 1.2 m, its capsule is where it lies.
+  - The follower over the quarter meters is out of the code (Nov 23
+    2026; 1400 lines): the fine way (navigation_fine_path, plan_fine),
+    the body points' guard (navigation_quarter_tightness,
+    navigation_body_line), the check of a found way and the crossings
+    it shut (mesh_way_holds, mesh_shut), quarter_stand and its like,
+    and `navigation_follow_mesh` with them. The suites' numbers the
+    same to the second.
   - Left of step 5: the water (a tile with water is built again when
     the water changes, and its region keeps its cells); F4's cell
     overlay shows a let-go region as open ground; the flyers read
-    `object_top`; the follower over the quarter meters (follow_mesh
-    off: fine ways, body points) is still in the code, to be taken
-    out.
+    `object_top`.
 
 ## Known and left
 

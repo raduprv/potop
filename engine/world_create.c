@@ -131,7 +131,6 @@ bool world_create(world_t *world)
 	world->navigation.wall_reach_meters = world->settings->simulation.navigation_wall_meters;
 	world->navigation.soft_kilograms = world->settings->simulation.navigation_soft_kilograms;
 	world->navigation.small_out = world->settings->simulation.navigation_small_out;
-	world->navigation.follow_mesh = world->settings->simulation.navigation_follow_mesh;
 	world->navigation.shed_cells = world->settings->simulation.navigation_shed_cells;
 	world->navigation.small_detour_meters = world->settings->simulation.small_object_detour_meters;
 	navigation_set_slope_cost(&world->navigation, world->settings->simulation.path_slope_degrees, world->settings->simulation.path_slope_cost);

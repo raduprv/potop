@@ -302,7 +302,6 @@ static const setting_field_t setting_fields[] =
 	FIELD("simulation", "navigation_wall_meters", SETTING_FLOAT, simulation.navigation_wall_meters),
 	FIELD("simulation", "navigation_soft_kilograms", SETTING_FLOAT, simulation.navigation_soft_kilograms),
 	FIELD("simulation", "navigation_small_out", SETTING_BOOL, simulation.navigation_small_out),
-	FIELD("simulation", "navigation_follow_mesh", SETTING_BOOL, simulation.navigation_follow_mesh),
 	FIELD("simulation", "navigation_shed_cells", SETTING_BOOL, simulation.navigation_shed_cells),
 	FIELD("simulation", "navigation_detail_meters", SETTING_FLOAT, simulation.navigation_detail_meters),
 	FIELD("simulation", "small_object_detour_meters", SETTING_FLOAT, simulation.small_object_detour_meters),
@@ -741,7 +740,6 @@ void settings_set_defaults(settings_t *settings)
 	settings->simulation.navigation_wall_meters = 1.2f;
 	settings->simulation.navigation_soft_kilograms = 20.0f;
 	settings->simulation.navigation_small_out = true;
-	settings->simulation.navigation_follow_mesh = true;
 	settings->simulation.navigation_shed_cells = true;
 	settings->simulation.navigation_detail_meters = 250.0f;
 	settings->simulation.small_object_detour_meters = 10.0f;

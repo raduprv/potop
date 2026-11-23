@@ -75,8 +75,7 @@
 // its own room above), and a level of a quarter is in the mesh of a class
 // of agents where a body of the class can have its middle there: it
 // stands there, and every point round it rests on something within a
-// step (the points the walkers' own guard measures a body by,
-// navigation_quarter_tightness). So the mesh is the space of the bodies'
+// step (eight points round it, a little inside its radius). So the mesh is the space of the bodies'
 // middles: by a wall it stops where the body would be in the wall, a gap
 // is in it if the body gets through, a terrace's floor ends short of its
 // open edge, and the 75 cm of ground beside a porch are ground. A class
@@ -410,32 +409,9 @@ typedef struct
 	navigation_mesh_tile_t *tiles;     // per region
 } navigation_mesh_class_t;
 
-// A portal shut to an agent: a way a search found through it did not
-// hold over the quarter meters for it (mesh_way_holds: a stair's treads
-// higher than its step, a beam lower than it is tall, inside cells the
-// rectangles take whole). Its searches leave the portal out, till either
-// rectangle's tile is built again or a while has gone by
-#define NAVIGATION_MESH_SHUT_MOST 32
-
-typedef struct
-{
-	int32_t from;                      // the rectangles (of the agent's class)
-	int32_t to;
-	uint32_t from_serial;              // their tiles' builds
-	uint32_t to_serial;
-	uint8_t class;
-	float step;                        // the agent's: one alike is kept out
-	float height;
-	float radius;
-	uint64_t until_ticks;              // SDL_GetTicks
-} navigation_mesh_shut_t;
-
 typedef struct
 {
 	navigation_mesh_class_t classes[NAVIGATION_MESH_CLASSES];
-	navigation_mesh_shut_t shut[NAVIGATION_MESH_SHUT_MOST];
-	int32_t shut_count;
-	int32_t shut_next;                 // the one written next (the oldest, once all are)
 	navigation_mesh_visit_t *visits;   // the searches' notes (a table found by the rectangle: a power of two of them)
 	int32_t visit_capacity;
 	int32_t visit_count;               // of the search going on
@@ -605,7 +581,7 @@ typedef struct
 	float soft_kilograms;              // and navigation_soft_kilograms
 	bool small_out;                    // navigation_small_out: small things gone round are not in the rectangles
 	// navigation_shed_cells: a region's cells' surfaces are let go once
-	// its tiles are built (with follow_mesh: nothing asks them then)
+	// its tiles are built (nothing asks them then)
 	bool shed_cells;
 	bool baking;                       // navigation_bake at its tiles, side by side: no region is built or let go then
 	// navigation_bake has run: the classes of every type of walker are
@@ -615,11 +591,6 @@ typedef struct
 	bool baked;
 	int32_t shed_regions;              // how many are let go now
 	int32_t shed_sweep;                // the region last looked at for letting go (navigation_set_detail)
-	// navigation_follow_mesh: what a walker on its way asks (may it step
-	// there, has its body the room on this line, how high is the ground)
-	// is answered from the rectangles, not from the quarter meters they
-	// were made from; no fine way over those either (it searches again)
-	bool follow_mesh;
 	float small_detour_meters;
 	uint8_t *extra_count;
 	uint16_t *extra_first;
@@ -709,36 +680,6 @@ bool navigation_passable(const navigation_t *navigation, const terrain_t *terrai
 bool navigation_quarter_free(const navigation_t *navigation, const terrain_t *terrain, const water_t *water,
 	const navigation_agent_t *agent, float x, float z, float near_height);
 
-// How tight an agent standing at (x, z) is: of eight points round it a
-// little inside its radius, how many are on quarter meters it could not
-// stand on within a step (a post, a balustrade's rail beside it, the drop
-// off a ledge); -1 where it cannot stand at all
-int navigation_quarter_tightness(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
-	float x, float z, float near_height);
-
-// Whether an agent's body can go straight from one point to another (it
-// at from_height): every eighth of a meter of the line somewhere it stands
-// (a step at a time on from the last) with room for its body round it
-// (navigation_quarter_tightness: most_brushes of its points taken or
-// fewer; or, out of a tighter place, no tighter than the step before).
-// The quarter meters' truth about a way the cells' rectangles let through
-// (navigation_line_passable: a square of its width fits somewhere in each
-// cell, a post beside it or not): a walker asks both before it leaves its
-// path's own corners (a point ahead, a corner cut, a turn's arc), and
-// its steps are held to the same (its step guard)
-bool navigation_body_line(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
-	float from_x, float from_z, float from_height, float to_x, float to_z, int most_brushes);
-
-// The fine way from (from_x, from_z) at from_height to (to_x, to_z), a few
-// meters apart, over the quarter meters: round a post inside a cell, past
-// a cell's corner, its body's radius off what it cannot stand on (where
-// there is such a way; else brushing by, as it must). Its corners into
-// points_out (at most most of them), the last by the goal: its own
-// quarter, or one beside it (a clear one rather than a tight one). The
-// count; 0 if there is none in the window (or the two too far apart)
-int navigation_fine_path(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
-	float from_x, float from_z, float from_height, float to_x, float to_z, float (*points_out)[2], int most);
-
 // A path from (from_x, from_z), on the surface nearest from_height, towards
 // (to_x, to_z): at most NAVIGATION_MAX_WAYPOINTS points (x, z), the start
 // not included. If the path needs more, the first ones are given and
@@ -760,15 +701,6 @@ bool navigation_small_blocks_step(const navigation_t *navigation, const navigati
 // them already may step any way, back to them
 bool navigation_step_passable(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
 	float from_x, float from_z, float height, float to_x, float to_z);
-
-// Whether the last path found (navigation_find_path, just now) gets to
-// its waypoint of that index by a jump from the one before (the start,
-// for the first): up onto or down off an edge the agent does not step
-// (navigation_agent_t.jump_up_meters, jump_down_meters), straight across
-// it; and the height it lands at
-// Whether a walker's questions are answered from the rectangles
-// (navigation_t.follow_mesh): no fine way then, a new search instead
-bool navigation_follows_mesh(const navigation_t *navigation);
 
 // Whether anything stands in the cell of a point or the eight round it
 // (an object's surface, room taken, a region not built yet: not known).

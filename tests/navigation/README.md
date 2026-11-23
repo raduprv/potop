@@ -6,6 +6,12 @@ what is still wrong. Written by Opus 5.5 after the work in the commits
 from 349cf6a (inertial turns) to 5717683 (the fine way); brought up to
 date by Fable 5.2 after the follower's rework (see "Where it stands").
 
+**Nov 23 2026:** the fine way, the body points' guard and the check of
+a found way over the quarter meters, which much of what follows tells
+of, are gone from the code: a walker keeps to the rectangles
+(docs/claude/04_navigation_plan.md, steps 4 and 5). What follows is how
+it got there.
+
 ## The problem, in Radu's words and in numbers
 
 Animals (bears, cows, people) now get everywhere they should round the

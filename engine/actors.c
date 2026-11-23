@@ -1773,7 +1773,6 @@ static bool path_logged(const actors_t *actors, const actor_t *actor)
 #define STEER_DIRECT_SHARE 0.6f       // the point ahead at least this much of that far off straight (a right corner's: 0.7), or it is the waypoint
 #define STRAIGHT_WAYPOINT_METERS 0.25f
 #define MESH_WAYPOINT_METERS 0.12f     // a path's corner is walked onto this close (the rectangles' slack), where it keeps to them and may not cut it
-#define BODY_BRUSHES 2               // of its body's 8 points (navigation_quarter_tightness): its sides brushing, let be
 #define BODY_WAY_METERS 5.0f         // its body's straight way looked at this far (body_way_clear); the rest as it gets there
 #define ARC_SECONDS 0.1f             // its turn's arc looked at this often (actor_t.arc_clear)
 #define ARC_FREE_RADIANS 0.15f       // its way this little off its nose: no arc to speak of
@@ -1783,12 +1782,8 @@ static bool path_logged(const actors_t *actors, const actor_t *actor)
 #define CORNER_BACK_LEAST_METERS 0.005f // a corner of its way cut short and its steps on refused: to the corner, if it is
 #define CORNER_BACK_MOST_METERS 1.0f   // this far at least and at most
 #define EDGE_SLIDE_SHARE 0.5f         // of its step, at the least, along a rectangle's edge its step is refused at
-#define FINE_AFTER_SECONDS 0.2f      // steps refused this long: a fine way round (navigation_fine_path)
-#define FINE_AGAIN_SECONDS 1.0f      // and not again sooner
-#define FINE_REACH_METERS 3.0f       // towards its waypoint at most this far
-#define FINE_BY_WAYPOINT_METERS 0.55f // a fine way's end this near its waypoint: the waypoint's own, reached with it
-#define FINE_FAILURES_MOST 2         // no fine way found this often where it stands: none there is, the walk given up
-#define FINE_POINT_METERS 0.15f      // a fine way's point reached this near // past a straight walker's waypoint (its mind's spot)
+#define SEARCH_AFTER_SECONDS 0.2f    // steps refused this long: its way searched again from where it stands
+#define SEARCH_AGAIN_SECONDS 1.0f    // and not again sooner
 // Its jump (jump_move): the phases; faced this near before it goes; no
 // longer turning to it than this; without clips, gathered and landed this
 // long; its arc's top this far over the higher of its ends; with a clip,
@@ -2281,13 +2276,20 @@ static float arc_speed(const actor_type_t *type, float radius)
 	return pivot * radius / (1.0f + (pivot - turning) * radius / walk);
 }
 
+// Whether an agent's middle can go the line between two points, over the
+// rectangles of its width, by its rules
+static bool body_line(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
+	float from_x, float from_z, float from_height, float to_x, float to_z)
+{
+	return navigation_line_passable(navigation, terrain, water, agent, from_x, from_z, from_height, to_x, to_z, NULL, NULL, NULL);
+}
+
 // Whether its body can go straight from where it is to a point: the
-// path finding's line there (the navigation mesh's: no wall, no drop, no
-// deep water between) and its body's along it over the quarter meters
-// (navigation_body_line, the first BODY_WAY_METERS of it: by its step
-// guard's own measure, so the steps of a way this lets through are not
-// refused). Every way it takes off its path's own lines is asked here
-// first: the point ahead it steers for, a corner cut, a turn's arc
+// line there over the rectangles (no wall, no drop, no deep water
+// between), from its body's height and from where its middle stands (the
+// first BODY_WAY_METERS of it). Every way it takes off its path's own
+// lines is asked here first: the point ahead it steers for, a corner cut,
+// a turn's arc
 static bool body_way_clear(const actor_t *actor, const navigation_t *navigation, const terrain_t *terrain, const water_t *water,
 	const navigation_agent_t *agent, float x, float z)
 {
@@ -2297,8 +2299,8 @@ static bool body_way_clear(const actor_t *actor, const navigation_t *navigation,
 	float share = distance > BODY_WAY_METERS ? BODY_WAY_METERS / distance : 1.0f;
 
 	return navigation_line_passable(navigation, terrain, water, agent, actor->x, actor->z, actor->y, x, z, NULL, NULL, NULL)
-		&& navigation_body_line(navigation, terrain, water, agent, actor->x, actor->z, actor->center_ground, actor->x + dx * share,
-			actor->z + dz * share, BODY_BRUSHES);
+		&& body_line(navigation, terrain, water, agent, actor->x, actor->z, actor->center_ground, actor->x + dx * share,
+			actor->z + dz * share);
 }
 
 // Where a walk on its path steers for (not a straight walker's: its
@@ -2306,9 +2308,7 @@ static bool body_way_clear(const actor_t *actor, const navigation_t *navigation,
 // path (more the faster it goes), so it starts round a corner before it
 // is at it, as one does; the waypoints it has cut past (one it is near and
 // can walk straight past to the next) left behind. Only where its body
-// can go straight to it (body_way_clear); else its waypoint, and whether
-// its body has the straight way to that (actor_t.steer_blocked: not, off
-// its path's line or a post by the corner: a fine way, move_actor).
+// can go straight to it (body_way_clear); else its waypoint.
 // Found again every STEER_SECONDS and when its waypoint changes
 static void steer_point(actors_t *actors, actor_t *actor, const navigation_t *navigation, const terrain_t *terrain, const water_t *water,
 	float seconds, float *target_x, float *target_z)
@@ -2344,7 +2344,6 @@ static void steer_point(actors_t *actors, actor_t *actor, const navigation_t *na
 	actor->steer_index = actor->path_index;
 	actor->steer_x = actor->path[actor->path_index][0];
 	actor->steer_z = actor->path[actor->path_index][1];
-	actor->steer_blocked = false;
 	// Ahead along the path from where it is: past its waypoint as far as
 	// is left
 	{
@@ -2390,17 +2389,6 @@ static void steer_point(actors_t *actors, actor_t *actor, const navigation_t *na
 				actor->steer_z = point_z;
 			}
 		}
-	}
-	// (its waypoint itself: whether its body has the straight way to it)
-	if (!actor->swimming && actor->steer_x == actor->path[actor->path_index][0] && actor->steer_z == actor->path[actor->path_index][1])
-	{
-		float dx = actor->steer_x - actor->x;
-		float dz = actor->steer_z - actor->z;
-		float distance = SDL_sqrtf(dx * dx + dz * dz);
-		float share = distance > BODY_WAY_METERS ? BODY_WAY_METERS / distance : 1.0f;
-
-		actor->steer_blocked = !navigation_body_line(navigation, terrain, water, &agent, actor->x, actor->z, actor->center_ground,
-			actor->x + dx * share, actor->z + dz * share, BODY_BRUSHES);
 	}
 	*target_x = actor->steer_x;
 	*target_z = actor->steer_z;
@@ -3307,114 +3295,20 @@ static bool gait_plan_stop(actors_t *actors, actor_t *actor)
 	return false;
 }
 
-// Whether it is on a fine way (still to the waypoint it was made for)
-static bool fine_active(const actor_t *actor)
-{
-	return actor->fine_index < actor->fine_count && actor->path_index == actor->fine_for && actor->path_index < actor->path_count
-		&& actor->path[actor->path_index][0] == actor->fine_for_x && actor->path[actor->path_index][1] == actor->fine_for_z;
-}
-
-// No straight way for its body to its waypoint, or its steps refused
-// (round a post, a cell's corner; why, for the log): a fine way over the
-// quarter meters to its waypoint, or towards it if that is far
-static void plan_fine(actors_t *actors, actor_t *actor, const navigation_t *navigation, const terrain_t *terrain, const water_t *water,
-	const navigation_agent_t *agent, const char *why)
-{
-	float to_x = actor->path[actor->path_index][0];
-	float to_z = actor->path[actor->path_index][1];
-	float dx = to_x - actor->x;
-	float dz = to_z - actor->z;
-	float distance = SDL_sqrtf(dx * dx + dz * dz);
-
-	if (distance > FINE_REACH_METERS)
-	{
-		to_x = actor->x + dx / distance * FINE_REACH_METERS;
-		to_z = actor->z + dz / distance * FINE_REACH_METERS;
-	}
-	actor->fine_count = navigation_fine_path(navigation, terrain, water, agent, actor->x, actor->z, actor->center_ground, to_x, to_z,
-		actor->fine_path, ACTOR_FINE_POINTS);
-	actor->fine_index = 0;
-	actor->fine_for = actor->path_index;
-	actor->fine_for_x = actor->path[actor->path_index][0];
-	actor->fine_for_z = actor->path[actor->path_index][1];
-	// (to the waypoint itself, by it: the clear quarter nearest it, the
-	// waypoint a corner of the mesh's rectangles, by a post as often as not)
-	actor->fine_to_waypoint = false;
-	if (actor->fine_count > 0)
-	{
-		float end_x = actor->fine_path[actor->fine_count - 1][0] - actor->fine_for_x;
-		float end_z = actor->fine_path[actor->fine_count - 1][1] - actor->fine_for_z;
-
-		actor->fine_to_waypoint = end_x * end_x + end_z * end_z < FINE_BY_WAYPOINT_METERS * FINE_BY_WAYPOINT_METERS;
-	}
-	// (none: the quarter meters have no way where the mesh's rectangles
-	// found one, up a stair's treads too high for it, under a beam too
-	// low; none again a little later: it gives up, move_actor)
-	actor->fine_failures = actor->fine_count > 0 ? 0 : actor->fine_failures + 1;
-	if (path_logged(actors, actor))
-	{
-		SDL_Log("Actor %u (%s): %s at (%.2f, %.2f), a fine way to (%.2f, %.2f): %d points", actor->id, actors->types[actor->type].name, why,
-			(double)actor->x, (double)actor->z, (double)to_x, (double)to_z, actor->fine_count);
-	}
-}
-
-// Whether a step of a walker on its path keeps to where the path finding
-// lets it be: its center's line to the step's end and a radius on is
-// passable and the quarter meter there free (inside a cell: a balustrade's
-// post on a stair's top); or, its cell one it cannot be in (pushed there),
-// the quarter ahead is free: out it goes
+// Whether a step of its middle can be made, by the rectangles (where its
+// body's middle can be, with all its room): onto them or along them it
+// steps, not into a small thing (those are not in them); off them it does
+// not; and one that is off them already (pushed there, started there) is
+// let walk, back to them (navigation_step_passable)
 static bool step_passable(const navigation_t *navigation, const terrain_t *terrain, const water_t *water, const navigation_agent_t *agent,
-	const actor_t *actor, float step_x, float step_z, bool fine)
+	const actor_t *actor, float step_x, float step_z)
 {
-	float length = SDL_sqrtf(step_x * step_x + step_z * step_z);
-	// (a radius on ahead; on a fine way, that keeps its body off what is
-	// round it already, half a quarter: it squeezes past a post)
-	float reach = length + (fine ? 0.125f : agent->radius_meters);
-	// (its center's line only, a radius on ahead: its sides brush along
-	// what its path keeps close to, a stair's edge)
-	navigation_agent_t center = *agent;
-	float ahead_x;
-	float ahead_z;
-	bool ahead_free;
-
-	center.line_center_only = true;
-	if (length < 1e-6f)
+	if (step_x * step_x + step_z * step_z < 1e-12f)
 	{
 		return true;
 	}
-	// By the rectangles (where its body's middle can be, with all its
-	// room): onto them or along them it steps, not into a small thing
-	// (those are not in them); off them it does not; and one that is off
-	// them already (pushed there, started there) is let walk, back to them
-	if (navigation_follows_mesh(navigation))
-	{
-		return navigation_step_passable(navigation, terrain, water, agent, actor->x, actor->z, actor->center_ground, actor->x + step_x,
-			actor->z + step_z);
-	}
-	ahead_x = actor->x + step_x / length * reach;
-	ahead_z = actor->z + step_z / length * reach;
-	ahead_free = navigation_quarter_free(navigation, terrain, water, &center, ahead_x, ahead_z, actor->center_ground);
-	// (and its body room where the step ends: a brush or two of its
-	// sides, or no tighter than where it is; not onto the ledge outside a
-	// balustrade)
-	if (ahead_free && !fine)
-	{
-		int tight_after = navigation_quarter_tightness(navigation, terrain, water, agent, actor->x + step_x, actor->z + step_z, actor->center_ground);
-
-		if (tight_after < 0 || (tight_after > BODY_BRUSHES && tight_after > navigation_quarter_tightness(navigation, terrain, water, agent, actor->x,
-			actor->z, actor->center_ground)))
-		{
-			ahead_free = false;
-		}
-	}
-	// (on a fine way the quarters are the judge: the cells' line may see a
-	// wall in a gap the cells are too coarse for)
-	if (ahead_free && (fine || navigation_line_passable(navigation, terrain, water, &center, actor->x, actor->z, actor->center_ground, ahead_x,
-		ahead_z, NULL, NULL, NULL)))
-	{
-		return true;
-	}
-	return ahead_free && !navigation_passable(navigation, terrain, water, &center, actor->x, actor->z, actor->center_ground);
+	return navigation_step_passable(navigation, terrain, water, agent, actor->x, actor->z, actor->center_ground, actor->x + step_x,
+		actor->z + step_z);
 }
 
 // Whether, short of its waypoint, it can go straight on to the next one
@@ -3471,29 +3365,15 @@ static bool turn_arc_clear(const actor_t *actor, const navigation_t *navigation,
 	// (half the arc: turned as far as the point is round)
 	middle_x = actor->x + radius * (SDL_sinf(SDL_fabsf(turn)) * SDL_sinf(actor->yaw_radians) + (1.0f - SDL_cosf(turn)) * side_x);
 	middle_z = actor->z + radius * (SDL_sinf(SDL_fabsf(turn)) * SDL_cosf(actor->yaw_radians) + (1.0f - SDL_cosf(turn)) * side_z);
-	return navigation_body_line(navigation, terrain, water, agent, actor->x, actor->z, actor->center_ground, middle_x, middle_z, BODY_BRUSHES)
-		&& navigation_body_line(navigation, terrain, water, agent, middle_x, middle_z, actor->center_ground, x, z, BODY_BRUSHES);
+	return body_line(navigation, terrain, water, agent, actor->x, actor->z, actor->center_ground, middle_x, middle_z)
+		&& body_line(navigation, terrain, water, agent, middle_x, middle_z, actor->center_ground, x, z);
 }
 
 // Where its way goes on from the point it steers for, if that is one of
-// its way's corners (a fine way's point, its waypoint: not a point ahead
-// past it, nor its path's end)
+// its way's corners (its waypoint: not a point ahead past it, nor its
+// path's end)
 static bool next_corner(const actor_t *actor, float target_x, float target_z, float *next_x, float *next_z)
 {
-	if (fine_active(actor))
-	{
-		if (actor->fine_index + 1 < actor->fine_count)
-		{
-			*next_x = actor->fine_path[actor->fine_index + 1][0];
-			*next_z = actor->fine_path[actor->fine_index + 1][1];
-		}
-		else
-		{
-			*next_x = actor->path[actor->path_index][0];
-			*next_z = actor->path[actor->path_index][1];
-		}
-		return (*next_x - target_x) * (*next_x - target_x) + (*next_z - target_z) * (*next_z - target_z) > 0.05f * 0.05f;
-	}
 	if (actor->path_index + 1 >= actor->path_count || target_x != actor->path[actor->path_index][0] || target_z != actor->path[actor->path_index][1])
 	{
 		return false;
@@ -3515,8 +3395,7 @@ static bool jump_due(actor_t *actor)
 	actor->jump_phase = JUMP_TURN;
 	actor->jump_seconds = 0.0f;
 	actor->jump_replan = false;
-	actor->fine_failures = 0;
-	actor->jump_to[0] = actor->path[actor->path_index][0];
+		actor->jump_to[0] = actor->path[actor->path_index][0];
 	actor->jump_to[1] = actor->path_jump_height[actor->path_index];
 	actor->jump_to[2] = actor->path[actor->path_index][1];
 	return true;
@@ -3650,8 +3529,7 @@ static void jump_move(actors_t *actors, actor_t *actor, navigation_t *navigation
 			actor->progress_x = actor->x;
 			actor->progress_z = actor->z;
 			actor->stuck_seconds = 0.0f;
-			actor->fine_failures = 0;
-			actor->jump_phase = JUMP_LAND;
+						actor->jump_phase = JUMP_LAND;
 			actor->jump_seconds = 0.0f;
 			actor->jump_phase_seconds = type->jump_actions[2] >= 0 ? SDL_max(action_length(model, type->jump_actions[2]), 0.05f) : JUMP_LAND_SECONDS;
 			if (type->jump_actions[2] >= 0)
@@ -3842,7 +3720,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 		if (distance < (last ? (actor->arrive_meters > 0.0f ? actor->arrive_meters : ARRIVE_METERS)
 			: (actor->straight || actor->path_jump[actor->path_index + 1] != 0 ? STRAIGHT_WAYPOINT_METERS : WAYPOINT_METERS))
 			&& (last || actor->straight
-				|| distance < (navigation_follows_mesh(navigation) ? SDL_max(MESH_WAYPOINT_METERS, actor->speed * seconds) : STRAIGHT_WAYPOINT_METERS)
+				|| distance < SDL_max(MESH_WAYPOINT_METERS, actor->speed * seconds)
 				|| corner_cut_passable(actors, actor, navigation, terrain, water)))
 		{
 			if (!last)
@@ -3887,56 +3765,10 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 		bool turn_refused = false;
 		bool creep_ahead = false;
 
-		// (on a fine way: its points one by one, close; not walking
-		// straight: round the corners, a point ahead)
-		while (fine_active(actor))
-		{
-			float fine_dx = actor->fine_path[actor->fine_index][0] - actor->x;
-			float fine_dz = actor->fine_path[actor->fine_index][1] - actor->z;
-
-			if (fine_dx * fine_dx + fine_dz * fine_dz > FINE_POINT_METERS * FINE_POINT_METERS)
-			{
-				break;
-			}
-			actor->fine_index++;
-			// (its end, by its waypoint: the waypoint reached, on to the
-			// next; not the path's last: its arrival is its own)
-			if (actor->fine_index >= actor->fine_count && actor->fine_to_waypoint && actor->path_index < actor->path_count - 1
-				&& actor->path_jump[actor->path_index + 1] == 0)
-			{
-				actor->path_index++;
-				actor->steer_seconds = 0.0f;
-				target_x = actor->path[actor->path_index][0];
-				target_z = actor->path[actor->path_index][1];
-			}
-		}
-		if (fine_active(actor))
-		{
-			target_x = actor->fine_path[actor->fine_index][0];
-			target_z = actor->fine_path[actor->fine_index][1];
-		}
-		else if (!actor->straight)
+		// (not walking straight: round the corners, a point ahead)
+		if (!actor->straight)
 		{
 			steer_point(actors, actor, navigation, terrain, water, seconds, &target_x, &target_z);
-			// (no straight way for its body to its waypoint: a fine way
-			// now, not after its steps are refused there)
-			// (by the rectangles there is no fine way: its way is over
-			// them already, and its steps are let as far as they go)
-			if (navigation_follows_mesh(navigation))
-			{
-				actor->steer_blocked = false;
-			}
-			if (actor->steer_blocked && actor->fine_wait <= 0.0f)
-			{
-				plan_fine(actors, actor, navigation, terrain, water, &agent, "no straight way for its body");
-				actor->fine_wait = FINE_AGAIN_SECONDS;
-				actor->steer_blocked = false;
-				if (fine_active(actor))
-				{
-					target_x = actor->fine_path[actor->fine_index][0];
-					target_z = actor->fine_path[actor->fine_index][1];
-				}
-			}
 		}
 		heading = SDL_atan2f(target_x - actor->x, target_z - actor->z);
 		// Walking straight, its nose against something and its way round
@@ -4264,7 +4096,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 		// on the spot; unless it is somewhere it cannot be already (pushed
 		// there): out it goes
 		if (!actor->straight && !actor->swimming && actor->moving && actor->speed > 0.0f && (step_x != 0.0f || step_z != 0.0f)
-			&& !step_passable(navigation, terrain, water, &agent, actor, step_x, step_z, fine_active(actor)))
+			&& !step_passable(navigation, terrain, water, &agent, actor, step_x, step_z))
 		{
 			// (along the edge instead, a little to either side: its path
 			// runs along it, its center a little over)
@@ -4278,7 +4110,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 				float slide_x = (step_x * slide_cos + step_z * slide_sin) * slide_cos;
 				float slide_z = (step_z * slide_cos - step_x * slide_sin) * slide_cos;
 
-				if (step_passable(navigation, terrain, water, &agent, actor, slide_x, slide_z, fine_active(actor)))
+				if (step_passable(navigation, terrain, water, &agent, actor, slide_x, slide_z))
 				{
 					step_x = slide_x;
 					step_z = slide_z;
@@ -4288,7 +4120,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 			// (a small thing it stands by in its way, its way planned from
 			// inside the berth it is led round at: round it, along its
 			// side and a little off it, the side its step leans to)
-			if (!slid && navigation_follows_mesh(navigation))
+			if (!slid)
 			{
 				float away_x;
 				float away_z;
@@ -4308,7 +4140,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 						float slide_x = (-away_z * along + away_x * off) * step_length;
 						float slide_z = (away_x * along + away_z * off) * step_length;
 
-						if (step_passable(navigation, terrain, water, &agent, actor, slide_x, slide_z, false))
+						if (step_passable(navigation, terrain, water, &agent, actor, slide_x, slide_z))
 						{
 							step_x = slide_x;
 							step_z = slide_z;
@@ -4321,7 +4153,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 			// where it is the way on leaves them (the corner is where a
 			// door's or a stair's portal is, it stands beside that): to the
 			// corner then, which is on them and on its way)
-			if (!slid && navigation_follows_mesh(navigation) && actor->path_index > 0 && !fine_active(actor)
+			if (!slid && actor->path_index > 0
 				&& actor->path_jump[actor->path_index] == 0)
 			{
 				float corner_dx = actor->path[actor->path_index - 1][0] - actor->x;
@@ -4334,7 +4166,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 					float slide_x = corner_dx / corner_distance * back;
 					float slide_z = corner_dz / corner_distance * back;
 
-					if (step_passable(navigation, terrain, water, &agent, actor, slide_x, slide_z, false))
+					if (step_passable(navigation, terrain, water, &agent, actor, slide_x, slide_z))
 					{
 						step_x = slide_x;
 						step_z = slide_z;
@@ -4346,7 +4178,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 			// corner cut a little short has it against one, its waypoint
 			// nearly straight over it: along the edge then, to where the
 			// rectangles go on, at half its step at the least)
-			if (!slid && navigation_follows_mesh(navigation))
+			if (!slid)
 			{
 				float step_length = SDL_sqrtf(step_x * step_x + step_z * step_z);
 				bool x_first = SDL_fabsf(step_x) >= SDL_fabsf(step_z);
@@ -4359,7 +4191,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 					float slide_x = along_x ? slide : 0.0f;
 					float slide_z = along_x ? 0.0f : slide;
 
-					if (step_passable(navigation, terrain, water, &agent, actor, slide_x, slide_z, false))
+					if (step_passable(navigation, terrain, water, &agent, actor, slide_x, slide_z))
 					{
 						step_x = slide_x;
 						step_z = slide_z;
@@ -4372,20 +4204,13 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 				step_x = 0.0f;
 				step_z = 0.0f;
 				actor->speed = 0.0f;
-				// (refused a while: a way round over the quarters)
+				// (refused a while: its way searched again from where it
+				// stands)
 				actor->guard_seconds += seconds;
-				if (actor->guard_seconds >= FINE_AFTER_SECONDS && actor->fine_wait <= 0.0f && !fine_active(actor))
+				if (actor->guard_seconds >= SEARCH_AFTER_SECONDS && actor->search_wait <= 0.0f)
 				{
-					// (by the rectangles: a new search from where it stands)
-					if (navigation_follows_mesh(navigation))
-					{
-						actor->search_again = true;
-					}
-					else
-					{
-						plan_fine(actors, actor, navigation, terrain, water, &agent, "steps refused");
-					}
-					actor->fine_wait = FINE_AGAIN_SECONDS;
+					actor->search_again = true;
+					actor->search_wait = SEARCH_AGAIN_SECONDS;
 				}
 			}
 			else
@@ -4397,7 +4222,7 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 		{
 			actor->guard_seconds = 0.0f;
 		}
-		actor->fine_wait -= seconds;
+		actor->search_wait -= seconds;
 		actor->x += step_x + current_x * carried * seconds;
 		actor->z += step_z + current_z * carried * seconds;
 		actor->x = SDL_clamp(actor->x, 0.5f, map_meters - 0.5f);
@@ -4415,9 +4240,8 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 			actor->progress_z = actor->z;
 			actor->stuck_seconds = 0.0f;
 			actor->replans = 0;
-			actor->fine_failures = 0;
 		}
-		// (its steps refused, by the rectangles: its way searched again
+		// (its steps refused: its way searched again
 		// from where it stands, a few times; then given up)
 		else if (actor->search_again && !actor->straight)
 		{
@@ -4426,20 +4250,6 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 			{
 				path_failed(actors, actor, water);
 			}
-		}
-		// (no way over the quarter meters where the path goes, found so
-		// twice: there is none, and a search again finds the same path;
-		// not pushed at for a quarter of a minute, given up now)
-		else if (actor->fine_failures >= FINE_FAILURES_MOST && !actor->straight)
-		{
-			if (path_logged(actors, actor))
-			{
-				SDL_Log("Actor %u (%s): no way for its body on from (%.2f, %.2f, height %.2f) to waypoint %d of %d (%.2f, %.2f): given up", actor->id,
-					type->name, (double)actor->x, (double)actor->z, (double)actor->y, actor->path_index, actor->path_count,
-					(double)actor->path[actor->path_index][0], (double)actor->path[actor->path_index][1]);
-			}
-			actor->fine_failures = 0;
-			path_failed(actors, actor, water);
 		}
 		// (turning about takes its time: a quarter of it counted, so one
 		// that turns for ever is still found)
@@ -4468,18 +4278,6 @@ static void move_actor(actors_t *actors, actor_t *actor, navigation_t *navigatio
 				|| !plan_path(actors, actor, type, navigation, terrain, water, "stuck, searching again"))
 			{
 				path_failed(actors, actor, water);
-			}
-			// (the same way again, likely: and a fine way to its first
-			// waypoint, past what it went round in circles at)
-			else if (actor->path_index < actor->path_count)
-			{
-				navigation_agent_t stuck_agent = agent_of(type);
-
-				if (!navigation_follows_mesh(navigation))
-				{
-					plan_fine(actors, actor, navigation, terrain, water, &stuck_agent, "still stuck");
-				}
-				actor->fine_wait = FINE_AGAIN_SECONDS;
 			}
 		}
 	}

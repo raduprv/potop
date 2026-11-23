@@ -527,16 +527,11 @@ typedef struct
 	// led round them (navigation.c: mesh_lead_round). Off: they are in
 	// the rectangles, as walls are
 	bool navigation_small_out;
-	// A walker on its way goes by the navigation's rectangles alone (where
-	// it may step, its body's room, the ground's height), not by the
-	// quarter meters they were made from. Off: as before, by those, with
-	// fine ways over them round what is in its way
-	bool navigation_follow_mesh;
 	// A region's cells' surfaces (what its objects' tops are, quarter meter
 	// by quarter meter: what the rectangles are built from) are let go
 	// once its rectangles are built, and built again when they are to be
-	// (a wall there new or gone; not for small things). With
-	// navigation_follow_mesh only. Off: kept, as before
+	// (a wall there new or gone; not for small things), in a navigation
+	// that was baked. Off: kept
 	bool navigation_shed_cells;
 	// Ways are led round small things only this near the player; further
 	// off they go straight through them (no one sees it)
