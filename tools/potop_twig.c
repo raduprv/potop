@@ -747,16 +747,34 @@ typedef struct
 	paint_t stalk;
 } fern_style_t;
 
+// A blade's paint a little brighter or darker (each pinnule its own)
+static blade_paint_t shaded_paint(const blade_paint_t *paint, float brightness)
+{
+	blade_paint_t shaded = *paint;
+
+	for (int k = 0; k < 3; k++)
+	{
+		shaded.base[k] *= brightness;
+		shaded.vein[k] *= brightness;
+		shaded.edge[k] *= brightness;
+	}
+	return shaded;
+}
+
 static void draw_pinna(canvas_t *canvas, random_t *random, const fern_style_t *style, float bx, float by, float angle, float length, float side)
 {
-	float segment = style->segment_length * length;
-	float step = segment * style->segment_spacing;
+	// (the smaller pinnae up the frond: their pinnules as big as they can
+	// be, run together into lobes, as on the pictures: no sparse spikes)
+	float smallness = clampf(1.0f - length / fmaxf(style->pinna_length, 1e-3f), 0.0f, 1.0f);
+	float joined = mixf(style->joined, 1.0f, smallness * smallness);
+	float segment = style->segment_length * length * mixf(1.0f, 1.5f, smallness);
+	float step = segment * style->segment_spacing * mixf(1.0f, 0.85f, smallness);
 	paint_t costa = { .tip_from = 1.0f };
 	float t = step * 0.6f / length;
 
 	// Its wing: the blade the pinnules sit on (narrow when they are apart,
 	// broad when they are lobes of it)
-	draw_blade(canvas, bx, by, angle, length, segment * mixf(0.18f, 0.55f, style->joined), side * style->pinna_curl, 0, 0.0f, 0.6f, &style->leaf);
+	draw_blade(canvas, bx, by, angle, length, segment * mixf(0.18f, 0.55f, joined), side * style->pinna_curl, 0, 0.0f, 0.6f, &style->leaf);
 	// Its pinnules both ways along it, shorter towards its tip
 	while (t < 0.86f)
 	{
@@ -769,16 +787,17 @@ static void draw_pinna(canvas_t *canvas, random_t *random, const fern_style_t *s
 		for (int k = -1; k <= 1; k += 2)
 		{
 			float out = heading + (float)k * style->segment_angle * random_range(random, 0.92f, 1.08f);
-			float half = size * mixf(0.34f, 0.42f, style->joined);
+			float half = size * mixf(0.34f, 0.42f, joined);
+			blade_paint_t own = shaded_paint(&style->leaf, random_range(random, 0.92f, 1.08f));
 
-			draw_blade(canvas, px, py, out, size, half, (float)k * -0.25f, style->teeth, style->tooth, mixf(0.4f, 0.9f, style->joined), &style->leaf);
+			draw_blade(canvas, px, py, out, size, half, (float)k * -0.25f, style->teeth, style->tooth, mixf(0.4f, 0.9f, joined), &own);
 		}
 		t += step * (1.0f - 0.55f * t) / length;
 	}
 	// The tip: one toothed blade where the pinnules run together
 	draw_blade(canvas, bx + sinf(angle) * length * 0.72f + cosf(angle) * side * style->pinna_curl * length * 0.26f,
 		by - cosf(angle) * length * 0.72f + sinf(angle) * side * style->pinna_curl * length * 0.26f,
-		angle + side * style->pinna_curl * 0.72f, length * 0.3f, segment * 0.32f, side * style->pinna_curl * 0.5f, 5, style->tooth * 0.8f, 0.9f,
+		angle + side * style->pinna_curl * 0.72f, length * 0.36f, segment * 0.27f, side * style->pinna_curl * 0.6f, 6, style->tooth * 0.8f, 0.9f,
 		&style->leaf);
 	// Its midrib over them, a darker green than the stalk
 	for (int k = 0; k < 3; k++)
@@ -809,10 +828,10 @@ static void draw_fern(canvas_t *canvas, random_t *random, const fern_style_t *st
 		{
 			float place = ((float)i + (k > 0 ? 0.5f : 0.0f)) / (float)style->pairs;
 			// (closer together towards the tip)
-			float t = style->pinnae_from + (1.0f - style->pinnae_from) * powf(place, 0.85f) * 0.97f;
+			float t = style->pinnae_from + (1.0f - style->pinnae_from) * powf(place, 0.78f) * 0.95f;
 			float longest = style->longest_at;
 			float size = place < longest ? mixf(0.82f, 1.0f, place / fmaxf(longest, 1e-3f))
-				: mixf(1.0f, 0.13f, powf((place - longest) / (1.0f - longest), 1.15f));
+				: mixf(1.0f, 0.12f, powf((place - longest) / (1.0f - longest), 1.05f));
 			float out = mixf(style->pinna_angle, style->pinna_angle_tip, place);
 
 			cubic_at(style->rachis, t, &x, &y, &heading);
@@ -831,6 +850,22 @@ static void draw_fern(canvas_t *canvas, random_t *random, const fern_style_t *st
 			&style->stalk);
 		last_x = x;
 		last_y = y;
+	}
+	// The frond's own tip: a lobed blade over the stalk's last stretch
+	// (the pinnae there run together into it)
+	{
+		float tip_x;
+		float tip_y;
+		float tip_heading;
+
+		float end_x;
+		float end_y;
+		float end_heading;
+
+		cubic_at(style->rachis, 0.88f, &tip_x, &tip_y, &tip_heading);
+		cubic_at(style->rachis, 1.0f, &end_x, &end_y, &end_heading);
+		draw_blade(canvas, tip_x, tip_y, tip_heading, 1.08f * sqrtf((end_x - tip_x) * (end_x - tip_x) + (end_y - tip_y) * (end_y - tip_y)),
+			style->pinna_length * style->segment_length * 0.38f, 0.0f, 6, 0.65f, 0.7f, &style->leaf);
 	}
 }
 
