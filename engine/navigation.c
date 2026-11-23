@@ -6781,6 +6781,11 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 	int32_t expansions = 0;
 	uint64_t search_start = SDL_GetPerformanceCounter();
 
+	// (not worth more than so much: navigation_agent_t.search_most)
+	if (agent->search_most > 0)
+	{
+		budget = SDL_min(budget, agent->search_most);
+	}
 	mesh_note_agent(navigation, agent);
 	navigation->mesh.search_number++;
 	if (navigation->mesh.search_number >= 0x7FFFFFFFu)
@@ -7165,6 +7170,15 @@ static int mesh_search(navigation_t *navigation, const terrain_t *terrain, const
 	navigation->mesh.last_search_ticks = SDL_GetPerformanceCounter() - search_start;
 	navigation->last_search_ticks = navigation->mesh.last_search_ticks;
 	navigation->last_expansions = expansions;
+	// (a way worth only so much, and none found for it: none, not what
+	// was got to)
+	if (!found && agent->search_most > 0)
+	{
+		mesh_chain_length = 0;
+		*waypoint_count_out = 0;
+		*complete_out = false;
+		return NAVIGATION_PATH_NONE;
+	}
 	// The rectangles from the end back to the start
 	for (int32_t id = best; id >= 0 && chain_length < (int32_t)SDL_arraysize(mesh_chain);)
 	{

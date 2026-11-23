@@ -80,6 +80,7 @@ static void send_on(game_t *game, potop_t *potop)
 
 	trail_take(game, goal[0], goal[1]);
 	potop_actor_set_running(potop, game->walk_test_actor, game->walk_test_running);
+	potop_actor_set_effort(potop, game->walk_test_actor, game->walk_test_effort);
 	if (!potop_actor_go_to(potop, game->walk_test_actor, goal[0], goal[1]))
 	{
 		SDL_snprintf(text, sizeof(text), "walk_test_no_way %.2f %.2f", (double)goal[0], (double)goal[1]);

@@ -166,6 +166,11 @@ typedef struct
 	// marked (navigation_path_jump). 0: it does not
 	float jump_up_meters;
 	float jump_down_meters;
+	// How much a way is worth looking for: over 0, a search looks at this
+	// many surfaces at most, and with the goal not got to by then there
+	// is no way (not a part of one: it is not worth setting out). 0: as
+	// far as a search goes, and a part of the way if that is all there is
+	int32_t search_most;
 } navigation_agent_t;
 
 // A door: a way from one cell to another through what is in the way (a

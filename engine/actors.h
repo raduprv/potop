@@ -80,6 +80,14 @@ enum
 
 // A leg for the feet on the ground: two bones that bend (thigh and calf,
 // or upper arm and forearm on all fours) and the foot at their end
+// How much a way is worth looking for (actor_t.effort): the surfaces a
+// search looks at, a base and so many more a meter to the goal as the
+// crow flies (actors.c's EFFORT_SURFACES); ACTOR_EFFORT_ALL: as far as a
+// search goes, and a part of the way if that is all there is
+#define ACTOR_EFFORT_ALL 0
+#define ACTOR_EFFORT_STROLL 1
+#define ACTOR_EFFORT_ERRAND 2
+
 typedef struct
 {
 	int upper;                         // bone indices in the model
@@ -439,6 +447,7 @@ typedef struct
 	float land_z;
 	uint32_t random_state;
 	bool running;                      // goes at its type's run speed (actors_set_running)
+	uint8_t effort;                    // how much a way is worth looking for (actors_set_effort, ACTOR_EFFORT_*)
 } actor_t;
 
 typedef struct
@@ -529,6 +538,12 @@ bool actors_heading_free(const actors_t *actors, uint32_t id, float heading_radi
 bool actors_remove(actors_t *actors, uint32_t id);
 // Goes at its run speed (run_meters_per_second) or at its walk again
 void actors_set_running(actors_t *actors, uint32_t id, bool running);
+// How much its ways are worth looking for, from now on (ACTOR_EFFORT_*):
+// a creature strolling about gives up a way that takes much finding and
+// goes on with what it does (no way: actors_move_to false, or
+// ACTOR_EVENT_NO_PATH on the way); one that is after someone looks as far
+// as a search goes
+void actors_set_effort(actors_t *actors, uint32_t id, int effort);
 // Something hit the actor or fell across its way (for the physics, once
 // actors have a body there): it searches its path again at the next move
 void actors_mark_path_dirty(actors_t *actors, uint32_t id);

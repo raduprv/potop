@@ -229,6 +229,15 @@ along the rectangle's edge; refused for a fifth of a second, its way is
 searched again from where it stands. The height under its feet is the
 terrain's, or the rectangle's on an object.
 
+How far a way is looked for is the game's to say, per creature
+(`potop_actor_set_effort`): with all its effort a search goes as far as
+it can and gives a part of the way if that is all there is (one after
+the player); an errand and a stroll look at a few hundred surfaces,
+more the farther the goal, and then there is no way: the creature goes
+on with what it does. A search with all its effort that looks at 1000
+surfaces or more writes "a long search" in the log, with where from,
+where to and how long it took.
+
 A door opened or shut builds nothing again: the cells of a doorway (and
 under a blocker) are rectangles of their own, and a search asks each
 whom it stops now. Only a door or a blocker that is new, gone or moved

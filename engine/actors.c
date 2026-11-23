@@ -1548,6 +1548,16 @@ int actors_find(const actors_t *actors, uint32_t id)
 	return -1;
 }
 
+void actors_set_effort(actors_t *actors, uint32_t id, int effort)
+{
+	int index = actors_find(actors, id);
+
+	if (index >= 0)
+	{
+		actors->actors[index].effort = (uint8_t)SDL_clamp(effort, ACTOR_EFFORT_ALL, ACTOR_EFFORT_ERRAND);
+	}
+}
+
 void actors_set_running(actors_t *actors, uint32_t id, bool running)
 {
 	int index = actors_find(actors, id);
@@ -1782,6 +1792,10 @@ static bool path_logged(const actors_t *actors, const actor_t *actor)
 #define CORNER_BACK_LEAST_METERS 0.005f // a corner of its way cut short and its steps on refused: to the corner, if it is
 #define CORNER_BACK_MOST_METERS 1.0f   // this far at least and at most
 #define EDGE_SLIDE_SHARE 0.5f         // of its step, at the least, along a rectangle's edge its step is refused at
+// What a way is worth looking for (ACTOR_EFFORT_*): the surfaces a search
+// looks at, a base and so many more a meter to the goal as the crow flies
+static const float EFFORT_SURFACES[3][2] = { { 0.0f, 0.0f }, { 150.0f, 10.0f }, { 300.0f, 30.0f } };
+#define LONG_SEARCH_SURFACES 1000    // a search with all its effort that looks at this many: told in the log
 #define SEARCH_AFTER_SECONDS 0.2f    // steps refused this long: its way searched again from where it stands
 #define SEARCH_AGAIN_SECONDS 1.0f    // and not again sooner
 // Its jump (jump_move): the phases; faced this near before it goes; no
@@ -1961,9 +1975,34 @@ static bool plan_path_logged(const actors_t *actors, actor_t *actor, const actor
 	const terrain_t *terrain, const water_t *water, const char *why, bool quiet)
 {
 	navigation_agent_t agent = agent_of(type);
-	uint64_t start = SDL_GetPerformanceCounter();
-	navigation_result_t result = navigation_find_path(navigation, terrain, water, &agent, actor->x, actor->z, actor->y, actor->goal_x,
-		actor->goal_z, actor->path, &actor->path_count, &actor->path_complete);
+	uint64_t start;
+	navigation_result_t result;
+
+	// (what its way is worth: a stroll is given up if it takes much
+	// finding)
+	if (actor->effort != ACTOR_EFFORT_ALL)
+	{
+		float goal_dx = actor->goal_x - actor->x;
+		float goal_dz = actor->goal_z - actor->z;
+
+		agent.search_most = (int32_t)(EFFORT_SURFACES[actor->effort][0] + EFFORT_SURFACES[actor->effort][1]
+			* SDL_sqrtf(goal_dx * goal_dx + goal_dz * goal_dz));
+	}
+	start = SDL_GetPerformanceCounter();
+	result = navigation_find_path(navigation, terrain, water, &agent, actor->x, actor->z, actor->y, actor->goal_x, actor->goal_z,
+		actor->path, &actor->path_count, &actor->path_complete);
+	// (one after someone, and its way took much finding: told, in the log)
+	if (actor->effort == ACTOR_EFFORT_ALL && navigation->last_expansions >= LONG_SEARCH_SURFACES)
+	{
+		float goal_dx = actor->goal_x - actor->x;
+		float goal_dz = actor->goal_z - actor->z;
+
+		SDL_Log("Actor %u (%s): a long search, %d surfaces in %.1f ms, its goal %.0f m away at (%.1f, %.1f) from (%.1f, %.1f): %s, %d waypoints", actor->id,
+			type->name, (int)navigation->last_expansions, (double)(SDL_GetPerformanceCounter() - start) * 1000.0
+			/ (double)SDL_GetPerformanceFrequency(), (double)SDL_sqrtf(goal_dx * goal_dx + goal_dz * goal_dz), (double)actor->goal_x,
+			(double)actor->goal_z, (double)actor->x, (double)actor->z, result == NAVIGATION_PATH_FOUND ? "found"
+			: result == NAVIGATION_PATH_PARTIAL ? "a part of it" : "none", actor->path_count);
+	}
 
 	// (the waypoints it gets to by a jump)
 	for (int k = 0; k < NAVIGATION_MAX_WAYPOINTS; k++)

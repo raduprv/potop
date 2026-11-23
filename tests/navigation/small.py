@@ -246,6 +246,48 @@ def push(placed):
 	return 1 if bad else 0
 
 
+# What a way is worth looking for: a goal inside a ring of trunks (a wall
+# of them, no way in). A walker with all its effort looks at every
+# surface it can get to and walks as near as it gets; one that strolls
+# looks at 150 and 10 more a meter, gives up and stays. Returns how many
+# of the two went wrong
+RING_MIDDLE = (56.0, 84.0)
+RING = [("nav_trunk", RING_MIDDLE[0] + dx * 0.75, RING_MIDDLE[1] + dz * 0.75) for dx in range(-2, 3) for dz in range(-2, 3)
+	if max(abs(dx), abs(dz)) == 2]
+# (and a field of trunks in twos, each two a wall between them (lone ones
+# are not in the rectangles): surfaces enough for a search to have more
+# to look at than a stroll is worth)
+FIELD = [("nav_trunk", 66.0 + 3.0 * i + side * 0.6, 104.0 + 2.2 * j) for i in range(12) for j in range(10) for side in range(2)]
+
+
+def effort(placed):
+	placed = placed + RING + FIELD
+	results = {}
+	for name in ("all", "stroll"):
+		environment = dict(os.environ)
+		environment.setdefault("VK_ICD_FILENAMES", "/usr/share/vulkan/icd.d/lvp_icd.json")
+		command = ["timeout", "900", "xvfb-run", "-a", os.path.join(ROOT, "potop"), "--houses", "nav_fence"] + nav_stress.BAKE
+		for model in MODELS:
+			points = ["%.2f,%.2f" % (x, z) for placed_name, x, z in placed if placed_name == model]
+			if points and model != "nav_fence":
+				command += ["--put", model, ";".join(points)]
+		command += ["--sim", "20", "--walk_from", "%.2f,%.2f" % START, "--walk_test", "bear", "%.2f,%.2f" % RING_MIDDLE]
+		command += ["--walk_effort", name] if name != "all" else []
+		log = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, text=True).stdout
+		with open(os.path.join(ROOT, "build", "small_effort_%s.log" % name), "w") as out:
+			out.write(log)
+		sent = re.search(r"sent: from .*?: (PARTIAL|NONE|found)[^\n]*?(\d+) surfaces", log)
+		results[name] = (int(sent.group(2)), sent.group(1)) if sent else (0, "?")
+	distance = math.hypot(RING_MIDDLE[0] - START[0], RING_MIDDLE[1] - START[1])
+	most = 150 + 10 * distance
+	bad_all = results["all"][1] != "PARTIAL" or results["all"][0] <= most
+	bad_stroll = results["stroll"][1] != "NONE" or results["stroll"][0] > most + 1
+	print("effort all           %d surfaces looked at, its way: %s%s" % (results["all"][0], results["all"][1], "!" if bad_all else ""))
+	print("effort stroll        %d surfaces looked at (%d at most), its way: %s%s" % (results["stroll"][0], most, results["stroll"][1],
+		"!" if bad_stroll else ""))
+	return (1 if bad_all else 0) + (1 if bad_stroll else 0)
+
+
 def main():
 	if len(sys.argv) < 2 or sys.argv[1] not in ("build", "run"):
 		sys.exit(__doc__ or "small.py build | run [TYPE...]")
@@ -263,6 +305,7 @@ def main():
 	if len([argument for argument in sys.argv[2:] if not argument.startswith("--")]) == 0:
 		wrong += take(placed)
 		wrong += push(placed)
+		wrong += effort(placed)
 	print("%d wrong (! above)" % wrong)
 	sys.exit(1 if wrong else 0)
 

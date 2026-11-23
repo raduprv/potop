@@ -326,6 +326,9 @@ def run(types):
 		text = ";".join("%.2f,%.2f" % goal for goal in goals)
 		trace = os.path.join(ROOT, "build", "nav_stress_%s.trace" % agent)
 		running = ["--walk_run"] if agent.endswith("+run") else []
+		# (NAV_EFFORT=stroll or errand: its ways worth only so much looking
+		# for; the goals it cannot get to are given up, not walked towards)
+		running += ["--walk_effort", os.environ["NAV_EFFORT"]] if os.environ.get("NAV_EFFORT") else []
 		command, environment = game_command(["--sim", "3000", "--trace", trace, "--walk_from", "%.2f,%.2f" % home] + running
 			+ ["--walk_test", agent.split("+")[0], text])
 		log = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, text=True).stdout

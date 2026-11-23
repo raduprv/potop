@@ -1307,6 +1307,11 @@ static const potop_stealth_t *stealth_of(const potop_t *potop)
 	return potop->stealth_set ? &potop->stealth : &DEFAULT_STEALTH;
 }
 
+void potop_actor_set_effort(potop_t *potop, uint32_t id, int effort)
+{
+	actors_set_effort(&potop->world.actors, id, effort);
+}
+
 void potop_actor_set_running(potop_t *potop, uint32_t id, bool running)
 {
 	actors_set_running(&potop->world.actors, id, running);

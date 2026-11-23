@@ -4,7 +4,7 @@
 //     potop [--map NAME] [--seed N] [--width W --height H] [--houses [CATEGORY]]
 //           [--put TYPE X,Z[;X,Z...]]... [--take X,Z@SECONDS[;...]] [--push X,Z,IX,IZ@SECONDS] [--set SECTION.KEY=VALUE]... [--hour H]
 //           [--sim SECONDS [--sim-step S]] [--trace FILE]
-//           [--walk_test TYPE X,Z[;X,Z...] [--walk_from X,Z] [--walk_run] [--walk_chase SPEED[,PAUSE]]]
+//           [--walk_test TYPE X,Z[;X,Z...] [--walk_from X,Z] [--walk_run] [--walk_effort stroll|errand] [--walk_chase SPEED[,PAUSE]]]
 //
 // --houses: no map, small flat ground with every house (objects.ini's
 // category "buildings", or "fable", or the one named) in rows
@@ -44,6 +44,7 @@ static const char *walk_test_type = NULL;
 static const char *walk_test_goals = NULL;
 static const char *walk_test_from = NULL;
 static bool walk_test_running = false;
+static int walk_test_effort = POTOP_EFFORT_ALL;
 static float walk_chase_speed = 0.0f;
 static float walk_chase_pause = 0.0f;
 
@@ -152,6 +153,13 @@ static void read_command_line(potop_options_t *options, int argument_count, char
 			walk_test_from = value;
 			i++;
 		}
+		else if (SDL_strcmp(argument, "--walk_effort") == 0 && value != NULL)
+		{
+			// (stroll, errand: a way that takes much finding is given up)
+			walk_test_effort = SDL_strcmp(value, "stroll") == 0 ? POTOP_EFFORT_STROLL : SDL_strcmp(value, "errand") == 0 ? POTOP_EFFORT_ERRAND
+				: POTOP_EFFORT_ALL;
+			i++;
+		}
 		else if (SDL_strcmp(argument, "--walk_run") == 0)
 		{
 			walk_test_running = true;
@@ -195,6 +203,7 @@ int main(int argument_count, char **arguments)
 	{
 		game_walk_test_set(&game, walk_test_type, walk_test_goals, walk_test_from);
 		game.walk_test_running = walk_test_running;
+		game.walk_test_effort = walk_test_effort;
 		game.walk_chase_speed = walk_chase_speed;
 		game.walk_chase_pause = walk_chase_pause;
 	}

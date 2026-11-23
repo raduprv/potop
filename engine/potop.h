@@ -454,6 +454,16 @@ void potop_actor_stop(potop_t *potop, uint32_t id);
 // Goes at its type's run speed (actors.ini run_meters_per_second), or walks
 // again
 void potop_actor_set_running(potop_t *potop, uint32_t id, bool running);
+// How much its ways are worth looking for, from now on: POTOP_EFFORT_ALL
+// (as it starts: as far as a search goes, a part of the way if that is
+// all there is; a search that looks at 1000 surfaces or more is told in
+// the log), POTOP_EFFORT_ERRAND, POTOP_EFFORT_STROLL (a search looks at
+// 300 + 30 a meter, 150 + 10 a meter surfaces; no way by then:
+// potop_actor_go_to false, it goes on with what it does)
+#define POTOP_EFFORT_ALL 0
+#define POTOP_EFFORT_STROLL 1
+#define POTOP_EFFORT_ERRAND 2
+void potop_actor_set_effort(potop_t *potop, uint32_t id, int effort);
 // One of its model's actions (sleeping, attacking...); false if it has
 // none of that name. Walking, it walks again
 bool potop_actor_play(potop_t *potop, uint32_t id, const char *action);

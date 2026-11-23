@@ -401,6 +401,21 @@ are joined at all), a coarse graph for ways of kilometers.
     overlay shows a let-go region as open ground; the flyers read
     `object_top`.
 
+- What a way is worth looking for (Nov 24 2026; Radu's: the actor says
+  how much its way matters). `navigation_agent_t.search_most`: a search
+  looks at so many surfaces at most, and with the goal not got to by
+  then there is no way at all (not a part of one). An actor's effort
+  (`actors_set_effort`, `potop_actor_set_effort`): all (as before: as
+  far as a search goes, a part of the way if that is all), an errand
+  (300 + 30 a meter as the crow flies), a stroll (150 + 10 a meter).
+  No way: `potop_actor_go_to` false, the creature goes on with what it
+  does. The bear: strolling a stroll, after a noise or off from a shot
+  an errand, after the player all. A search with all its effort that
+  looks at 1000 surfaces or more is told in the log ("a long search").
+  No islands (Radu: not worth it). small.py's effort: a goal inside a
+  ring of trunks, all 384 surfaces and a part of the way, a stroll 250
+  and none.
+
 ## Known and left
 
 - A memory regression of Nov 18: a cell partly under something gets a

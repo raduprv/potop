@@ -398,6 +398,7 @@ typedef struct
 	float walk_test_wait;          // seconds till it is put down / still since it stopped
 	bool walk_test_done;           // every goal tried
 	bool walk_test_running;        // it runs to them (--walk_run)
+	int walk_test_effort;          // what its ways are worth looking for (--walk_effort: POTOP_EFFORT_*)
 	float walk_test_goal_seconds;  // since it was sent to this goal
 	float walk_test_trail[2][2];   // the trail's box (minimum, maximum), for the trace's map
 	// (a chase, --walk_chase SPEED: the goals are a runner's route, a

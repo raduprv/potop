@@ -129,7 +129,7 @@ static void stand(potop_t *potop, bear_mind_t *bear)
 // there); in deep water or inside a rock it does not even look for a way
 // (the search for a way to somewhere it cannot get costs the most). None:
 // it stays where it is and tries again a few seconds later
-static void go_to(game_t *game, potop_t *potop, bear_mind_t *bear, float x, float z, bool running)
+static void go_to(game_t *game, potop_t *potop, bear_mind_t *bear, float x, float z, bool running, int effort)
 {
 	potop_actor_info_t actor;
 	double now = potop_world_time(potop);
@@ -143,6 +143,7 @@ static void go_to(game_t *game, potop_t *potop, bear_mind_t *bear, float x, floa
 	if (potop_actor_stand_near(potop, bear->actor_id, x, z, GO_NEAR_METERS, &near_x, &near_z))
 	{
 		potop_actor_set_running(potop, bear->actor_id, running);
+		potop_actor_set_effort(potop, bear->actor_id, effort);
 		bear->going = potop_actor_go_to(potop, bear->actor_id, near_x, near_z);
 		// (where it was sent after: the one who sends it asks whether that
 		// has moved on, not the place by it)
@@ -223,7 +224,7 @@ static void flee(game_t *game, potop_t *potop, bear_mind_t *bear, const potop_ac
 	potop_actor_stop_looking(potop, bear->actor_id);
 	bear->provoked = false;
 	set_state(bear, BEAR_FLEE);
-	go_to(game, potop, bear, actor->x + away_x * scale, actor->z + away_z * scale, true);
+	go_to(game, potop, bear, actor->x + away_x * scale, actor->z + away_z * scale, true, POTOP_EFFORT_ERRAND);
 }
 
 // What it heard since it last listened: the nearest of the loud ones, the
@@ -352,7 +353,7 @@ static void think(game_t *game, potop_t *potop, bear_mind_t *bear, const potop_a
 					find_shade(game, potop, actor, &x, &z);
 					set_state(bear, BEAR_REST);
 					bear->rest_seconds = random_between(game, REST_SECONDS_LEAST, REST_SECONDS_MOST);
-					go_to(game, potop, bear, x, z, false);
+					go_to(game, potop, bear, x, z, false, POTOP_EFFORT_STROLL);
 					break;
 				}
 			}
@@ -376,7 +377,7 @@ static void think(game_t *game, potop_t *potop, bear_mind_t *bear, const potop_a
 						break;
 					}
 				}
-				go_to(game, potop, bear, x, z, false);
+				go_to(game, potop, bear, x, z, false, POTOP_EFFORT_STROLL);
 			}
 			break;
 		case BEAR_ALERT:
@@ -417,12 +418,12 @@ static void think(game_t *game, potop_t *potop, bear_mind_t *bear, const potop_a
 					set_state(bear, BEAR_WANDER);
 					bear->has_interest = false;
 					bear->wander_heading = away;
-					go_to(game, potop, bear, actor->x + SDL_sinf(away) * KNOWN_OFF_METERS, actor->z + SDL_cosf(away) * KNOWN_OFF_METERS, false);
+					go_to(game, potop, bear, actor->x + SDL_sinf(away) * KNOWN_OFF_METERS, actor->z + SDL_cosf(away) * KNOWN_OFF_METERS, false, POTOP_EFFORT_ERRAND);
 				}
 				else if (bear->has_interest && (bear->suspicion > 0.2f || loud))
 				{
 					set_state(bear, BEAR_INVESTIGATE);
-					go_to(game, potop, bear, bear->interest_x, bear->interest_z, false);
+					go_to(game, potop, bear, bear->interest_x, bear->interest_z, false, POTOP_EFFORT_ERRAND);
 				}
 				else
 				{
@@ -438,7 +439,7 @@ static void think(game_t *game, potop_t *potop, bear_mind_t *bear, const potop_a
 			}
 			if (heard)
 			{
-				go_to(game, potop, bear, heard_x, heard_z, false);
+				go_to(game, potop, bear, heard_x, heard_z, false, POTOP_EFFORT_ERRAND);
 			}
 			if (bear->state_seconds > INVESTIGATE_SECONDS || (bear->going && arrived(bear, actor) && bear->state_seconds > 3.0f))
 			{
@@ -502,7 +503,7 @@ static void think(game_t *game, potop_t *potop, bear_mind_t *bear, const potop_a
 			{
 				// After them, running (the path again when they moved on)
 				potop_actor_stop_looking(potop, bear->actor_id);
-				go_to(game, potop, bear, camera->walker_x, camera->walker_z, true);
+				go_to(game, potop, bear, camera->walker_x, camera->walker_z, true, POTOP_EFFORT_ALL);
 			}
 			break;
 		case BEAR_FLEE:
