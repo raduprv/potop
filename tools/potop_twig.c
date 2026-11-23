@@ -912,9 +912,11 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 		{
 			continue;
 		}
+		// (as big as a shoot's, whatever its stem)
+		float size = fminf(shoots[i].radius, 0.012f);
+
 		shoot_point(&shoots[i], 0.97f, &x, &y, &heading);
-		draw_segment(canvas, x, y, shoots[i].radius * 1.3f, x + sinf(heading) * shoots[i].radius * 5.0f, y - cosf(heading) * shoots[i].radius * 5.0f,
-			shoots[i].radius * 0.4f, 0.0f, 1.0f, bud);
+		draw_segment(canvas, x, y, size * 1.3f, x + sinf(heading) * size * 5.0f, y - cosf(heading) * size * 5.0f, size * 0.4f, 0.0f, 1.0f, bud);
 	}
 	free(needles);
 }
