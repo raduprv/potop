@@ -274,6 +274,209 @@ static void draw_curve(canvas_t *canvas, float ax, float ay, float cx, float cy,
 	}
 }
 
+// --- A needle --------------------------------------------------------------------------
+
+// What a conifer's needles look like: their outline, how round they are,
+// their colors; one for every needle of a kind (each needle varies it a
+// little). A pine's: long, round, rounded tips, a pale foot; a spruce's:
+// short, four sided, sharp; a fir's: flat, notched, two pale stripes under
+typedef struct
+{
+	float foot_narrow;             // the foot this much narrower than the middle (where it leaves the twig)
+	float tip_round;               // 1: the tip a half round; 0: drawn out to a point
+	float tip_length;              // the tip's share of the length (where it narrows)
+	float flat;                    // 0: round across (lit like a cylinder); 1: flat (lit evenly)
+	float foot[3];                 // the color at the foot ...
+	float middle[3];               // ... along most of it ...
+	float tip[3];                  // ... and at the tip
+	float foot_to;                 // the foot's color up to this far along
+	float tip_from;                // the tip's color from this far along
+	float stripes;                 // pale stripes along it (stomata), 0: none, 1: two plain ones
+	float stripe_color[3];
+	float streaks;                 // fine lines along it, lighter and darker (0: monochrome)
+	float gloss;                   // a soft bright band along its lit side
+	float shade;                   // how dark its shadowed side gets (0..1)
+} needle_shape_t;
+
+// One needle: from (ax, ay) along a curve through (cx, cy) to (bx, by),
+// half_width at its widest, drawn in the shape's outline and colors;
+// brightness and hue_shift (towards yellow) its own; dry: a brown tip from
+// this far along (1: none)
+static void draw_needle_shape(canvas_t *canvas, const needle_shape_t *shape, float ax, float ay, float cx, float cy, float bx, float by,
+	float half_width, float brightness, float hue_shift, float dry, uint32_t grain_seed)
+{
+	enum { PIECES = 12 };
+	float points[PIECES + 1][2];
+	float lengths[PIECES + 1];
+	float s = canvas->scale * canvas->fit;
+	float total;
+	float left = 1e9f;
+	float right = -1e9f;
+	float top = 1e9f;
+	float bottom = -1e9f;
+	float grain_offset = (float)(grain_seed % 1000u) * 7.31f;
+
+	// The curve in the drawing's pixels, and how far along it each point is
+	for (int i = 0; i <= PIECES; i++)
+	{
+		float t = (float)i / (float)PIECES;
+		float u = 1.0f - t;
+		float x = u * u * ax + 2.0f * u * t * cx + t * t * bx;
+		float y = u * u * ay + 2.0f * u * t * cy + t * t * by;
+
+		points[i][0] = (canvas->foot_x + (x - canvas->foot_x) * canvas->fit) * canvas->scale;
+		points[i][1] = (canvas->foot_y + (y - canvas->foot_y) * canvas->fit) * canvas->scale;
+		lengths[i] = i == 0 ? 0.0f
+			: lengths[i - 1] + sqrtf((points[i][0] - points[i - 1][0]) * (points[i][0] - points[i - 1][0])
+				+ (points[i][1] - points[i - 1][1]) * (points[i][1] - points[i - 1][1]));
+		left = fminf(left, points[i][0]);
+		right = fmaxf(right, points[i][0]);
+		top = fminf(top, points[i][1]);
+		bottom = fmaxf(bottom, points[i][1]);
+	}
+	total = fmaxf(lengths[PIECES], 1e-3f);
+	half_width *= s;
+	{
+		int x0 = (int)floorf(left - half_width - 2.0f);
+		int x1 = (int)ceilf(right + half_width + 2.0f);
+		int y0 = (int)floorf(top - half_width - 2.0f);
+		int y1 = (int)ceilf(bottom + half_width + 2.0f);
+
+		x0 = x0 < 0 ? 0 : x0;
+		y0 = y0 < 0 ? 0 : y0;
+		x1 = x1 >= canvas->width ? canvas->width - 1 : x1;
+		y1 = y1 >= canvas->height ? canvas->height - 1 : y1;
+		for (int y = y0; y <= y1; y++)
+		{
+			for (int x = x0; x <= x1; x++)
+			{
+				float px = (float)x + 0.5f;
+				float py = (float)y + 0.5f;
+				float best = 1e9f;
+				float along = 0.0f;
+				float side = 0.0f;
+				float width;
+				float across;
+				float coverage;
+				float lit;
+				float color[3];
+				float *pixel;
+
+				// (the nearest point of the curve: how far along, which side)
+				for (int i = 0; i < PIECES; i++)
+				{
+					float dx = points[i + 1][0] - points[i][0];
+					float dy = points[i + 1][1] - points[i][1];
+					float length_squared = dx * dx + dy * dy;
+					float t = length_squared > 0.0f ? clampf(((px - points[i][0]) * dx + (py - points[i][1]) * dy) / length_squared, 0.0f, 1.0f) : 0.0f;
+					float ex = px - (points[i][0] + t * dx);
+					float ey = py - (points[i][1] + t * dy);
+					float distance = ex * ex + ey * ey;
+
+					if (distance < best)
+					{
+						best = distance;
+						along = (lengths[i] + t * sqrtf(length_squared)) / total;
+						// (signed: its right of the heading positive)
+						side = (dx * ey - dy * ex) >= 0.0f ? 1.0f : -1.0f;
+					}
+				}
+				best = sqrtf(best);
+				// The outline: a narrower foot, full along, the tip a half
+				// round or drawn out
+				width = half_width * (1.0f - shape->foot_narrow * powf(fmaxf(1.0f - along / 0.12f, 0.0f), 2.0f));
+				if (along > 1.0f - shape->tip_length)
+				{
+					float into = (along - (1.0f - shape->tip_length)) / fmaxf(shape->tip_length, 1e-3f);
+					float round = sqrtf(fmaxf(1.0f - into * into, 0.0f));
+					float pointed = 1.0f - into;
+
+					width *= mixf(pointed, round, shape->tip_round);
+				}
+				coverage = clampf(width - best + 0.5f, 0.0f, 1.0f);
+				if (coverage <= 0.0f || width <= 0.0f)
+				{
+					continue;
+				}
+				across = clampf(side * best / width, -1.0f, 1.0f);
+				// Lit from the upper left: a cylinder (or a flat strip)
+				{
+					float normal_x = across * (1.0f - shape->flat);
+					float normal_z = sqrtf(fmaxf(1.0f - normal_x * normal_x, 0.0f));
+					// (which side of the heading faces the light: the heading's
+					// right is towards the light when it points up and left)
+					float dx = points[PIECES][0] - points[0][0];
+					float dy = points[PIECES][1] - points[0][1];
+					float facing = (-dy * -0.7f + dx * -0.7f) >= 0.0f ? 1.0f : -1.0f;
+
+					lit = clampf(0.55f + 0.45f * (normal_x * facing * 0.8f + normal_z * 0.6f), 0.0f, 1.0f);
+					lit = mixf(1.0f - shape->shade, 1.0f, lit);
+					for (int k = 0; k < 3; k++)
+					{
+						float base = shape->middle[k];
+
+						if (along < shape->foot_to)
+						{
+							base = mixf(shape->foot[k], base, along / fmaxf(shape->foot_to, 1e-3f));
+						}
+						if (along > shape->tip_from)
+						{
+							base = mixf(base, shape->tip[k], (along - shape->tip_from) / fmaxf(1.0f - shape->tip_from, 1e-3f));
+						}
+						// (towards yellow, its own)
+						base += hue_shift * (k == 0 ? 0.06f : (k == 1 ? 0.03f : -0.03f));
+						if (along > dry)
+						{
+							float brown[3] = { 0.44f, 0.32f, 0.19f };
+
+							base = mixf(base, brown[k], clampf((along - dry) / 0.06f, 0.0f, 1.0f));
+						}
+						color[k] = base * lit * brightness;
+					}
+					// Pale stripes along it
+					if (shape->stripes > 0.0f)
+					{
+						float stripe = clampf(1.0f - fabsf(fabsf(across) - 0.45f) / 0.18f, 0.0f, 1.0f) * shape->stripes;
+
+						for (int k = 0; k < 3; k++)
+						{
+							color[k] = mixf(color[k], shape->stripe_color[k] * lit * brightness, stripe * 0.7f);
+						}
+					}
+					// Fine lines along it, lighter and darker
+					if (shape->streaks > 0.0f)
+					{
+						float streak = value_noise(across * 6.0f + grain_offset, along * total / 40.0f) - 0.5f;
+						float fleck = value_noise(across * 3.0f - grain_offset, along * total / 9.0f) - 0.5f;
+
+						for (int k = 0; k < 3; k++)
+						{
+							color[k] *= 1.0f + shape->streaks * (streak * 0.5f + fleck * 0.25f);
+						}
+					}
+					// A soft bright band on the lit side
+					if (shape->gloss > 0.0f)
+					{
+						float band = clampf(1.0f - fabsf(across * facing - 0.3f) / 0.3f, 0.0f, 1.0f);
+
+						band = band * band * (3.0f - 2.0f * band);
+						for (int k = 0; k < 3; k++)
+						{
+							color[k] += shape->gloss * band * 0.12f * brightness;
+						}
+					}
+				}
+				pixel = &canvas->pixels[((size_t)y * (size_t)canvas->width + (size_t)x) * 4];
+				for (int k = 0; k < 3; k++)
+				{
+					pixel[k] = clampf(color[k], 0.0f, 1.0f) * coverage + pixel[k] * (1.0f - coverage);
+				}
+				pixel[3] = coverage + pixel[3] * (1.0f - coverage);
+			}
+		}
+	}
+}
+
 // --- A shoot ---------------------------------------------------------------------------
 
 typedef struct
@@ -367,6 +570,7 @@ typedef struct
 	float broken_share;            // the needles broken short (a dry stub of a tip)
 	paint_t sheath;                // a pair's sheath at its foot (its tip_from 0: none)
 	float foot_pale[3];            // a needle's color where it leaves its sheath
+	const needle_shape_t *shape;   // the needles drawn in this outline and colors (NULL: as shaded strokes)
 } needle_style_t;
 
 #define NEEDLES_MAX 20000
@@ -529,8 +733,16 @@ static void draw_needles(canvas_t *canvas, needle_t *needles, int count, const n
 			draw_curve(canvas, needle->x + offset, needle->y + offset, control_x + offset, control_y + offset, end_x + offset, end_y + offset,
 				needle->radius * 3.2f, needle->radius * 1.2f, &shade);
 		}
-		draw_curve(canvas, needle->x, needle->y, control_x, control_y, end_x, end_y, needle->radius,
-			needle->radius * (style->tip_radius > 0.0f ? style->tip_radius : 0.15f), &paint);
+		if (style->shape != NULL)
+		{
+			draw_needle_shape(canvas, style->shape, needle->x, needle->y, control_x, control_y, end_x, end_y, needle->radius, darken,
+				(needle->hue - 0.5f) * 1.2f, needle->dry, (uint32_t)i * 2654435761u);
+		}
+		else
+		{
+			draw_curve(canvas, needle->x, needle->y, control_x, control_y, end_x, end_y, needle->radius,
+				needle->radius * (style->tip_radius > 0.0f ? style->tip_radius : 0.15f), &paint);
+		}
 		if (needle->sheath && style->sheath.tip_from > 0.0f)
 		{
 			// (the pair's sheath: a short brown grey sleeve at their foot)
@@ -629,9 +841,9 @@ static void draw_twig(canvas_t *canvas, random_t *random, const needle_style_t *
 static void draw_pine(canvas_t *canvas, random_t *random)
 {
 	needle_style_t style = {
-		.length_low = 0.17f, .length_high = 0.23f, .radius = 0.0068f,
+		.length_low = 0.17f, .length_high = 0.23f, .radius = 0.0058f,
 		.angle_low = 0.95f, .angle_high = 1.5f, .curl = 0.42f,
-		.per_bundle = 2, .bundles_per_unit = 270.0f, .crowding = 1.3f, .bare = 0.08f, .brush = 1.2f,
+		.per_bundle = 2, .bundles_per_unit = 320.0f, .crowding = 1.3f, .bare = 0.08f, .brush = 1.2f,
 		.greens = {
 			{ .dark = { 0.16f, 0.21f, 0.12f }, .light = { 0.40f, 0.47f, 0.29f }, .tip = { 0.40f, 0.46f, 0.28f }, .tip_from = 1.0f },
 			{ .dark = { 0.20f, 0.24f, 0.13f }, .light = { 0.48f, 0.52f, 0.31f }, .tip = { 0.47f, 0.51f, 0.30f }, .tip_from = 1.0f } },
@@ -641,6 +853,18 @@ static void draw_pine(canvas_t *canvas, random_t *random)
 		.sheath = { .dark = { 0.18f, 0.11f, 0.07f }, .light = { 0.42f, 0.28f, 0.18f }, .tip = { 0.40f, 0.30f, 0.20f }, .tip_from = 0.5f },
 		.foot_pale = { 0.46f, 0.50f, 0.31f },
 	};
+	// The needle: round, a little narrower at its foot, its tip rounded;
+	// pale yellowish at its foot, grey green along, a touch lighter at the
+	// tip, fine streaks along it, a soft gloss
+	static const needle_shape_t needle = {
+		.foot_narrow = 0.3f, .tip_round = 0.75f, .tip_length = 0.07f, .flat = 0.15f,
+		.foot = { 0.52f, 0.52f, 0.32f }, .middle = { 0.36f, 0.43f, 0.27f }, .tip = { 0.41f, 0.46f, 0.29f },
+		.foot_to = 0.12f, .tip_from = 0.82f,
+		.stripes = 0.12f, .stripe_color = { 0.46f, 0.52f, 0.40f },
+		.streaks = 0.35f, .gloss = 0.7f, .shade = 0.45f,
+	};
+
+	style.shape = &needle;
 	// (the shoots reddish brown, the stem below grey brown and scaly)
 	paint_t shoot_bark = { .dark = { 0.22f, 0.11f, 0.06f }, .light = { 0.55f, 0.32f, 0.20f }, .tip = { 0.50f, 0.30f, 0.18f }, .tip_from = 1.0f,
 		.rough = 0.5f };
