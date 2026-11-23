@@ -29,3 +29,14 @@
 // a base at 1000 m; the Earth's would put it at 110 km, too far to march,
 // and leave a clear band above the horizon)
 #define CLOUD_PLANET_RADIUS 200000.0
+
+// How much of a cut out leaf picture's texel is thin green tissue (lets the
+// sun through), not wood (a twig picture's stem, its bark: opaque): its
+// green over its red and blue, of its green (linear color). The conifers'
+// twigs lit through their brown shoots glowed rust red against the sun
+float leaf_tissue(vec3 linear_color)
+{
+	float excess = linear_color.g - max(linear_color.r, linear_color.b);
+
+	return smoothstep(0.02, 0.15, excess / max(linear_color.g, 1e-3));
+}

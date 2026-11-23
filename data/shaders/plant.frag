@@ -187,6 +187,9 @@ void main()
 			normal = -normal;
 		}
 		albedo = pow(color.rgb, vec3(2.2));
+		// (the picture's own: green tissue lets the sun through, its wood
+		// not; before the autumn's colors)
+		float tissue = leaf_tissue(albedo);
 		// Each card its own shade of green, its tip a little lighter and
 		// yellower: the new growth (the conifers' most). Subtle: as light as
 		// the leaf itself, a quarter more (a dark needle's tip stays dark,
@@ -215,7 +218,7 @@ void main()
 		{
 			float facing_sun = dot(normal, sun_direction);
 
-			diffuse = max(facing_sun * 0.6 + 0.4, 0.0) + LEAF_SUN_THROUGH * max(-facing_sun, 0.0);
+			diffuse = mix(max(facing_sun, 0.0), max(facing_sun * 0.6 + 0.4, 0.0) + LEAF_SUN_THROUGH * max(-facing_sun, 0.0), tissue);
 		}
 		// Deep in the crown (the tangent's size, tools/potop_plant)
 		{
@@ -224,7 +227,7 @@ void main()
 			shade = tangent_size > 1e-3 ? min(tangent_size, 1.5) : 1.0;
 		}
 		// The sun through the leaves, seen against it
-		through = pow(max(dot(-towards_eye, sun_direction), 0.0), 3.0) * 0.45;
+		through = pow(max(dot(-towards_eye, sun_direction), 0.0), 3.0) * 0.45 * tissue;
 	}
 	else
 	{

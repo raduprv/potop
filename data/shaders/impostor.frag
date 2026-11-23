@@ -151,6 +151,8 @@ void main()
 	gl_FragDepth = clamp(clip.z / clip.w, 0.0, 1.0);
 
 	vec3 albedo = pow(color, vec3(2.2));
+	// (a plant's wood lets no sun through: its twigs' stems, its bark)
+	leaf *= plant ? leaf_tissue(albedo) : 1.0;
 	float facing_sun = dot(normal, sun_direction);
 	float diffuse = mix(max(facing_sun, 0.0), max(facing_sun * 0.6 + 0.4, 0.0) + 0.35 * max(-facing_sun, 0.0), leaf);   // (plant.frag's LEAF_SUN_THROUGH)
 	// The shadow maps hold the real model: looked up a little towards the
