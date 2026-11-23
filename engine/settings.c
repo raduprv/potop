@@ -453,7 +453,7 @@ void settings_set_defaults(settings_t *settings)
 	settings->terrain.talus_slope = 0.8f;
 	settings->terrain.gully_depth_meters = 3.0f;
 	settings->terrain.crest_rounding_meters = 8.0f;
-	settings->terrain.ledges = 0.5f;
+	settings->terrain.ledges = 0.0f;
 	settings->terrain.mountain_soil_pockets = 0.5f;
 	settings->terrain.rock_slope = 0.85f;
 	settings->terrain.rock_height_fraction = 0.78f;
