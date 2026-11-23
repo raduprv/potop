@@ -3113,7 +3113,7 @@ static void sketch_fill_fields(ui_t *ui, const ui_view_t *view)
 	ui->sketch_max_height = terrain->max_height_meters;
 	ui->sketch_erosion = terrain->erosion_droplets;
 	ui->sketch_crest_rounding = terrain->crest_rounding_meters;
-	ui->sketch_ledges = terrain->ledges;
+	ui->sketch_shelves = terrain->shelves;
 	SDL_snprintf(ui->sketch_seed_input, sizeof(ui->sketch_seed_input), "%u", view->seed);
 	if (view->project_name[0] != '\0')
 	{
@@ -3261,7 +3261,7 @@ static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
 	slider_row(ui, "Erosion", &ui->sketch_erosion, 0.0f, 4.0f, 0.1f, "%.1f", "How much the rain wears the land when it is made (0: none)");
 	slider_row(ui, "Round crests", &ui->sketch_crest_rounding, 0.0f, 40.0f, 1.0f, "%.0f m",
 		"The crests and peaks rounded over about this many meters (0: only blades and spikes worn down)");
-	slider_row(ui, "Ledges", &ui->sketch_ledges, 0.0f, 1.0f, 0.05f, "%.2f", "Short shelves on the mountains' steep faces, where soil and trees hold (0: none)");
+	slider_row(ui, "Shelves", &ui->sketch_shelves, 0.0f, 1.0f, 0.05f, "%.2f", "Flat patches here and there on the mountains' steep faces, where soil and trees hold (0: none)");
 	nk_layout_row_dynamic(context, SMALL_ROW_HEIGHT, 1);
 	SDL_snprintf(line, sizeof(line), "%.1f x %.1f km", (double)(map_meters * 0.001f), (double)(map_meters * 0.001f));
 	nk_label(context, line, NK_TEXT_LEFT);
@@ -3394,6 +3394,18 @@ static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
 			ui->sketch_preview_small = !full;
 		}
 	}
+	// (under it, before the buttons: Make the map waits for it)
+	if (taken)
+	{
+		nk_layout_row_dynamic(context, ROW_HEIGHT, 1);
+		SDL_snprintf(line, sizeof(line), replaces_open ? "Replace this project's map (everything on it)" : "Replace \"%s\"'s map", clean);
+		checkbox_row(ui, line, &ui->sketch_confirm_replace, "Its map is made again from the sketch: what was done on it is lost");
+	}
+	else
+	{
+		nk_layout_row_dynamic(context, SMALL_ROW_HEIGHT, 1);
+		nk_label(context, clean[0] == '\0' ? "The project needs a name." : "A new project.", NK_TEXT_LEFT);
+	}
 	nk_layout_row_dynamic(context, ROW_HEIGHT + 2.0f, 2);
 	tooltip_if_hovered(context, "The land in 3D, outside any project, no objects (back to the sketch: New or Sketch)");
 	if (nk_button_label(context, "Preview"))
@@ -3415,17 +3427,6 @@ static void sketch_tools(ui_t *ui, const ui_view_t *view, float map_meters)
 	if (clean[0] == '\0' || (taken && !ui->sketch_confirm_replace))
 	{
 		nk_widget_disable_end(context);
-	}
-	if (taken)
-	{
-		nk_layout_row_dynamic(context, ROW_HEIGHT, 1);
-		SDL_snprintf(line, sizeof(line), replaces_open ? "Replace this project's map (everything on it)" : "Replace \"%s\"'s map", clean);
-		checkbox_row(ui, line, &ui->sketch_confirm_replace, "Its map is made again from the sketch: what was done on it is lost");
-	}
-	else
-	{
-		nk_layout_row_dynamic(context, SMALL_ROW_HEIGHT, 1);
-		nk_label(context, clean[0] == '\0' ? "The project needs a name." : "A new project.", NK_TEXT_LEFT);
 	}
 	if (view->sketch_view != NULL && !view->sketch_view->painted)
 	{

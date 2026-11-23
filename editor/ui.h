@@ -284,7 +284,7 @@ typedef struct
 	float sketch_max_height;       // meters
 	float sketch_erosion;          // droplets a texel (terrain_settings_t.erosion_droplets)
 	float sketch_crest_rounding;   // meters (terrain_settings_t.crest_rounding_meters)
-	float sketch_ledges;           // 0..1 (terrain_settings_t.ledges)
+	float sketch_shelves;          // 0..1 (terrain_settings_t.shelves)
 	bool sketch_confirm_replace;
 	bool sketch_new_pending;       // opened as New (the command line's): its fields afresh when it opens
 	bool state_loaded;

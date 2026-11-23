@@ -35,7 +35,7 @@ static const setting_field_t setting_fields[] =
 	FIELD("terrain", "talus_slope", SETTING_FLOAT, terrain.talus_slope),
 	FIELD("terrain", "gully_depth_meters", SETTING_FLOAT, terrain.gully_depth_meters),
 	FIELD("terrain", "crest_rounding_meters", SETTING_FLOAT, terrain.crest_rounding_meters),
-	FIELD("terrain", "ledges", SETTING_FLOAT, terrain.ledges),
+	FIELD("terrain", "shelves", SETTING_FLOAT, terrain.shelves),
 	FIELD("terrain", "mountain_soil_pockets", SETTING_FLOAT, terrain.mountain_soil_pockets),
 	FIELD("terrain", "rock_slope", SETTING_FLOAT, terrain.rock_slope),
 	FIELD("terrain", "rock_height_fraction", SETTING_FLOAT, terrain.rock_height_fraction),
@@ -453,7 +453,7 @@ void settings_set_defaults(settings_t *settings)
 	settings->terrain.talus_slope = 0.8f;
 	settings->terrain.gully_depth_meters = 3.0f;
 	settings->terrain.crest_rounding_meters = 8.0f;
-	settings->terrain.ledges = 0.0f;
+	settings->terrain.shelves = 0.5f;
 	settings->terrain.mountain_soil_pockets = 0.5f;
 	settings->terrain.rock_slope = 0.85f;
 	settings->terrain.rock_height_fraction = 0.78f;
