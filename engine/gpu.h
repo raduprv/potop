@@ -98,6 +98,12 @@ typedef struct
 	int mipmap_capacity;
 	SDL_GPUTransferBuffer *transfer;
 	uint32_t transfer_capacity;
+	// ...and a small one for what a frame sends up (the interface's
+	// vertices, a chunk, the objects touched): the big one grows to the
+	// largest load ever staged (the textures at the start, 64 MB), and
+	// being mapped cycled at every flush, several a frame, the driver was
+	// asked for copies of all of that
+	SDL_GPUTransferBuffer *transfer_small;
 
 	// Samplers everyone uses
 	SDL_GPUSampler *linear_repeat;      // trilinear, anisotropic (textures of things)

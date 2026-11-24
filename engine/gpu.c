@@ -236,6 +236,11 @@ void gpu_destroy(void)
 	SDL_ReleaseGPUSampler(gpu.device, gpu.linear_clamp);
 	SDL_ReleaseGPUSampler(gpu.device, gpu.nearest_clamp);
 	SDL_ReleaseGPUSampler(gpu.device, gpu.shadow_compare);
+	if (gpu.transfer_small != NULL)
+	{
+		SDL_ReleaseGPUTransferBuffer(gpu.device, gpu.transfer_small);
+		gpu.transfer_small = NULL;
+	}
 	if (gpu.transfer != NULL)
 	{
 		SDL_ReleaseGPUTransferBuffer(gpu.device, gpu.transfer);
@@ -517,35 +522,55 @@ static void record_uploads(SDL_GPUCommandBuffer *command_buffer)
 {
 	SDL_GPUCopyPass *copy_pass;
 	uint8_t *mapped;
+	SDL_GPUTransferBuffer *transfer = NULL;
 
 	if (gpu.pending_count > 0)
 	{
-		if (gpu.transfer == NULL || gpu.transfer_capacity < gpu.staging_used)
+		// (a frame's uploads through the small buffer, a load's through
+		// the big one)
+		if (gpu.staging_used <= STAGING_START_BYTES)
 		{
-			SDL_GPUTransferBufferCreateInfo info;
+			if (gpu.transfer_small == NULL)
+			{
+				SDL_GPUTransferBufferCreateInfo info;
 
-			if (gpu.transfer != NULL)
-			{
-				SDL_ReleaseGPUTransferBuffer(gpu.device, gpu.transfer);
+				SDL_zero(info);
+				info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+				info.size = STAGING_START_BYTES;
+				gpu.transfer_small = SDL_CreateGPUTransferBuffer(gpu.device, &info);
 			}
-			SDL_zero(info);
-			info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-			info.size = (uint32_t)SDL_max(gpu.staging_capacity, (size_t)STAGING_START_BYTES);
-			gpu.transfer = SDL_CreateGPUTransferBuffer(gpu.device, &info);
-			gpu.transfer_capacity = gpu.transfer != NULL ? info.size : 0;
-			// (it is mapped cycled at every flush, several a frame: its size
-			// is what each of those may ask the driver to back anew)
-			SDL_Log("GPU: the uploads' transfer buffer made, %.1f MB", (double)info.size / (1024.0 * 1024.0));
-			if (gpu.transfer == NULL)
+			transfer = gpu.transfer_small;
+		}
+		if (transfer == NULL)
+		{
+			if (gpu.transfer == NULL || gpu.transfer_capacity < gpu.staging_used)
 			{
-				SDL_LogError(SDL_LOG_CATEGORY_RENDER, "GPU: transfer buffer of %u bytes: %s", info.size, SDL_GetError());
-				gpu.pending_count = 0;
-				gpu.staging_used = 0;
-				return;
+				SDL_GPUTransferBufferCreateInfo info;
+
+				if (gpu.transfer != NULL)
+				{
+					SDL_ReleaseGPUTransferBuffer(gpu.device, gpu.transfer);
+				}
+				SDL_zero(info);
+				info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+				info.size = (uint32_t)SDL_max(gpu.staging_capacity, (size_t)STAGING_START_BYTES);
+				gpu.transfer = SDL_CreateGPUTransferBuffer(gpu.device, &info);
+				gpu.transfer_capacity = gpu.transfer != NULL ? info.size : 0;
+				// (it is mapped cycled at every flush that needs it: its size
+				// is what each of those may ask the driver to back anew)
+				SDL_Log("GPU: the uploads' transfer buffer made, %.1f MB", (double)info.size / (1024.0 * 1024.0));
+				if (gpu.transfer == NULL)
+				{
+					SDL_LogError(SDL_LOG_CATEGORY_RENDER, "GPU: transfer buffer of %u bytes: %s", info.size, SDL_GetError());
+					gpu.pending_count = 0;
+					gpu.staging_used = 0;
+					return;
+				}
 			}
+			transfer = gpu.transfer;
 		}
 		// Cycled: the last frame's uploads may still be reading the old one
-		mapped = SDL_MapGPUTransferBuffer(gpu.device, gpu.transfer, true);
+		mapped = SDL_MapGPUTransferBuffer(gpu.device, transfer, true);
 		if (mapped == NULL)
 		{
 			gpu.pending_count = 0;
@@ -553,7 +578,7 @@ static void record_uploads(SDL_GPUCommandBuffer *command_buffer)
 			return;
 		}
 		SDL_memcpy(mapped, gpu.staging, gpu.staging_used);
-		SDL_UnmapGPUTransferBuffer(gpu.device, gpu.transfer);
+		SDL_UnmapGPUTransferBuffer(gpu.device, transfer);
 
 		copy_pass = SDL_BeginGPUCopyPass(command_buffer);
 		for (int i = 0; i < gpu.pending_count; i++)
@@ -566,7 +591,7 @@ static void record_uploads(SDL_GPUCommandBuffer *command_buffer)
 				SDL_GPUTextureRegion destination;
 
 				SDL_zero(source);
-				source.transfer_buffer = gpu.transfer;
+				source.transfer_buffer = transfer;
 				source.offset = (uint32_t)upload->staging_offset;
 				SDL_zero(destination);
 				destination.texture = upload->texture;
@@ -584,7 +609,7 @@ static void record_uploads(SDL_GPUCommandBuffer *command_buffer)
 				SDL_GPUTransferBufferLocation source;
 				SDL_GPUBufferRegion destination;
 
-				source.transfer_buffer = gpu.transfer;
+				source.transfer_buffer = transfer;
 				source.offset = (uint32_t)upload->staging_offset;
 				destination.buffer = upload->buffer;
 				destination.offset = upload->offset;
