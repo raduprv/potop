@@ -457,6 +457,13 @@ typedef struct
 	bool follow_pass_active;
 	bool follow_pass_everything;
 	int follow_cursor;
+	// The grid cells the pass's chunks reach, a bit each (made when the
+	// pass begins: the pass looks at these only, not at every cell of the
+	// map for the chunks over it); follow_cell_count: the cells they were
+	// made for (another now: every cell asked, as without them)
+	uint32_t *follow_cell_bits;
+	int follow_cell_capacity;
+	int follow_cell_count;
 	float draw_distance_scale;     // from the settings, multiplies every type's draw distance
 	// The camera's view distance (camera.h): none drawn for it past this,
 	// across the ground from the center (0: no limit); the shadows' passes

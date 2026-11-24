@@ -1171,6 +1171,7 @@ void objects_destroy(objects_t *objects)
 	SDL_free(objects->grid_maximum_y);
 	SDL_free(objects->grid_draw_distance);
 	SDL_free(objects->type_rank);
+	SDL_free(objects->follow_cell_bits);
 	SDL_free(objects->floating);
 	SDL_free(objects->draw_models);
 	SDL_free(objects->draw_materials);
@@ -2785,6 +2786,74 @@ static bool chunks_in_pass(const terrain_t *terrain, float minimum_x, float mini
 	return false;
 }
 
+// The grid cells the chunks of the pass beginning reach (by the margin
+// too, and a cell more: chunks_in_pass tells exactly), a bit each. The
+// pass went through every cell of the map asking for the chunks over it,
+// each frame water wore the ground somewhere: most of its time
+static void mark_follow_cells(objects_t *objects, const terrain_t *terrain, float margin)
+{
+	int grid_cells = objects->grid_size * objects->grid_size;
+	int words = (grid_cells + 31) / 32;
+	float chunk_meters = terrain->cell_size_meters * (float)TERRAIN_CHUNK_SIZE;
+
+	objects->follow_cell_count = 0;
+	if (grid_cells <= 0 || objects->follow_pass_everything)
+	{
+		return;
+	}
+	if (objects->follow_cell_capacity < words)
+	{
+		uint32_t *grown = SDL_realloc(objects->follow_cell_bits, sizeof(uint32_t) * (size_t)words);
+
+		if (grown == NULL)
+		{
+			return;
+		}
+		objects->follow_cell_bits = grown;
+		objects->follow_cell_capacity = words;
+	}
+	SDL_memset(objects->follow_cell_bits, 0, sizeof(uint32_t) * (size_t)words);
+	for (int chunk_y = 0; chunk_y < terrain->chunks_per_side; chunk_y++)
+	{
+		for (int chunk_x = 0; chunk_x < terrain->chunks_per_side; chunk_x++)
+		{
+			int first_i;
+			int first_j;
+			int last_i;
+			int last_j;
+
+			if (!terrain->chunks[chunk_y * terrain->chunks_per_side + chunk_x].objects_pass)
+			{
+				continue;
+			}
+			first_i = SDL_clamp(floor_to_int(((float)chunk_x * chunk_meters - margin) / OBJECTS_GRID_CELL_METERS) - 1, 0, objects->grid_size - 1);
+			first_j = SDL_clamp(floor_to_int(((float)chunk_y * chunk_meters - margin) / OBJECTS_GRID_CELL_METERS) - 1, 0, objects->grid_size - 1);
+			last_i = SDL_clamp(floor_to_int(((float)(chunk_x + 1) * chunk_meters + margin) / OBJECTS_GRID_CELL_METERS) + 1, 0, objects->grid_size - 1);
+			last_j = SDL_clamp(floor_to_int(((float)(chunk_y + 1) * chunk_meters + margin) / OBJECTS_GRID_CELL_METERS) + 1, 0, objects->grid_size - 1);
+			// (chunks_in_pass clamps a cell off the terrain's edge to its
+			// last chunks: those cells with them)
+			if (chunk_x == terrain->chunks_per_side - 1)
+			{
+				last_i = objects->grid_size - 1;
+			}
+			if (chunk_y == terrain->chunks_per_side - 1)
+			{
+				last_j = objects->grid_size - 1;
+			}
+			for (int j = first_j; j <= last_j; j++)
+			{
+				for (int i = first_i; i <= last_i; i++)
+				{
+					int cell = j * objects->grid_size + i;
+
+					objects->follow_cell_bits[cell >> 5] |= 1u << (cell & 31);
+				}
+			}
+		}
+	}
+	objects->follow_cell_count = grid_cells;
+}
+
 void objects_follow_terrain(objects_t *objects, terrain_t *terrain)
 {
 	// Footprints reach a little over the cell's edge
@@ -2793,6 +2862,7 @@ void objects_follow_terrain(objects_t *objects, terrain_t *terrain)
 	int grid_cells = objects->grid_size * objects->grid_size;
 	int budget;
 	int done = 0;
+	const uint32_t *cell_bits;
 
 	if (!objects->follow_pass_active)
 	{
@@ -2816,19 +2886,39 @@ void objects_follow_terrain(objects_t *objects, terrain_t *terrain)
 		objects->follow_pass_active = true;
 		objects->follow_pass_everything = in_pass == chunk_count;
 		objects->follow_cursor = 0;
+		mark_follow_cells(objects, terrain, margin);
 	}
 	if (objects->instance_count > 0)
 	{
 		objects_sort(objects);
 	}
 	budget = objects->follow_pass_everything ? INT32_MAX : OBJECTS_FOLLOW_BUDGET;
+	cell_bits = !objects->follow_pass_everything && objects->follow_cell_count == grid_cells ? objects->follow_cell_bits : NULL;
 	while (objects->follow_cursor < grid_cells && done < budget && objects->instance_count > 0)
 	{
 		int cell = objects->follow_cursor++;
-		int i = cell % objects->grid_size;
-		int j = cell / objects->grid_size;
-		float minimum_x = (float)i * OBJECTS_GRID_CELL_METERS;
-		float minimum_z = (float)j * OBJECTS_GRID_CELL_METERS;
+		int i;
+		int j;
+		float minimum_x;
+		float minimum_z;
+
+		// (the cells no chunk of the pass reaches: 32 at a time, then one)
+		if (cell_bits != NULL)
+		{
+			if ((cell & 31) == 0 && cell + 32 <= grid_cells && cell_bits[cell >> 5] == 0)
+			{
+				objects->follow_cursor = cell + 32;
+				continue;
+			}
+			if ((cell_bits[cell >> 5] & (1u << (cell & 31))) == 0)
+			{
+				continue;
+			}
+		}
+		i = cell % objects->grid_size;
+		j = cell / objects->grid_size;
+		minimum_x = (float)i * OBJECTS_GRID_CELL_METERS;
+		minimum_z = (float)j * OBJECTS_GRID_CELL_METERS;
 
 		if (objects->grid_first[cell] == objects->grid_first[cell + 1]
 			|| !chunks_in_pass(terrain, minimum_x - margin, minimum_z - margin, minimum_x + OBJECTS_GRID_CELL_METERS + margin,
