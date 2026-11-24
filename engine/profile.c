@@ -59,7 +59,7 @@ static const char *counter_name(frame_counter_t counter)
 		"path searches", "path surfaces", "objects checked", "objects moved",
 		"awake bodies", "bodies pushed", "body moves", "objects removed", "gpu water tiles", "terrain chunks drawn", "water chunks drawn",
 		"shadow draw calls", "far shadow for the ground", "far shadow for objects", "far shadow for the light", "far shadow for the camera",
-		"object sorts", "full body syncs", "bodies made", "cloud passes", "cloud whole domes", "cloud shadow maps" };
+		"object sorts", "full body syncs", "bodies made", "cloud passes", "cloud whole domes", "cloud shadow maps", "waterfall searches" };
 
 	return names[counter];
 }
@@ -89,7 +89,7 @@ static bool section_nested(int section)
 
 static void log_spike(double milliseconds, double frequency)
 {
-	char line[1024];
+	char line[2048];
 	size_t length = 0;
 	double accounted = 0.0;
 
@@ -141,6 +141,38 @@ static void log_spike(double milliseconds, double frequency)
 			length += (size_t)SDL_snprintf(line + length, sizeof(line) - length, " %s %d,", counter_name((frame_counter_t)counter), (int)before);
 		}
 	}
+	// What happened now and then in the frames before those (not what
+	// every frame does: that says nothing), with how many frames ago last
+	if (length < sizeof(line))
+	{
+		length += (size_t)SDL_snprintf(line + length, sizeof(line) - length, " | 3 to %d frames before:", FRAME_OLDER_FRAMES + 2);
+	}
+	for (int counter = 0; counter < FRAME_COUNTER_COUNT && length < sizeof(line); counter++)
+	{
+		int32_t sum = 0;
+		int frames_with = 0;
+		int last_ago = 0;
+
+		for (int ago = 0; ago < FRAME_OLDER_FRAMES; ago++)
+		{
+			int32_t value = frame_profile.older_counters[(frame_profile.older_next + FRAME_OLDER_FRAMES - 1 - ago) % FRAME_OLDER_FRAMES][counter];
+
+			if (value != 0)
+			{
+				sum += value;
+				frames_with++;
+				if (last_ago == 0)
+				{
+					last_ago = ago + 3;
+				}
+			}
+		}
+		if (frames_with > 0 && frames_with <= FRAME_OLDER_FRAMES / 2)
+		{
+			length += (size_t)SDL_snprintf(line + length, sizeof(line) - length, " %s %d (%d ago),", counter_name((frame_counter_t)counter),
+				(int)sum, last_ago);
+		}
+	}
 	SDL_Log("%s", line);
 }
 
@@ -179,6 +211,8 @@ void frame_profile_finish(void)
 		}
 	}
 	frame_profile.last_finish = now;
+	SDL_memcpy(frame_profile.older_counters[frame_profile.older_next], frame_profile.earlier_counters, sizeof(frame_profile.earlier_counters));
+	frame_profile.older_next = (frame_profile.older_next + 1) % FRAME_OLDER_FRAMES;
 	SDL_memcpy(frame_profile.earlier_counters, frame_profile.previous_counters, sizeof(frame_profile.earlier_counters));
 	SDL_memcpy(frame_profile.previous_counters, frame_profile.counters, sizeof(frame_profile.previous_counters));
 	for (int section = 0; section < FRAME_SECTION_COUNT; section++)

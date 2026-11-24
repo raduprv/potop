@@ -133,8 +133,12 @@ typedef enum
 	FRAME_CLOUD_PASSES,            // the clouds' dome marched: sixteenths of it this frame (by the clock: none, one, up to four after a slow frame)
 	FRAME_CLOUD_WHOLE_DOMES,       // ...all of it at once (the eye moving: coarsely; a jump or the first: finely)
 	FRAME_CLOUD_SHADOWS,           // the clouds' shadow map made again
+	FRAME_WATERFALL_SEARCHES,      // the waterfalls looked for again round the player (every few seconds)
 	FRAME_COUNTER_COUNT
 } frame_counter_t;
+
+// How many frames before the two just before a stutter its line looks at
+#define FRAME_OLDER_FRAMES 16
 
 typedef struct
 {
@@ -144,6 +148,11 @@ typedef struct
 	// pays for what those asked of it)
 	int32_t earlier_counters[FRAME_COUNTER_COUNT];
 	int32_t previous_counters[FRAME_COUNTER_COUNT];
+	// ...and the ones before those, FRAME_OLDER_FRAMES of them in a ring
+	// (older_next: where the next goes): what a burst of waits began with
+	// is often a few frames before its first slow frame
+	int32_t older_counters[FRAME_OLDER_FRAMES][FRAME_COUNTER_COUNT];
+	int older_next;
 	uint64_t last_finish;
 	double usual_milliseconds;     // slow running average of the frame time
 	double worst_milliseconds;     // since frame_profile_take_worst

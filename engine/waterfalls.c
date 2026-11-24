@@ -3,6 +3,7 @@
 #include "waterfalls.h"
 #include "parallel.h"
 
+#include "profile.h"
 #include <SDL3/SDL.h>
 
 // The water's surface drops at least this many cells' widths from a cell to
@@ -667,6 +668,7 @@ void waterfalls_update(waterfalls_t *waterfalls, particles_t *particles, const t
 		uint32_t *playing = playing_count > 0 ? SDL_malloc(sizeof(uint32_t) * (size_t)playing_count) : NULL;
 
 		waterfalls->next_search_seconds = now_seconds + SEARCH_SECONDS;
+		frame_profile_count(FRAME_WATERFALL_SEARCHES, 1);
 		if (playing != NULL)
 		{
 			SDL_memcpy(playing, waterfalls->emitters, sizeof(uint32_t) * (size_t)playing_count);
