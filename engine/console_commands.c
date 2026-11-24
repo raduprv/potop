@@ -924,6 +924,22 @@ void console_run_command(console_t *console, potop_t *potop, const char *line, c
 		// does to each (the first few; awake N: that many)
 		physics_log_awake(&potop->world.physics, &potop->world.objects, has_first ? SDL_max(SDL_atoi(first), 0) : 12);
 	}
+	else if (SDL_strcmp(command, "stutters") == 0)
+	{
+		// The shortest frame told as a stutter (stutters 15; stutters 0:
+		// any the frame's usual length makes one)
+		if (has_first)
+		{
+			frame_profile_set_stutter_floor(SDL_atof(first));
+		}
+		else
+		{
+			double floor_milliseconds = frame_profile_set_stutter_floor(0.0);
+
+			frame_profile_set_stutter_floor(floor_milliseconds);
+			SDL_Log("Stutters: told from %.1f ms (stutters N sets it; 0: by the usual frame alone)", floor_milliseconds);
+		}
+	}
 	else if (SDL_strcmp(command, "profile") == 0)
 	{
 		// Where the frames' time went on the CPU since the last time

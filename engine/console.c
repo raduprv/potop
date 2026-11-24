@@ -30,6 +30,7 @@ const console_command_t console_commands[] =
 	{ "time", "[speed]", "how fast the sky's clock goes: clouds, wind, their life (1: as it is, 0: still)" },
 	{ "hour", "[0..24]", "the time of day, or sets it (18.5: half past six in the evening)" },
 	{ "freeze", "", "stops the day at this hour, or lets it go on" },
+	{ "stutters", "[ms]", "the shortest frame logged as a stutter (stutters 15: only what is felt; 0: any frame half again the usual)" },
 	{ "awake", "[count]", "the bodies the physics keeps awake: how many of each type, and the first few (12, or count) with their speed and what the water does to them" },
 	{ "profile", "[frame [frames]]", "frame: the next frame (or the one that many frames later) step by step, each step's ms; else where the frames' time went on the CPU since the last profile, ms a frame (acquire: waiting for the GPU)" },
 	{ "noclip", "", "on foot: flies through walls and everything, where you look (Space up, Ctrl down, Shift fast); again: walks" },

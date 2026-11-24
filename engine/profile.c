@@ -241,6 +241,18 @@ static void log_spike(double milliseconds, double frequency)
 	hold_line(line);
 }
 
+// A frame of 8 ms among ones of 4 misses a refresh of a fast display and is
+// not felt: what is, is the user's to say (the console's stutters)
+static double stutter_floor_milliseconds = 0.0;
+
+double frame_profile_set_stutter_floor(double milliseconds)
+{
+	double before = stutter_floor_milliseconds;
+
+	stutter_floor_milliseconds = SDL_max(milliseconds, 0.0);
+	return before;
+}
+
 void frame_profile_finish(void)
 {
 	uint64_t now = SDL_GetPerformanceCounter();
@@ -259,7 +271,7 @@ void frame_profile_finish(void)
 			write_held(now);
 		}
 		// Long stalls (a window dragged, loading a map) are not stutters
-		if (frame_profile.usual_milliseconds > 0.0 && milliseconds < 250.0
+		if (frame_profile.usual_milliseconds > 0.0 && milliseconds < 250.0 && milliseconds >= stutter_floor_milliseconds
 			&& milliseconds > frame_profile.usual_milliseconds * SPIKE_FACTOR
 			&& milliseconds > frame_profile.usual_milliseconds + SPIKE_EXTRA_MILLISECONDS)
 		{
@@ -401,7 +413,8 @@ void trace_frame_begin(void)
 		&& !held_quiet(SDL_GetPerformanceCounter()))
 	{
 		trace_begin_if_slow("Stutter, step by step (ms)",
-			SDL_max(frame_profile.usual_milliseconds * SPIKE_FACTOR, frame_profile.usual_milliseconds + SPIKE_EXTRA_MILLISECONDS), 0.3);
+			SDL_max(SDL_max(frame_profile.usual_milliseconds * SPIKE_FACTOR, frame_profile.usual_milliseconds + SPIKE_EXTRA_MILLISECONDS),
+				stutter_floor_milliseconds), 0.3);
 		trace.held = true;
 	}
 }

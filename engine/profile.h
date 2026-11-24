@@ -193,6 +193,9 @@ void frame_profile_path(uint64_t ticks, uint32_t actor, const char *type_name, i
 // At the end of each frame: logs it if it was a stutter, then starts the
 // next one
 void frame_profile_finish(void);
+// Stutters shorter than this are not told (0: all of them, as the frame's
+// usual length has it). The console's stutters; returns what it was
+double frame_profile_set_stutter_floor(double milliseconds);
 
 // The slowest frame (milliseconds) since the last call
 double frame_profile_take_worst(void);
