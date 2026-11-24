@@ -1008,15 +1008,21 @@ static void place_on_ground(const actors_t *actors, actor_t *actor, const terrai
 			float foot_x = actor->foot_x[i];
 			float foot_z = actor->foot_z[i];
 			bool on_object = false;
-			float ground = navigation_surface_height_on(navigation, terrain, &agent, foot_x, foot_z, actor->placed ? center_height : actor->foot_ground[i],
-				&on_object);
-			float ground_x = navigation_surface_height(navigation, terrain, &agent, foot_x + IK_NORMAL_METERS, foot_z, ground);
-			float ground_z = navigation_surface_height(navigation, terrain, &agent, foot_x, foot_z + IK_NORMAL_METERS, ground);
+			// (only an object's top bends the leg: with nothing by the
+			// foot, or too far for anyone to see its legs, the terrain
+			// under it and no more; three looks at the rectangles a leg
+			// each frame, for every walker on the map, were the most of
+			// what its placing cost)
+			bool by_object = physics_rays && navigation_objects_near(navigation, foot_x, foot_z);
+			float ground = by_object ? navigation_surface_height_on(navigation, terrain, &agent, foot_x, foot_z,
+				actor->placed ? center_height : actor->foot_ground[i], &on_object) : terrain_sample_height_meters(terrain, foot_x, foot_z);
+			float ground_x = by_object ? navigation_surface_height(navigation, terrain, &agent, foot_x + IK_NORMAL_METERS, foot_z, ground) : ground;
+			float ground_z = by_object ? navigation_surface_height(navigation, terrain, &agent, foot_x, foot_z + IK_NORMAL_METERS, ground) : ground;
 			float normal[3];
 
 			// (and the physics' real shapes under the foot: a tread, a
 			// terrace's flags; then level)
-			if (actors->physics != NULL && physics_rays && navigation_objects_near(navigation, foot_x, foot_z))
+			if (actors->physics != NULL && by_object)
 			{
 				float top;
 
