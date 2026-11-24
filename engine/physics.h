@@ -120,6 +120,13 @@ typedef struct
 	uint32_t visit_stamp;          // looked at by the water's push this step already (physics_t.visit_stamp)
 	float scale;
 	bool awake;                    // as far as the move events tell
+	// Woken by the water's flow: where it lay and how fast the water was;
+	// asleep again where it lay, it is stuck (wedged, in a hollow), and
+	// only a flow a good deal faster than stuck_flow wakes it again (0:
+	// not stuck). Else it was woken every step, never moving
+	float woken_at[3];
+	float woken_flow;              // 0: not woken by the flow
+	float stuck_flow;
 	bool in_ice;                   // under the ice that bears when it came: held in it (disabled) until it goes
 	// Where the last two steps left it (x, y, z, then the rotation x, y, z,
 	// w): its object is drawn in between (see physics_interpolate)

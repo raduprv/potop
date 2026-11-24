@@ -447,6 +447,7 @@ static void wake_body_in_rectangle(physics_t *physics, objects_t *objects, const
 			}
 			b3Body_SetAwake(body->id, true);
 			body->awake = true;
+			body->stuck_flow = 0.0f;
 			return;
 		}
 		clearance = lift_above_ground(body->id, terrain);
@@ -457,6 +458,7 @@ static void wake_body_in_rectangle(physics_t *physics, objects_t *objects, const
 		{
 			b3Body_SetAwake(body->id, true);
 			body->awake = true;
+			body->stuck_flow = 0.0f;
 		}
 	}
 }
@@ -2056,6 +2058,13 @@ static bool sample_water(const water_t *water, const physics_settings_t *setting
 // rest on a pond was woken every step for it)
 #define WAKE_DRAG_SHARE 0.25f
 #define AFLOAT_SHARE 0.9f
+// A body the flow woke that fell asleep again within this far of where it
+// lay is stuck (wedged between others, in a hollow of the bed): woken
+// again by the flow only once it is this many times faster than then.
+// Rocks in a fast stream the water could push but not free were woken
+// every step for it
+#define STUCK_METERS 0.05f
+#define STUCK_FLOW_GROWTH 1.3f
 
 // How many of a sleeping body's sample points are looked at, the lowest
 // ones (compute_water_push's probe), beside its middle
@@ -3028,6 +3037,7 @@ static void wake_neighbours(physics_t *physics, objects_t *objects, const terrai
 			ensure_tiles_around(physics, terrain, instance->x, instance->z, neighbour->scale * physics->types[instance->type].height);
 			b3Body_SetAwake(neighbour->id, true);
 			neighbour->awake = true;
+			neighbour->stuck_flow = 0.0f;
 		}
 	}
 }
@@ -3390,7 +3400,8 @@ void physics_step(physics_t *physics, objects_t *objects, terrain_t *terrain, wa
 				float held_newtons = SDL_max(weight - push.buoyancy, 0.0f);
 				bool pushed = push.count > 0 && deep_enough
 					&& ((push.fastest_flow > settings->wake_flow_meters_per_second
-						&& body->water_drag_newtons > WAKE_DRAG_SHARE * held_newtons)
+						&& body->water_drag_newtons > WAKE_DRAG_SHARE * held_newtons
+						&& push.fastest_flow > body->stuck_flow * STUCK_FLOW_GROWTH)
 						|| push.buoyancy > 1.1f * weight);
 				// (afloat: the water bears it, it hangs over the ground as
 				// it should)
@@ -3406,6 +3417,12 @@ void physics_step(physics_t *physics, objects_t *objects, terrain_t *terrain, wa
 				{
 					continue;
 				}
+				// (where it lies as it is woken: asleep again there, stuck)
+				body->woken_at[0] = transform.p.x;
+				body->woken_at[1] = transform.p.y;
+				body->woken_at[2] = transform.p.z;
+				body->woken_flow = pushed ? SDL_max(push.fastest_flow, 1e-3f) : 0.0f;
+				body->stuck_flow = 0.0f;
 				ensure_tiles_around(physics, terrain, transform.p.x, transform.p.z, body->scale * physics_type->height);
 			}
 			else
@@ -3548,6 +3565,21 @@ void physics_step(physics_t *physics, objects_t *objects, terrain_t *terrain, wa
 			}
 			instance = &objects->instances[body->instance];
 			body->awake = !move->fellAsleep;
+			if (move->fellAsleep)
+			{
+				// Woken by the flow and asleep again where it lay: stuck,
+				// left alone till the water is a good deal faster
+				if (body->woken_flow > 0.0f)
+				{
+					b3WorldTransform rest = b3Body_GetTransform(body->id);
+					float dx = rest.p.x - body->woken_at[0];
+					float dy = rest.p.y - body->woken_at[1];
+					float dz = rest.p.z - body->woken_at[2];
+
+					body->stuck_flow = dx * dx + dy * dy + dz * dz < STUCK_METERS * STUCK_METERS ? body->woken_flow : 0.0f;
+				}
+				body->woken_flow = 0.0f;
+			}
 			if (!(instance->state & OBJECT_STATE_FREE))
 			{
 				objects_set_free(objects, body->instance, true);
