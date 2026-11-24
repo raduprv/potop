@@ -2961,14 +2961,14 @@ static const float lod_base_pixels[3] = { 300.0f, 120.0f, 50.0f };
 // How far apart the trees are in the autumn (plant.glsl)
 #define PLANT_AUTUMN_SPREAD 0.12f
 
-// Shortest distance from a point to a box
-static float distance_to_box(vec3_t point, vec3_t box_minimum, vec3_t box_maximum)
+// Shortest distance from a point to a box, squared
+static float distance_to_box_squared(vec3_t point, vec3_t box_minimum, vec3_t box_maximum)
 {
 	float dx = SDL_max(SDL_max(box_minimum.x - point.x, 0.0f), point.x - box_maximum.x);
 	float dy = SDL_max(SDL_max(box_minimum.y - point.y, 0.0f), point.y - box_maximum.y);
 	float dz = SDL_max(SDL_max(box_minimum.z - point.z, 0.0f), point.z - box_maximum.z);
 
-	return SDL_sqrtf(dx * dx + dy * dy + dz * dz);
+	return dx * dx + dy * dy + dz * dz;
 }
 
 static SDL_GPUBuffer *grow_buffer(SDL_GPUBuffer *buffer, SDL_GPUBufferUsageFlags usage, uint32_t *capacity_bytes, uint32_t needed_bytes)
@@ -4190,7 +4190,7 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 			objects->block_maximum_y[block], (float)((block_j + 1) * OBJECTS_GRID_BLOCK_CELLS) * OBJECTS_GRID_CELL_METERS + 12.0f);
 
 		if (block_distance <= 0.0f || beyond_view(objects, pass, block_minimum, block_maximum)
-			|| (pass != PASS_FAR_SHADOW && distance_to_box(eye, block_minimum, block_maximum) > block_distance * objects->draw_distance_scale)
+			|| (pass != PASS_FAR_SHADOW && distance_to_box_squared(eye, block_minimum, block_maximum) > block_distance * objects->draw_distance_scale * block_distance * objects->draw_distance_scale)
 			|| (frustum != NULL && !frustum_contains_box(frustum, block_minimum, block_maximum)))
 		{
 			continue;
@@ -4225,11 +4225,16 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 			}
 			if (pass != PASS_FAR_SHADOW)
 			{
-				cell_distance = distance_to_box(eye, cell_minimum, cell_maximum);
-				if (cell_distance > objects->grid_draw_distance[cell] * objects->draw_distance_scale)
+				// (by the squares: the root only for a cell kept, most on a
+				// big map being left here)
+				float farthest_drawn = objects->grid_draw_distance[cell] * objects->draw_distance_scale;
+				float cell_distance_squared = distance_to_box_squared(eye, cell_minimum, cell_maximum);
+
+				if (cell_distance_squared > farthest_drawn * farthest_drawn)
 				{
 					continue;
 				}
+				cell_distance = SDL_sqrtf(cell_distance_squared);
 			}
 			if (!block_in_view && !frustum_contains_box(frustum, cell_minimum, cell_maximum))
 			{
@@ -5958,12 +5963,49 @@ static int insert_hit(object_ray_hit_t *hits, int count, int maximum_hits, int i
 static int ray_instances(objects_t *objects, int first, int last, vec3_t origin, vec3_t direction, float maximum_distance,
 	objects_ray_mode_t mode, object_ray_hit_t *hits, int count, int maximum_hits)
 {
+	int reach_type = -1;
+	float reach = 0.0f;
+
 	for (int i = first; i < last; i++)
 	{
 		const object_instance_t *instance = &objects->instances[i];
 		float distance = maximum_distance;
+		vec3_t to_foot;
+		float along;
+		float radius;
 
 		if (mode == OBJECTS_RAY_INTERACTIVE && !(instance->state & OBJECT_STATE_INTERACTIVE))
+		{
+			continue;
+		}
+		// A ball around its foot first, as far as its model's box goes from
+		// there: no turning it, and the reach asked once for a run of one
+		// type (a cell's objects are sorted by it). Nearly every object of
+		// the cells looked at is left here, a short ray being in few of them
+		if ((int)instance->type != reach_type)
+		{
+			const object_type_t *type = &objects->types.types[instance->type];
+
+			reach_type = (int)instance->type;
+			reach = -1.0f;
+			if (type->model >= 0)
+			{
+				const object_model_t *model = &objects->models[type->model];
+				vec3_t farthest = vec3_make(SDL_max(SDL_fabsf(model->bounds_minimum.x), SDL_fabsf(model->bounds_maximum.x)),
+					SDL_max(SDL_fabsf(model->bounds_minimum.y), SDL_fabsf(model->bounds_maximum.y)),
+					SDL_max(SDL_fabsf(model->bounds_minimum.z), SDL_fabsf(model->bounds_maximum.z)));
+
+				reach = vec3_length(farthest);
+			}
+		}
+		if (reach < 0.0f)
+		{
+			continue;
+		}
+		radius = reach * SDL_max(instance->scale, 1e-4f);
+		to_foot = vec3_make(instance->x - origin.x, objects_instance_base_y(instance) - origin.y, instance->z - origin.z);
+		along = vec3_dot(to_foot, direction);
+		if (along < -radius || along - radius > maximum_distance || vec3_dot(to_foot, to_foot) - along * along > radius * radius)
 		{
 			continue;
 		}
