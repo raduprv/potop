@@ -2049,6 +2049,14 @@ static bool sample_water(const water_t *water, const physics_settings_t *setting
 	return true;
 }
 
+// A sleeping body in a fast flow is woken only if the flow's drag is this
+// share of what holds it down (sliding takes about half of it, rolling
+// less), and one the water bears this share of is afloat: hanging over
+// the ground is then no sign of the ground gone from under it (a log at
+// rest on a pond was woken every step for it)
+#define WAKE_DRAG_SHARE 0.25f
+#define AFLOAT_SHARE 0.9f
+
 // How many of a sleeping body's sample points are looked at, the lowest
 // ones (compute_water_push's probe), beside its middle
 #define PROBE_LOW_POINTS 4
@@ -3375,14 +3383,24 @@ void physics_step(physics_t *physics, objects_t *objects, terrain_t *terrain, wa
 				// a few centimeters onto the ground's collision tiles with a
 				// hop: left alone till the water stands a real share of it)
 				bool deep_enough = push.deepest >= SDL_max(0.05f, 0.15f * body->scale * physics_type->height);
+				// (a fast flow only if it pushes a real share of what holds
+				// the body down, its weight less what the water bears: a rock
+				// in a brook was woken every step by 0.3 m/s pushing it with
+				// a fortieth of that, never moved, and never slept)
+				float held_newtons = SDL_max(weight - push.buoyancy, 0.0f);
 				bool pushed = push.count > 0 && deep_enough
-					&& (push.fastest_flow > settings->wake_flow_meters_per_second || push.buoyancy > 1.1f * weight);
+					&& ((push.fastest_flow > settings->wake_flow_meters_per_second
+						&& body->water_drag_newtons > WAKE_DRAG_SHARE * held_newtons)
+						|| push.buoyancy > 1.1f * weight);
+				// (afloat: the water bears it, it hangs over the ground as
+				// it should)
+				bool afloat = push.buoyancy > AFLOAT_SHARE * weight;
 				// (the ground washed away under it: only where there is
 				// water. A rock on a dry bank sat a little over the ground
 				// the samples see, on a slope, its middle low: woken and
 				// settled with a jerk every time water anywhere in its tile
 				// moved, a water gun's splash fifty meters off)
-				bool unsupported = push.wet && push.lowest_clearance > HOVER_METERS && push.lowest_clearance < 1e29f;
+				bool unsupported = push.wet && !afloat && push.lowest_clearance > HOVER_METERS && push.lowest_clearance < 1e29f;
 
 				if (!pushed && !unsupported)
 				{
