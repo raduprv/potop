@@ -58,6 +58,16 @@ static inline int clamp_int(int value, int minimum, int maximum)
 	return value < minimum ? minimum : (value > maximum ? maximum : value);
 }
 
+// The whole number at or under a value, as an integer: in place (SDL_floorf
+// is a call into the library, and this is asked for every water and terrain
+// sample, every cell looked at). For values an int holds
+static inline int floor_to_int(float value)
+{
+	int whole = (int)value;
+
+	return whole - (value < (float)whole ? 1 : 0);
+}
+
 static inline float lerp_float(float from, float to, float amount)
 {
 	return from + (to - from) * amount;

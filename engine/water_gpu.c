@@ -6,6 +6,7 @@
 #include "profile.h"
 #include "water.h"
 
+#include "math3d.h"
 #include <SDL3/SDL.h>
 #include <string.h>
 
@@ -1303,8 +1304,8 @@ void water_gpu_brush(water_t *water, float center_x, float center_z, float radiu
 	float radius_cells = radius_meters / water->cell_size_meters;
 	float center_cell_x = center_x / water->cell_size_meters;
 	float center_cell_y = center_z / water->cell_size_meters;
-	int32_t minimum_x = clamp_int((int32_t)SDL_floorf(center_cell_x - radius_cells), 0, water->size - 1);
-	int32_t minimum_y = clamp_int((int32_t)SDL_floorf(center_cell_y - radius_cells), 0, water->size - 1);
+	int32_t minimum_x = clamp_int(floor_to_int(center_cell_x - radius_cells), 0, water->size - 1);
+	int32_t minimum_y = clamp_int(floor_to_int(center_cell_y - radius_cells), 0, water->size - 1);
 	int32_t maximum_x = clamp_int((int32_t)SDL_ceilf(center_cell_x + radius_cells), 0, water->size - 1);
 	int32_t maximum_y = clamp_int((int32_t)SDL_ceilf(center_cell_y + radius_cells), 0, water->size - 1);
 	uint32_t cell_count = (uint32_t)(maximum_x - minimum_x + 1) * (uint32_t)(maximum_y - minimum_y + 1);

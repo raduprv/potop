@@ -11,6 +11,7 @@
 #include "scene_uniforms.h"
 #include "terrain_renderer.h"
 
+#include "math3d.h"
 #include <SDL3/SDL.h>
 
 // Floats per instance in the instance buffer: x, y, z, scale, rotation
@@ -3982,10 +3983,10 @@ static bool cell_dry(const objects_t *objects, int i, int j)
 	}
 	tile_meters = (float)WATER_TILE_SIZE * water->cell_size_meters;
 	reach += 2.0f * water->cell_size_meters;
-	first_x = clamp_int((int32_t)SDL_floorf(((float)i * OBJECTS_GRID_CELL_METERS - reach) / tile_meters), 0, water->tiles_per_side - 1);
-	first_y = clamp_int((int32_t)SDL_floorf(((float)j * OBJECTS_GRID_CELL_METERS - reach) / tile_meters), 0, water->tiles_per_side - 1);
-	last_x = clamp_int((int32_t)SDL_floorf(((float)(i + 1) * OBJECTS_GRID_CELL_METERS + reach) / tile_meters), 0, water->tiles_per_side - 1);
-	last_y = clamp_int((int32_t)SDL_floorf(((float)(j + 1) * OBJECTS_GRID_CELL_METERS + reach) / tile_meters), 0, water->tiles_per_side - 1);
+	first_x = clamp_int(floor_to_int(((float)i * OBJECTS_GRID_CELL_METERS - reach) / tile_meters), 0, water->tiles_per_side - 1);
+	first_y = clamp_int(floor_to_int(((float)j * OBJECTS_GRID_CELL_METERS - reach) / tile_meters), 0, water->tiles_per_side - 1);
+	last_x = clamp_int(floor_to_int(((float)(i + 1) * OBJECTS_GRID_CELL_METERS + reach) / tile_meters), 0, water->tiles_per_side - 1);
+	last_y = clamp_int(floor_to_int(((float)(j + 1) * OBJECTS_GRID_CELL_METERS + reach) / tile_meters), 0, water->tiles_per_side - 1);
 	for (int32_t y = first_y; y <= last_y; y++)
 	{
 		for (int32_t x = first_x; x <= last_x; x++)
@@ -4169,10 +4170,10 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 			farthest = SDL_max(farthest, objects->types.types[t].draw_distance_meters);
 		}
 		farthest = farthest * objects->draw_distance_scale + 12.0f;
-		first_i = clamp_int((int)SDL_floorf((eye.x - farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
-		first_j = clamp_int((int)SDL_floorf((eye.z - farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
-		last_i = clamp_int((int)SDL_floorf((eye.x + farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
-		last_j = clamp_int((int)SDL_floorf((eye.z + farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
+		first_i = clamp_int(floor_to_int((eye.x - farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
+		first_j = clamp_int(floor_to_int((eye.z - farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
+		last_i = clamp_int(floor_to_int((eye.x + farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
+		last_j = clamp_int(floor_to_int((eye.z + farthest) / OBJECTS_GRID_CELL_METERS), 0, objects->grid_size - 1);
 	}
 	// By blocks of cells first: one with nothing in it, too far for
 	// anything of its to be drawn, or out of view is thrown out whole (on
@@ -6146,8 +6147,8 @@ int objects_raycast(objects_t *objects, vec3_t origin, vec3_t direction, float m
 	for (int step = 0; step <= steps; step++)
 	{
 		float along = maximum_distance * (float)step / (float)steps;
-		int cell_x = (int)SDL_floorf((origin.x + direction.x * along) / OBJECTS_GRID_CELL_METERS);
-		int cell_z = (int)SDL_floorf((origin.z + direction.z * along) / OBJECTS_GRID_CELL_METERS);
+		int cell_x = floor_to_int((origin.x + direction.x * along) / OBJECTS_GRID_CELL_METERS);
+		int cell_z = floor_to_int((origin.z + direction.z * along) / OBJECTS_GRID_CELL_METERS);
 
 		for (int j = cell_z - 1; j <= cell_z + 1; j++)
 		{

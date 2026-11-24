@@ -6,6 +6,7 @@
 #include "profile.h"
 #include "water_gpu.h"
 
+#include "math3d.h"
 #include <SDL3/SDL.h>
 #include <math.h>
 
@@ -290,8 +291,8 @@ void water_clear(water_t *water)
 bool water_sample(const water_t *water, float world_x, float world_z, float *depth_meters_out, float *velocity_x_out,
 	float *velocity_z_out)
 {
-	int32_t cell_x = (int32_t)SDL_floorf(world_x / water->cell_size_meters + 0.5f);
-	int32_t cell_y = (int32_t)SDL_floorf(world_z / water->cell_size_meters + 0.5f);
+	int32_t cell_x = floor_to_int(world_x / water->cell_size_meters + 0.5f);
+	int32_t cell_y = floor_to_int(world_z / water->cell_size_meters + 0.5f);
 	int32_t index;
 	float depth;
 	float flow_x;
@@ -532,8 +533,8 @@ void water_add_units(water_t *water, int32_t cell_x, int32_t cell_y, int32_t uni
 
 bool water_toggle_spring(water_t *water, float world_x, float world_z)
 {
-	int32_t cell_x = (int32_t)SDL_floorf(world_x / water->cell_size_meters + 0.5f);
-	int32_t cell_y = (int32_t)SDL_floorf(world_z / water->cell_size_meters + 0.5f);
+	int32_t cell_x = floor_to_int(world_x / water->cell_size_meters + 0.5f);
+	int32_t cell_y = floor_to_int(world_z / water->cell_size_meters + 0.5f);
 	// Clicking within two meters (or three cells) of a spring removes it
 	int32_t remove_radius_cells = SDL_max(3, (int32_t)SDL_ceilf(2.0f / water->cell_size_meters));
 
@@ -1145,8 +1146,8 @@ bool water_ice_surface(const water_t *water, const terrain_t *terrain, float wor
 {
 	float cell_x = world_x / water->cell_size_meters;
 	float cell_y = world_z / water->cell_size_meters;
-	int32_t x0 = (int32_t)SDL_floorf(cell_x);
-	int32_t y0 = (int32_t)SDL_floorf(cell_y);
+	int32_t x0 = floor_to_int(cell_x);
+	int32_t y0 = floor_to_int(cell_y);
 	float fraction_x = cell_x - (float)x0;
 	float fraction_y = cell_y - (float)y0;
 	float sum = 0.0f;

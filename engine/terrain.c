@@ -3,6 +3,7 @@
 #include "terrain.h"
 #include "parallel.h"
 
+#include "math3d.h"
 #include <SDL3/SDL.h>
 
 // Chunks whose bounds are worked out again per thread (fewer: one thread)
@@ -105,8 +106,8 @@ float terrain_sample_height_meters(const terrain_t *terrain, float world_x, floa
 
 bool terrain_world_to_cell(const terrain_t *terrain, float world_x, float world_z, int32_t *cell_x_out, int32_t *cell_y_out)
 {
-	int32_t cell_x = (int32_t)SDL_floorf(world_x / terrain->cell_size_meters + 0.5f);
-	int32_t cell_y = (int32_t)SDL_floorf(world_z / terrain->cell_size_meters + 0.5f);
+	int32_t cell_x = floor_to_int(world_x / terrain->cell_size_meters + 0.5f);
+	int32_t cell_y = floor_to_int(world_z / terrain->cell_size_meters + 0.5f);
 
 	if (cell_x < 0 || cell_y < 0 || cell_x >= terrain->size || cell_y >= terrain->size)
 	{

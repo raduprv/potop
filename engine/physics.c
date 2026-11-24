@@ -3,6 +3,7 @@
 #include "physics.h"
 #include "profile.h"
 
+#include "math3d.h"
 #include <SDL3/SDL.h>
 
 #define WATER_DENSITY 1000.0f
@@ -286,8 +287,8 @@ static bool rescue_from_ground(b3BodyId id, const terrain_t *terrain)
 // Whether the ground tile under a point is there
 static bool tile_exists_at(const physics_t *physics, float x, float z)
 {
-	int tile_x = (int)SDL_floorf(x / physics->tile_meters);
-	int tile_y = (int)SDL_floorf(z / physics->tile_meters);
+	int tile_x = floor_to_int(x / physics->tile_meters);
+	int tile_y = floor_to_int(z / physics->tile_meters);
 
 	if (tile_x < 0 || tile_y < 0 || tile_x >= physics->tiles_per_side || tile_y >= physics->tiles_per_side)
 	{
@@ -537,10 +538,10 @@ static void build_tile(physics_t *physics, const terrain_t *terrain, int tile_x,
 // Makes the ground tiles around a point (and a radius) if they are missing
 static void ensure_tiles_around(physics_t *physics, const terrain_t *terrain, float x, float z, float radius)
 {
-	int first_x = (int)SDL_floorf((x - radius) / physics->tile_meters) - TILE_MARGIN;
-	int first_y = (int)SDL_floorf((z - radius) / physics->tile_meters) - TILE_MARGIN;
-	int last_x = (int)SDL_floorf((x + radius) / physics->tile_meters) + TILE_MARGIN;
-	int last_y = (int)SDL_floorf((z + radius) / physics->tile_meters) + TILE_MARGIN;
+	int first_x = floor_to_int((x - radius) / physics->tile_meters) - TILE_MARGIN;
+	int first_y = floor_to_int((z - radius) / physics->tile_meters) - TILE_MARGIN;
+	int last_x = floor_to_int((x + radius) / physics->tile_meters) + TILE_MARGIN;
+	int last_y = floor_to_int((z + radius) / physics->tile_meters) + TILE_MARGIN;
 
 	first_x = SDL_max(first_x, 0);
 	first_y = SDL_max(first_y, 0);
@@ -1822,8 +1823,8 @@ static void rebuild_walls(physics_t *physics, objects_t *objects, const terrain_
 		model = &objects->models[model_index];
 		base_y = objects_instance_base_y(instance);
 		reach = model->horizontal_radius * scale + water->cell_size_meters;
-		rectangle[0] = clamp_int((int32_t)SDL_floorf((instance->x - reach) / water->cell_size_meters), 0, water->size - 1);
-		rectangle[1] = clamp_int((int32_t)SDL_floorf((instance->z - reach) / water->cell_size_meters), 0, water->size - 1);
+		rectangle[0] = clamp_int(floor_to_int((instance->x - reach) / water->cell_size_meters), 0, water->size - 1);
+		rectangle[1] = clamp_int(floor_to_int((instance->z - reach) / water->cell_size_meters), 0, water->size - 1);
 		rectangle[2] = clamp_int((int32_t)SDL_ceilf((instance->x + reach) / water->cell_size_meters), 0, water->size - 1);
 		rectangle[3] = clamp_int((int32_t)SDL_ceilf((instance->z + reach) / water->cell_size_meters), 0, water->size - 1);
 		rectangle_width = rectangle[2] - rectangle[0] + 1;
@@ -1879,8 +1880,8 @@ static void rebuild_walls(physics_t *physics, objects_t *objects, const terrain_
 					float x = world_x[k] + (world_x[next] - world_x[k]) * f;
 					float z = world_z[k] + (world_z[next] - world_z[k]) * f;
 					float y = world_y[k] + (world_y[next] - world_y[k]) * f;
-					int32_t cell_x = (int32_t)SDL_floorf(x / water->cell_size_meters + 0.5f) - rectangle[0];
-					int32_t cell_y = (int32_t)SDL_floorf(z / water->cell_size_meters + 0.5f) - rectangle[1];
+					int32_t cell_x = floor_to_int(x / water->cell_size_meters + 0.5f) - rectangle[0];
+					int32_t cell_y = floor_to_int(z / water->cell_size_meters + 0.5f) - rectangle[1];
 
 					if (cell_x >= 0 && cell_y >= 0 && cell_x < rectangle_width && cell_y < rectangle_height)
 					{
@@ -1897,10 +1898,10 @@ static void rebuild_walls(physics_t *physics, objects_t *objects, const terrain_
 				continue;
 			}
 			for (int32_t cell_y = SDL_max((int32_t)SDL_ceilf(minimum_z / water->cell_size_meters), rectangle[1]);
-				cell_y <= SDL_min((int32_t)SDL_floorf(maximum_z / water->cell_size_meters), rectangle[3]); cell_y++)
+				cell_y <= SDL_min(floor_to_int(maximum_z / water->cell_size_meters), rectangle[3]); cell_y++)
 			{
 				for (int32_t cell_x = SDL_max((int32_t)SDL_ceilf(minimum_x / water->cell_size_meters), rectangle[0]);
-					cell_x <= SDL_min((int32_t)SDL_floorf(maximum_x / water->cell_size_meters), rectangle[2]); cell_x++)
+					cell_x <= SDL_min(floor_to_int(maximum_x / water->cell_size_meters), rectangle[2]); cell_x++)
 				{
 					float x = (float)cell_x * water->cell_size_meters;
 					float z = (float)cell_y * water->cell_size_meters;
@@ -2010,8 +2011,8 @@ static bool sample_water(const water_t *water, const physics_settings_t *setting
 	float cell = water->cell_size_meters;
 	float grid_x = world_x / cell;
 	float grid_z = world_z / cell;
-	int32_t x0 = (int32_t)SDL_floorf(grid_x);
-	int32_t z0 = (int32_t)SDL_floorf(grid_z);
+	int32_t x0 = floor_to_int(grid_x);
+	int32_t z0 = floor_to_int(grid_z);
 	float u = grid_x - (float)x0;
 	float v = grid_z - (float)z0;
 	int32_t last = water->size - 1;
