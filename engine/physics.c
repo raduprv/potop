@@ -2365,7 +2365,11 @@ static bool take_damage(physics_t *physics, objects_t *objects, const terrain_t 
 	body->damage_ready_seconds = physics->clock_seconds + 1.0;
 	instance->damage++;
 	objects_touch(objects, body->instance);
-	physics->walls_dirty = true;
+	// (the water's walls only if it is one: a barrel knocked about is none)
+	if (type->blocks_water)
+	{
+		physics->walls_dirty = true;
+	}
 	objects->far_shadow_dirty = true;
 	objects->near_shadow_dirty = true;
 	SDL_Log("Physics: %s %s", type->name, instance->damage == OBJECT_DAMAGE_DESTROYED ? "destroyed" : "damaged");
@@ -3054,7 +3058,7 @@ void physics_step(physics_t *physics, objects_t *objects, terrain_t *terrain, wa
 	section_start = SDL_GetPerformanceCounter();
 	restore_poses(physics, objects);
 	objects_sort(objects);
-	if (physics->needs_full_sync || physics->synced_generation != objects->generation || physics->walls_dirty)
+	if (physics->needs_full_sync || physics->synced_generation != objects->generation)
 	{
 		// Walls only change with the objects (or their damage)
 		physics->walls_dirty = false;
@@ -3064,6 +3068,14 @@ void physics_step(physics_t *physics, objects_t *objects, terrain_t *terrain, wa
 	}
 	else
 	{
+		// (a wall damaged: the walls alone, the bodies are as they were.
+		// Every object was matched to its body again for it, some ten
+		// milliseconds on a big map, each time one thing hit another hard)
+		if (physics->walls_dirty)
+		{
+			physics->walls_dirty = false;
+			rebuild_walls(physics, objects, terrain, water, false);
+		}
 		// (the bodies wanted: round the focus, the cells nearest it made at
 		// once (a jump somewhere), the rest a little a step; where the water
 		// moves; round the actors (physics_request_bodies). Never taken away)
