@@ -334,6 +334,11 @@ typedef struct
 	// The draws: each material of each model, in order
 	int *draw_models;
 	int *draw_materials;
+	// What each is to the pass prepared (classify_draws; made again for
+	// every pass drawn): draw_models goes through the draws once for each
+	// kind, and leaves the others by this, their models not looked at
+	uint8_t *draw_classes;
+	int draw_class_capacity;
 	int *draw_levels;                  // the level of detail each is drawn at (objects_cull.comp)
 	float *draw_drop_levels;           // the deepest branch level the next level keeps (0: none; object.vert)
 	int draw_count;

@@ -707,10 +707,13 @@ static void release_tables(objects_t *objects)
 	}
 	SDL_free(objects->draw_models);
 	SDL_free(objects->draw_materials);
+	SDL_free(objects->draw_classes);
 	SDL_free(objects->draw_levels);
 	SDL_free(objects->draw_drop_levels);
 	objects->draw_models = NULL;
 	objects->draw_materials = NULL;
+	objects->draw_classes = NULL;
+	objects->draw_class_capacity = 0;
 	objects->draw_levels = NULL;
 	objects->draw_drop_levels = NULL;
 	objects->draw_count = 0;
@@ -1170,6 +1173,7 @@ void objects_destroy(objects_t *objects)
 	SDL_free(objects->floating);
 	SDL_free(objects->draw_models);
 	SDL_free(objects->draw_materials);
+	SDL_free(objects->draw_classes);
 	SDL_free(objects->slot_instance);
 	SDL_free(objects->free_slots);
 	SDL_free(objects->slot_dirty);
@@ -5043,6 +5047,59 @@ static bool order_draws(objects_t *objects)
 	return true;
 }
 
+// A draw none of draw_models' passes takes (draw_classes)
+#define DRAW_CLASS_NONE 0xffu
+
+// What draw_models asks for, as one number: alpha tested, a plant's, and
+// for the camera's pass which pipeline's (a plant's: its own, no kind)
+static uint8_t draw_class(bool camera, bool alpha_tested, bool plants, draw_kind_t kind)
+{
+	return (uint8_t)((alpha_tested ? 1u : 0u) | (plants ? 2u : 0u) | (camera && !plants ? (uint32_t)kind << 2 : 0u));
+}
+
+// Each draw's class for the pass prepared, once before its draw_models
+// (which go through all the draws, seven times for the camera: a draw's
+// model and material, far apart in memory, looked at here only)
+static void classify_draws(objects_t *objects)
+{
+	bool camera = objects->prepared_pass == PASS_CAMERA;
+
+	if (objects->draw_class_capacity < objects->draw_count)
+	{
+		uint8_t *grown = SDL_realloc(objects->draw_classes, (size_t)objects->draw_count);
+
+		if (grown == NULL)
+		{
+			// (draw_models tells without them)
+			SDL_free(objects->draw_classes);
+			objects->draw_classes = NULL;
+			objects->draw_class_capacity = 0;
+			return;
+		}
+		objects->draw_classes = grown;
+		objects->draw_class_capacity = objects->draw_count;
+	}
+	for (int d = 0; d < objects->draw_count; d++)
+	{
+		const object_model_t *model = &objects->models[objects->draw_models[d]];
+		const object_material_t *material;
+		bool plants = model->plant_buffer != NULL;
+
+		objects->draw_classes[d] = DRAW_CLASS_NONE;
+		if (objects->draw_materials[d] < 0 || !model_on_map(objects, objects->draw_models[d]))
+		{
+			continue;
+		}
+		material = &model->materials[objects->draw_materials[d]];
+		if (material->texture == NULL)
+		{
+			continue;
+		}
+		objects->draw_classes[d] = draw_class(camera, material->alpha_tested, plants,
+			camera && !plants ? camera_draw_kind(objects, model, material) : DRAW_OTHERS);
+	}
+}
+
 static int draw_models(const objects_t *objects, SDL_GPURenderPass *pass, bool alpha_pass, draw_kind_t kind)
 {
 	int draw_calls = 0;
@@ -5146,12 +5203,16 @@ static int draw_models(const objects_t *objects, SDL_GPURenderPass *pass, bool a
 	SDL_GPUTexture *bound_texture = NULL;
 	SDL_GPUSampler *bound_sampler = NULL;
 	SDL_GPUTexture *bound_maps[3] = { NULL, NULL, NULL };
+	// The draws of another kind left by their class, where those are known
+	// for all of them (the tests below tell the same, by the model)
+	const uint8_t *classes = objects->draw_class_capacity >= objects->draw_count ? objects->draw_classes : NULL;
+	uint8_t wanted_class = draw_class(objects->prepared_pass == PASS_CAMERA, alpha_pass, plants, kind);
 
 	for (int n = ordered ? 0 : first_draw; n < objects->draw_count; n++)
 	{
 		int d = ordered ? objects->draw_order[n] : n;
 
-		if (d < first_draw)
+		if (d < first_draw || (classes != NULL && classes[d] != wanted_class))
 		{
 			continue;
 		}
@@ -5582,6 +5643,7 @@ void objects_draw(objects_t *objects, SDL_GPURenderPass *pass, const render_sett
 	// Near first (by each model's nearest visible cell), and the big
 	// ones that hide most first of all: the buildings, then the rest
 	objects->draw_order_ready = order_draws(objects);
+	classify_draws(objects);
 	if (objects->building_pipeline != NULL)
 	{
 		SDL_BindGPUGraphicsPipeline(pass, objects->building_pipeline);
@@ -5674,6 +5736,7 @@ void objects_render_shadow(objects_t *objects, SDL_GPURenderPass *pass)
 	int draw_calls = 0;
 
 	refresh_models_used(objects);
+	classify_draws(objects);
 	SDL_BindGPUGraphicsPipeline(pass, objects->shadow_pipeline);
 	draw_calls += draw_models(objects, pass, false, DRAW_OTHERS);
 	draw_calls += draw_models(objects, pass, true, DRAW_OTHERS);
