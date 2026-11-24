@@ -634,6 +634,39 @@ static void bleed(uint8_t *atlases, const picture_layout_t *layout)
 	SDL_free(depth);
 }
 
+// How far to the sides of a picture's middle anything is covered, in any
+// of the atlas's pictures (0..1 of half a picture: of the sphere's radius).
+// A picture's sides are level for every picture taken (impostor.glsl's
+// impostor_basis), so this is how far the model reaches sideways seen from
+// anywhere round it
+static float covered_across(const uint8_t *albedo, const picture_layout_t *layout)
+{
+	int cell_width = layout->atlas_width / SDL_max(layout->grid_x, 1);
+	float farthest = 0.0f;
+
+	if (cell_width <= 0)
+	{
+		return 0.0f;
+	}
+	for (int y = 0; y < layout->atlas_height; y++)
+	{
+		const uint8_t *row = albedo + (size_t)y * (size_t)layout->atlas_width * 4;
+
+		for (int x = 0; x < layout->atlas_width; x++)
+		{
+			// (the faintest coverage counts: the mip levels spread it)
+			if (row[(size_t)x * 4 + 3] >= 8)
+			{
+				// The texel's far edge from its picture's middle
+				float from_middle = SDL_fabsf(((float)(x % cell_width) + 0.5f) / (float)cell_width * 2.0f - 1.0f) + 1.0f / (float)cell_width;
+
+				farthest = SDL_max(farthest, from_middle);
+			}
+		}
+	}
+	return SDL_min(farthest, 1.0f);
+}
+
 bool impostor_make(impostor_baker_t *baker, impostor_t *impostor, const object_model_t *model, const object_texture_cache_t *textures,
 	float month)
 {
@@ -697,6 +730,7 @@ bool impostor_make(impostor_baker_t *baker, impostor_t *impostor, const object_m
 		}
 		impostor->look[0] = triangles > 0 ? (float)cut_out / (float)triangles : 0.0f;
 	}
+	impostor->across = covered_across(atlases, &layout);
 	impostor->look[1] = layout.plant ? 1.0f : 0.0f;
 	impostor->look[2] = (float)layout.grid_x;
 	impostor->look[3] = (float)layout.grid_y;

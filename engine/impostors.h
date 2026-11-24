@@ -58,6 +58,11 @@ typedef struct
 	SDL_GPUTexture *normal;        // RGBA8, mipmapped: normal in the model's axes * 0.5 + 0.5 (a plant's leaves a quarter as long), alpha depth
 	float sphere[4];               // the model's bounding sphere: center, radius (model axes, meters at size 1)
 	float look[4];                 // x: how leafy, 0..1 (its triangles' share in cut out materials): lit like leaves; y: a plant's (1); z, w: pictures across, down its atlas
+	// How far its pictures are covered to the sides of their middle, of
+	// the sphere's radius (0..1; the widest of them all): the square it is
+	// drawn on is that wide, not the sphere's whole width (a tall tree
+	// fills a third of that; impostor.vert). 0: not known
+	float across;
 	int atlas_width;               // its atlases' size
 	int atlas_height;
 	int month_index;               // a plant's: the month its foliage's pictures are of (0 January; -1 not a plant)

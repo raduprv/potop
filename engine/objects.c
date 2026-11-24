@@ -3477,7 +3477,9 @@ static bool upload_tables(objects_t *objects)
 			// instances (objects_cull.comp, impostor.vert)
 			if (has_impostor(objects, m))
 			{
-				models[MODEL_FLOATS * m + 18] = (float)objects->impostors[m].layer;
+				// (with how wide its pictures are covered after the point:
+				// 0.9 of it, 0 not known; impostor.vert takes them apart)
+				models[MODEL_FLOATS * m + 18] = (float)objects->impostors[m].layer + 0.9f * SDL_clamp(objects->impostors[m].across, 0.0f, 1.0f);
 				models[MODEL_FLOATS * m + 19] = objects->impostors[m].look[1] > 0.5f ? -1.0f : objects->impostors[m].look[0];
 			}
 			// A building's look (its type's age, its spread, its lichen and

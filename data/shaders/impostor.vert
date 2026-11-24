@@ -82,8 +82,20 @@ void main()
 	impostor_basis(eye_direction, right, up);
 	sky_light = sky_light_at(center, center.y - instance_placement.y, vec3(0.0, 1.0, 0.0));
 	// A little larger than the sphere: seen from near, its outline is
-	// wider than its radius
-	world_position = center + (corner.x * right + corner.y * up) * radius * 1.1;
+	// wider than its radius. Only as wide as its pictures are covered
+	// (picture.x's fraction, objects.c: a tall tree a third of its sphere;
+	// with room for what lies between the pictures taken), where the
+	// square's sides are the pictures': the object standing upright, not
+	// seen from straight above. The empty rest was drawn, each pixel
+	// reading its pictures to find nothing
+	float across = fract(picture.x) / 0.9;
+	float wide = 1.1;
+
+	if (across > 0.0 && impostor_rotate(instance_rotation, vec3(0.0, 1.0, 0.0)).y > 0.985 && eye_direction.y < 0.95)
+	{
+		wide = min(1.1, 1.1 * (across * 1.15 + 0.04));
+	}
+	world_position = center + (corner.x * wide * right + corner.y * 1.1 * up) * radius;
 
 	// The eye and the corner in the model's axes, in sphere radii
 	{
@@ -166,12 +178,32 @@ void main()
 			picture_point_2 = on_picture(frame_c, eye, point);
 		}
 	}
+	// A small one from fewer pictures: three blended are not told from the
+	// nearest alone on a few pixels, and each is two more textures read at
+	// every pixel. The nearest weighed more and more as it shrinks, the
+	// faint ones left out (impostor.frag skips a weight of 0); by its
+	// radius on the screen (the screen's height is 2: 0.035 some 25 pixels
+	// of 1440, 0.015 some 11)
+	{
+		vec4 clip_center = world_to_clip(center);
+		vec4 clip_top = world_to_clip(center + up * radius);
+		float on_screen = abs(clip_top.y / max(clip_top.w, 1e-4) - clip_center.y / max(clip_center.w, 1e-4));
+		float small = clamp((0.035 - on_screen) / 0.02, 0.0, 1.0);
+
+		if (small > 0.0)
+		{
+			weights = pow(weights, vec3(1.0 + 7.0 * small));
+			weights /= max(weights.x + weights.y + weights.z, 1e-6);
+			weights *= step(vec3(0.12 * small), weights);
+			weights /= max(weights.x + weights.y + weights.z, 1e-6);
+		}
+	}
 	rotation = instance_rotation;
 	fade = instance_fade;
 	toward_eye = vec4(eye_direction, radius);
 	// (a plant's: told a texel at a time, impostor.frag)
 	leafy = picture.y;
-	picture_layer = int(picture.x + 0.5);
+	picture_layer = int(floor(picture.x));
 	haze = clamp(haze_amount(world_position), 0.0, 1.0);
 	// Drawn at the sphere's near side (the same square on the screen,
 	// moved towards the eye along the rays: the attributes stay those of

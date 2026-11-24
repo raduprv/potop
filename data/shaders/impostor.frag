@@ -109,6 +109,8 @@ void main()
 	float coverage = 0.0;
 	vec3 color = vec3(0.0);
 	vec4 normal_depth = vec4(0.0);
+	vec3 places[3];
+	float covered[3] = float[3](0.0, 0.0, 0.0);
 
 	if (drawn_fade < 1.0 && drawn_fade < dither_threshold())
 	{
@@ -123,16 +125,28 @@ void main()
 		vec2 uv = impostor_atlas_uv(frames[k], points[k], picture_grid);
 		vec3 at = vec3(uv, float(picture_layer));
 		vec4 albedo_sample = plant ? textureLod(plant_albedo_atlases, at, lod) : textureLod(albedo_atlases, at, lod);
-		vec4 normal_sample = plant ? textureLod(plant_normal_atlases, at, lod) : textureLod(normal_atlases, at, lod);
 		float weight = weights[k] * albedo_sample.a;
 
-		coverage += weights[k] * albedo_sample.a;
+		places[k] = at;
+		covered[k] = weight;
+		coverage += weight;
 		color += albedo_sample.rgb * weight;
-		normal_depth += vec4(normal_sample.rgb * 2.0 - 1.0, normal_sample.a) * weight;
 	}
 	// Cut out as the leaves are (object.frag: the alpha boosted with the
-	// mip level)
+	// mip level). Before the normals are read: about half a square's
+	// pixels are empty, and go here (alpha_cutout discards them)
 	float cut_alpha = alpha_cutout(coverage * (1.0 + 0.25 * lod), 0.5);
+
+	for (int k = 0; k < 3; k++)
+	{
+		if (covered[k] <= 0.0)
+		{
+			continue;
+		}
+		vec4 normal_sample = plant ? textureLod(plant_normal_atlases, places[k], lod) : textureLod(normal_atlases, places[k], lod);
+
+		normal_depth += vec4(normal_sample.rgb * 2.0 - 1.0, normal_sample.a) * covered[k];
+	}
 
 	// (with alpha to coverage a texel all but bare can stay, a sample or
 	// two of it: no division by nothing, its NaN bloomed into blotches)
