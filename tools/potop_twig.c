@@ -1054,9 +1054,9 @@ static void draw_spruce(canvas_t *canvas, random_t *random)
 {
 	static needle_shape_t needle;
 	needle_style_t style = {
-		.length_low = 0.21f, .length_high = 0.25f, .radius = 0.0084f,
+		.length_low = 0.15f, .length_high = 0.18f, .radius = 0.0064f,
 		.angle_low = 0.95f, .angle_high = 1.15f, .curl = 0.3f,
-		.per_bundle = 1, .bundles_per_unit = 80.0f, .crowding = 0.65f, .bare = 0.0f, .brush = 0.15f,
+		.per_bundle = 1, .bundles_per_unit = 120.0f, .crowding = 0.65f, .bare = 0.0f, .brush = 0.15f,
 		.greens = {
 			{ .dark = { 0.08f, 0.17f, 0.06f }, .light = { 0.30f, 0.48f, 0.18f }, .tip = { 0.38f, 0.52f, 0.18f }, .tip_from = 1.0f },
 			{ .dark = { 0.15f, 0.22f, 0.05f }, .light = { 0.48f, 0.58f, 0.20f }, .tip = { 0.52f, 0.60f, 0.20f }, .tip_from = 1.0f } },
@@ -1098,8 +1098,8 @@ static void draw_spruce(canvas_t *canvas, random_t *random)
 		.length = stem_length * stub, .radius = 0.028f, .scale = 1.0f, .taper = 0.85f, .bare = true, .crook = 0.04f,
 		.phase = random_range(random, 0.0f, 6.0f), .bark = &stub_bark };
 	shoot_point(&shoots[0], 1.0f, &x, &y, &heading);
-	shoots[count++] = (shoot_t){ .fx = x, .fy = y, .angle = heading, .bend = random_range(random, -0.3f, 0.3f),
-		.length = stem_length * (1.0f - stub), .radius = 0.021f, .scale = 0.78f, .taper = 0.4f, .needles_from = 0.01f, .crook = 0.14f,
+	shoots[count++] = (shoot_t){ .fx = x, .fy = y, .angle = heading, .bend = random_range(random, -0.15f, 0.15f),
+		.length = stem_length * (1.0f - stub), .radius = 0.021f, .scale = 0.78f, .taper = 0.4f, .needles_from = 0.01f, .crook = 0.07f,
 		.phase = random_range(random, 0.0f, 6.0f) };
 	// The shoots, alternately, the lower longer, out and a little up
 	for (int i = 0; i < sides && count < 8; i++)
@@ -1108,11 +1108,11 @@ static void draw_spruce(canvas_t *canvas, random_t *random)
 		float along = i == 0 ? random_range(random, 0.01f, 0.04f)
 			: 0.16f + 0.56f * ((float)(i - 1) + random_range(random, 0.0f, 0.35f)) / (float)(sides - 1);
 		float side = (i % 2 == 0) ? first_side : -first_side;
-		float length = random_range(random, 0.36f, 0.43f) * (1.0f - 0.45f * along) * stem_length * (i == 0 ? random_range(random, 0.42f, 0.52f) : 1.0f);
+		float length = random_range(random, 0.34f, 0.39f) * (1.0f - 0.45f * along) * stem_length * (i == 0 ? random_range(random, 0.42f, 0.52f) : 1.0f);
 
 		shoot_point(&shoots[1], along, &x, &y, &heading);
-		shoots[count++] = (shoot_t){ .fx = x, .fy = y, .angle = heading + side * random_range(random, 0.6f, 0.7f),
-			.bend = side * random_range(random, 0.12f, 0.22f), .length = length, .radius = 0.014f, .scale = 1.08f, .taper = 0.5f,
+		shoots[count++] = (shoot_t){ .fx = x, .fy = y, .angle = heading + side * random_range(random, 0.46f, 0.54f),
+			.bend = side * random_range(random, 0.08f, 0.16f), .length = length, .radius = 0.014f, .scale = 1.08f, .taper = 0.5f,
 			.needles_from = 0.02f, .crook = 0.16f, .phase = random_range(random, 0.0f, 6.0f) };
 	}
 	draw_twig(canvas, random, &style, &bark, NULL, shoots, count);
@@ -1666,7 +1666,12 @@ static void write_to_file(void *context, void *data, int size)
 }
 
 // Averaged down, the color spread under the clear background, written
-static bool finish(const canvas_t *canvas, int width, int height, const char *path)
+// aspect > 0: the picture cut to the twig (a few pixels round it) and
+// widened (clear at its sides) or heightened (clear over it) to aspect
+// times as tall as wide, the twig's foot at its bottom, in its middle
+// across: the atlas's cells keep a picture's shape, so one the cell's
+// shape fills it
+static bool finish(const canvas_t *canvas, int width, int height, const char *path, float aspect)
 {
 	uint8_t *out = malloc((size_t)width * (size_t)height * 4);
 	float *small = malloc(sizeof(float) * (size_t)width * (size_t)height * 4);
@@ -1802,6 +1807,73 @@ static bool finish(const canvas_t *canvas, int width, int height, const char *pa
 		memmove(out, out + (size_t)first * (size_t)width * 4, (size_t)(height - first) * (size_t)width * 4);
 		height -= first;
 	}
+	if (aspect > 0.0f)
+	{
+		int left = width;
+		int right = -1;
+		int bottom = -1;
+		int new_width;
+		int new_height;
+		int offset_x;
+		int offset_y;
+		uint8_t *shaped;
+
+		for (int y = 0; y < height; y++)
+		{
+			for (int x = 0; x < width; x++)
+			{
+				if (out[((size_t)y * (size_t)width + (size_t)x) * 4 + 3] != 0)
+				{
+					left = x < left ? x : left;
+					right = x > right ? x : right;
+					bottom = y > bottom ? y : bottom;
+				}
+			}
+		}
+		if (right >= left)
+		{
+			// (the twig with its foot's column in the middle: as far out
+			// on both sides as its farther side)
+			int middle = width / 2;
+			int half = (middle - left > right - middle ? middle - left : right - middle) + 4;
+			int content_height = bottom + 5 < height ? bottom + 5 : height;
+
+			new_width = 2 * half;
+			new_height = content_height;
+			if ((float)new_height < aspect * (float)new_width)
+			{
+				new_height = (int)lroundf(aspect * (float)new_width);
+			}
+			else
+			{
+				new_width = (int)lroundf((float)new_height / aspect);
+				half = new_width / 2;
+			}
+			shaped = calloc((size_t)new_width * (size_t)new_height * 4, 1);
+			if (shaped != NULL)
+			{
+				offset_x = half - middle;
+				offset_y = new_height - content_height;
+				for (int y = 0; y < content_height; y++)
+				{
+					for (int x = 0; x < width; x++)
+					{
+						int to_x = x + offset_x;
+
+						if (to_x < 0 || to_x >= new_width)
+						{
+							continue;
+						}
+						memcpy(&shaped[((size_t)(y + offset_y) * (size_t)new_width + (size_t)to_x) * 4], &out[((size_t)y * (size_t)width + (size_t)x) * 4], 4);
+					}
+				}
+				free(out);
+				out = shaped;
+				width = new_width;
+				height = new_height;
+			}
+		}
+	}
 	file = fopen(path, "wb");
 	ok = file != NULL && stbi_write_png_to_func(write_to_file, file, width, height, 4, out, width * 4) != 0;
 	if (file != NULL)
@@ -1901,7 +1973,7 @@ int main(int argument_count, char **arguments)
 		free(canvas.pixels);
 		return 1;
 	}
-	if (!finish(&canvas, width, canvas.height / SUPERSAMPLE, path))
+	if (!finish(&canvas, width, canvas.height / SUPERSAMPLE, path, strcmp(kind, "spruce") == 0 ? 2.0f : 0.0f))
 	{
 		fprintf(stderr, "potop_twig: could not write %s\n", path);
 		free(canvas.pixels);
