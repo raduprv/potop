@@ -918,6 +918,12 @@ void console_run_command(console_t *console, potop_t *potop, const char *line, c
 		SDL_Log("Lamps: %s; %d lights lighting, %d placed", potop->settings.render.lamps_with_the_day ? "with the day"
 			: (potop->world.lights.lamps == LIGHTS_LAMPS_ON ? "on" : "off"), potop->world.lights.count, potop->world.lights.placed_count);
 	}
+	else if (SDL_strcmp(command, "awake") == 0)
+	{
+		// The bodies the physics keeps awake: which, and what the water
+		// does to each (the first few; awake N: that many)
+		physics_log_awake(&potop->world.physics, &potop->world.objects, has_first ? SDL_max(SDL_atoi(first), 0) : 12);
+	}
 	else if (SDL_strcmp(command, "profile") == 0)
 	{
 		// Where the frames' time went on the CPU since the last time

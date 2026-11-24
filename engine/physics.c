@@ -3041,6 +3041,62 @@ static void remember_moved(physics_t *physics, int slot)
 	physics->moved_slots[physics->moved_count++] = slot;
 }
 
+void physics_log_awake(const physics_t *physics, const objects_t *objects, int listed_most)
+{
+	int type_count = objects->types.type_count;
+	int *per_type;
+	int awake = 0;
+	int listed = 0;
+
+	if (!physics->created || type_count <= 0)
+	{
+		return;
+	}
+	per_type = SDL_calloc((size_t)type_count, sizeof(int));
+	if (per_type == NULL)
+	{
+		return;
+	}
+	for (int slot = 0; slot < physics->body_capacity; slot++)
+	{
+		const physics_body_t *body = &physics->bodies[slot];
+		const object_instance_t *instance;
+
+		if (!body->used || body->kind != PHYSICS_BODY_DYNAMIC || !b3Body_IsAwake(body->id) || body->instance < 0
+			|| body->instance >= objects->instance_count)
+		{
+			continue;
+		}
+		instance = &objects->instances[body->instance];
+		awake++;
+		if (instance->type >= 0 && instance->type < type_count)
+		{
+			per_type[instance->type]++;
+		}
+		if (listed < listed_most)
+		{
+			b3WorldTransform transform = b3Body_GetTransform(body->id);
+			b3Vec3 velocity = b3Body_GetLinearVelocity(body->id);
+			b3Vec3 spin = b3Body_GetAngularVelocity(body->id);
+
+			SDL_Log("Awake: %s at (%.1f, %.1f, %.1f): %.3f m/s, %.3f rad/s; in the water %.2f of it, buoyancy %.0f N of %.0f N weight, drag %.0f N, flow %.2f m/s",
+				objects->types.types[instance->type].name, (double)transform.p.x, (double)transform.p.y, (double)transform.p.z,
+				(double)b3Length(velocity), (double)b3Length(spin), (double)body->water_submerged, (double)body->water_buoyancy_newtons,
+				(double)(body->mass * GRAVITY), (double)body->water_drag_newtons, (double)body->water_flow_meters_per_second);
+			listed++;
+		}
+	}
+	for (int t = 0; t < type_count; t++)
+	{
+		if (per_type[t] > 0)
+		{
+			SDL_Log("Awake: %d of %s", per_type[t], objects->types.types[t].name);
+		}
+	}
+	SDL_Log("Awake: %d bodies in all", awake);
+	SDL_free(per_type);
+}
+
 void physics_step(physics_t *physics, objects_t *objects, terrain_t *terrain, water_t *water, const physics_settings_t *settings,
 	float step_seconds)
 {

@@ -293,6 +293,11 @@ void physics_push_with_walker(physics_t *physics, float x, float feet_height, fl
 // Every frame, before drawing; the next step puts them back where they are
 void physics_interpolate(physics_t *physics, objects_t *objects, float amount);
 
+// The bodies awake now, logged (the console's awake): how many of each
+// type, and the first few with where they are, how fast they move and
+// what the water does to them (for finding what keeps bodies from sleeping)
+void physics_log_awake(const physics_t *physics, const objects_t *objects, int listed_most);
+
 // One simulation step: bodies follow the object list, the water pushes
 // them, Box3D moves them, objects follow their bodies. objects may get
 // objects removed (gone off the map, destroyed, washed away).
