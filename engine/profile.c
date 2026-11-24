@@ -88,6 +88,70 @@ static bool section_nested(int section)
 		|| section == FRAME_SHADOWS || section == FRAME_OBJECTS_CULL || section == FRAME_PATHS || section >= FRAME_FOLLOW_WATER;
 }
 
+// The stutters' lines, held and written together once a second: a line
+// written is drawn by the terminal it goes to, the desktop's compositor
+// draws that, and the game waits for its next picture meanwhile (a stutter
+// some ten milliseconds after any line). Written as they came, each one's
+// lines made the next stutter and the detector fed itself for a few frames;
+// and the stutters right after the lines are written are theirs, not told
+#define STUTTER_QUIET_SECONDS 0.25
+
+static struct
+{
+	char text[32768];
+	size_t length;
+	uint64_t quiet_until;                  // SDL_GetPerformanceCounter's; 0: none
+	int untold;                            // stutters within the quiet after a writing
+} held;
+
+static void hold_line(const char *line)
+{
+	if (held.length < sizeof(held.text))
+	{
+		held.length += (size_t)SDL_snprintf(held.text + held.length, sizeof(held.text) - held.length, "(at %.3f) %s\n",
+			(double)SDL_GetTicksNS() * 1e-9, line);
+		held.length = SDL_min(held.length, sizeof(held.text) - 1);
+	}
+}
+
+static bool held_quiet(uint64_t now)
+{
+	return held.quiet_until != 0 && now < held.quiet_until;
+}
+
+static void write_held(uint64_t now)
+{
+	char *line = held.text;
+
+	if (held.length == 0)
+	{
+		return;
+	}
+	while (*line != '\0')
+	{
+		char *end = SDL_strchr(line, '\n');
+
+		if (end != NULL)
+		{
+			*end = '\0';
+		}
+		SDL_Log("%s", line);
+		if (end == NULL)
+		{
+			break;
+		}
+		line = end + 1;
+	}
+	if (held.untold > 0)
+	{
+		SDL_Log("(%d more stutters right after the last lines were written: not told, the writing makes them)", held.untold);
+	}
+	held.length = 0;
+	held.text[0] = '\0';
+	held.untold = 0;
+	held.quiet_until = now + (uint64_t)(STUTTER_QUIET_SECONDS * (double)SDL_GetPerformanceFrequency());
+}
+
 static void log_spike(double milliseconds, double frequency)
 {
 	char line[2048];
@@ -174,7 +238,7 @@ static void log_spike(double milliseconds, double frequency)
 				(int)sum, last_ago);
 		}
 	}
-	SDL_Log("%s", line);
+	hold_line(line);
 }
 
 void frame_profile_finish(void)
@@ -192,6 +256,7 @@ void frame_profile_finish(void)
 		{
 			frame_profile.second_timer = 0.0;
 			frame_profile.spikes_logged_this_second = 0;
+			write_held(now);
 		}
 		// Long stalls (a window dragged, loading a map) are not stutters
 		if (frame_profile.usual_milliseconds > 0.0 && milliseconds < 250.0
@@ -199,7 +264,11 @@ void frame_profile_finish(void)
 			&& milliseconds > frame_profile.usual_milliseconds + SPIKE_EXTRA_MILLISECONDS)
 		{
 			frame_profile.spike_count++;
-			if (frame_profile.spikes_logged_this_second < SPIKES_LOGGED_PER_SECOND)
+			if (held_quiet(now))
+			{
+				held.untold++;
+			}
+			else if (frame_profile.spikes_logged_this_second < SPIKES_LOGGED_PER_SECOND)
 			{
 				frame_profile.spikes_logged_this_second++;
 				log_spike(milliseconds, frequency);
@@ -275,6 +344,7 @@ static struct
 	double threshold_milliseconds; // steps under it into "the rest"
 	double log_over_milliseconds;  // logged only if it took this long in all (0: always)
 	double live_milliseconds;      // steps this long logged at once (0: none)
+	bool held;                     // a stutter's trace: its line held with the stutter's (write_held)
 	bool frame_asked;              // trace_next_frame: a frame traced, every step
 	int frames_to_wait;            // frames before it (time to close the console)
 } trace;
@@ -288,6 +358,7 @@ void trace_begin(const char *label)
 	trace.threshold_milliseconds = 0.5;
 	trace.log_over_milliseconds = 0.0;
 	trace.live_milliseconds = 0.0;
+	trace.held = false;
 	trace_active = true;
 }
 
@@ -326,10 +397,12 @@ void trace_frame_begin(void)
 	// Every frame traced, and logged if it is a stutter (as log_spike's
 	// line, which tells the sections: this one the steps in the order
 	// done, the time in none of the sections among them)
-	if (!trace_active && frame_profile.usual_milliseconds > 0.0 && frame_profile.spikes_logged_this_second < SPIKES_LOGGED_PER_SECOND)
+	if (!trace_active && frame_profile.usual_milliseconds > 0.0 && frame_profile.spikes_logged_this_second < SPIKES_LOGGED_PER_SECOND
+		&& !held_quiet(SDL_GetPerformanceCounter()))
 	{
 		trace_begin_if_slow("Stutter, step by step (ms)",
 			SDL_max(frame_profile.usual_milliseconds * SPIKE_FACTOR, frame_profile.usual_milliseconds + SPIKE_EXTRA_MILLISECONDS), 0.3);
+		trace.held = true;
 	}
 }
 
@@ -368,6 +441,15 @@ void trace_end(void)
 	trace_active = false;
 	if (total < trace.log_over_milliseconds)
 	{
+		return;
+	}
+	if (trace.held)
+	{
+		// (a stutter's steps: with its line, written once a second)
+		char line[sizeof(trace.line) + 64];
+
+		SDL_snprintf(line, sizeof(line), "%s the rest %.1f; %.1f ms in all", trace.line, trace.rest_milliseconds, total);
+		hold_line(line);
 		return;
 	}
 	SDL_Log(trace.threshold_milliseconds > 0.0 ? "%s the rest %.1f; %.1f ms in all" : "%s the rest %.3f; %.3f ms in all", trace.line,
