@@ -668,16 +668,18 @@ static float covered_across(const uint8_t *albedo, const picture_layout_t *layou
 	return SDL_min(farthest, 1.0f);
 }
 
-// Raise when the color atlases are compressed differently: every one is
+// Raise when the atlases are compressed differently: every one is
 // compressed again
 #define IMPOSTOR_COLOR_VERSION 1
 
-// The color atlas compressed (BC7, IMPOSTOR_COLOR_LEVELS levels: each from
-// the one above, four texels into one, which never mixes a picture's cell
-// with the next), from the texture cache or made and kept there: under the
-// atlas's own key, a file a model and a month (a plant's foliage's). NULL
-// without memory
-static uint8_t *color_blocks(const object_model_t *model, const picture_layout_t *layout, uint64_t atlas_key, const uint8_t *albedo)
+// An atlas compressed (BC7, IMPOSTOR_ATLAS_LEVELS levels: each from the one
+// above, four texels into one, which never mixes a picture's cell with the
+// next; as they are, a normal not made a unit long again: a plant's tells
+// leaf from bark by its length), from the texture cache or made and kept
+// there: under the atlas's own key, a file a model, a month (a plant's
+// foliage's) and what it is ("color", "normal"). NULL without memory
+static uint8_t *atlas_blocks(const object_model_t *model, const picture_layout_t *layout, uint64_t atlas_key, const uint8_t *pixels,
+	const char *what)
 {
 	uint32_t width = (uint32_t)layout->atlas_width;
 	uint32_t height = (uint32_t)layout->atlas_height;
@@ -688,14 +690,16 @@ static uint8_t *color_blocks(const object_model_t *model, const picture_layout_t
 	uint8_t *level;
 	size_t offset = 0;
 
-	SDL_snprintf(raw, sizeof(raw), "impostors/%s_month%d", model->name, layout->month_index);
+	// (the colors' files as they were first named, with nothing after)
+	SDL_snprintf(raw, sizeof(raw), "impostors/%s_month%d%s%s", model->name, layout->month_index, SDL_strcmp(what, "color") == 0 ? "" : "_",
+		SDL_strcmp(what, "color") == 0 ? "" : what);
 	texture_cache_name(raw, name, sizeof(name));
-	blocks = texture_cache_load(name, key, width, height, 1, IMPOSTOR_COLOR_LEVELS);
+	blocks = texture_cache_load(name, key, width, height, 1, IMPOSTOR_ATLAS_LEVELS);
 	if (blocks != NULL)
 	{
 		return blocks;
 	}
-	blocks = SDL_malloc(texture_cache_layer_bytes(width, height, IMPOSTOR_COLOR_LEVELS));
+	blocks = SDL_malloc(texture_cache_layer_bytes(width, height, IMPOSTOR_ATLAS_LEVELS));
 	level = SDL_malloc((size_t)width * height * 4);
 	if (blocks == NULL || level == NULL)
 	{
@@ -703,8 +707,8 @@ static uint8_t *color_blocks(const object_model_t *model, const picture_layout_t
 		SDL_free(level);
 		return NULL;
 	}
-	SDL_memcpy(level, albedo, (size_t)width * height * 4);
-	for (uint32_t k = 0; k < IMPOSTOR_COLOR_LEVELS; k++)
+	SDL_memcpy(level, pixels, (size_t)width * height * 4);
+	for (uint32_t k = 0; k < IMPOSTOR_ATLAS_LEVELS; k++)
 	{
 		uint32_t level_width = SDL_max(width >> k, 1u);
 		uint32_t level_height = SDL_max(height >> k, 1u);
@@ -712,7 +716,7 @@ static uint8_t *color_blocks(const object_model_t *model, const picture_layout_t
 		texture_cache_encode_pixels(level, level_width, level_height, blocks + offset);
 		offset += texture_cache_level_bytes(level_width, level_height);
 		// The next level, in place (it is read ahead of where it is written)
-		if (k + 1 < IMPOSTOR_COLOR_LEVELS)
+		if (k + 1 < IMPOSTOR_ATLAS_LEVELS)
 		{
 			uint32_t next_width = SDL_max(level_width / 2, 1u);
 			uint32_t next_height = SDL_max(level_height / 2, 1u);
@@ -738,7 +742,7 @@ static uint8_t *color_blocks(const object_model_t *model, const picture_layout_t
 		}
 	}
 	SDL_free(level);
-	texture_cache_save(name, key, width, height, 1, IMPOSTOR_COLOR_LEVELS, blocks);
+	texture_cache_save(name, key, width, height, 1, IMPOSTOR_ATLAS_LEVELS, blocks);
 	return blocks;
 }
 
@@ -812,11 +816,11 @@ bool impostor_make(impostor_baker_t *baker, impostor_t *impostor, const object_m
 	impostor->atlas_width = layout.atlas_width;
 	impostor->atlas_height = layout.atlas_height;
 	impostor->month_index = layout.month_index;
-	impostor->albedo_blocks = color_blocks(model, &layout, key, atlases);
-	impostor->normal = object_texture_upload(atlases + layout.atlas_bytes, layout.atlas_width, layout.atlas_height);
+	impostor->albedo_blocks = atlas_blocks(model, &layout, key, atlases, "color");
+	impostor->normal_blocks = atlas_blocks(model, &layout, key, atlases + layout.atlas_bytes, "normal");
 	SDL_free(atlases);
 	baker->seconds += (double)(SDL_GetPerformanceCounter() - start) / (double)SDL_GetPerformanceFrequency();
-	if (impostor->albedo_blocks == NULL || impostor->normal == NULL)
+	if (impostor->albedo_blocks == NULL || impostor->normal_blocks == NULL)
 	{
 		impostor_release(impostor);
 		return false;
@@ -890,12 +894,6 @@ bool impostor_make_thumbnail(impostor_baker_t *baker, const object_model_t *mode
 void impostor_release(impostor_t *impostor)
 {
 	SDL_free(impostor->albedo_blocks);
-	if (gpu.device != NULL)
-	{
-		if (impostor->normal != NULL)
-		{
-			SDL_ReleaseGPUTexture(gpu.device, impostor->normal);
-		}
-	}
+	SDL_free(impostor->normal_blocks);
 	SDL_zerop(impostor);
 }
