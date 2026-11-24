@@ -320,6 +320,7 @@ typedef struct
 	float light_side[3];
 	bool two_tone_fixed;           // the light half always the needle's right (its own color, not the light's: no light baked in)
 	float hue_spread;              // how far each needle's own hue strays (yellower or bluer), on top of the usual (0: the usual)
+	float round_shade;             // darker towards its edges, lightest along its middle (its roundness, the same whatever the light; 0: none)
 } needle_shape_t;
 
 // One needle: from (ax, ay) along a curve through (cx, cy) to (bx, by),
@@ -460,6 +461,15 @@ static void draw_needle_shape(canvas_t *canvas, const needle_shape_t *shape, flo
 							base = mixf(base, brown[k], clampf((along - dry) / 0.06f, 0.0f, 1.0f));
 						}
 						color[k] = base * lit * brightness;
+					}
+					if (shape->round_shade > 0.0f)
+					{
+						float middle = sqrtf(fmaxf(1.0f - across * across, 0.0f));
+
+						for (int k = 0; k < 3; k++)
+						{
+							color[k] *= mixf(1.0f - shape->round_shade, 1.0f + 0.25f * shape->round_shade, middle);
+						}
 					}
 					if (shape->two_tone > 0.0f)
 					{
@@ -1044,15 +1054,15 @@ static void draw_spruce(canvas_t *canvas, random_t *random)
 {
 	static needle_shape_t needle;
 	needle_style_t style = {
-		.length_low = 0.21f, .length_high = 0.25f, .radius = 0.0085f,
+		.length_low = 0.21f, .length_high = 0.25f, .radius = 0.0084f,
 		.angle_low = 0.95f, .angle_high = 1.15f, .curl = 0.3f,
-		.per_bundle = 1, .bundles_per_unit = 93.5f, .crowding = 0.65f, .bare = 0.0f, .brush = 0.15f,
+		.per_bundle = 1, .bundles_per_unit = 80.0f, .crowding = 0.65f, .bare = 0.0f, .brush = 0.15f,
 		.greens = {
 			{ .dark = { 0.08f, 0.17f, 0.06f }, .light = { 0.30f, 0.48f, 0.18f }, .tip = { 0.38f, 0.52f, 0.18f }, .tip_from = 1.0f },
 			{ .dark = { 0.15f, 0.22f, 0.05f }, .light = { 0.48f, 0.58f, 0.20f }, .tip = { 0.52f, 0.60f, 0.20f }, .tip_from = 1.0f } },
 		.behind_dark = 0.3f, .spread_taper = 0.7f, .brightness_spread = 0.32f,
 		.pairs_together = false, .rim = 0.2f, .gloss = 0.0f, .shadow = 0.0f, .tip_radius = 0.3f,
-		.unevenness = 0.2f, .dry_share = 0.01f, .broken_share = 0.01f, .order = 1.0f, .new_growth = 0.8f, .flatten = 0.85f, .front_from = 0.0f, .curl_outward = 0.7f, .tip_shorter = 0.6f, .alternate = true,
+		.unevenness = 0.2f, .dry_share = 0.01f, .broken_share = 0.01f, .order = 1.0f, .new_growth = 0.8f, .flatten = 0.95f, .front_from = 0.0f, .curl_outward = 0.7f, .tip_shorter = 0.6f, .alternate = true,
 	};
 	// (four sided, so a light ridge along its middle, sharp, a little
 	// narrower at its foot; dark green, yellowish at its tip)
@@ -1062,7 +1072,7 @@ static void draw_spruce(canvas_t *canvas, random_t *random)
 		.foot_to = 0.1f, .tip_from = 0.78f,
 		.stripes = 0.55f, .stripe_color = { 0.40f, 0.50f, 0.25f },
 		.streaks = 1.0f, .gloss = 0.0f, .shade = 0.0f,
-		.two_tone = 0.55f, .light_side = { 0.34f, 0.44f, 0.17f }, .two_tone_fixed = true, .hue_spread = 1.5f,
+		.two_tone = 0.55f, .light_side = { 0.34f, 0.44f, 0.17f }, .two_tone_fixed = true, .hue_spread = 1.5f, .round_shade = 0.55f,
 	};
 	style.shape = &needle;
 	// (the shoots orange brown with pegs where the needles stand; the stub
@@ -1089,18 +1099,20 @@ static void draw_spruce(canvas_t *canvas, random_t *random)
 		.phase = random_range(random, 0.0f, 6.0f), .bark = &stub_bark };
 	shoot_point(&shoots[0], 1.0f, &x, &y, &heading);
 	shoots[count++] = (shoot_t){ .fx = x, .fy = y, .angle = heading, .bend = random_range(random, -0.3f, 0.3f),
-		.length = stem_length * (1.0f - stub), .radius = 0.021f, .scale = 1.0f, .taper = 0.4f, .needles_from = 0.01f, .crook = 0.14f,
+		.length = stem_length * (1.0f - stub), .radius = 0.021f, .scale = 0.78f, .taper = 0.4f, .needles_from = 0.01f, .crook = 0.14f,
 		.phase = random_range(random, 0.0f, 6.0f) };
 	// The shoots, alternately, the lower longer, out and a little up
 	for (int i = 0; i < sides && count < 8; i++)
 	{
-		float along = 0.03f + 0.67f * ((float)i + random_range(random, 0.0f, 0.35f)) / (float)sides;
+		// (the lowest one small, right at the foot; the rest spread above it)
+		float along = i == 0 ? random_range(random, 0.01f, 0.04f)
+			: 0.16f + 0.56f * ((float)(i - 1) + random_range(random, 0.0f, 0.35f)) / (float)(sides - 1);
 		float side = (i % 2 == 0) ? first_side : -first_side;
-		float length = random_range(random, 0.36f, 0.43f) * (1.0f - 0.45f * along) * stem_length;
+		float length = random_range(random, 0.36f, 0.43f) * (1.0f - 0.45f * along) * stem_length * (i == 0 ? random_range(random, 0.42f, 0.52f) : 1.0f);
 
 		shoot_point(&shoots[1], along, &x, &y, &heading);
-		shoots[count++] = (shoot_t){ .fx = x, .fy = y, .angle = heading + side * random_range(random, 0.42f, 0.52f),
-			.bend = side * random_range(random, 0.3f, 0.45f), .length = length, .radius = 0.014f, .scale = 1.08f, .taper = 0.5f,
+		shoots[count++] = (shoot_t){ .fx = x, .fy = y, .angle = heading + side * random_range(random, 0.6f, 0.7f),
+			.bend = side * random_range(random, 0.12f, 0.22f), .length = length, .radius = 0.014f, .scale = 1.08f, .taper = 0.5f,
 			.needles_from = 0.02f, .crook = 0.16f, .phase = random_range(random, 0.0f, 6.0f) };
 	}
 	draw_twig(canvas, random, &style, &bark, NULL, shoots, count);
