@@ -59,6 +59,13 @@ typedef struct
 	double next_valley_seconds;            // when it is made again
 	float highest;                         // the highest top anywhere (m): rays above it have no fog
 	bool valley_ready;
+	// Its making, a slice a frame (four milliseconds at once, every few
+	// seconds, was a stutter): the buffers it is worked out in, and how
+	// far it is (valley_step: FOG_VALLEY_ steps, valley_row within one)
+	float *valley_work[4];                 // the ground, what lies around, the top, the amount
+	double *valley_table;                  // the blurs' summed table
+	int valley_step;
+	int valley_row;
 	// The froxels (RGBA16F 3D): the light and the density in each (two,
 	// in turn: this frame's is built on the frame before's, the same place
 	// in the world), and gathered towards the eye

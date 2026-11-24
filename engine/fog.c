@@ -153,6 +153,11 @@ void fog_destroy(fog_t *fog)
 		release_texture(&fog->rays_texture);
 	}
 	SDL_free(fog->valley);
+	for (int k = 0; k < 4; k++)
+	{
+		SDL_free(fog->valley_work[k]);
+	}
+	SDL_free(fog->valley_table);
 	SDL_zerop(fog);
 }
 
@@ -220,8 +225,18 @@ static void box_blur(const float *in, float *out, int size, int radius, double *
 
 // The valley map: for each texel the ground, how far below its
 // surroundings it is (the fog's thickness there), the water; the top and
-// the amount smoothed
-static void make_valleys(fog_t *fog, const terrain_t *terrain, const water_t *water, const render_settings_t *settings)
+// the amount smoothed. In steps, a slice of rows of each a call
+// (valley_step, valley_row): returns true once the map is made and sent up
+enum
+{
+	VALLEY_STEP_GROUND = 0,                // the ground sampled, rows at a time
+	VALLEY_STEP_AROUND,                    // ...smoothed over the reach
+	VALLEY_STEP_THICKNESS,                 // the fog's thickness and the water, rows at a time
+	VALLEY_STEP_SMOOTH,                    // the top and the amount smoothed, sent up
+};
+#define VALLEY_ROWS_A_STEP 32
+
+static bool make_valleys_step(fog_t *fog, const terrain_t *terrain, const water_t *water, const render_settings_t *settings)
 {
 	int size = fog->valley_size;
 	size_t texels = (size_t)size * (size_t)size;
@@ -229,48 +244,94 @@ static void make_valleys(fog_t *fog, const terrain_t *terrain, const water_t *wa
 	float texel_meters = extent / (float)size;
 	float most = SDL_max(settings->fog_valley_height_meters, 0.0f);
 	int reach = SDL_clamp((int)(settings->fog_valley_reach_meters / SDL_max(texel_meters, 0.01f) + 0.5f), 1, size);
-	float *ground = SDL_malloc(texels * sizeof(float));
-	float *around = SDL_malloc(texels * sizeof(float));
-	float *top = SDL_malloc(texels * sizeof(float));
-	float *amount = SDL_malloc(texels * sizeof(float));
-	double *table = SDL_malloc((size_t)(size + 1) * (size_t)(size + 1) * sizeof(double));
+	float *ground = fog->valley_work[0];
+	float *around = fog->valley_work[1];
+	float *top = fog->valley_work[2];
+	float *amount = fog->valley_work[3];
+	double *table = fog->valley_table;
+	int last_row = SDL_min(fog->valley_row + VALLEY_ROWS_A_STEP, size);
 
-	if (ground == NULL || around == NULL || top == NULL || amount == NULL || table == NULL)
+	if (ground == NULL)
 	{
-		SDL_free(ground);
-		SDL_free(around);
-		SDL_free(top);
-		SDL_free(amount);
-		SDL_free(table);
-		return;
-	}
-	for (int y = 0; y < size; y++)
-	{
-		for (int x = 0; x < size; x++)
+		for (int k = 0; k < 4; k++)
 		{
-			ground[(size_t)y * (size_t)size + (size_t)x] = terrain_sample_height_meters(terrain, ((float)x + 0.5f) * texel_meters,
-				((float)y + 0.5f) * texel_meters);
+			fog->valley_work[k] = SDL_malloc(texels * sizeof(float));
 		}
+		fog->valley_table = SDL_malloc((size_t)(size + 1) * (size_t)(size + 1) * sizeof(double));
+		if (fog->valley_work[0] == NULL || fog->valley_work[1] == NULL || fog->valley_work[2] == NULL || fog->valley_work[3] == NULL
+			|| fog->valley_table == NULL)
+		{
+			for (int k = 0; k < 4; k++)
+			{
+				SDL_free(fog->valley_work[k]);
+				fog->valley_work[k] = NULL;
+			}
+			SDL_free(fog->valley_table);
+			fog->valley_table = NULL;
+			// (none made: not tried again each frame)
+			return true;
+		}
+		ground = fog->valley_work[0];
+		around = fog->valley_work[1];
+		top = fog->valley_work[2];
+		amount = fog->valley_work[3];
+		table = fog->valley_table;
+		fog->valley_step = VALLEY_STEP_GROUND;
+		fog->valley_row = 0;
+		last_row = SDL_min(VALLEY_ROWS_A_STEP, size);
 	}
-	box_blur(ground, around, size, reach, table);
-	for (size_t t = 0; t < texels; t++)
+	switch (fog->valley_step)
 	{
-		float below = around[t] - ground[t];
-		float thickness = SDL_clamp(below * 1.5f, 0.0f, most);
-		int x = (int)(t % (size_t)size);
-		int y = (int)(t / (size_t)size);
-		float depth = 0.0f;
-		float velocity_x;
-		float velocity_z;
+		case VALLEY_STEP_GROUND:
+			for (int y = fog->valley_row; y < last_row; y++)
+			{
+				for (int x = 0; x < size; x++)
+				{
+					ground[(size_t)y * (size_t)size + (size_t)x] = terrain_sample_height_meters(terrain, ((float)x + 0.5f) * texel_meters,
+						((float)y + 0.5f) * texel_meters);
+				}
+			}
+			fog->valley_row = last_row;
+			if (last_row == size)
+			{
+				fog->valley_step = VALLEY_STEP_AROUND;
+			}
+			return false;
+		case VALLEY_STEP_AROUND:
+			box_blur(ground, around, size, reach, table);
+			fog->valley_step = VALLEY_STEP_THICKNESS;
+			fog->valley_row = 0;
+			return false;
+		case VALLEY_STEP_THICKNESS:
+			for (size_t t = (size_t)fog->valley_row * (size_t)size; t < (size_t)last_row * (size_t)size; t++)
+			{
+				float below = around[t] - ground[t];
+				float thickness = SDL_clamp(below * 1.5f, 0.0f, most);
+				int x = (int)(t % (size_t)size);
+				int y = (int)(t / (size_t)size);
+				float depth = 0.0f;
+				float velocity_x;
+				float velocity_z;
 
-		if (water != NULL && water_sample(water, ((float)x + 0.5f) * texel_meters, ((float)y + 0.5f) * texel_meters, &depth, &velocity_x,
-			&velocity_z) && depth > 0.05f)
-		{
-			thickness = SDL_max(thickness, most * WATER_FOG);
-		}
-		top[t] = ground[t] + thickness;
-		amount[t] = most > 0.0f ? SDL_clamp(thickness / (0.25f * most), 0.0f, 1.0f) : 0.0f;
+				if (water != NULL && water_sample(water, ((float)x + 0.5f) * texel_meters, ((float)y + 0.5f) * texel_meters, &depth, &velocity_x,
+					&velocity_z) && depth > 0.05f)
+				{
+					thickness = SDL_max(thickness, most * WATER_FOG);
+				}
+				top[t] = ground[t] + thickness;
+				amount[t] = most > 0.0f ? SDL_clamp(thickness / (0.25f * most), 0.0f, 1.0f) : 0.0f;
+			}
+			fog->valley_row = last_row;
+			if (last_row == size)
+			{
+				fog->valley_step = VALLEY_STEP_SMOOTH;
+			}
+			return false;
+		default:
+			break;
 	}
+	// (the ground's and what lies around are done with: the smoothed top
+	// and amount into them)
 	box_blur(top, around, size, VALLEY_TOP_SMOOTHING, table);
 	box_blur(amount, ground, size, VALLEY_TOP_SMOOTHING, table);
 	fog->highest = -1e9f;
@@ -285,11 +346,9 @@ static void make_valleys(fog_t *fog, const terrain_t *terrain, const water_t *wa
 	}
 	gpu_upload_texture(fog->valley_texture, 0, 0, 0, 0, (uint32_t)size, (uint32_t)size, fog->valley, texels * 2 * sizeof(float));
 	fog->valley_ready = true;
-	SDL_free(ground);
-	SDL_free(around);
-	SDL_free(top);
-	SDL_free(amount);
-	SDL_free(table);
+	fog->valley_step = VALLEY_STEP_GROUND;
+	fog->valley_row = 0;
+	return true;
 }
 
 void fog_update(fog_t *fog, const terrain_t *terrain, const water_t *water, const render_settings_t *settings, double seconds)
@@ -307,12 +366,24 @@ void fog_update(fog_t *fog, const terrain_t *terrain, const water_t *water, cons
 			return;
 		}
 	}
-	if (fog->valley_ready && seconds < fog->next_valley_seconds)
+	// (the first one whole, at once: there is no map to show meanwhile)
+	if (!fog->valley_ready)
+	{
+		while (!make_valleys_step(fog, terrain, water, settings))
+		{
+		}
+		fog->next_valley_seconds = seconds + VALLEY_SECONDS;
+		return;
+	}
+	if (seconds < fog->next_valley_seconds)
 	{
 		return;
 	}
-	fog->next_valley_seconds = seconds + VALLEY_SECONDS;
-	make_valleys(fog, terrain, water, settings);
+	// Due: a slice of it this frame, the next one counted from its end
+	if (make_valleys_step(fog, terrain, water, settings))
+	{
+		fog->next_valley_seconds = seconds + VALLEY_SECONDS;
+	}
 }
 
 // The rays' textures at half the screen's size (made again when it changes)
