@@ -319,6 +319,7 @@ typedef struct
 	float two_tone;
 	float light_side[3];
 	bool two_tone_fixed;           // the light half always the needle's right (its own color, not the light's: no light baked in)
+	float hue_spread;              // how far each needle's own hue strays (yellower or bluer), on top of the usual (0: the usual)
 } needle_shape_t;
 
 // One needle: from (ax, ay) along a curve through (cx, cy) to (bx, by),
@@ -451,7 +452,7 @@ static void draw_needle_shape(canvas_t *canvas, const needle_shape_t *shape, flo
 							base = mixf(base, shape->tip[k], (along - shape->tip_from) / fmaxf(1.0f - shape->tip_from, 1e-3f));
 						}
 						// (towards yellow, its own)
-						base += hue_shift * (k == 0 ? 0.06f : (k == 1 ? 0.03f : -0.03f)) * (shape->two_tone > 0.0f ? 1.4f : 1.0f);
+						base += hue_shift * (k == 0 ? 0.06f : (k == 1 ? 0.03f : -0.03f)) * (shape->two_tone > 0.0f ? 1.4f : 1.0f) * (1.0f + shape->hue_spread);
 						if (along > dry)
 						{
 							float brown[3] = { 0.44f, 0.32f, 0.19f };
@@ -1049,19 +1050,19 @@ static void draw_spruce(canvas_t *canvas, random_t *random)
 		.greens = {
 			{ .dark = { 0.08f, 0.17f, 0.06f }, .light = { 0.30f, 0.48f, 0.18f }, .tip = { 0.38f, 0.52f, 0.18f }, .tip_from = 1.0f },
 			{ .dark = { 0.15f, 0.22f, 0.05f }, .light = { 0.48f, 0.58f, 0.20f }, .tip = { 0.52f, 0.60f, 0.20f }, .tip_from = 1.0f } },
-		.behind_dark = 0.18f, .spread_taper = 0.7f, .brightness_spread = 0.18f,
-		.pairs_together = false, .rim = 0.15f, .gloss = 0.0f, .shadow = 0.0f, .tip_radius = 0.3f,
-		.unevenness = 0.2f, .dry_share = 0.01f, .broken_share = 0.01f, .order = 1.0f, .new_growth = 1.5f, .flatten = 0.85f, .front_from = 0.0f, .curl_outward = 0.7f, .tip_shorter = 0.6f, .alternate = true,
+		.behind_dark = 0.3f, .spread_taper = 0.7f, .brightness_spread = 0.32f,
+		.pairs_together = false, .rim = 0.2f, .gloss = 0.0f, .shadow = 0.0f, .tip_radius = 0.3f,
+		.unevenness = 0.2f, .dry_share = 0.01f, .broken_share = 0.01f, .order = 1.0f, .new_growth = 0.8f, .flatten = 0.85f, .front_from = 0.0f, .curl_outward = 0.7f, .tip_shorter = 0.6f, .alternate = true,
 	};
 	// (four sided, so a light ridge along its middle, sharp, a little
 	// narrower at its foot; dark green, yellowish at its tip)
 	needle = (needle_shape_t){
 		.foot_narrow = 0.35f, .tip_round = 0.55f, .tip_length = 0.2f, .flat = 0.0f,
-		.foot = { 0.30f, 0.36f, 0.14f }, .middle = { 0.17f, 0.32f, 0.11f }, .tip = { 0.46f, 0.54f, 0.18f },
+		.foot = { 0.26f, 0.31f, 0.13f }, .middle = { 0.15f, 0.27f, 0.10f }, .tip = { 0.39f, 0.46f, 0.16f },
 		.foot_to = 0.1f, .tip_from = 0.78f,
-		.stripes = 0.7f, .stripe_color = { 0.50f, 0.62f, 0.30f },
+		.stripes = 0.55f, .stripe_color = { 0.40f, 0.50f, 0.25f },
 		.streaks = 1.0f, .gloss = 0.0f, .shade = 0.0f,
-		.two_tone = 0.75f, .light_side = { 0.42f, 0.54f, 0.20f }, .two_tone_fixed = true,
+		.two_tone = 0.55f, .light_side = { 0.34f, 0.44f, 0.17f }, .two_tone_fixed = true, .hue_spread = 1.5f,
 	};
 	style.shape = &needle;
 	// (the shoots orange brown with pegs where the needles stand; the stub
