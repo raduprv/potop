@@ -102,6 +102,8 @@ enum
 // Copies back in flight, and how many tiles each may bring (about 10 MB a
 // frame at most); the tiles around the camera's target come first
 #define DOWNLOAD_SLOTS 3
+// How often the statistics are copied back while nothing changes in them
+#define STATISTICS_QUIET_FRAMES 4
 #define DOWNLOAD_BUDGET_TILES 128
 #define FOCUS_RADIUS_TILES 3
 // A tile's water in a copy: depth, sediment, flux; its ground: height,
@@ -268,6 +270,13 @@ typedef struct water_gpu_s
 	int32_t steps_since_submit;
 	SDL_GPUFence *step_fence;
 	bool stepped_since_render;         // the depth texture's previous step moves on
+	// The last statistics copied back showed no tile changed nor asking for
+	// anything (a map with no water moving): they are then copied only
+	// every STATISTICS_QUIET_FRAMES frames, every tile's words being read
+	// and compared each time. What the GPU counts adds up meanwhile
+	bool statistics_quiet;
+	int32_t statistics_wait_frames;
+	uint32_t statistics_edit_serial;   // the CPU's edits as they stood at the last copy asked for (an edit: asked again at once)
 
 	// The GPU's side
 	bool ready;
@@ -1557,6 +1566,7 @@ static void apply_statistics(water_t *water, const uint32_t *words)
 	int64_t evaporated = (int64_t)wide(&counters[2 * COUNTER_EVAPORATED]);
 	int64_t discarded = (int64_t)wide(&counters[2 * COUNTER_DISCARDED]);
 	int64_t corrections = (int64_t)wide(&counters[2 * COUNTER_CORRECTIONS]);
+	bool quiet;
 
 	// The balance: total = added - removed - drained - evaporated (the
 	// trickles thrown away count as evaporated; a cell clamped at zero
@@ -1586,6 +1596,14 @@ static void apply_statistics(water_t *water, const uint32_t *words)
 	water->fastest_flow_last_step = float_of_bits(words[HEADER_LAST_FASTEST_DEEP_SPEED]);
 	water->simulated_tiles_last_step = (int32_t)words[HEADER_MOST_UPDATE_TILES];
 
+	// (all the tiles' words as they were, and none flagged in what was kept
+	// of them: nothing to copy out, told in one comparison)
+	if (state->tile_words_last != NULL && state->statistics_quiet
+		&& SDL_memcmp(&words[HEADER_WORDS], state->tile_words_last, sizeof(uint32_t) * TILE_WORDS * (size_t)state->tile_count) == 0)
+	{
+		return;
+	}
+	quiet = state->tile_words_last != NULL;
 	for (int32_t tile = 0; tile < state->tile_count; tile++)
 	{
 		const uint32_t *tile_words = &words[HEADER_WORDS + tile * TILE_WORDS];
@@ -1602,6 +1620,7 @@ static void apply_statistics(water_t *water, const uint32_t *words)
 			}
 			SDL_memcpy(last, tile_words, sizeof(uint32_t) * TILE_WORDS);
 		}
+		quiet = false;
 		water->tile_state[tile] = (uint8_t)tile_words[TILE_STATE];
 		water->tile_idle_steps[tile] = (uint8_t)SDL_min(tile_words[TILE_IDLE_STEPS], 255u);
 		water->tile_total_depth[tile] = (int64_t)wide(&tile_words[TILE_TOTAL_DEPTH]);
@@ -1623,6 +1642,7 @@ static void apply_statistics(water_t *water, const uint32_t *words)
 			state->tile_terrain_needs_download[tile] = 1;
 		}
 	}
+	state->statistics_quiet = quiet;
 }
 
 static void apply_tile(water_t *water, const uint8_t *data, int32_t tile)
@@ -2025,11 +2045,29 @@ void water_gpu_end_frame(water_t *water, const terrain_t *terrain, float focus_x
 				state->terrain_cursor = (tile + 1) % state->tile_count;
 			}
 		}
-		slot->serial = state->edit_serial;
-		slot->generation = state->generation;
-		slot->has_statistics = true;
-		slot->sequence = ++state->download_sequence;
-		record_download(water, slot->transfer, true, slot->tiles, slot->tile_count);
+		// The statistics with them: every frame while tiles change or the
+		// CPU edits, else now and then (statistics_quiet)
+		bool statistics = !state->statistics_quiet || state->statistics_edit_serial != state->edit_serial
+			|| ++state->statistics_wait_frames >= STATISTICS_QUIET_FRAMES;
+
+		if (statistics)
+		{
+			state->statistics_wait_frames = 0;
+			state->statistics_edit_serial = state->edit_serial;
+		}
+		if (!statistics && slot->tile_count == 0)
+		{
+			// (nothing to copy this frame: the slot stays free)
+			slot = NULL;
+		}
+		else
+		{
+			slot->serial = state->edit_serial;
+			slot->generation = state->generation;
+			slot->has_statistics = statistics;
+			slot->sequence = ++state->download_sequence;
+			record_download(water, slot->transfer, statistics, slot->tiles, slot->tile_count);
+		}
 	}
 	gpu_submit_work(slot != NULL ? &fence : NULL);
 	state->steps_since_submit = 0;
