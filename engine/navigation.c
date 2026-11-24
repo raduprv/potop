@@ -2327,6 +2327,17 @@ static void build_regions(navigation_t *navigation, const terrain_t *terrain, co
 		}
 		work_out_slopes(navigation, terrain, r, box);
 		build_box(navigation, terrain, objects, r, box, &scratch);
+		// (which of its cells hold anything: kept when their surfaces go)
+		for (int32_t cell_z = box[1]; cell_z <= box[3]; cell_z++)
+		{
+			for (int32_t cell_x = box[0]; cell_x <= box[2]; cell_x++)
+			{
+				int32_t cell = cell_z * navigation->size + cell_x;
+
+				navigation->cell_solid[cell] = navigation->extra_count[cell] != 0 || navigation->terrain_clearance[cell] != NAVIGATION_CLEARANCE_OPEN
+					|| navigation->small_only[cell] != 0 || navigation->small_height[cell] != 0;
+			}
+		}
 		if (objects != NULL)
 		{
 			region->objects_signature = region_signature(navigation, objects, r, &scratch, region);
@@ -2893,6 +2904,7 @@ static void free_map(navigation_t *navigation)
 	SDL_free(navigation->object_top);
 	SDL_free(navigation->ground_slope);
 	SDL_free(navigation->small_only);
+	SDL_free(navigation->cell_solid);
 	SDL_free(navigation->model_shapes);
 	SDL_free(navigation->small_height);
 	SDL_free(navigation->blocked);
@@ -2915,6 +2927,7 @@ static void free_map(navigation_t *navigation)
 	navigation->object_top = NULL;
 	navigation->ground_slope = NULL;
 	navigation->small_only = NULL;
+	navigation->cell_solid = NULL;
 	navigation->model_shapes = NULL;
 	navigation->model_shape_count = 0;
 	navigation->small_height = NULL;
@@ -2942,6 +2955,7 @@ static bool resize(navigation_t *navigation, const terrain_t *terrain)
 	navigation->object_top = SDL_calloc(cells, 1);
 	navigation->ground_slope = SDL_calloc(cells, 1);
 	navigation->small_only = SDL_calloc(cells, 1);
+	navigation->cell_solid = SDL_calloc(cells, 1);
 	navigation->small_height = SDL_calloc(cells, 1);
 	navigation->blocked = SDL_calloc(cells, 1);
 	navigation->blocker_zone = SDL_calloc(cells, 1);
@@ -2952,7 +2966,7 @@ static bool resize(navigation_t *navigation, const terrain_t *terrain)
 	navigation->build_list = SDL_calloc((size_t)region_count, sizeof(int32_t));
 	if (navigation->build_list == NULL || navigation->regions == NULL || navigation->ground_height == NULL || navigation->terrain_clearance == NULL
 		|| navigation->terrain_blocker == NULL || navigation->object_top == NULL || navigation->ground_slope == NULL || navigation->small_height == NULL || navigation->small_only == NULL || navigation->blocked == NULL
-		|| navigation->blocker_zone == NULL
+		|| navigation->blocker_zone == NULL || navigation->cell_solid == NULL
 		|| navigation->extra_count == NULL
 		|| navigation->extra_first == NULL || navigation->region_generation == NULL)
 	{
@@ -3513,9 +3527,11 @@ bool navigation_objects_near(const navigation_t *navigation, float x, float z)
 		{
 			int32_t cell = (cell_z + dz) * navigation->size + cell_x + dx;
 
-			// (the cells' highest object: kept for the whole map, whatever
-			// becomes of the cells' surfaces)
-			if (navigation->object_top[cell] != 0 || navigation->regions[region_of_cell(navigation, cell)].stale)
+			// (a cell that holds anything: kept, whatever becomes of the
+			// cells' surfaces; not object_top, which a crown high overhead
+			// and a bush set too: in a forest that was every cell, and
+			// every walker's feet cast their rays)
+			if (navigation->cell_solid[cell] != 0 || navigation->regions[region_of_cell(navigation, cell)].stale)
 			{
 				return true;
 			}
@@ -3964,10 +3980,10 @@ static bool mesh_cell_plain(const navigation_t *navigation, int32_t cell_x, int3
 		return false;
 	}
 	cell = cell_z * navigation->size + cell_x;
-	// (its region's cells let go: whether it had surfaces is not known;
-	// nothing over it at all then)
+	// (its region's cells let go: whether it had surfaces is cell_solid's
+	// to say)
 	return ((navigation->extra_count[cell] == 0 && navigation->terrain_clearance[cell] == NAVIGATION_CLEARANCE_OPEN
-		&& (!navigation->regions[region_of_cell(navigation, cell)].shed || navigation->object_top[cell] == 0))
+		&& (!navigation->regions[region_of_cell(navigation, cell)].shed || navigation->cell_solid[cell] == 0))
 		|| navigation->small_only[cell] != 0) && !navigation->regions[region_of_cell(navigation, cell)].stale;
 }
 
@@ -7858,14 +7874,14 @@ static bool mesh_follow_height(const navigation_t *navigation, const terrain_t *
 	{
 		c = navigation_mesh_class_used(navigation, k) ? k : -1;
 	}
-	// (a cell with nothing in it or over it at all, most of the wild: the
+	// (a cell that holds nothing (cell_solid), most of the wild: the
 	// ground, with no look at the rectangles; every walker asks this for
 	// each of its feet each frame)
 	{
 		int32_t cell;
 
-		if (cell_of_point(navigation, x, z, &cell) && navigation->object_top[cell] == 0
-			&& navigation->terrain_clearance[cell] == NAVIGATION_CLEARANCE_OPEN && !navigation->regions[region_of_cell(navigation, cell)].stale)
+		if (cell_of_point(navigation, x, z, &cell) && navigation->cell_solid[cell] == 0
+			&& !navigation->regions[region_of_cell(navigation, cell)].stale)
 		{
 			*height_out = terrain_sample_height_meters(terrain, x, z);
 			*object_out = false;

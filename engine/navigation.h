@@ -564,6 +564,12 @@ typedef struct
 	// Per cell: only small things gone round stand in it (a trunk): open
 	// ground to the rectangles
 	uint8_t *small_only;
+	// Per cell: something stands in it or is over its ground within a
+	// walker's height (an object's top, room taken, a small thing): what a
+	// foot there could be on or by. Kept when the cells' surfaces are let
+	// go; a cell without it is the terrain and nothing else (a crown high
+	// overhead or a bush is not it: object_top has those, for the flyers)
+	uint8_t *cell_solid;
 	navigation_model_shape_t *model_shapes; // per model of the objects, fitted when first asked for
 	int model_shape_count;
 	// Per cell: the groups the blockers there stop (navigation_set_blockers)
