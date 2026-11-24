@@ -66,6 +66,12 @@ typedef struct
 	double *valley_table;                  // the blurs' summed table
 	int valley_step;
 	int valley_row;
+	// Made again only for a reason: the fog come back after hours without
+	// (valley_stale), its reach or height changed in the settings (as the
+	// map in hand was made for), and now and then for the water
+	bool valley_stale;
+	float valley_made_reach;
+	float valley_made_height;
 	// The froxels (RGBA16F 3D): the light and the density in each (two,
 	// in turn: this frame's is built on the frame before's, the same place
 	// in the world), and gathered towards the eye
@@ -97,6 +103,10 @@ void fog_destroy(fog_t *fog);
 // How much fog the hour brings (0..1): it forms at fog_form_hour, thickest
 // through the night and at dawn, gone by fog_clear_hour
 float fog_amount_at_hour(const render_settings_t *settings, float hour);
+
+// Another map (loaded, made): its valley map made afresh the next time
+// there is fog
+void fog_forget(fog_t *fog);
 
 // Makes the valley map again if it is due (every few seconds: the water
 // moves, the land is dug)

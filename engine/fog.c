@@ -7,7 +7,7 @@
 #include "math3d.h"
 
 #define VALLEY_SIZE 256                // the valley map's texels a side
-#define VALLEY_SECONDS 4.0             // made again this often
+#define VALLEY_SECONDS 120.0           // made again this often while there is fog (for the water: a lake filled, a river dry)
 #define VALLEY_TOP_SMOOTHING 3         // texels: the top lies level
 #define WATER_FOG 0.6f                 // over water: this much of the most the fog rises
 #define NEAREST_METERS 0.5f            // the froxels' first slice starts here
@@ -351,6 +351,11 @@ static bool make_valleys_step(fog_t *fog, const terrain_t *terrain, const water_
 	return true;
 }
 
+void fog_forget(fog_t *fog)
+{
+	fog->valley_stale = true;
+}
+
 void fog_update(fog_t *fog, const terrain_t *terrain, const water_t *water, const render_settings_t *settings, float hour, double seconds)
 {
 	if (settings->fog_mode == FOG_MODE_OFF || terrain == NULL || terrain->size <= 0 || fog->failed)
@@ -370,11 +375,18 @@ void fog_update(fog_t *fog, const terrain_t *terrain, const water_t *water, cons
 	// It was made every few seconds all day long)
 	if (fog_amount_at_hour(settings, hour) <= 0.0f)
 	{
+		// (made afresh when the fog comes back: the land and the water
+		// may be other by then)
+		fog->valley_stale = true;
 		return;
 	}
 	// (the first one too a slice a frame: the fog comes over the evening,
-	// a dozen frames without it are not seen)
-	if (fog->valley_ready && seconds < fog->next_valley_seconds)
+	// a dozen frames without it are not seen. One begun is gone through
+	// with; else only for a reason, the fog lying in pieces too big for
+	// the ground's wear to show in them)
+	if (fog->valley_ready && fog->valley_step == VALLEY_STEP_GROUND && fog->valley_row == 0 && !fog->valley_stale
+		&& fog->valley_made_reach == settings->fog_valley_reach_meters && fog->valley_made_height == settings->fog_valley_height_meters
+		&& seconds < fog->next_valley_seconds)
 	{
 		return;
 	}
@@ -382,6 +394,9 @@ void fog_update(fog_t *fog, const terrain_t *terrain, const water_t *water, cons
 	if (make_valleys_step(fog, terrain, water, settings))
 	{
 		fog->next_valley_seconds = seconds + VALLEY_SECONDS;
+		fog->valley_stale = false;
+		fog->valley_made_reach = settings->fog_valley_reach_meters;
+		fog->valley_made_height = settings->fog_valley_height_meters;
 	}
 }
 

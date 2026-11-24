@@ -670,6 +670,7 @@ bool world_load(world_t *world, session_t *session, const char *path, map_file_i
 	objects_clear_interactive(&world->objects);
 	physics_reset(&world->physics, &world->objects, &world->terrain);
 	navigation_forget(&world->navigation, &world->terrain, &world->objects);
+	fog_forget(&world->fog);
 	erosion_reset(&world->erosion);
 	// A saved map starts with still water: let it settle again
 	world_touch_water(world);

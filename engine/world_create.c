@@ -166,6 +166,7 @@ void world_populate(world_t *world, bool plant)
 	// as on a loaded map: not all of them on the loading screen, 5 s on
 	// a map of 4 km)
 	navigation_forget(&world->navigation, &world->terrain, &world->objects);
+	fog_forget(&world->fog);
 }
 
 void world_destroy(world_t *world)
