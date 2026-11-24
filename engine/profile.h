@@ -70,6 +70,7 @@ typedef enum
 	FRAME_WEAPONS,                 // the weapons, the shots, the explosives, the areas
 	FRAME_UI,                      // the HUD drawn
 	FRAME_SKY_OCCLUSION,           // the sky's occlusion brought to the CPU
+	FRAME_LIMIT,                   // waited out for the frame rate limit (max_fps), or resting in the background
 	// Inside objects follow and terrain upload (to find what costs there)
 	FRAME_FOLLOW_WATER,            // floating objects on the water
 	FRAME_FLOODED_COVER,           // the cover a flood took away, silt buried

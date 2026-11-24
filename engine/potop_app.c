@@ -1676,6 +1676,7 @@ void potop_frame_end(potop_t *potop)
 	}
 	trace_end();
 	frame_profile_finish();
+	section_start = SDL_GetPerformanceCounter();
 	// The frame rate limit: the rest of the frame's time waited out (each
 	// frame a period after the one before; fallen a whole period behind, the
 	// count starts over from now)
@@ -1699,12 +1700,15 @@ void potop_frame_end(potop_t *potop)
 	{
 		potop->next_frame_ns = 0;
 	}
-	potop->game_counter = SDL_GetPerformanceCounter();
 	// In the background vsync often does not hold the loop back: a rest
 	if (potop->input.in_background)
 	{
 		SDL_Delay(30);
 	}
+	// (both counted in the frame they begin, under their own name: the
+	// rest was the game's 30 ms, a wait overslept in no section at all)
+	frame_profile_end(FRAME_LIMIT, section_start);
+	potop->game_counter = SDL_GetPerformanceCounter();
 }
 
 void potop_player_reload(potop_t *potop)

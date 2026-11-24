@@ -45,7 +45,7 @@ static const char *section_name(frame_section_t section)
 {
 	static const char *names[FRAME_SECTION_COUNT] = { "update", "poll", "water", "erosion", "wetting", "physics", "particles",
 		"water end", "copy wait", "acquire", "objects follow", "navigation", "terrain upload", "shadows", "objects cull", "render", "present",
-		"game", "events", "hud", "player", "actors", "paths", "weapons", "ui", "sky occlusion",
+		"game", "events", "hud", "player", "actors", "paths", "weapons", "ui", "sky occlusion", "frame limit",
 		"follow water", "flooded cover", "terrain setup", "terrain materials", "chunk prepare", "chunk send", "soil blur", "water tiles", "chunk bounds",
 		"physics sync", "physics terrain", "physics water", "physics flood", "box3d step", "physics hits", "physics follow", "physics wake", "physics remove" };
 
@@ -286,6 +286,15 @@ void trace_frame_begin(void)
 		trace.frame_asked = false;
 		trace_begin("One frame, step by step (ms; the steps are in the order done)");
 		trace.threshold_milliseconds = 0.0;
+		return;
+	}
+	// Every frame traced, and logged if it is a stutter (as log_spike's
+	// line, which tells the sections: this one the steps in the order
+	// done, the time in none of the sections among them)
+	if (!trace_active && frame_profile.usual_milliseconds > 0.0 && frame_profile.spikes_logged_this_second < SPIKES_LOGGED_PER_SECOND)
+	{
+		trace_begin_if_slow("Stutter, step by step (ms)",
+			SDL_max(frame_profile.usual_milliseconds * SPIKE_FACTOR, frame_profile.usual_milliseconds + SPIKE_EXTRA_MILLISECONDS), 0.3);
 	}
 }
 
