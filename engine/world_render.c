@@ -348,7 +348,7 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 	{
 		uint64_t water_start = SDL_GetPerformanceCounter();
 
-		objects_follow_water(&world->objects, &world->water);
+		objects_follow_water(&world->objects, &world->terrain, &world->water);
 		frame_profile_end(FRAME_FOLLOW_WATER, water_start);
 	}
 	frame_profile_end(FRAME_OBJECTS_FOLLOW, section_start);

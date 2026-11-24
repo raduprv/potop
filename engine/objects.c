@@ -2862,7 +2862,10 @@ void objects_follow_terrain(objects_t *objects, terrain_t *terrain)
 				// Ground risen under it: with a tool's edit it goes up
 				// with it, under the water's silt it stays and is buried
 				// (and goes down again only once worn lower than it stands)
-				if (ground > instance->ground_height && !chunk_pass_edited(terrain, instance->x, instance->z))
+				// (what follows the water's surface is never under the silt:
+				// objects_follow_water keeps its ground)
+				if (ground > instance->ground_height && !follows_water(objects, instance)
+					&& !chunk_pass_edited(terrain, instance->x, instance->z))
 				{
 					continue;
 				}
@@ -2889,7 +2892,7 @@ void objects_follow_terrain(objects_t *objects, terrain_t *terrain)
 	}
 }
 
-void objects_follow_water(objects_t *objects, const water_t *water)
+void objects_follow_water(objects_t *objects, const terrain_t *terrain, const water_t *water)
 {
 	objects_sort(objects);
 	objects->dry_water = water;
@@ -2909,6 +2912,14 @@ void objects_follow_water(objects_t *objects, const water_t *water)
 		if (lift != instance->lift_meters)
 		{
 			instance->lift_meters = lift;
+			// Its ground with it: silt laid under it asks for no pass of
+			// objects_follow_terrain's, and the depth is over the ground
+			// as it is now
+			if (terrain != NULL)
+			{
+				instance->ground_height = ground_height_under(terrain, instance->x, instance->z, footprint_of(objects, instance))
+					- sink_of(objects, instance);
+			}
 			objects_touch(objects, objects->floating[k]);
 		}
 	}

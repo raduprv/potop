@@ -819,7 +819,7 @@ void objects_refresh_ground(objects_t *objects, const terrain_t *terrain, int in
 
 // Lifts floating objects to the water surface (once per frame); keeps the
 // water for the camera's pass (its dry cells)
-void objects_follow_water(objects_t *objects, const water_t *water);
+void objects_follow_water(objects_t *objects, const terrain_t *terrain, const water_t *water);
 
 // Finds what the camera sees and uploads it, before the scene's pass
 // begins (objects_draw draws it)

@@ -1700,6 +1700,7 @@ static int32_t apply_terrain_tile(water_t *water, const uint8_t *data, int32_t t
 	int32_t start_x = (tile % water->tiles_per_side) * WATER_TILE_SIZE;
 	int32_t start_y = (tile / water->tiles_per_side) * WATER_TILE_SIZE;
 	int32_t max_change = 0;
+	int32_t max_lowering = 0;
 
 	for (int32_t y = 0; y < WATER_TILE_SIZE; y++)
 	{
@@ -1711,6 +1712,7 @@ static int32_t apply_terrain_tile(water_t *water, const uint8_t *data, int32_t t
 			int32_t change = heights[local] - terrain->heights[row + (size_t)x];
 
 			max_change = SDL_max(max_change, SDL_abs(change));
+			max_lowering = SDL_max(max_lowering, -change);
 			terrain->heights[row + (size_t)x] = heights[local];
 			terrain->bedrock_heights[row + (size_t)x] = layers[2 * local];
 			terrain->silt_thickness[row + (size_t)x] = layers[2 * local + 1];
@@ -1724,7 +1726,9 @@ static int32_t apply_terrain_tile(water_t *water, const uint8_t *data, int32_t t
 		frame_profile_count(FRAME_GROUND_TILES, 1);
 		// The objects on it sink into the ground a little: they are put
 		// back on it only once erosion could have uncovered their feet
-		chunk->objects_erosion_units += max_change;
+		// (only by what it wore away: silt laid down buries them where
+		// they stand, none to look at; objects_follow_terrain)
+		chunk->objects_erosion_units += max_lowering;
 		if (chunk->objects_erosion_units >= OBJECTS_SINK_UNITS)
 		{
 			chunk->objects_erosion_units = 0;
