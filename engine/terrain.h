@@ -84,6 +84,12 @@ typedef struct
 	// erosion since they were last put down.
 	bool objects_dirty;
 	bool objects_pass;             // being gone through (objects.c)
+	// Edited since the objects were last gone through (a tool, a stamp, a
+	// crater: terrain_mark_cells_changed), not only worn or silted by the
+	// water: the objects follow the ground up too. Under what the water
+	// lays down they stay where they stand, buried
+	bool objects_edited;
+	bool objects_pass_edited;      // ...as it was when the pass began
 	int32_t objects_erosion_units;
 	// Its part of the material map changed (material_map.c): the renderer
 	// uploads it and clears this

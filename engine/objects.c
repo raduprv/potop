@@ -2752,6 +2752,17 @@ void objects_sort(objects_t *objects)
 
 // True if any chunk overlapping the rectangle had its shape changed since
 // the last upload
+// Whether the chunk a point is on was edited (not only the water's work)
+// when the current pass began
+static bool chunk_pass_edited(const terrain_t *terrain, float x, float z)
+{
+	float chunk_meters = terrain->cell_size_meters * (float)TERRAIN_CHUNK_SIZE;
+	int chunk_x = SDL_clamp((int)(x / chunk_meters), 0, terrain->chunks_per_side - 1);
+	int chunk_y = SDL_clamp((int)(z / chunk_meters), 0, terrain->chunks_per_side - 1);
+
+	return terrain->chunks[chunk_y * terrain->chunks_per_side + chunk_x].objects_pass_edited;
+}
+
 // Whether a chunk in the rectangle is in the current pass
 static bool chunks_in_pass(const terrain_t *terrain, float minimum_x, float minimum_z, float maximum_x, float maximum_z)
 {
@@ -2797,6 +2808,8 @@ void objects_follow_terrain(objects_t *objects, terrain_t *terrain)
 		{
 			terrain->chunks[chunk].objects_pass = terrain->chunks[chunk].objects_dirty;
 			terrain->chunks[chunk].objects_dirty = false;
+			terrain->chunks[chunk].objects_pass_edited = terrain->chunks[chunk].objects_edited;
+			terrain->chunks[chunk].objects_edited = false;
 			in_pass += terrain->chunks[chunk].objects_pass ? 1 : 0;
 		}
 		terrain->any_chunk_objects_dirty = false;
@@ -2843,6 +2856,13 @@ void objects_follow_terrain(objects_t *objects, terrain_t *terrain)
 				// (most of a changed chunk is as it was: a few millimeters
 				// of erosion somewhere in it)
 				if (SDL_fabsf(ground - instance->ground_height) <= OBJECTS_FOLLOW_METERS)
+				{
+					continue;
+				}
+				// Ground risen under it: with a tool's edit it goes up
+				// with it, under the water's silt it stays and is buried
+				// (and goes down again only once worn lower than it stands)
+				if (ground > instance->ground_height && !chunk_pass_edited(terrain, instance->x, instance->z))
 				{
 					continue;
 				}

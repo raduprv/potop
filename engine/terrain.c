@@ -206,6 +206,7 @@ void terrain_mark_cells_changed(terrain_t *terrain, int32_t minimum_x, int32_t m
 			terrain->chunks[chunk_y * terrain->chunks_per_side + chunk_x].physics_dirty = true;
 			terrain->chunks[chunk_y * terrain->chunks_per_side + chunk_x].sim_dirty = true;
 			terrain->chunks[chunk_y * terrain->chunks_per_side + chunk_x].objects_dirty = true;
+			terrain->chunks[chunk_y * terrain->chunks_per_side + chunk_x].objects_edited = true;
 		}
 	}
 	if (!terrain->any_chunk_physics_dirty)
