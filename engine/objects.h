@@ -50,7 +50,7 @@
 // Objects put back on changed ground per frame (the rest follow in the
 // next frames; a whole new terrain at once)
 #define OBJECTS_FOLLOW_BUDGET 10000
-#define OBJECTS_FOLLOW_METERS 0.002f   // an object's ground moving less than this leaves it where it is
+#define OBJECTS_FOLLOW_METERS 0.01f    // an object's ground moving less than this leaves it where it is (half of what it is sunk by)
 
 // object_instance_t.state flags
 #define OBJECT_STATE_FREE 0x01     // moved by the physics: position and rotation are its body's
