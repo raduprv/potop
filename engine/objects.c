@@ -1809,6 +1809,7 @@ static void note_change(objects_t *objects, int index, object_change_kind_t kind
 		objects->change_capacity = capacity;
 	}
 	change = &objects->changes[objects->change_count++];
+	frame_profile_count(FRAME_OBJECT_CHANGES, 1);
 	change->index = index;
 	change->kind = kind;
 	change->x = objects->instances[index].x;

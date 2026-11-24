@@ -2,6 +2,7 @@
 
 #include "grass_mask.h"
 
+#include "profile.h"
 #include <SDL3/SDL.h>
 
 #include "object_format.h"
@@ -480,12 +481,14 @@ void grass_mask_update(grass_mask_t *mask, const objects_t *objects, float eye_x
 		mask->rebuild_pending = false;
 		mask->rebuilt_nanoseconds = now;
 		changed = true;
+		frame_profile_count(FRAME_GRASS_MASK_REBUILDS, 1);
 	}
 	else if (SDL_abs(wanted_x - mask->origin_x) >= GRASS_MASK_RECENTER_TEXELS || SDL_abs(wanted_z - mask->origin_z) >= GRASS_MASK_RECENTER_TEXELS)
 	{
 		int32_t old_x = mask->origin_x;
 		int32_t old_z = mask->origin_z;
 
+		frame_profile_count(FRAME_GRASS_MASK_STRIPS, 1);
 		mask->origin_x = wanted_x;
 		mask->origin_z = wanted_z;
 		// The strips come into the window (where the old one did not reach),

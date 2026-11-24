@@ -134,6 +134,9 @@ typedef enum
 	FRAME_CLOUD_WHOLE_DOMES,       // ...all of it at once (the eye moving: coarsely; a jump or the first: finely)
 	FRAME_CLOUD_SHADOWS,           // the clouds' shadow map made again
 	FRAME_WATERFALL_SEARCHES,      // the waterfalls looked for again round the player (every few seconds)
+	FRAME_GRASS_MASK_REBUILDS,     // the grass's mask made again whole (objects changed, the eye far off) and sent up
+	FRAME_GRASS_MASK_STRIPS,       // ...its strips coming into the window as the eye moves
+	FRAME_OBJECT_CHANGES,          // objects' changes noted (killed, come loose, stirred, another type...)
 	FRAME_COUNTER_COUNT
 } frame_counter_t;
 
