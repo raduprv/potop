@@ -1148,6 +1148,7 @@ void objects_destroy(objects_t *objects)
 	SDL_free(objects->run_first);
 	SDL_free(objects->run_start);
 	SDL_free(objects->run_type);
+	SDL_free(objects->run_distance);
 	SDL_free(objects->model_distance);
 	SDL_free(objects->type_marked_distance);
 	SDL_free(objects->block_minimum_y);
@@ -2620,6 +2621,7 @@ static void make_type_runs(objects_t *objects, int cell_count)
 				int capacity = SDL_max(objects->run_capacity * 2, 1024);
 				int *starts = SDL_realloc(objects->run_start, sizeof(int) * (size_t)capacity);
 				int *types;
+				float *distances;
 
 				if (starts == NULL)
 				{
@@ -2632,10 +2634,17 @@ static void make_type_runs(objects_t *objects, int cell_count)
 					return;
 				}
 				objects->run_type = types;
+				distances = SDL_realloc(objects->run_distance, sizeof(float) * (size_t)capacity);
+				if (distances == NULL)
+				{
+					return;
+				}
+				objects->run_distance = distances;
 				objects->run_capacity = capacity;
 			}
 			objects->run_start[objects->run_count] = k;
 			objects->run_type[objects->run_count] = type;
+			objects->run_distance[objects->run_count] = objects->types.types[type].draw_distance_meters;
 			objects->run_count++;
 		}
 	}
@@ -4168,6 +4177,9 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 	{
 	for (int block_i = first_i / OBJECTS_GRID_BLOCK_CELLS; block_i <= last_i / OBJECTS_GRID_BLOCK_CELLS; block_i++)
 	{
+	// (a block wholly in view: its cells are, with no test of their own)
+	bool block_in_view = frustum == NULL;
+
 	if (by_blocks)
 	{
 		int block = block_j * blocks_per_side + block_i;
@@ -4183,6 +4195,7 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 		{
 			continue;
 		}
+		block_in_view = frustum == NULL || frustum_box_inside(frustum, block_minimum, block_maximum);
 	}
 	for (int j = SDL_max(first_j, block_j * OBJECTS_GRID_BLOCK_CELLS); j <= SDL_min(last_j, (block_j + 1) * OBJECTS_GRID_BLOCK_CELLS - 1); j++)
 	{
@@ -4218,7 +4231,7 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 					continue;
 				}
 			}
-			if (frustum != NULL && !frustum_contains_box(frustum, cell_minimum, cell_maximum))
+			if (!block_in_view && !frustum_contains_box(frustum, cell_minimum, cell_maximum))
 			{
 				continue;
 			}
@@ -4236,7 +4249,7 @@ static uint32_t find_cells(objects_t *objects, pass_t pass, const frustum_t *fru
 					low = last;
 					for (int r = objects->run_first[cell]; r < objects->run_first[cell + 1]; r++)
 					{
-						if (objects->types.types[objects->run_type[r]].draw_distance_meters * objects->draw_distance_scale < cell_distance)
+						if (objects->run_distance[r] * objects->draw_distance_scale < cell_distance)
 						{
 							low = objects->run_start[r];
 							break;

@@ -323,4 +323,24 @@ static inline bool frustum_contains_box(const frustum_t *frustum, vec3_t box_min
 	return true;
 }
 
+// True if an axis aligned box is wholly inside the frustum: for each plane
+// the corner least far along its normal is inside (what is in such a box
+// needs no test of its own)
+static inline bool frustum_box_inside(const frustum_t *frustum, vec3_t box_minimum, vec3_t box_maximum)
+{
+	for (int i = 0; i < 6; i++)
+	{
+		const plane_t *plane = &frustum->planes[i];
+		float x = plane->a >= 0.0f ? box_minimum.x : box_maximum.x;
+		float y = plane->b >= 0.0f ? box_minimum.y : box_maximum.y;
+		float z = plane->c >= 0.0f ? box_minimum.z : box_maximum.z;
+
+		if (plane->a * x + plane->b * y + plane->c * z + plane->d < 0.0f)
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 #endif

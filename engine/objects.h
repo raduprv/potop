@@ -222,6 +222,7 @@ typedef struct
 	int *run_first;
 	int *run_start;
 	int *run_type;
+	float *run_distance;               // its type's draw distance (not asked of the types, each one far apart in memory)
 	int run_count;
 	int run_capacity;
 	int run_cells;
