@@ -30,8 +30,9 @@ const char *profile_phase_name(profile_phase_t phase)
 frame_profile_t frame_profile;
 
 // A frame this much longer than the usual one is a stutter (both must hold)
-#define SPIKE_FACTOR 1.8
-#define SPIKE_EXTRA_MILLISECONDS 3.0
+// (a frame of 7 ms among ones of 4 is felt, and was under both)
+#define SPIKE_FACTOR 1.5
+#define SPIKE_EXTRA_MILLISECONDS 2.0
 // No more lines than this a second, whatever happens
 #define SPIKES_LOGGED_PER_SECOND 4
 
