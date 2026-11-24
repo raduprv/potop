@@ -67,6 +67,13 @@ static float clampf(float value, float low, float high)
 	return value < low ? low : (value > high ? high : value);
 }
 
+static float smooth_step(float low, float high, float value)
+{
+	float t = clampf((value - low) / (high - low), 0.0f, 1.0f);
+
+	return t * t * (3.0f - 2.0f * t);
+}
+
 static float mixf(float a, float b, float t)
 {
 	return a + (b - a) * t;
@@ -322,6 +329,8 @@ typedef struct
 	float hue_spread;              // how far each needle's own hue strays (yellower or bluer), on top of the usual (0: the usual)
 	float round_shade;             // darker towards its edges, lightest along its middle (its roundness, the same whatever the light; 0: none)
 	float foot_shade;              // darker towards its foot, in among the others by the shoot, lighter out at its tip (0: none)
+	float flecks;                  // fine pale specks in lines along it (stomata, a waxy bloom), sharp, a pixel or two each (0: none)
+	float fleck_color[3];
 } needle_shape_t;
 
 // One needle: from (ax, ay) along a curve through (cx, cy) to (bx, by),
@@ -462,6 +471,18 @@ static void draw_needle_shape(canvas_t *canvas, const needle_shape_t *shape, flo
 							base = mixf(base, brown[k], clampf((along - dry) / 0.06f, 0.0f, 1.0f));
 						}
 						color[k] = base * lit * brightness;
+					}
+					if (shape->flecks > 0.0f)
+					{
+						// (in a few lines along it, each broken into short dashes)
+						float line = fabsf(sinf((across + 1.0f) * 3.3f * PI_F + grain_offset));
+						float dash = value_noise(across * 9.0f + grain_offset * 3.0f, along * total / 2.2f);
+						float speck = smooth_step(0.78f, 0.95f, line) * smooth_step(0.42f, 0.6f, dash) * shape->flecks;
+
+						for (int k = 0; k < 3; k++)
+						{
+							color[k] = mixf(color[k], shape->fleck_color[k] * brightness, clampf(speck, 0.0f, 1.0f));
+						}
 					}
 					if (shape->foot_shade > 0.0f)
 					{
@@ -1070,7 +1091,7 @@ static void draw_spruce(canvas_t *canvas, random_t *random)
 {
 	static needle_shape_t needle;
 	needle_style_t style = {
-		.length_low = 0.15f, .length_high = 0.18f, .radius = 0.0064f,
+		.length_low = 0.13f, .length_high = 0.155f, .radius = 0.0054f,
 		.angle_low = 0.95f, .angle_high = 1.15f, .curl = 0.3f,
 		.per_bundle = 1, .bundles_per_unit = 157.5f, .crowding = 0.65f, .bare = 0.0f, .brush = 0.15f,
 		.greens = {
@@ -1087,8 +1108,8 @@ static void draw_spruce(canvas_t *canvas, random_t *random)
 		.foot = { 0.26f, 0.31f, 0.13f }, .middle = { 0.15f, 0.27f, 0.10f }, .tip = { 0.62f, 0.64f, 0.18f },
 		.foot_to = 0.1f, .tip_from = 0.9f,
 		.stripes = 0.55f, .stripe_color = { 0.40f, 0.50f, 0.25f },
-		.streaks = 1.0f, .gloss = 0.0f, .shade = 0.0f,
-		.two_tone = 0.55f, .light_side = { 0.34f, 0.44f, 0.17f }, .two_tone_fixed = true, .hue_spread = 1.5f, .round_shade = 0.55f, .foot_shade = 0.55f,
+		.streaks = 1.2f, .gloss = 0.0f, .shade = 0.0f,
+		.two_tone = 0.55f, .light_side = { 0.34f, 0.44f, 0.17f }, .two_tone_fixed = true, .hue_spread = 1.5f, .round_shade = 0.55f, .foot_shade = 0.55f, .flecks = 1.0f, .fleck_color = { 0.68f, 0.74f, 0.46f },
 	};
 	style.shape = &needle;
 	// (the shoots orange brown with pegs where the needles stand; the stub
@@ -1103,19 +1124,19 @@ static void draw_spruce(canvas_t *canvas, random_t *random)
 	int count = 0;
 	int sides = 4 + (random_float(random) < 0.3f ? 1 : 0);
 	float first_side = random_float(random) < 0.5f ? 1.0f : -1.0f;
-	float stem_length = canvas->tall * 0.76f;
-	float stub = 0.09f;
+	float stem_length = canvas->tall * 0.64f;
+	float stub = 0.07f;
 	float x;
 	float y;
 	float heading;
 
 	// The stub at the foot, then the stem on from it
 	shoots[count++] = (shoot_t){ .fx = 0.5f, .fy = canvas->tall - 0.02f, .angle = random_range(random, -0.06f, 0.06f), .bend = 0.0f,
-		.length = stem_length * stub, .radius = 0.028f, .scale = 1.0f, .taper = 0.85f, .bare = true, .crook = 0.04f,
+		.length = stem_length * stub, .radius = 0.02f, .scale = 1.0f, .taper = 0.85f, .bare = true, .crook = 0.04f,
 		.phase = random_range(random, 0.0f, 6.0f), .bark = &stub_bark };
 	shoot_point(&shoots[0], 1.0f, &x, &y, &heading);
 	shoots[count++] = (shoot_t){ .fx = x, .fy = y, .angle = heading, .bend = random_range(random, -0.15f, 0.15f),
-		.length = stem_length * (1.0f - stub), .radius = 0.021f, .scale = 0.78f, .taper = 0.4f, .needles_from = 0.01f, .crook = 0.07f,
+		.length = stem_length * (1.0f - stub), .radius = 0.017f, .scale = 0.78f, .taper = 0.4f, .needles_from = 0.01f, .crook = 0.07f,
 		.phase = random_range(random, 0.0f, 6.0f) };
 	// The shoots, alternately, the lower longer, out and a little up
 	for (int i = 0; i < sides && count < 8; i++)
@@ -1124,11 +1145,11 @@ static void draw_spruce(canvas_t *canvas, random_t *random)
 		float along = i == 0 ? random_range(random, 0.01f, 0.04f)
 			: 0.2f + 0.62f * ((float)(i - 1) + random_range(random, 0.0f, 0.35f)) / (float)(sides - 1);
 		float side = (i % 2 == 0) ? first_side : -first_side;
-		float length = random_range(random, 0.34f, 0.39f) * (1.0f - 0.45f * along) * stem_length * (i == 0 ? random_range(random, 0.42f, 0.52f) : 1.0f);
+		float length = random_range(random, 0.4f, 0.46f) * (1.0f - 0.45f * along) * stem_length * (i == 0 ? random_range(random, 0.42f, 0.52f) : 1.0f);
 
 		shoot_point(&shoots[1], along, &x, &y, &heading);
 		shoots[count++] = (shoot_t){ .fx = x, .fy = y, .angle = heading + side * random_range(random, 0.46f, 0.54f),
-			.bend = side * random_range(random, 0.08f, 0.16f), .length = length, .radius = 0.014f, .scale = 1.08f, .taper = 0.5f,
+			.bend = side * random_range(random, 0.08f, 0.16f), .length = length, .radius = 0.012f, .scale = 1.08f, .taper = 0.5f,
 			.needles_from = 0.02f, .crook = 0.16f, .phase = random_range(random, 0.0f, 6.0f) };
 	}
 	draw_twig(canvas, random, &style, &bark, NULL, shoots, count);
@@ -1855,7 +1876,10 @@ static bool finish(const canvas_t *canvas, int width, int height, const char *pa
 			int content_height = bottom + 5 < height ? bottom + 5 : height;
 
 			new_width = 2 * half;
-			new_height = content_height;
+			// (some clear over it, as a photographed twig has: the card is
+			// as long as the picture, so a twig to its top edge comes out
+			// longer than one with room over it)
+			new_height = (int)lroundf((float)content_height * 1.12f);
 			if ((float)new_height < aspect * (float)new_width)
 			{
 				new_height = (int)lroundf(aspect * (float)new_width);
