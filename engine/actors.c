@@ -2875,6 +2875,8 @@ static bool steer(const actors_t *actors, actor_t *actor, float wanted, float se
 #define WANDER_SIDE_SHARE 0.85f        // its sides' lines: this share of its half width out
 #define WANDER_ON_GROUND_METERS 0.3f   // it stands on the ground itself: within this of the terrain
 #define WANDER_GROUND_STEP_METERS 1.0f // the ground ahead looked at this far apart
+#define WANDER_STEP_LOOK_SECONDS 0.1f  // its step's way is looked at this often
+#define WANDER_RAYS_METERS 250.0f      // the physics' rays for the wanderers this near the eye; farther, the ground and the others only
 #define WANDER_HOLD_SECONDS 0.5f       // its step blocked: it stands this long before it tries again
 
 // Whether a point (another's middle, of radius) is across the stretch
@@ -2921,8 +2923,11 @@ static bool heading_free_for(const actors_t *actors, const actor_t *actor, float
 	heights[0] = type->ground_align <= 0.0f ? type->step_meters + 0.03f : SDL_min(0.08f, 0.3f * type->height_meters);
 	heights[1] = 0.6f * type->height_meters;
 	// Bodies: lines along its middle and both its sides, at its feet and
-	// at its middle (one line slips between two fence posts)
-	if (actors->physics != NULL)
+	// at its middle (one line slips between two fence posts); for those
+	// near the eye (a bear a kilometer off goes by the ground alone)
+	if (actors->physics != NULL && (!actors->pose_eye_known
+		|| (actor->x - actors->pose_eye.x) * (actor->x - actors->pose_eye.x) + (actor->z - actors->pose_eye.z) * (actor->z - actors->pose_eye.z)
+			< WANDER_RAYS_METERS * WANDER_RAYS_METERS))
 	{
 		for (int side = -1; side <= 1; side++)
 		{
@@ -3058,7 +3063,7 @@ static void wander_move(actors_t *actors, actor_t *actor, const navigation_t *na
 		wanted_speed = 0.0f;
 	}
 	// (a one-shot of its own playing: still, as move_actor holds it)
-	if (actor->action >= 0 && !walking_action(type, actor->action) && (model_of(actors, actor)->actions[actor->action].flags & ACTOR_ACTION_LOOP) == 0)
+	if (actor->action >= 0 && (model_of(actors, actor)->actions[actor->action].flags & ACTOR_ACTION_LOOP) == 0 && !walking_action(type, actor->action))
 	{
 		wanted_speed = 0.0f;
 	}
@@ -3075,10 +3080,18 @@ static void wander_move(actors_t *actors, actor_t *actor, const navigation_t *na
 	// (the same look as its mind's (actors_heading_free), just past its
 	// nose: a stricter one here walked it in place where its mind saw the
 	// way free)
-	if ((step_x != 0.0f || step_z != 0.0f)
-		&& !heading_free_for(actors, actor, actor->speed >= 0.0f ? actor->yaw_radians : actor->yaw_radians + 3.14159265f,
-			SDL_fabsf(actor->speed) * seconds + 0.02f))
+	// (looked at every WANDER_STEP_LOOK_SECONDS, as far as it gets till
+	// the next look: not six rays a frame for each of a hundred bears)
+	actor->wander_look_in -= seconds;
+	if ((step_x != 0.0f || step_z != 0.0f) && actor->wander_look_in <= 0.0f)
 	{
+		actor->wander_look_in = WANDER_STEP_LOOK_SECONDS;
+		actor->wander_step_free = heading_free_for(actors, actor, actor->speed >= 0.0f ? actor->yaw_radians : actor->yaw_radians + 3.14159265f,
+			SDL_fabsf(actor->speed) * (WANDER_STEP_LOOK_SECONDS + seconds) + 0.02f);
+	}
+	if ((step_x != 0.0f || step_z != 0.0f) && !actor->wander_step_free)
+	{
+		actor->wander_look_in = 0.0f;
 		// (it stands a while before it tries again: not a start and a stop
 		// every frame against what is at its nose)
 		actor->wander_hold_seconds = WANDER_HOLD_SECONDS;

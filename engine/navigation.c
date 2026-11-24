@@ -7858,6 +7858,20 @@ static bool mesh_follow_height(const navigation_t *navigation, const terrain_t *
 	{
 		c = navigation_mesh_class_used(navigation, k) ? k : -1;
 	}
+	// (a cell with nothing in it or over it at all, most of the wild: the
+	// ground, with no look at the rectangles; every walker asks this for
+	// each of its feet each frame)
+	{
+		int32_t cell;
+
+		if (cell_of_point(navigation, x, z, &cell) && navigation->object_top[cell] == 0
+			&& navigation->terrain_clearance[cell] == NAVIGATION_CLEARANCE_OPEN && !navigation->regions[region_of_cell(navigation, cell)].stale)
+		{
+			*height_out = terrain_sample_height_meters(terrain, x, z);
+			*object_out = false;
+			return true;
+		}
+	}
 	if (c < 0 || navigation->mesh.classes[c].tiles == NULL)
 	{
 		return false;

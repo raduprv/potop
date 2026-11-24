@@ -395,6 +395,8 @@ typedef struct
 	bool wandering;
 	float wander_heading;
 	float wander_share;
+	float wander_look_in;              // till its step's way is looked at again (WANDER_STEP_LOOK_SECONDS), and what that look said
+	bool wander_step_free;
 	float wander_hold_seconds;         // its step was blocked: it stands this long before it tries again (no stop-go every frame)
 	// A straight walk that ends exactly (actors_walk_straight_exact: a
 	// worker onto his place at the anvil): how near the end counts as there
