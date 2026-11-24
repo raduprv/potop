@@ -2687,6 +2687,7 @@ void objects_sort(objects_t *objects)
 	}
 	// (all where they belong after it: no strays; by their indices before
 	// they move)
+	frame_profile_count(FRAME_OBJECT_SORTS, 1);
 	clear_strays(objects, true);
 	for (int i = 0; i < objects->instance_count; i++)
 	{

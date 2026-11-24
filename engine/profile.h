@@ -126,6 +126,9 @@ typedef enum
 	FRAME_FAR_SHADOW_FOR_OBJECTS,  // ... by objects changing (the editor)
 	FRAME_FAR_SHADOW_FOR_LIGHT,    // ... by the sun turning
 	FRAME_FAR_SHADOW_FOR_CAMERA,   // ... by the camera leaving its square (a view distance)
+	FRAME_OBJECT_SORTS,            // the objects sorted into their cells again, all of them (one taken out, many added)
+	FRAME_BODY_FULL_SYNCS,         // the bodies matched to the objects again, all of them (after such a sort)
+	FRAME_BODIES_MADE,             // bodies made (a cell's near the focus at once, the queue's a little a step)
 	FRAME_COUNTER_COUNT
 } frame_counter_t;
 

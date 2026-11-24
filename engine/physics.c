@@ -1461,6 +1461,7 @@ static void make_body_for(physics_t *physics, objects_t *objects, const terrain_
 	if (instance->body >= 0)
 	{
 		physics->bodies[instance->body].mark = physics->mark;
+		frame_profile_count(FRAME_BODIES_MADE, 1);
 	}
 }
 
@@ -3057,6 +3058,7 @@ void physics_step(physics_t *physics, objects_t *objects, terrain_t *terrain, wa
 	{
 		// Walls only change with the objects (or their damage)
 		physics->walls_dirty = false;
+		frame_profile_count(FRAME_BODY_FULL_SYNCS, 1);
 		sync_bodies(physics, objects, terrain);
 		rebuild_walls(physics, objects, terrain, water, false);
 	}
