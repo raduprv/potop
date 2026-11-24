@@ -2068,6 +2068,9 @@ static void compute_water_push(const physics_t *physics, const physics_body_t *b
 	int low_points[PROBE_LOW_POINTS];
 	int low_count = 0;
 	int entry_count;
+	// What a point pushes with: a part's, and the whole body's in one
+	float part_area = SDL_powf(body->displaced_volume / (float)sample_count, 2.0f / 3.0f);
+	float whole_area = single ? part_area : SDL_powf(body->displaced_volume, 2.0f / 3.0f);
 
 	// (its forces and points are read only up to its count: not cleared,
 	// most of a kilobyte for every body looked at, every step)
@@ -2130,7 +2133,7 @@ static void compute_water_push(const physics_t *physics, const physics_body_t *b
 		bool pushes = !probe || whole;
 		int parts = whole ? 1 : sample_count;
 		float share = body->displaced_volume / (float)parts;
-		float area = SDL_powf(share, 2.0f / 3.0f);
+		float area = whole ? whole_area : part_area;
 		float point_mass = body->mass / (float)parts;
 		float slab = (whole ? physics_type->whole_height : physics_type->sample_height) * scale;
 		const float *local = whole ? physics_type->center_point : physics_type->sample_points[probe ? low_points[entry] : entry];
