@@ -114,6 +114,11 @@ enum
 #define TERRAIN_ENTRY 0x40000000
 // Ground tiles each copy may bring (erosion changes the ground slowly)
 #define DOWNLOAD_TERRAIN_TILES 64
+// ...and how many of them a frame: the tiles a stream wears all came due
+// in the same frame, every interval (28 of them, their chunks made again
+// and sent up, the objects on them looked at: four milliseconds in one
+// frame, four times a second). A few a frame, each still once an interval
+#define DOWNLOAD_TERRAIN_TILES_PER_FRAME 4
 // A tile's copy back no more often than this (milliseconds): what reads
 // it (the physics, the actors, the paths, the ground's moisture) does not
 // need it every frame, and each copy is 64 KB a tile. Near the focus more
@@ -2074,7 +2079,7 @@ void water_gpu_end_frame(water_t *water, const terrain_t *terrain, float focus_x
 
 		slot->tile_count = choose_waiting_tiles(state->tile_terrain_needs_download, state->tile_terrain_downloaded_ticks, state->tile_count,
 			&state->terrain_cursor, now, DOWNLOAD_TERRAIN_INTERVAL_MILLISECONDS, slot->tiles, slot->tile_count,
-			DOWNLOAD_BUDGET_TILES + DOWNLOAD_TERRAIN_TILES, TERRAIN_ENTRY);
+			slot->tile_count + DOWNLOAD_TERRAIN_TILES_PER_FRAME, TERRAIN_ENTRY);
 		// The statistics with them: every frame while tiles change or the
 		// CPU edits, else now and then (statistics_quiet)
 		bool statistics = !state->statistics_quiet || state->statistics_edit_serial != state->edit_serial
