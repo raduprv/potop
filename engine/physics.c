@@ -2048,18 +2048,26 @@ static bool sample_water(const water_t *water, const physics_settings_t *setting
 	return true;
 }
 
+// How many of a sleeping body's sample points are looked at, the lowest
+// ones (compute_water_push's probe), beside its middle
+#define PROBE_LOW_POINTS 4
+
+// probe: a sleeping body asked only whether the water wakes it. Not all
+// its points then (27 of a big one, every step, for every rock lying in a
+// stream): its lowest few, which tell how far over the ground it hangs and
+// the water round its foot, and its middle taken for the whole of it, as
+// a small body's is, for how much of it is under and how hard it is pushed
 static void compute_water_push(const physics_t *physics, const physics_body_t *body, const physics_type_t *physics_type,
 	const terrain_t *terrain, const water_t *water, const physics_settings_t *settings, b3WorldTransform transform, bool moving,
-	float step_seconds, water_push_t *push)
+	bool probe, float step_seconds, water_push_t *push)
 {
 	float scale = body->scale;
 	// A small one: one point, its middle (a pebble needs no 27)
 	bool single = physics_type->largest_extent * scale < settings->small_body_meters;
 	int sample_count = single ? 1 : physics_type->sample_count;
-	float share = body->displaced_volume / (float)sample_count;
-	float area = SDL_powf(share, 2.0f / 3.0f);
-	float point_mass = body->mass / (float)sample_count;
-	float slab = (single ? physics_type->whole_height : physics_type->sample_height) * scale;
+	int low_points[PROBE_LOW_POINTS];
+	int low_count = 0;
+	int entry_count;
 
 	// (its forces and points are read only up to its count: not cleared,
 	// most of a kilobyte for every body looked at, every step)
@@ -2077,9 +2085,55 @@ static void compute_water_push(const physics_t *physics, const physics_body_t *b
 	{
 		return;
 	}
-	for (int i = 0; i < sample_count; i++)
+	probe = probe && !single && sample_count > PROBE_LOW_POINTS + 1;
+	if (probe)
 	{
-		const float *local = single ? physics_type->center_point : physics_type->sample_points[i];
+		// The lowest of its points as it lies: by their height only, no
+		// ground nor water asked for the others
+		float low_heights[PROBE_LOW_POINTS];
+
+		for (int i = 0; i < sample_count; i++)
+		{
+			const float *local = physics_type->sample_points[i];
+			float height = b3RotateVector(transform.q, vector(local[0] * scale, local[1] * scale, local[2] * scale)).y;
+			int place = low_count;
+
+			if (low_count == PROBE_LOW_POINTS && height >= low_heights[PROBE_LOW_POINTS - 1])
+			{
+				continue;
+			}
+			if (low_count < PROBE_LOW_POINTS)
+			{
+				low_count++;
+			}
+			else
+			{
+				place = PROBE_LOW_POINTS - 1;
+			}
+			while (place > 0 && low_heights[place - 1] > height)
+			{
+				low_heights[place] = low_heights[place - 1];
+				low_points[place] = low_points[place - 1];
+				place--;
+			}
+			low_heights[place] = height;
+			low_points[place] = i;
+		}
+	}
+	// The probe: its lowest points, then its middle; else every point
+	entry_count = probe ? low_count + 1 : sample_count;
+	for (int entry = 0; entry < entry_count; entry++)
+	{
+		// (the probe's middle: the whole body in one point; its low
+		// points: where they are, pushing nothing)
+		bool whole = single || (probe && entry == low_count);
+		bool pushes = !probe || whole;
+		int parts = whole ? 1 : sample_count;
+		float share = body->displaced_volume / (float)parts;
+		float area = SDL_powf(share, 2.0f / 3.0f);
+		float point_mass = body->mass / (float)parts;
+		float slab = (whole ? physics_type->whole_height : physics_type->sample_height) * scale;
+		const float *local = whole ? physics_type->center_point : physics_type->sample_points[probe ? low_points[entry] : entry];
 		b3Vec3 offset = b3RotateVector(transform.q, vector(local[0] * scale, local[1] * scale, local[2] * scale));
 		b3Pos point = vector(transform.p.x + offset.x, transform.p.y + offset.y, transform.p.z + offset.z);
 		float depth;
@@ -2107,6 +2161,15 @@ static void compute_water_push(const physics_t *physics, const physics_body_t *b
 		submerged = SDL_clamp((ground + depth - point.y) / slab + 0.5f, 0.0f, 1.0f);
 		if (submerged <= 0.0f)
 		{
+			continue;
+		}
+		push->fastest_flow = SDL_max(push->fastest_flow, SDL_sqrtf(flow_x * flow_x + flow_z * flow_z));
+		if (!pushes)
+		{
+			// (under water: counted, with no force of its own)
+			push->forces[push->count] = vector(0.0f, 0.0f, 0.0f);
+			push->points[push->count] = point;
+			push->count++;
 			continue;
 		}
 		if (moving)
@@ -2139,8 +2202,7 @@ static void compute_water_push(const physics_t *physics, const physics_body_t *b
 		}
 		force.y += submerged * share * WATER_DENSITY * GRAVITY;
 		push->buoyancy += submerged * share * WATER_DENSITY * GRAVITY;
-		push->submerged += submerged / (float)sample_count;
-		push->fastest_flow = SDL_max(push->fastest_flow, SDL_sqrtf(flow_x * flow_x + flow_z * flow_z));
+		push->submerged += submerged / (float)parts;
 		push->forces[push->count] = force;
 		push->points[push->count] = point;
 		push->count++;
@@ -3227,7 +3289,7 @@ void physics_step(physics_t *physics, objects_t *objects, terrain_t *terrain, wa
 			instance = &objects->instances[body->instance];
 			physics_type = &physics->types[instance->type];
 			transform = b3Body_GetTransform(body->id);
-			compute_water_push(physics, body, physics_type, terrain, water, settings, transform, awake, step_seconds, &push);
+			compute_water_push(physics, body, physics_type, terrain, water, settings, transform, awake, !awake, step_seconds, &push);
 			body->water_submerged = push.submerged;
 			body->water_buoyancy_newtons = push.buoyancy;
 			body->water_drag_newtons = SDL_sqrtf(push.horizontal_drag_x * push.horizontal_drag_x + push.horizontal_drag_z * push.horizontal_drag_z);
@@ -3327,7 +3389,7 @@ void physics_step(physics_t *physics, objects_t *objects, terrain_t *terrain, wa
 			{
 				transform.p = vector(instance->x, objects_instance_base_y(instance), instance->z);
 				transform.q = instance_rotation(instance);
-				compute_water_push(physics, body, physics_type, terrain, water, settings, transform, false, step_seconds, &push);
+				compute_water_push(physics, body, physics_type, terrain, water, settings, transform, false, false, step_seconds, &push);
 				if (push.count == 0)
 				{
 					continue;
