@@ -59,7 +59,7 @@ static const char *counter_name(frame_counter_t counter)
 		"path searches", "path surfaces", "objects checked", "objects moved",
 		"awake bodies", "bodies pushed", "body moves", "objects removed", "gpu water tiles", "terrain chunks drawn", "water chunks drawn",
 		"shadow draw calls", "far shadow for the ground", "far shadow for objects", "far shadow for the light", "far shadow for the camera",
-		"object sorts", "full body syncs", "bodies made" };
+		"object sorts", "full body syncs", "bodies made", "cloud passes", "cloud whole domes", "cloud shadow maps" };
 
 	return names[counter];
 }

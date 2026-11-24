@@ -4,6 +4,7 @@
 #include "file_io.h"
 #include "math3d.h"
 
+#include "profile.h"
 #include <SDL3/SDL.h>
 
 #define SHAPE_SIZE 128
@@ -736,6 +737,7 @@ SDL_GPURenderPass *clouds_draw(clouds_t *clouds, SDL_GPUTexture *color_texture, 
 		SDL_BindGPUComputeSamplers(compute, 0, textures, 7);
 		SDL_BindGPUComputeStorageBuffers(compute, 0, &clouds->weather.stamp_buffer, 1);
 		SDL_PushGPUComputeUniformData(gpu.command_buffer, 0, scene, sizeof(*scene));
+		frame_profile_count(uniforms.dome[1] == 4.0f ? FRAME_CLOUD_PASSES : FRAME_CLOUD_WHOLE_DOMES, passes);
 		for (int32_t p = 0; p < passes; p++)
 		{
 			if (uniforms.dome[1] == 4.0f)
@@ -783,6 +785,7 @@ SDL_GPURenderPass *clouds_draw(clouds_t *clouds, SDL_GPUTexture *color_texture, 
 			SDL_EndGPUComputePass(compute);
 			clouds->shadow_ready = true;
 			clouds->shadow_ticks = SDL_GetTicksNS();
+			frame_profile_count(FRAME_CLOUD_SHADOWS, 1);
 			shadow_for_shading = clouds->shadow_texture;
 		}
 	}

@@ -130,6 +130,9 @@ typedef enum
 	FRAME_OBJECT_SORTS,            // the objects sorted into their cells again, all of them (one taken out, many added)
 	FRAME_BODY_FULL_SYNCS,         // the bodies matched to the objects again, all of them (after such a sort)
 	FRAME_BODIES_MADE,             // bodies made (a cell's near the focus at once, the queue's a little a step)
+	FRAME_CLOUD_PASSES,            // the clouds' dome marched: sixteenths of it this frame (by the clock: none, one, up to four after a slow frame)
+	FRAME_CLOUD_WHOLE_DOMES,       // ...all of it at once (the eye moving: coarsely; a jump or the first: finely)
+	FRAME_CLOUD_SHADOWS,           // the clouds' shadow map made again
 	FRAME_COUNTER_COUNT
 } frame_counter_t;
 
