@@ -33,6 +33,14 @@
 #include "ui_backend.h"
 #include "ui_style.h"
 
+// Log categories for a line that goes one way only: into the game's
+// console at once, to the terminal (or the file) later. The stutters'
+// lines: the terminal drawing a line makes the game wait a frame, so those
+// are written there together now and then (profile.c), but shown in the
+// game as they come
+#define CONSOLE_LOG_GAME_ONLY (SDL_LOG_CATEGORY_CUSTOM + 1)
+#define CONSOLE_LOG_TERMINAL_ONLY (SDL_LOG_CATEGORY_CUSTOM + 2)
+
 #define CONSOLE_LINES 1024
 #define CONSOLE_LINE_LENGTH 240
 #define CONSOLE_INPUT_LENGTH 240

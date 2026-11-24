@@ -159,6 +159,11 @@ static void SDLCALL log_output(void *userdata, int category, SDL_LogPriority pri
 	// before it, colored where it has a color, and the seconds since the
 	// start before that, to tell how often a thing comes back; elsewhere
 	// (a pipe, a file: the tests read those), SDL's own output as it is)
+	if (category == CONSOLE_LOG_GAME_ONLY)
+	{
+		add_message(console, priority, message);
+		return;
+	}
 	if (console->terminal)
 	{
 		static const char *names[SDL_LOG_PRIORITY_COUNT] = { "", "TRACE", "VERBOSE", "DEBUG", "INFO", "WARN", "ERROR", "CRITICAL" };
@@ -171,7 +176,10 @@ static void SDLCALL log_output(void *userdata, int category, SDL_LogPriority pri
 	{
 		console->previous_output(console->previous_userdata, category, priority, message);
 	}
-	add_message(console, priority, message);
+	if (category != CONSOLE_LOG_TERMINAL_ONLY)
+	{
+		add_message(console, priority, message);
+	}
 }
 
 void console_create(console_t *console)
@@ -181,6 +189,9 @@ void console_create(console_t *console)
 	console->mutex = SDL_CreateMutex();
 	SDL_GetLogOutputFunction(&console->previous_output, &console->previous_userdata);
 	SDL_SetLogOutputFunction(log_output, console);
+	// (SDL lets only errors through in categories of one's own)
+	SDL_SetLogPriority(CONSOLE_LOG_GAME_ONLY, SDL_LOG_PRIORITY_INFO);
+	SDL_SetLogPriority(CONSOLE_LOG_TERMINAL_ONLY, SDL_LOG_PRIORITY_INFO);
 	// (colors only in a terminal, and not when NO_COLOR asks for none)
 	// (POTOP_LOG_TIME: the seconds before each line into a file or a pipe
 	// too, where the lines are otherwise SDL's own)

@@ -1,6 +1,7 @@
 // Phase profiler. See profile.h.
 
 #include "profile.h"
+#include "console.h"
 
 #include <SDL3/SDL.h>
 
@@ -106,6 +107,9 @@ static struct
 
 static void hold_line(const char *line)
 {
+	// (in the game's console at once: drawing it there costs the game
+	// nothing it was not paying)
+	SDL_LogInfo(CONSOLE_LOG_GAME_ONLY, "%s", line);
 	if (held.length < sizeof(held.text))
 	{
 		held.length += (size_t)SDL_snprintf(held.text + held.length, sizeof(held.text) - held.length, "(at %.3f) %s\n",
@@ -135,7 +139,7 @@ static void write_held(uint64_t now)
 		{
 			*end = '\0';
 		}
-		SDL_Log("%s", line);
+		SDL_LogInfo(CONSOLE_LOG_TERMINAL_ONLY, "%s", line);
 		if (end == NULL)
 		{
 			break;
@@ -144,7 +148,8 @@ static void write_held(uint64_t now)
 	}
 	if (held.untold > 0)
 	{
-		SDL_Log("(%d more stutters right after the last lines were written: not told, the writing makes them)", held.untold);
+		SDL_LogInfo(CONSOLE_LOG_TERMINAL_ONLY, "(%d more stutters right after the last lines were written: not told, the writing makes them)",
+			held.untold);
 	}
 	held.length = 0;
 	held.text[0] = '\0';
