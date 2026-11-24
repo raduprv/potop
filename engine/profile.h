@@ -137,6 +137,8 @@ typedef enum
 	FRAME_GRASS_MASK_REBUILDS,     // the grass's mask made again whole (objects changed, the eye far off) and sent up
 	FRAME_GRASS_MASK_STRIPS,       // ...its strips coming into the window as the eye moves
 	FRAME_OBJECT_CHANGES,          // objects' changes noted (killed, come loose, stirred, another type...)
+	FRAME_UPLOAD_FLUSHES,          // times the staged uploads were copied into the (cycled) transfer buffer and recorded
+	FRAME_UPLOAD_KILOBYTES,        // ...and how much went up
 	FRAME_COUNTER_COUNT
 } frame_counter_t;
 

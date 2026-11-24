@@ -533,6 +533,9 @@ static void record_uploads(SDL_GPUCommandBuffer *command_buffer)
 			info.size = (uint32_t)SDL_max(gpu.staging_capacity, (size_t)STAGING_START_BYTES);
 			gpu.transfer = SDL_CreateGPUTransferBuffer(gpu.device, &info);
 			gpu.transfer_capacity = gpu.transfer != NULL ? info.size : 0;
+			// (it is mapped cycled at every flush, several a frame: its size
+			// is what each of those may ask the driver to back anew)
+			SDL_Log("GPU: the uploads' transfer buffer made, %.1f MB", (double)info.size / (1024.0 * 1024.0));
 			if (gpu.transfer == NULL)
 			{
 				SDL_LogError(SDL_LOG_CATEGORY_RENDER, "GPU: transfer buffer of %u bytes: %s", info.size, SDL_GetError());
@@ -591,6 +594,8 @@ static void record_uploads(SDL_GPUCommandBuffer *command_buffer)
 		}
 		SDL_EndGPUCopyPass(copy_pass);
 		gpu.uploaded_bytes += gpu.staging_used;
+		frame_profile_count(FRAME_UPLOAD_FLUSHES, 1);
+		frame_profile_count(FRAME_UPLOAD_KILOBYTES, (int32_t)((gpu.staging_used + 1023) / 1024));
 	}
 	for (int i = 0; i < gpu.mipmap_count; i++)
 	{

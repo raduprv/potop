@@ -60,7 +60,7 @@ static const char *counter_name(frame_counter_t counter)
 		"awake bodies", "bodies pushed", "body moves", "objects removed", "gpu water tiles", "terrain chunks drawn", "water chunks drawn",
 		"shadow draw calls", "far shadow for the ground", "far shadow for objects", "far shadow for the light", "far shadow for the camera",
 		"object sorts", "full body syncs", "bodies made", "cloud passes", "cloud whole domes", "cloud shadow maps", "waterfall searches",
-		"grass mask rebuilds", "grass mask strips", "object changes" };
+		"grass mask rebuilds", "grass mask strips", "object changes", "upload flushes", "upload kilobytes" };
 
 	return names[counter];
 }
