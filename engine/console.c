@@ -181,8 +181,10 @@ void console_create(console_t *console)
 	SDL_GetLogOutputFunction(&console->previous_output, &console->previous_userdata);
 	SDL_SetLogOutputFunction(log_output, console);
 	// (colors only in a terminal, and not when NO_COLOR asks for none)
-	console->terminal = isatty(STDERR_FILENO);
-	console->terminal_colors = console->terminal && SDL_getenv("NO_COLOR") == NULL;
+	// (POTOP_LOG_TIME: the seconds before each line into a file or a pipe
+	// too, where the lines are otherwise SDL's own)
+	console->terminal = isatty(STDERR_FILENO) || SDL_getenv("POTOP_LOG_TIME") != NULL;
+	console->terminal_colors = isatty(STDERR_FILENO) && SDL_getenv("NO_COLOR") == NULL;
 	console->hooked = true;
 }
 
