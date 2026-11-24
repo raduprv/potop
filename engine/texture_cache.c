@@ -325,6 +325,12 @@ static void level_to_bytes(const float *level, size_t texels, texture_cache_kind
 	}
 }
 
+void texture_cache_encode_pixels(const uint8_t *pixels, uint32_t width, uint32_t height, uint8_t *blocks_out)
+{
+	encode_initialize();
+	encode_level(pixels, width, height, blocks_out);
+}
+
 void texture_cache_encode_layer(const uint8_t *pixels, uint32_t width, uint32_t height, uint32_t level_count, texture_cache_kind_t kind,
 	uint8_t *blocks_out)
 {
@@ -578,6 +584,12 @@ SDL_GPUTexture *texture_cache_create(uint32_t width, uint32_t height, uint32_t l
 	return gpu_create_texture(layer_count > 1 ? SDL_GPU_TEXTURETYPE_2D_ARRAY : SDL_GPU_TEXTURETYPE_2D,
 		bc7_native() ? SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, width, height, layer_count, level_count,
 		SDL_GPU_TEXTUREUSAGE_SAMPLER);
+}
+
+SDL_GPUTexture *texture_cache_create_array(uint32_t width, uint32_t height, uint32_t layer_count, uint32_t level_count)
+{
+	return gpu_create_texture(SDL_GPU_TEXTURETYPE_2D_ARRAY, bc7_native() ? SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+		width, height, SDL_max(layer_count, 1u), level_count, SDL_GPU_TEXTUREUSAGE_SAMPLER);
 }
 
 void texture_cache_layer_smallest(const uint8_t *blocks, uint32_t width, uint32_t height, uint32_t level_count, uint8_t rgba_out[4])

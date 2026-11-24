@@ -50,11 +50,16 @@
 // color atlases (3, the plants' 6), the clouds' shadows (4), the normal
 // atlases (5, the plants' 7): arrays, a layer a model
 #define IMPOSTOR_FRAGMENT_SAMPLERS 8
+// The color atlases' levels: all impostor.frag reads (its
+// IMPOSTOR_MAXIMUM_LOD 3; further down the pictures' cells run together)
+#define IMPOSTOR_COLOR_LEVELS 4
 
 typedef struct
 {
-	// Its atlases as made (until moved into the arrays: in_array)
-	SDL_GPUTexture *albedo;        // RGBA8, mipmapped: sRGB color, alpha covered
+	// Its atlases as made (until moved into the arrays: in_array). The
+	// color's compressed (texture_cache.h: BC7 blocks, IMPOSTOR_COLOR_LEVELS
+	// levels; SDL_free them): sRGB color, alpha covered
+	uint8_t *albedo_blocks;
 	SDL_GPUTexture *normal;        // RGBA8, mipmapped: normal in the model's axes * 0.5 + 0.5 (a plant's leaves a quarter as long), alpha depth
 	float sphere[4];               // the model's bounding sphere: center, radius (model axes, meters at size 1)
 	float look[4];                 // x: how leafy, 0..1 (its triangles' share in cut out materials): lit like leaves; y: a plant's (1); z, w: pictures across, down its atlas

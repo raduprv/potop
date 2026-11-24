@@ -1,6 +1,7 @@
 // Impostors' atlases: baked, cached, loaded. See impostors.h.
 
 #include "impostors.h"
+#include "texture_cache.h"
 #include "file_io.h"
 #include "screenshot.h"
 #include "season.h"
@@ -667,6 +668,80 @@ static float covered_across(const uint8_t *albedo, const picture_layout_t *layou
 	return SDL_min(farthest, 1.0f);
 }
 
+// Raise when the color atlases are compressed differently: every one is
+// compressed again
+#define IMPOSTOR_COLOR_VERSION 1
+
+// The color atlas compressed (BC7, IMPOSTOR_COLOR_LEVELS levels: each from
+// the one above, four texels into one, which never mixes a picture's cell
+// with the next), from the texture cache or made and kept there: under the
+// atlas's own key, a file a model and a month (a plant's foliage's). NULL
+// without memory
+static uint8_t *color_blocks(const object_model_t *model, const picture_layout_t *layout, uint64_t atlas_key, const uint8_t *albedo)
+{
+	uint32_t width = (uint32_t)layout->atlas_width;
+	uint32_t height = (uint32_t)layout->atlas_height;
+	uint32_t key = texture_cache_key_int((uint32_t)(atlas_key ^ (atlas_key >> 32)), IMPOSTOR_COLOR_VERSION);
+	char raw[OBJECT_MODEL_NAME_LENGTH + 64];
+	char name[OBJECT_MODEL_NAME_LENGTH + 64];
+	uint8_t *blocks;
+	uint8_t *level;
+	size_t offset = 0;
+
+	SDL_snprintf(raw, sizeof(raw), "impostors/%s_month%d", model->name, layout->month_index);
+	texture_cache_name(raw, name, sizeof(name));
+	blocks = texture_cache_load(name, key, width, height, 1, IMPOSTOR_COLOR_LEVELS);
+	if (blocks != NULL)
+	{
+		return blocks;
+	}
+	blocks = SDL_malloc(texture_cache_layer_bytes(width, height, IMPOSTOR_COLOR_LEVELS));
+	level = SDL_malloc((size_t)width * height * 4);
+	if (blocks == NULL || level == NULL)
+	{
+		SDL_free(blocks);
+		SDL_free(level);
+		return NULL;
+	}
+	SDL_memcpy(level, albedo, (size_t)width * height * 4);
+	for (uint32_t k = 0; k < IMPOSTOR_COLOR_LEVELS; k++)
+	{
+		uint32_t level_width = SDL_max(width >> k, 1u);
+		uint32_t level_height = SDL_max(height >> k, 1u);
+
+		texture_cache_encode_pixels(level, level_width, level_height, blocks + offset);
+		offset += texture_cache_level_bytes(level_width, level_height);
+		// The next level, in place (it is read ahead of where it is written)
+		if (k + 1 < IMPOSTOR_COLOR_LEVELS)
+		{
+			uint32_t next_width = SDL_max(level_width / 2, 1u);
+			uint32_t next_height = SDL_max(level_height / 2, 1u);
+
+			for (uint32_t y = 0; y < next_height; y++)
+			{
+				for (uint32_t x = 0; x < next_width; x++)
+				{
+					uint32_t x0 = SDL_min(x * 2, level_width - 1);
+					uint32_t x1 = SDL_min(x * 2 + 1, level_width - 1);
+					uint32_t y0 = SDL_min(y * 2, level_height - 1);
+					uint32_t y1 = SDL_min(y * 2 + 1, level_height - 1);
+
+					for (int c = 0; c < 4; c++)
+					{
+						uint32_t sum = (uint32_t)level[((size_t)y0 * level_width + x0) * 4 + c] + level[((size_t)y0 * level_width + x1) * 4 + c]
+							+ level[((size_t)y1 * level_width + x0) * 4 + c] + level[((size_t)y1 * level_width + x1) * 4 + c];
+
+						level[((size_t)y * next_width + x) * 4 + c] = (uint8_t)((sum + 2) / 4);
+					}
+				}
+			}
+		}
+	}
+	SDL_free(level);
+	texture_cache_save(name, key, width, height, 1, IMPOSTOR_COLOR_LEVELS, blocks);
+	return blocks;
+}
+
 bool impostor_make(impostor_baker_t *baker, impostor_t *impostor, const object_model_t *model, const object_texture_cache_t *textures,
 	float month)
 {
@@ -737,11 +812,11 @@ bool impostor_make(impostor_baker_t *baker, impostor_t *impostor, const object_m
 	impostor->atlas_width = layout.atlas_width;
 	impostor->atlas_height = layout.atlas_height;
 	impostor->month_index = layout.month_index;
-	impostor->albedo = object_texture_upload(atlases, layout.atlas_width, layout.atlas_height);
+	impostor->albedo_blocks = color_blocks(model, &layout, key, atlases);
 	impostor->normal = object_texture_upload(atlases + layout.atlas_bytes, layout.atlas_width, layout.atlas_height);
 	SDL_free(atlases);
 	baker->seconds += (double)(SDL_GetPerformanceCounter() - start) / (double)SDL_GetPerformanceFrequency();
-	if (impostor->albedo == NULL || impostor->normal == NULL)
+	if (impostor->albedo_blocks == NULL || impostor->normal == NULL)
 	{
 		impostor_release(impostor);
 		return false;
@@ -814,12 +889,9 @@ bool impostor_make_thumbnail(impostor_baker_t *baker, const object_model_t *mode
 
 void impostor_release(impostor_t *impostor)
 {
+	SDL_free(impostor->albedo_blocks);
 	if (gpu.device != NULL)
 	{
-		if (impostor->albedo != NULL)
-		{
-			SDL_ReleaseGPUTexture(gpu.device, impostor->albedo);
-		}
 		if (impostor->normal != NULL)
 		{
 			SDL_ReleaseGPUTexture(gpu.device, impostor->normal);

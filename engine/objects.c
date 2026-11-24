@@ -2,6 +2,7 @@
 
 #include "lights.h"
 #include "objects.h"
+#include "texture_cache.h"
 
 #include <float.h>
 #include "profile.h"
@@ -776,7 +777,7 @@ static bool build_impostor_arrays(objects_t *objects)
 	{
 		const impostor_t *impostor = &objects->impostors[m];
 
-		if (impostor->albedo != NULL || impostor->in_array)
+		if (impostor->albedo_blocks != NULL || impostor->in_array)
 		{
 			counts[impostor->month_index >= 0 ? 1 : 0]++;
 		}
@@ -785,8 +786,12 @@ static bool build_impostor_arrays(objects_t *objects)
 	{
 		for (int k = 0; k < 2 && counts[kind] > 0; k++)
 		{
-			arrays[kind][k] = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D_ARRAY, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, (uint32_t)sizes[kind][0],
-				(uint32_t)sizes[kind][1], (uint32_t)counts[kind], 0, SDL_GPU_TEXTUREUSAGE_SAMPLER);
+			// (the colors compressed, the levels impostor.frag reads; the
+			// normals and depths as they are, every level)
+			arrays[kind][k] = k == 0
+				? texture_cache_create_array((uint32_t)sizes[kind][0], (uint32_t)sizes[kind][1], (uint32_t)counts[kind], IMPOSTOR_COLOR_LEVELS)
+				: gpu_create_texture(SDL_GPU_TEXTURETYPE_2D_ARRAY, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, (uint32_t)sizes[kind][0],
+					(uint32_t)sizes[kind][1], (uint32_t)counts[kind], 0, SDL_GPU_TEXTUREUSAGE_SAMPLER);
 			ok = ok && arrays[kind][k] != NULL;
 		}
 	}
@@ -811,15 +816,17 @@ static bool build_impostor_arrays(objects_t *objects)
 		int kind = impostor->month_index >= 0 ? 1 : 0;
 		int levels = (int)gpu_mip_count((uint32_t)sizes[kind][0], (uint32_t)sizes[kind][1]);
 
-		if (impostor->albedo == NULL && !impostor->in_array)
+		if (impostor->albedo_blocks == NULL && !impostor->in_array)
 		{
 			continue;
 		}
 		for (int k = 0; k < 2; k++)
 		{
-			SDL_GPUTexture *from = impostor->albedo != NULL ? (k == 0 ? impostor->albedo : impostor->normal) : objects->impostor_arrays[kind][k];
+			// (a newly made's colors: its blocks sent up below, none copied)
+			SDL_GPUTexture *from = impostor->albedo_blocks != NULL ? (k == 0 ? NULL : impostor->normal) : objects->impostor_arrays[kind][k];
+			int copied_levels = k == 0 ? SDL_min(levels, IMPOSTOR_COLOR_LEVELS) : levels;
 
-			for (int level = 0; level < levels && from != NULL; level++)
+			for (int level = 0; level < copied_levels && from != NULL; level++)
 			{
 				SDL_GPUTextureLocation source;
 				SDL_GPUTextureLocation destination;
@@ -827,7 +834,7 @@ static bool build_impostor_arrays(objects_t *objects)
 				SDL_zero(source);
 				source.texture = from;
 				source.mip_level = (uint32_t)level;
-				source.layer = impostor->albedo != NULL ? 0u : (uint32_t)impostor->layer;
+				source.layer = impostor->albedo_blocks != NULL ? 0u : (uint32_t)impostor->layer;
 				SDL_zero(destination);
 				destination.texture = arrays[kind][k];
 				destination.mip_level = (uint32_t)level;
@@ -843,20 +850,37 @@ static bool build_impostor_arrays(objects_t *objects)
 		SDL_EndGPUCopyPass(copy);
 		ok = SDL_SubmitGPUCommandBuffer(command_buffer);
 	}
+	// The newly made's colors: their blocks up into their layers
+	for (int m = 0; m < objects->impostor_capacity && ok; m++)
+	{
+		const impostor_t *impostor = &objects->impostors[m];
+		int kind = impostor->month_index >= 0 ? 1 : 0;
+
+		if (impostor->albedo_blocks != NULL)
+		{
+			texture_cache_upload_layer(arrays[kind][0], (uint32_t)impostor->layer, (uint32_t)sizes[kind][0], (uint32_t)sizes[kind][1],
+				IMPOSTOR_COLOR_LEVELS, impostor->albedo_blocks);
+		}
+	}
+	if (ok)
+	{
+		gpu_flush_uploads();
+		gpu_submit_work(NULL);
+	}
 	// The newly made let go (now in the arrays), the arrays before too
 	for (int m = 0; m < objects->impostor_capacity; m++)
 	{
 		impostor_t *impostor = &objects->impostors[m];
 
-		if (impostor->albedo == NULL && !impostor->in_array)
+		if (impostor->albedo_blocks == NULL && !impostor->in_array)
 		{
 			continue;
 		}
-		if (impostor->albedo != NULL)
+		if (impostor->albedo_blocks != NULL)
 		{
-			SDL_ReleaseGPUTexture(gpu.device, impostor->albedo);
+			SDL_free(impostor->albedo_blocks);
 			SDL_ReleaseGPUTexture(gpu.device, impostor->normal);
-			impostor->albedo = NULL;
+			impostor->albedo_blocks = NULL;
 			impostor->normal = NULL;
 		}
 		impostor->in_array = ok;
@@ -920,13 +944,13 @@ void objects_update_impostors(objects_t *objects)
 
 		// (a plant's of another month: its foliage's pictures are not
 		// those of now)
-		bool held = impostor->albedo != NULL || impostor->in_array;
+		bool held = impostor->albedo_blocks != NULL || impostor->in_array;
 
 		if (wanted && held && impostor->month_index >= 0 && impostor->month_index != month_index)
 		{
 			impostor_release(impostor);
 		}
-		held = impostor->albedo != NULL || impostor->in_array;
+		held = impostor->albedo_blocks != NULL || impostor->in_array;
 		if (wanted && !held)
 		{
 			if (impostor_make(&objects->impostor_baker, impostor, &objects->models[m], &objects->textures, objects->month))
@@ -956,7 +980,9 @@ void objects_update_impostors(objects_t *objects)
 		SDL_Log("Impostors: %d made (%d baked, %d from the cache) in %.2f s; %d models have one (%.0f MB)", made,
 			objects->impostor_baker.baked - baked_before, objects->impostor_baker.loaded - loaded_before,
 			objects->impostor_baker.seconds - seconds_before, total,
-			texels * 2.0 * 4.0 * 4.0 / 3.0 / (1024.0 * 1024.0));
+			// (the normals and depths 4 bytes a texel with every level, the
+			// colors' blocks one, their four levels)
+			texels * (4.0 * 4.0 / 3.0 + 85.0 / 64.0) / (1024.0 * 1024.0));
 		// The culling's tables know which models have one
 		release_tables(objects);
 	}
@@ -1020,7 +1046,7 @@ bool objects_reload_changed(objects_t *objects)
 			for (int k = 0; k < objects->models[m].material_count; k++)
 			{
 				if (objects->models[m].materials[k].texture == old_textures[i] && m < objects->impostor_capacity
-					&& (objects->impostors[m].albedo != NULL || objects->impostors[m].in_array))
+					&& (objects->impostors[m].albedo_blocks != NULL || objects->impostors[m].in_array))
 				{
 					// Its pictures, taken again with the new texture
 					impostor_release(&objects->impostors[m]);

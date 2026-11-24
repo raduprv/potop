@@ -50,6 +50,12 @@ typedef enum
 void texture_cache_encode_layer(const uint8_t *pixels, uint32_t width, uint32_t height, uint32_t level_count, texture_cache_kind_t kind,
 	uint8_t *blocks_out);
 
+// One level's RGBA8 pixels into BC7 blocks, as they are
+// (texture_cache_level_bytes of them): for a texture whose levels are made
+// by who has it (an impostor's atlas: a picture's cell never mixed with
+// the next one's). On every core
+void texture_cache_encode_pixels(const uint8_t *pixels, uint32_t width, uint32_t height, uint8_t *blocks_out);
+
 // The cached file name (under data/cache/textures/) of a key and a name;
 // load: its blocks (SDL_free them) if its key and its sizes are those
 // asked for, else NULL. save: the blocks of layer_count layers
@@ -66,6 +72,9 @@ void texture_cache_name(const char *relative_path, char *name_out, size_t name_o
 // A texture (2D, or a 2D array with layer_count > 1) to hold them: BC7
 // where the GPU reads it, else RGBA8
 SDL_GPUTexture *texture_cache_create(uint32_t width, uint32_t height, uint32_t layer_count, uint32_t level_count);
+// The same, a 2D array whatever its layers (one too: a shader's sampler
+// of arrays wants an array)
+SDL_GPUTexture *texture_cache_create_array(uint32_t width, uint32_t height, uint32_t layer_count, uint32_t level_count);
 // A layer's smallest level's first texel (its blocks, every level: as
 // texture_cache_upload_layer takes them), decoded: what a shader's
 // textureLod at the last level reads, its average (RGBA8)
