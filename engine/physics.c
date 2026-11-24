@@ -2060,7 +2060,16 @@ static void compute_water_push(const physics_t *physics, const physics_body_t *b
 	float point_mass = body->mass / (float)sample_count;
 	float slab = (single ? physics_type->whole_height : physics_type->sample_height) * scale;
 
-	SDL_zerop(push);
+	// (its forces and points are read only up to its count: not cleared,
+	// most of a kilobyte for every body looked at, every step)
+	push->count = 0;
+	push->buoyancy = 0.0f;
+	push->horizontal_drag_x = 0.0f;
+	push->horizontal_drag_z = 0.0f;
+	push->fastest_flow = 0.0f;
+	push->submerged = 0.0f;
+	push->wet = false;
+	push->deepest = 0.0f;
 	push->lowest_clearance = 1e30f;
 	// (on the ice that bears: the water under it pushes nothing)
 	if (physics->ice_water != NULL)

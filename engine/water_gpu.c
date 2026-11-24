@@ -1659,19 +1659,32 @@ static void apply_tile(water_t *water, const uint8_t *data, int32_t tile)
 	{
 		size_t row = (size_t)(start_y + y) * (size_t)water->size + (size_t)start_x;
 
+#if WATER_FLUX_BITS == 16
+		// A direction's row at a time: one stream read and one written,
+		// which the compiler can do several cells at once (cell by cell,
+		// four arrays were written in turn)
+		for (int k = 0; k < WATER_DIRECTION_COUNT; k++)
+		{
+			const uint16_t *source = &halves[4 * (y * WATER_TILE_SIZE) + k];
+			water_flux_t *row_flux = &water->flux[k][row];
+
+			for (int32_t x = 0; x < WATER_TILE_SIZE; x++)
+			{
+				// (the half's bits as they are)
+				SDL_memcpy(&row_flux[x], &source[4 * x], sizeof(uint16_t));
+			}
+		}
+#else
 		for (int32_t x = 0; x < WATER_TILE_SIZE; x++)
 		{
 			const uint16_t *cell = &halves[4 * (y * WATER_TILE_SIZE + x)];
 
 			for (int k = 0; k < WATER_DIRECTION_COUNT; k++)
 			{
-#if WATER_FLUX_BITS == 16
-				SDL_memcpy(&water->flux[k][row + (size_t)x], &cell[k], sizeof(uint16_t));
-#else
 				water->flux[k][row + (size_t)x] = half_to_float(cell[k]);
-#endif
 			}
 		}
+#endif
 	}
 }
 
