@@ -351,7 +351,7 @@ static bool make_valleys_step(fog_t *fog, const terrain_t *terrain, const water_
 	return true;
 }
 
-void fog_update(fog_t *fog, const terrain_t *terrain, const water_t *water, const render_settings_t *settings, double seconds)
+void fog_update(fog_t *fog, const terrain_t *terrain, const water_t *water, const render_settings_t *settings, float hour, double seconds)
 {
 	if (settings->fog_mode == FOG_MODE_OFF || terrain == NULL || terrain->size <= 0 || fog->failed)
 	{
@@ -366,16 +366,15 @@ void fog_update(fog_t *fog, const terrain_t *terrain, const water_t *water, cons
 			return;
 		}
 	}
-	// (the first one whole, at once: there is no map to show meanwhile)
-	if (!fog->valley_ready)
+	// (its pipelines made at the start, not at dusk; no fog at this hour: fog_draw draws none, and no map is made for it.
+	// It was made every few seconds all day long)
+	if (fog_amount_at_hour(settings, hour) <= 0.0f)
 	{
-		while (!make_valleys_step(fog, terrain, water, settings))
-		{
-		}
-		fog->next_valley_seconds = seconds + VALLEY_SECONDS;
 		return;
 	}
-	if (seconds < fog->next_valley_seconds)
+	// (the first one too a slice a frame: the fog comes over the evening,
+	// a dozen frames without it are not seen)
+	if (fog->valley_ready && seconds < fog->next_valley_seconds)
 	{
 		return;
 	}

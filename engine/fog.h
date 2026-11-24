@@ -100,7 +100,7 @@ float fog_amount_at_hour(const render_settings_t *settings, float hour);
 
 // Makes the valley map again if it is due (every few seconds: the water
 // moves, the land is dug)
-void fog_update(fog_t *fog, const terrain_t *terrain, const water_t *water, const render_settings_t *settings, double seconds);
+void fog_update(fog_t *fog, const terrain_t *terrain, const water_t *water, const render_settings_t *settings, float hour, double seconds);
 
 // Draws the fog over the scene's color, by its depth (a pass of its own,
 // ended here); the scene's block is the frame's. wind: meters per second

@@ -1004,7 +1004,7 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 				SDL_sinf(wind_radians) * world->lit_render.wind_speed_meters_per_second,
 			};
 
-			fog_update(&world->fog, &world->terrain, &world->water, &world->lit_render, world->elapsed_seconds);
+			fog_update(&world->fog, &world->terrain, &world->water, &world->lit_render, (float)world->day_hour, world->elapsed_seconds);
 			render_target_pause(&world->scene_target, pass);
 			fog_draw(&world->fog, world->scene_target.color_texture, world->scene_target.depth_texture, (uint32_t)world->scene_target.width,
 				(uint32_t)world->scene_target.height, &scene, &world->lit_render, world->shadow.depth_texture, world->near_shadow.depth_texture,
