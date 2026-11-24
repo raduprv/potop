@@ -972,6 +972,49 @@ static bool solid_triangles_first(object_model_t *model)
 	return true;
 }
 
+// The boxes of the picked triangles, a few in a row to each (a mesh's
+// triangles lie near their neighbours in the file, mostly). Without them
+// (no memory) the ray looks at every triangle
+static void build_pick_boxes(object_model_t *model)
+{
+	int triangles = model->pick_index_count / 3;
+	int chunks = (triangles + OBJECT_MODEL_PICK_CHUNK_TRIANGLES - 1) / OBJECT_MODEL_PICK_CHUNK_TRIANGLES;
+
+	SDL_free(model->pick_boxes);
+	model->pick_boxes = NULL;
+	if (chunks < 2 || model->collision_positions == NULL || model->collision_indices == NULL)
+	{
+		return;
+	}
+	model->pick_boxes = SDL_malloc(sizeof(float) * 6 * (size_t)chunks);
+	if (model->pick_boxes == NULL)
+	{
+		return;
+	}
+	for (int chunk = 0; chunk < chunks; chunk++)
+	{
+		float *box = &model->pick_boxes[(size_t)chunk * 6];
+		int first = chunk * OBJECT_MODEL_PICK_CHUNK_TRIANGLES * 3;
+		int last = SDL_min(first + OBJECT_MODEL_PICK_CHUNK_TRIANGLES * 3, triangles * 3);
+
+		for (int k = 0; k < 3; k++)
+		{
+			box[k] = 1e30f;
+			box[3 + k] = -1e30f;
+		}
+		for (int i = first; i < last; i++)
+		{
+			const float *position = &model->collision_positions[(size_t)model->collision_indices[i] * 3];
+
+			for (int k = 0; k < 3; k++)
+			{
+				box[k] = SDL_min(box[k], position[k]);
+				box[3 + k] = SDL_max(box[3 + k], position[k]);
+			}
+		}
+	}
+}
+
 // The materials that are only collision shapes (OBJECT_MATERIAL_COLLISION_ONLY),
 // taken out once the collision shape is made: never drawn (no textures
 // were made for them), their indices stay in the buffer unused
@@ -1492,6 +1535,7 @@ static bool load_pobj(object_model_t *model, const char *relative_path, object_t
 	{
 		FAIL("Out of memory loading '%s'", relative_path);
 	}
+	build_pick_boxes(model);
 	drop_collision_only_materials(model);
 
 	// GPU buffers (32 bit indices: such models are seldom small)
@@ -1813,6 +1857,7 @@ static bool load_e3d(object_model_t *model, const char *relative_path, object_te
 	{
 		FAIL("Out of memory loading '%s'", relative_path);
 	}
+	build_pick_boxes(model);
 
 	// Tangents: .e3d has none the game reads (they would only matter for a
 	// normal map, which it does not have either; made all the same, so
@@ -1913,6 +1958,7 @@ void object_model_destroy(object_model_t *model)
 {
 	SDL_free(model->collision_positions);
 	SDL_free(model->collision_indices);
+	SDL_free(model->pick_boxes);
 	if (model->vertex_buffer != NULL)
 	{
 		SDL_ReleaseGPUBuffer(gpu.device, model->vertex_buffer);

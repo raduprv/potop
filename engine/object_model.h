@@ -89,6 +89,9 @@ typedef struct
 // object_file_snow_vertex_t (plant.vert's plant_data, plant_snow)
 static const int OBJECT_PLANT_VERTEX_FLOATS = 8;
 
+// How many triangles in a row share a box for the picking ray
+#define OBJECT_MODEL_PICK_CHUNK_TRIANGLES 16
+
 typedef struct
 {
 	char name[OBJECT_MODEL_NAME_LENGTH]; // file path relative to data/
@@ -159,6 +162,10 @@ typedef struct
 	uint32_t *collision_indices;
 	int collision_index_count;
 	int pick_index_count;
+	// A box round each OBJECT_MODEL_PICK_CHUNK_TRIANGLES of them in a row
+	// (minimum then maximum, six numbers; NULL: none made), for a ray to
+	// leave most of a tree's leaves without looking at each
+	float *pick_boxes;
 	// The file it came from (relative to data/: the .pobj or the .e3d) and
 	// when that was last written, for reloading it when it changes
 	char file_path[OBJECT_MODEL_NAME_LENGTH + 8];

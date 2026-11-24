@@ -1067,13 +1067,16 @@ bool objects_reload_changed(objects_t *objects)
 		// The collision shape stays: physics and navigation were built from it
 		SDL_free(fresh.collision_positions);
 		SDL_free(fresh.collision_indices);
+		SDL_free(fresh.pick_boxes);
 		fresh.collision_positions = model->collision_positions;
 		fresh.collision_vertex_count = model->collision_vertex_count;
 		fresh.collision_indices = model->collision_indices;
 		fresh.collision_index_count = model->collision_index_count;
 		fresh.pick_index_count = model->pick_index_count;
+		fresh.pick_boxes = model->pick_boxes;
 		model->collision_positions = NULL;
 		model->collision_indices = NULL;
+		model->pick_boxes = NULL;
 		object_model_destroy(model);
 		*model = fresh;
 		models_changed = true;
@@ -5844,9 +5847,26 @@ static float ray_triangles(const object_model_t *model, vec3_t origin, vec3_t di
 
 	for (int i = 0; i + 2 < model->pick_index_count; i += 3)
 	{
-		const float *a = &model->collision_positions[(size_t)model->collision_indices[i] * 3];
-		const float *b = &model->collision_positions[(size_t)model->collision_indices[i + 1] * 3];
-		const float *c = &model->collision_positions[(size_t)model->collision_indices[i + 2] * 3];
+		const float *a;
+		const float *b;
+		const float *c;
+
+		// (a box round the next few first: a tree's leaves and branches
+		// are all picked, thousands of them, the ray near a handful)
+		if (model->pick_boxes != NULL && i % (OBJECT_MODEL_PICK_CHUNK_TRIANGLES * 3) == 0)
+		{
+			const float *box = &model->pick_boxes[(size_t)(i / (OBJECT_MODEL_PICK_CHUNK_TRIANGLES * 3)) * 6];
+
+			if (ray_box(origin, direction, vec3_make(box[0], box[1], box[2]), vec3_make(box[3], box[4], box[5]),
+				nearest < 0.0f ? far : nearest) < 0.0f)
+			{
+				i += (OBJECT_MODEL_PICK_CHUNK_TRIANGLES - 1) * 3;
+				continue;
+			}
+		}
+		a = &model->collision_positions[(size_t)model->collision_indices[i] * 3];
+		b = &model->collision_positions[(size_t)model->collision_indices[i + 1] * 3];
+		c = &model->collision_positions[(size_t)model->collision_indices[i + 2] * 3];
 		vec3_t edge_1 = vec3_make(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
 		vec3_t edge_2 = vec3_make(c[0] - a[0], c[1] - a[1], c[2] - a[2]);
 		vec3_t p = vec3_cross(direction, edge_2);
