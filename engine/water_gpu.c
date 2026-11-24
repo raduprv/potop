@@ -1909,6 +1909,44 @@ static void record_download(water_t *water, SDL_GPUTransferBuffer *transfer, boo
 	}
 }
 
+// The tiles waiting (needs: a byte each, 1) and not asked for within the
+// interval, in turn from the cursor once round the map, into chosen (each
+// with entry_flag) up to limit; returns the new count. From one waiting
+// tile to the next with memchr: every tile was looked at one by one, each
+// frame any of them waited
+static int32_t choose_waiting_tiles(uint8_t *needs, uint64_t *asked_ticks, int32_t tile_count, int32_t *cursor, uint64_t now,
+	uint64_t interval_milliseconds, int32_t *chosen, int32_t count, int32_t limit, int32_t entry_flag)
+{
+	int32_t start = tile_count > 0 ? SDL_clamp(*cursor, 0, tile_count - 1) : 0;
+
+	// (from the cursor to the end, then from the start up to the cursor)
+	for (int part = 0; part < 2 && count < limit; part++)
+	{
+		int32_t tile = part == 0 ? start : 0;
+		int32_t end = part == 0 ? tile_count : start;
+
+		while (tile < end && count < limit)
+		{
+			const uint8_t *found = memchr(&needs[tile], 1, (size_t)(end - tile));
+
+			if (found == NULL)
+			{
+				break;
+			}
+			tile = (int32_t)(found - needs);
+			if (now - asked_ticks[tile] >= interval_milliseconds)
+			{
+				needs[tile] = 0;
+				asked_ticks[tile] = now;
+				chosen[count++] = tile | entry_flag;
+				*cursor = (tile + 1) % tile_count;
+			}
+			tile++;
+		}
+	}
+	return count;
+}
+
 // The tiles to copy back this frame: those the CPU is behind on, around
 // the focus first, then in turn from where the last frame stopped
 static int32_t choose_tiles(water_t *water, float focus_x, float focus_z, int32_t budget)
@@ -1935,22 +1973,8 @@ static int32_t choose_tiles(water_t *water, float focus_x, float focus_z, int32_
 			}
 		}
 	}
-	// (no tile asking: none looked at, every frame of a map with no water moving)
-	bool asking = memchr(state->tile_needs_download, 1, (size_t)state->tile_count) != NULL;
-
-	for (int32_t i = 0; asking && i < state->tile_count && count < budget; i++)
-	{
-		int32_t tile = (state->download_cursor + i) % state->tile_count;
-
-		if (state->tile_needs_download[tile] && now - state->tile_downloaded_ticks[tile] >= DOWNLOAD_INTERVAL_MILLISECONDS)
-		{
-			state->tile_needs_download[tile] = 0;
-			state->tile_downloaded_ticks[tile] = now;
-			state->chosen_tiles[count++] = tile;
-			state->download_cursor = (tile + 1) % state->tile_count;
-		}
-	}
-	return count;
+	return choose_waiting_tiles(state->tile_needs_download, state->tile_downloaded_ticks, state->tile_count, &state->download_cursor, now,
+		DOWNLOAD_INTERVAL_MILLISECONDS, state->chosen_tiles, count, budget, 0);
 }
 
 void water_gpu_end_frame(water_t *water, const terrain_t *terrain, float focus_x, float focus_z)
@@ -2048,21 +2072,9 @@ void water_gpu_end_frame(water_t *water, const terrain_t *terrain, float focus_x
 		// The ground erosion changed, in turn (it changes slowly)
 		uint64_t now = SDL_GetTicks();
 
-		// (no tile's ground waiting: none looked at)
-		bool ground_waiting = memchr(state->tile_terrain_needs_download, 1, (size_t)state->tile_count) != NULL;
-
-		for (int32_t i = 0; ground_waiting && i < state->tile_count && slot->tile_count < DOWNLOAD_BUDGET_TILES + DOWNLOAD_TERRAIN_TILES; i++)
-		{
-			int32_t tile = (state->terrain_cursor + i) % state->tile_count;
-
-			if (state->tile_terrain_needs_download[tile] && now - state->tile_terrain_downloaded_ticks[tile] >= DOWNLOAD_TERRAIN_INTERVAL_MILLISECONDS)
-			{
-				state->tile_terrain_needs_download[tile] = 0;
-				state->tile_terrain_downloaded_ticks[tile] = now;
-				slot->tiles[slot->tile_count++] = tile | TERRAIN_ENTRY;
-				state->terrain_cursor = (tile + 1) % state->tile_count;
-			}
-		}
+		slot->tile_count = choose_waiting_tiles(state->tile_terrain_needs_download, state->tile_terrain_downloaded_ticks, state->tile_count,
+			&state->terrain_cursor, now, DOWNLOAD_TERRAIN_INTERVAL_MILLISECONDS, slot->tiles, slot->tile_count,
+			DOWNLOAD_BUDGET_TILES + DOWNLOAD_TERRAIN_TILES, TERRAIN_ENTRY);
 		// The statistics with them: every frame while tiles change or the
 		// CPU edits, else now and then (statistics_quiet)
 		bool statistics = !state->statistics_quiet || state->statistics_edit_serial != state->edit_serial
