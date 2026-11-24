@@ -154,13 +154,17 @@ static void SDLCALL log_output(void *userdata, int category, SDL_LogPriority pri
 	console_t *console = userdata;
 	const char *color = console->terminal_colors ? terminal_color(priority, message) : NULL;
 
-	// (in a terminal, colored: written here as SDL's own output does, its
-	// priority before it; elsewhere, SDL's own output)
-	if (color != NULL)
+	// (in a terminal: written here as SDL's own output does, its priority
+	// before it, colored where it has a color, and the seconds since the
+	// start before that, to tell how often a thing comes back; elsewhere
+	// (a pipe, a file: the tests read those), SDL's own output as it is)
+	if (console->terminal)
 	{
 		static const char *names[SDL_LOG_PRIORITY_COUNT] = { "", "TRACE", "VERBOSE", "DEBUG", "INFO", "WARN", "ERROR", "CRITICAL" };
+		double seconds = (double)SDL_GetTicksNS() * 1e-9;
 
-		fprintf(stderr, "%s%s: %s\033[0m\n", color, priority > 0 && priority < SDL_LOG_PRIORITY_COUNT ? names[priority] : "", message);
+		fprintf(stderr, "[%9.3f] %s%s: %s%s\n", seconds, color != NULL ? color : "",
+			priority > 0 && priority < SDL_LOG_PRIORITY_COUNT ? names[priority] : "", message, color != NULL ? "\033[0m" : "");
 	}
 	else if (console->previous_output != NULL)
 	{
@@ -177,7 +181,8 @@ void console_create(console_t *console)
 	SDL_GetLogOutputFunction(&console->previous_output, &console->previous_userdata);
 	SDL_SetLogOutputFunction(log_output, console);
 	// (colors only in a terminal, and not when NO_COLOR asks for none)
-	console->terminal_colors = isatty(STDERR_FILENO) && SDL_getenv("NO_COLOR") == NULL;
+	console->terminal = isatty(STDERR_FILENO);
+	console->terminal_colors = console->terminal && SDL_getenv("NO_COLOR") == NULL;
 	console->hooked = true;
 }
 

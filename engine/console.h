@@ -103,6 +103,7 @@ typedef struct
 	void *previous_userdata;
 	bool hooked;
 	bool terminal_colors;          // the log written in color (a terminal)
+	bool terminal;                 // the log goes to a terminal: each line with the seconds since the start
 
 	// The commands added by the game or the editor
 	console_added_command_t added[CONSOLE_ADDED_MAX];
