@@ -2538,9 +2538,10 @@ static float fruit_profile(fruit_shape_t shape, float s)
 // A card fruit: two crossed cards
 static void add_fruit_body(plant_t *plant, vec3 foot, vec3 axis, float length, float width, bool hanging, const cell_place_t *place)
 {
-	// Small things: a few dozen triangles each
-	const int rings = plant->fruit_shape == FRUIT_SPHERE ? (width < 0.03f ? 5 : 6) : 8;
-	const int sides = width < 0.03f ? 5 : 6;
+	// Small things, but round: about a hundred triangles each (a berry of
+	// a few dozen looked a lumpy pentagon)
+	const int rings = plant->fruit_shape == FRUIT_SPHERE ? 7 : 8;
+	const int sides = plant->fruit_shape == FRUIT_SPHERE ? 8 : (width < 0.03f ? 5 : 6);
 	vec3 side = perpendicular(axis);
 	vec3 other = rotated(side, axis, 0.5f * PI_F);
 	float flat = plant->fruit_shape == FRUIT_POD ? 0.3f : 1.0f;
@@ -2564,7 +2565,9 @@ static void add_fruit_body(plant_t *plant, vec3 foot, vec3 axis, float length, f
 	}
 	for (int i = 0; i <= rings; i++)
 	{
-		float s_value = (float)i / (float)rings;
+		// (a sphere's rings evenly round it, not evenly up it: as many
+		// near its poles as round its middle)
+		float s_value = plant->fruit_shape == FRUIT_SPHERE ? 0.5f - 0.5f * cosf(PI_F * (float)i / (float)rings) : (float)i / (float)rings;
 		float radius = 0.5f * width * fruit_profile(plant->fruit_shape, s_value);
 		float slope = 0.5f * width * (fruit_profile(plant->fruit_shape, fminf(s_value + 0.02f, 1.0f))
 			- fruit_profile(plant->fruit_shape, fmaxf(s_value - 0.02f, 0.0f))) / (0.04f * length);
