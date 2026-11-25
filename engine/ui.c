@@ -1772,6 +1772,8 @@ static const ui_setting_t ui_settings[] = {
 	{ TAB_RENDER, "render", "far_upload_meters", "Far from", 0, 2000, 10, EFFECT_LIVE, "%.0f m", NULL,
 		"Ground and water nearer than this are always redrawn at once (if on screen)" },
 	{ TAB_RENDER, "render", "vsync", "Vertical sync", 0, 0, 0, EFFECT_LIVE, NULL, NULL, NULL },
+	{ TAB_RENDER, "render", "direct_present", "Draw straight to the window", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
+		"The frame drawn straight into the window, not copied there at the end: one full screen copy less (worth most on shared memory)" },
 	{ TAB_RENDER, "render", "start_fullscreen", "Start fullscreen", 0, 0, 0, EFFECT_LIVE, NULL, NULL,
 		"The game starts fullscreen (from the next start; F11 still switches)" },
 	{ TAB_RENDER, "render", "start_maximized", "Start maximized", 0, 0, 0, EFFECT_LIVE, NULL, NULL,

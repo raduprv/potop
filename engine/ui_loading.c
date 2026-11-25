@@ -15,7 +15,7 @@ void ui_loading_frame(ui_backend_t *backend, const char *title, const char *what
 
 	// (the window answers meanwhile: no "not responding")
 	SDL_PumpEvents();
-	if (gpu_begin_frame() && gpu.final_texture != NULL)
+	if (gpu_begin_frame() && gpu_final_target() != NULL)
 	{
 		SDL_GPUColorTargetInfo target;
 		SDL_GPURenderPass *pass;

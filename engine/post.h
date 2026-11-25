@@ -38,6 +38,7 @@ typedef struct
 	SDL_GPUGraphicsPipeline *down_pipeline;
 	SDL_GPUGraphicsPipeline *up_pipeline;
 	SDL_GPUGraphicsPipeline *final_pipeline;
+	SDL_GPUGraphicsPipeline *window_pipeline;   // the same into the window's picture straight (its format; NULL: the same as ours)
 	SDL_GPUComputePipeline *exposure_pipeline;
 	// The bloom's levels, half the scene and smaller: going down, and
 	// summed back up

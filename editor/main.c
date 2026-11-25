@@ -2956,6 +2956,7 @@ static bool new_map(testbed_t *game, uint32_t seed)
 static void set_vsync(const testbed_t *game)
 {
 	gpu_set_vsync(game->potop->settings.render.vsync && game->command_line.screenshot_path == NULL);
+	gpu_set_direct_present(game->potop->settings.render.direct_present && game->command_line.screenshot_path == NULL);
 }
 
 // The settings that rebuild (Apply): the textures, the shadow maps; vsync
@@ -4616,6 +4617,8 @@ static void run(testbed_t *game)
 		world_end_frame(&game->potop->world, &game->potop->camera, particle_seconds, game->paused, game->command_line.screenshot_path != NULL);
 		game->water_upload_milliseconds_sum += game->potop->world.water_copy_milliseconds;
 		render_start = SDL_GetPerformanceCounter();
+		// (a screenshot's frame drawn into our own, to be read back)
+		gpu.capture_next = game->input.request_screenshot;
 		gpu_begin_frame();
 		trace_mark("frame begun (swapchain)");
 		{

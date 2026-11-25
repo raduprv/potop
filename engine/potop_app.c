@@ -1547,6 +1547,7 @@ void potop_frame_end(potop_t *potop)
 	run_console(potop);
 	world_follow_settings(&potop->world);
 	gpu_set_vsync(potop->settings.render.vsync);
+	gpu_set_direct_present(potop->settings.render.direct_present);
 	gpu_set_anisotropy(potop->settings.render.anisotropy);
 	session_update(&potop->session, &potop->world, seconds);
 	journal_sync_markers(&potop->session.journal, &potop->session.markers);
@@ -1617,7 +1618,8 @@ void potop_frame_end(potop_t *potop)
 		potop->game_counter = SDL_GetPerformanceCounter();
 		return;
 	}
-	// The picture
+	// The picture (a screenshot's drawn into our own, to be read back)
+	gpu.capture_next = potop->screenshot_requested;
 	gpu_begin_frame();
 	trace_mark("the swapchain acquired (waits for the GPU)");
 	{
@@ -1645,6 +1647,10 @@ void potop_frame_end(potop_t *potop)
 		uint32_t shot_width = 0;
 		uint32_t shot_height = 0;
 
+		// (asked for after this frame began, drawn straight into the
+		// window: nothing to read back, so the next frame's)
+		bool drawn_straight = gpu.frame_direct && gpu.frame_acquired;
+
 		gpu_end_frame(potop->screenshot_requested ? &pixels : NULL, &shot_width, &shot_height);
 		if (pixels != NULL)
 		{
@@ -1654,7 +1660,7 @@ void potop_frame_end(potop_t *potop)
 			screenshot_save(name, pixels, (int)shot_width, (int)shot_height);
 			SDL_free(pixels);
 		}
-		potop->screenshot_requested = false;
+		potop->screenshot_requested = potop->screenshot_requested && drawn_straight;
 	}
 	trace_mark("the frame submitted, acquired, presented");
 	// (the sky's occlusion, just worked out: on the CPU too, for the light)

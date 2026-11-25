@@ -189,7 +189,11 @@ bool post_create(post_t *post)
 	post->down_pipeline = make_pipeline("bloom_down.frag", 1, LEVEL_FORMAT, "bloom down");
 	post->up_pipeline = make_pipeline("bloom_up.frag", 2, LEVEL_FORMAT, "bloom up");
 	post->grade_preset = -1;
-	post->final_pipeline = make_pipeline("post.frag", 4, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, "post");
+	post->final_pipeline = make_pipeline("post.frag", 4, GPU_FINAL_FORMAT, "post");
+	if (gpu.direct_possible && gpu.swapchain_format != GPU_FINAL_FORMAT)
+	{
+		post->window_pipeline = make_pipeline("post.frag", 4, gpu.swapchain_format, "post into the window");
+	}
 	post->exposure_pipeline = gpu_load_compute("exposure.comp", &layout);
 	post->temporal_pipeline = make_pipeline("taa.frag", 3, GPU_SCENE_COLOR_FORMAT, "temporal anti-aliasing");
 	for (int i = 0; i < 2; i++)
@@ -244,6 +248,10 @@ void post_destroy(post_t *post)
 	if (post->final_pipeline != NULL)
 	{
 		SDL_ReleaseGPUGraphicsPipeline(gpu.device, post->final_pipeline);
+	}
+	if (post->window_pipeline != NULL)
+	{
+		SDL_ReleaseGPUGraphicsPipeline(gpu.device, post->window_pipeline);
 	}
 	if (post->exposure_pipeline != NULL)
 	{
@@ -469,11 +477,15 @@ void post_draw(post_t *post, SDL_GPUTexture *scene_texture, int scene_width, int
 		float padding;
 	} uniforms;
 
+	SDL_GPUGraphicsPipeline *final_pipeline;
+
 	post->last_seconds = now_seconds;
-	if (gpu.command_buffer == NULL || gpu.final_texture == NULL || scene_texture == NULL || post->final_pipeline == NULL)
+	if (gpu.command_buffer == NULL || scene_texture == NULL || post->final_pipeline == NULL)
 	{
 		return;
 	}
+	// (the bloom and the exposure's passes first: the window's picture,
+	// drawn straight, asked for as late as can be)
 	// The eye's adaptation: most of the way in exposure_adapt_seconds
 	adaptation = instant || settings->exposure_adapt_seconds <= 0.0f ? 1.0f
 		: 1.0f - SDL_expf(-elapsed * 3.0f / settings->exposure_adapt_seconds);
@@ -507,6 +519,11 @@ void post_draw(post_t *post, SDL_GPUTexture *scene_texture, int scene_width, int
 	samplers[2].sampler = gpu.nearest_clamp;
 	samplers[3].texture = post->grade_texture;
 	samplers[3].sampler = gpu.linear_clamp;
+	if (gpu_final_target() == NULL)
+	{
+		return;
+	}
+	final_pipeline = gpu.final_format != GPU_FINAL_FORMAT && post->window_pipeline != NULL ? post->window_pipeline : post->final_pipeline;
 	if (gpu.scene_width > 0 && gpu.scene_height > 0)
 	{
 		// (into its part of the picture, the rest black for the interface
@@ -525,7 +542,7 @@ void post_draw(post_t *post, SDL_GPUTexture *scene_texture, int scene_width, int
 		{
 			SDL_SetGPUViewport(pass, &viewport);
 			SDL_SetGPUScissor(pass, &scissor);
-			SDL_BindGPUGraphicsPipeline(pass, post->final_pipeline);
+			SDL_BindGPUGraphicsPipeline(pass, final_pipeline);
 			SDL_BindGPUFragmentSamplers(pass, 0, samplers, 4);
 			SDL_PushGPUFragmentUniformData(gpu.command_buffer, 0, &uniforms, sizeof(uniforms));
 			SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
@@ -533,5 +550,5 @@ void post_draw(post_t *post, SDL_GPUTexture *scene_texture, int scene_width, int
 		}
 		return;
 	}
-	draw_into(gpu.final_texture, gpu.final_width, gpu.final_height, post->final_pipeline, samplers, 4, &uniforms, sizeof(uniforms));
+	draw_into(gpu.final_texture, gpu.final_width, gpu.final_height, final_pipeline, samplers, 4, &uniforms, sizeof(uniforms));
 }

@@ -75,10 +75,28 @@ typedef struct
 	uint32_t window_height;
 	// The frame's picture, at the window's size: the scene goes in, the
 	// interface on top, then it is copied to the window (and is what a
-	// screenshot downloads)
+	// screenshot downloads). Drawn into straight (direct_present), it is
+	// the window's own picture once gpu_final_target() asked for it; draw
+	// into it only after that call
 	SDL_GPUTexture *final_texture;
+	SDL_GPUTextureFormat final_format;  // its format now: GPU_FINAL_FORMAT, or the window's straight
 	uint32_t final_width;
 	uint32_t final_height;
+	SDL_GPUTexture *own_final_texture;  // the one copied to the window
+	uint32_t own_final_width;
+	uint32_t own_final_height;
+	// The frame's picture drawn straight into the window's, not into our
+	// own and copied there at the end: one full screen copy less (on a
+	// laptop's shared memory or a phone's tiles worth a millisecond), but
+	// the window's picture asked for before the post pass and the
+	// interface, not after them (gpu_set_direct_present). Not for a frame
+	// a screenshot is taken of (capture_next), nor where the window's
+	// format is sRGB (the picture is already encoded)
+	bool direct_present;
+	bool direct_possible;
+	bool capture_next;                  // the caller will want this frame's pixels: set before gpu_begin_frame
+	bool frame_direct;                  // this frame is drawn straight
+	bool frame_acquired;                // ...and the window's picture was asked for
 	// Where in it the scene goes (pixels; a width of 0: all of it): the
 	// editor's bars round it (gpu_set_scene_rect)
 	int32_t scene_x;
@@ -193,6 +211,16 @@ bool gpu_begin_frame(void);
 // it), which waits for the GPU
 void gpu_end_frame(uint8_t **pixels_out, uint32_t *width_out, uint32_t *height_out);
 
+// Draws the frame straight into the window's picture (see direct_present)
+void gpu_set_direct_present(bool direct);
+// The frame's picture, to draw into now (the window's own drawn straight:
+// asked for here, at the first call); NULL if there is none (minimized).
+// gpu.final_format is the format to draw with
+SDL_GPUTexture *gpu_final_target(void);
+
+// The frame's own picture's format (the passes into it made for it, and
+// for gpu.swapchain_format when drawn straight)
+#define GPU_FINAL_FORMAT SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM
 // Formats the passes draw into: the scene is linear light in floats
 // (brighter than white is kept, for post.h)
 #define GPU_SCENE_COLOR_FORMAT SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT

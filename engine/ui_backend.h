@@ -48,6 +48,9 @@ typedef struct
 	// ui_backend_world_depth), hidden behind the scene: the scene's depth
 	// buffer for this frame (NULL: drawn as the rest)
 	SDL_GPUGraphicsPipeline *depth_pipeline;
+	// The two into the window's picture straight (its format; NULL: the same as ours)
+	SDL_GPUGraphicsPipeline *window_pipeline;
+	SDL_GPUGraphicsPipeline *window_depth_pipeline;
 	SDL_GPUTexture *scene_depth;
 	SDL_GPUBuffer *vertex_buffer;
 	SDL_GPUBuffer *element_buffer;

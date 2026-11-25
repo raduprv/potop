@@ -156,7 +156,12 @@ bool gpu_create(SDL_Window *window, bool vsync, float anisotropy)
 		}
 		apply_present_mode();
 		gpu.swapchain_format = SDL_GetGPUSwapchainTextureFormat(gpu.device, window);
+		// (drawn straight only into a plain 8 bit picture: an sRGB one
+		// would encode the post pass's already encoded colors again)
+		gpu.direct_possible = gpu.swapchain_format == SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM
+			|| gpu.swapchain_format == SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
 	}
+	gpu.final_format = GPU_FINAL_FORMAT;
 
 	gpu.depth_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
 	gpu.shadow_depth_format = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
@@ -211,6 +216,58 @@ void gpu_set_anisotropy(float anisotropy)
 	}
 }
 
+void gpu_set_direct_present(bool direct)
+{
+	if (direct && !gpu.direct_possible && !gpu.direct_present)
+	{
+		SDL_LogWarn(SDL_LOG_CATEGORY_RENDER, "GPU: the window's picture (format %d) cannot be drawn into straight; copied to it",
+			(int)gpu.swapchain_format);
+	}
+	gpu.direct_present = direct;
+}
+
+SDL_GPUTexture *gpu_final_target(void)
+{
+	if (gpu.command_buffer == NULL)
+	{
+		return NULL;
+	}
+	if (gpu.frame_direct && !gpu.frame_acquired)
+	{
+		uint64_t acquire_start = SDL_GetPerformanceCounter();
+		SDL_GPUTexture *swapchain = NULL;
+		uint32_t swapchain_width = 0;
+		uint32_t swapchain_height = 0;
+
+		gpu.frame_acquired = true;
+		gpu_flush_uploads();
+		if (!SDL_WaitAndAcquireGPUSwapchainTexture(gpu.command_buffer, gpu.window, &swapchain, &swapchain_width, &swapchain_height))
+		{
+			swapchain = NULL;
+		}
+		frame_profile_end(FRAME_ACQUIRE, acquire_start);
+		gpu.swapchain_texture = swapchain;
+		if (swapchain != NULL)
+		{
+			// (its size may differ from the frame's for a frame while the
+			// window is resized: the passes into it go by this)
+			gpu.final_texture = swapchain;
+			gpu.final_format = gpu.swapchain_format;
+			gpu.final_width = swapchain_width;
+			gpu.final_height = swapchain_height;
+			gpu.window_width = swapchain_width;
+			gpu.window_height = swapchain_height;
+		}
+		else
+		{
+			// (nothing to draw into: the frame is drawn into our own, and
+			// thrown away)
+			gpu.frame_direct = false;
+		}
+	}
+	return gpu.final_texture;
+}
+
 void gpu_set_vsync(bool vsync)
 {
 	if (gpu.device != NULL && gpu.window != NULL && gpu.vsync != vsync)
@@ -245,9 +302,9 @@ void gpu_destroy(void)
 	{
 		SDL_ReleaseGPUTransferBuffer(gpu.device, gpu.transfer);
 	}
-	if (gpu.final_texture != NULL)
+	if (gpu.own_final_texture != NULL)
 	{
-		SDL_ReleaseGPUTexture(gpu.device, gpu.final_texture);
+		SDL_ReleaseGPUTexture(gpu.device, gpu.own_final_texture);
 	}
 	SDL_free(gpu.staging);
 	SDL_free(gpu.pending);
@@ -704,6 +761,10 @@ bool gpu_begin_frame(void)
 	frame_profile_end(FRAME_PRESENT, submit_start);
 	gpu.command_buffer = SDL_AcquireGPUCommandBuffer(gpu.device);
 	gpu.swapchain_texture = NULL;
+	gpu.frame_direct = false;
+	gpu.frame_acquired = false;
+	gpu.final_texture = gpu.own_final_texture;
+	gpu.final_format = GPU_FINAL_FORMAT;
 	if (gpu.command_buffer == NULL)
 	{
 		SDL_LogError(SDL_LOG_CATEGORY_RENDER, "GPU: no command buffer: %s", SDL_GetError());
@@ -725,17 +786,25 @@ bool gpu_begin_frame(void)
 		gpu.window_width = (uint32_t)width;
 		gpu.window_height = (uint32_t)height;
 	}
-	if (gpu.final_texture == NULL || gpu.final_width != gpu.window_width || gpu.final_height != gpu.window_height)
+	if (gpu.own_final_texture == NULL || gpu.own_final_width != gpu.window_width || gpu.own_final_height != gpu.window_height)
 	{
-		if (gpu.final_texture != NULL)
+		if (gpu.own_final_texture != NULL)
 		{
-			SDL_ReleaseGPUTexture(gpu.device, gpu.final_texture);
+			SDL_ReleaseGPUTexture(gpu.device, gpu.own_final_texture);
 		}
-		gpu.final_texture = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, gpu.window_width,
-			gpu.window_height, 1, 1, SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER);
-		gpu.final_width = gpu.window_width;
-		gpu.final_height = gpu.window_height;
+		gpu.own_final_texture = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D, GPU_FINAL_FORMAT, gpu.window_width, gpu.window_height, 1, 1,
+			SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER);
+		gpu.own_final_width = gpu.window_width;
+		gpu.own_final_height = gpu.window_height;
+		gpu.final_texture = gpu.own_final_texture;
 	}
+	gpu.final_width = gpu.window_width;
+	gpu.final_height = gpu.window_height;
+	// Drawn straight into the window's picture: asked for when first drawn
+	// into (gpu_final_target), not here (as before: the recording goes on
+	// while the GPU works on the frames before)
+	gpu.frame_direct = gpu.direct_present && gpu.direct_possible && !gpu.capture_next && gpu.window != NULL;
+	gpu.capture_next = false;
 	return gpu.final_texture != NULL;
 }
 
@@ -753,6 +822,18 @@ void gpu_end_frame(uint8_t **pixels_out, uint32_t *width_out, uint32_t *height_o
 		return;
 	}
 	gpu_flush_uploads();
+	// Drawn straight into the window's picture: nothing to copy (and no
+	// pixels to give: a screenshot's frame is drawn into our own,
+	// capture_next)
+	if (gpu.frame_direct && gpu.frame_acquired)
+	{
+		SDL_SubmitGPUCommandBuffer(gpu.command_buffer);
+		gpu.command_buffer = NULL;
+		gpu.final_texture = gpu.own_final_texture;
+		gpu.final_format = GPU_FINAL_FORMAT;
+		return;
+	}
+	gpu.frame_direct = false;
 	// The window's picture, as late as can be (gpu_begin_frame); its size
 	// may differ from the frame's for a frame while the window is resized:
 	// the blit scales

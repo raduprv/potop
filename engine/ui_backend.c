@@ -144,8 +144,14 @@ bool ui_backend_create(ui_backend_t *backend, SDL_Window *window, const char *fo
 			info.cull = SDL_GPU_CULLMODE_NONE;
 			info.blend = GPU_BLEND_ALPHA;
 			info.no_depth = true;
-			info.color_format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+			info.color_format = GPU_FINAL_FORMAT;
 			backend->pipeline = gpu_make_pipeline(&info, "interface");
+			if (gpu.direct_possible && gpu.swapchain_format != GPU_FINAL_FORMAT)
+			{
+				info.color_format = gpu.swapchain_format;
+				backend->window_pipeline = gpu_make_pipeline(&info, "interface into the window");
+				info.color_format = GPU_FINAL_FORMAT;
+			}
 		}
 		SDL_ReleaseGPUShader(gpu.device, fragment);
 		// (the same, hidden behind the scene: the world's names)
@@ -154,6 +160,12 @@ bool ui_backend_create(ui_backend_t *backend, SDL_Window *window, const char *fo
 		{
 			info.fragment_shader = fragment;
 			backend->depth_pipeline = gpu_make_pipeline(&info, "interface in the world");
+			if (gpu.direct_possible && gpu.swapchain_format != GPU_FINAL_FORMAT)
+			{
+				info.color_format = gpu.swapchain_format;
+				backend->window_depth_pipeline = gpu_make_pipeline(&info, "interface in the world, into the window");
+				info.color_format = GPU_FINAL_FORMAT;
+			}
 		}
 		SDL_ReleaseGPUShader(gpu.device, vertex);
 		SDL_ReleaseGPUShader(gpu.device, fragment);
@@ -211,6 +223,14 @@ void ui_backend_destroy(ui_backend_t *backend)
 	if (backend->depth_pipeline != NULL)
 	{
 		SDL_ReleaseGPUGraphicsPipeline(gpu.device, backend->depth_pipeline);
+	}
+	if (backend->window_pipeline != NULL)
+	{
+		SDL_ReleaseGPUGraphicsPipeline(gpu.device, backend->window_pipeline);
+	}
+	if (backend->window_depth_pipeline != NULL)
+	{
+		SDL_ReleaseGPUGraphicsPipeline(gpu.device, backend->window_depth_pipeline);
 	}
 	if (backend->text_input_started)
 	{
@@ -561,7 +581,7 @@ void ui_backend_render(ui_backend_t *backend, int pixel_width, int pixel_height)
 	nk_buffer_clear(&backend->elements);
 	nk_convert(context, &backend->commands, &backend->vertices, &backend->elements, &config);
 
-	if (gpu.command_buffer == NULL || gpu.final_texture == NULL || backend->vertices.needed == 0 || backend->elements.needed == 0)
+	if (gpu.command_buffer == NULL || backend->vertices.needed == 0 || backend->elements.needed == 0 || gpu_final_target() == NULL)
 	{
 		nk_clear(context);
 		return;
@@ -593,9 +613,13 @@ void ui_backend_render(ui_backend_t *backend, int pixel_width, int pixel_height)
 			nk_clear(context);
 			return;
 		}
-		SDL_GPUGraphicsPipeline *bound = backend->pipeline;
+		// (into the window's picture straight: those made for its format)
+		bool into_window = gpu.final_format != GPU_FINAL_FORMAT && backend->window_pipeline != NULL;
+		SDL_GPUGraphicsPipeline *plain_pipeline = into_window ? backend->window_pipeline : backend->pipeline;
+		SDL_GPUGraphicsPipeline *world_pipeline = into_window ? backend->window_depth_pipeline : backend->depth_pipeline;
+		SDL_GPUGraphicsPipeline *bound = plain_pipeline;
 
-		SDL_BindGPUGraphicsPipeline(pass, backend->pipeline);
+		SDL_BindGPUGraphicsPipeline(pass, plain_pipeline);
 		SDL_SetGPUViewport(pass, &viewport);
 		SDL_PushGPUVertexUniformData(gpu.command_buffer, 0, uniforms, sizeof(uniforms));
 		SDL_BindGPUVertexBuffers(pass, 0, &vertex_binding, 1);
@@ -620,8 +644,8 @@ void ui_backend_render(ui_backend_t *backend, int pixel_width, int pixel_height)
 			clip.h = bottom - clip.y;
 			if (clip.w > 0 && clip.h > 0 && command->texture.ptr != NULL)
 			{
-				bool in_world = command->userdata.id != 0 && backend->depth_pipeline != NULL && backend->scene_depth != NULL;
-				SDL_GPUGraphicsPipeline *wanted = in_world ? backend->depth_pipeline : backend->pipeline;
+				bool in_world = command->userdata.id != 0 && world_pipeline != NULL && backend->scene_depth != NULL;
+				SDL_GPUGraphicsPipeline *wanted = in_world ? world_pipeline : plain_pipeline;
 
 				if (wanted != bound)
 				{
