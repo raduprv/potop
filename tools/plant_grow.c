@@ -3860,7 +3860,8 @@ static void snow_sag(plant_t *plant, const float (*boxes)[4])
 				for (int j = 0; j < plant->bough_count; j++)
 				{
 					const bough_t *other = &plant->boughs[j];
-					card_hit_t hit;
+					// (filled only on a hit; zeroed, the compiler can not see that)
+					card_hit_t hit = { 0 };
 
 					if (other == bough || other->branch.points[0].y >= bough->branch.points[0].y
 						|| point.x < boxes[j][0] || point.x > boxes[j][2] || point.z < boxes[j][1] || point.z > boxes[j][3])
