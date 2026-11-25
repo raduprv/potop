@@ -1397,6 +1397,361 @@ static void draw_juniper(canvas_t *canvas, random_t *random)
 	draw_twig(canvas, random, &style, &bark, NULL, shoots, count);
 }
 
+// --- A berry shrub's twig (cranberry, lingonberry) ------------------------------------------
+
+// A leaf's colors: its blade, its midrib, its rolled rim, and how uneven
+typedef struct
+{
+	float blade[3];
+	float midrib[3];
+	float rim[3];
+	float young[3];                // a young leaf's (the shoot's tip)
+	float under[3];                // its underside, paler (a leaf turned over shows it)
+	float mottle;
+} oval_leaf_paint_t;
+
+// An oval leaf from (bx, by) heading at angle (radians, 0 up the picture,
+// positive to the right): a short stalk, then a blade widest past its
+// middle and round at the tip (obovate), length long, half_width wide each
+// side, bent by curl; its rim rolled under (darker), a midrib along it,
+// the side veins faint. seen: 1 face on, less turned away (narrower, as
+// it is seen edge on); young: how much of the young leaf's color. Its
+// color is its own, no light baked in: only a little darker at its rim
+// and in its fold, the same whatever the light
+static void draw_oval_leaf(canvas_t *canvas, float bx, float by, float angle, float length, float half_width, float curl, float seen,
+	float young, float brightness, float turned, const oval_leaf_paint_t *paint)
+{
+	float s = canvas->scale;
+	float reach = (length + half_width) * s + 2.0f;
+	int left = (int)floorf(bx * s - reach);
+	int right = (int)ceilf(bx * s + reach);
+	int top = (int)floorf(by * s - reach);
+	int bottom = (int)ceilf(by * s + reach);
+	float along_x = sinf(angle);
+	float along_y = -cosf(angle);
+	const float stalk = 0.1f;
+	float width_seen = half_width * clampf(seen, 0.25f, 1.0f);
+
+	left = left < 0 ? 0 : left;
+	top = top < 0 ? 0 : top;
+	right = right >= canvas->width ? canvas->width - 1 : right;
+	bottom = bottom >= canvas->height ? canvas->height - 1 : bottom;
+	for (int y = top; y <= bottom; y++)
+	{
+		for (int x = left; x <= right; x++)
+		{
+			float px = ((float)x + 0.5f) / s - bx;
+			float py = ((float)y + 0.5f) / s - by;
+			float u = px * along_x + py * along_y;
+			float v = px * -along_y + py * along_x;
+			float t;
+			float width;
+			float across;
+			float coverage;
+			float color[3];
+			float *pixel;
+
+			if (u < 0.0f || u > length)
+			{
+				continue;
+			}
+			t = u / length;
+			v -= curl * length * t * t * 0.5f;
+			if (t < stalk)
+			{
+				// (the stalk: a thin green line)
+				width = half_width * 0.07f;
+			}
+			else
+			{
+				// (the blade: an egg, widest at 60%, round at both ends)
+				float b = (t - stalk) / (1.0f - stalk);
+				// (an ellipse widest a little past the middle: the foot a
+				// wedge into the stalk, the tip round)
+				float e = b < 0.55f ? b / 0.55f : 1.0f - (b - 0.55f) / 0.45f;
+				float round = b < 0.55f ? powf(sinf(e * PI_F * 0.5f), 0.9f) : sqrtf(fmaxf(1.0f - (1.0f - e) * (1.0f - e), 0.0f));
+
+				width = fmaxf(width_seen * round, half_width * 0.07f);
+			}
+			coverage = clampf((width - fabsf(v)) * s + 0.5f, 0.0f, 1.0f);
+			if (coverage <= 0.0f)
+			{
+				continue;
+			}
+			across = fabsf(v) / fmaxf(width, 1e-5f);
+			for (int k = 0; k < 3; k++)
+			{
+				float base = mixf(mixf(paint->blade[k], paint->young[k], young), paint->under[k], turned);
+
+				color[k] = base;
+				if (t >= stalk)
+				{
+					// The midrib, sunk in a fold (a little darker either side
+					// of it), the rim rolled under, darker
+					float rib = clampf(1.0f - across / 0.07f, 0.0f, 1.0f) * clampf((0.97f - t) / 0.2f, 0.0f, 1.0f);
+					float fold = clampf(1.0f - fabsf(across - 0.14f) / 0.1f, 0.0f, 1.0f) * 0.12f;
+
+					color[k] = mixf(base * (1.0f - fold), paint->rim[k], smooth_step(0.78f, 1.0f, across) * 0.8f);
+					color[k] = mixf(color[k], paint->midrib[k], rib * 0.8f);
+				}
+			}
+			if (paint->mottle > 0.0f && t >= stalk)
+			{
+				float grain = value_noise((float)x / 2.5f, (float)y / 2.5f) * 0.5f + value_noise((float)x / 8.0f, (float)y / 8.0f) * 0.5f;
+				// (side veins: faint lines out from the midrib towards the tip)
+				float vein = fabsf(sinf((u - fabsf(v) * 1.3f) / fmaxf(half_width, 1e-4f) * 7.0f));
+
+				for (int k = 0; k < 3; k++)
+				{
+					color[k] *= 1.0f + paint->mottle * ((grain - 0.5f) * 0.8f + (vein > 0.94f && across < 0.8f ? 0.18f : 0.0f));
+				}
+			}
+			pixel = &canvas->pixels[((size_t)y * (size_t)canvas->width + (size_t)x) * 4];
+			for (int k = 0; k < 3; k++)
+			{
+				pixel[k] = color[k] * brightness * coverage + pixel[k] * (1.0f - coverage);
+			}
+			pixel[3] = coverage + pixel[3] * (1.0f - coverage);
+		}
+	}
+}
+
+// A berry at (cx, cy), radius long: round, a little darker towards its rim
+// (no light baked in), speckled, the dry star of its flower at its foot
+// (towards end: the side away from its stalk)
+static void draw_berry(canvas_t *canvas, float cx, float cy, float radius, float end_x, float end_y, const float color[3], const float rim[3],
+	float brightness)
+{
+	float s = canvas->scale;
+	int left = (int)floorf((cx - radius) * s - 2.0f);
+	int right = (int)ceilf((cx + radius) * s + 2.0f);
+	int top = (int)floorf((cy - radius) * s - 2.0f);
+	int bottom = (int)ceilf((cy + radius) * s + 2.0f);
+	float star_x = cx + end_x * radius * 0.86f;
+	float star_y = cy + end_y * radius * 0.86f;
+	// (its paler side: where, how much; from its place, so each its own)
+	float pale_angle = hash_unit((int)(cx * 977.0f), (int)(cy * 613.0f)) * 2.0f * PI_F;
+	float pale_x = cx + cosf(pale_angle) * radius * 0.45f;
+	float pale_y = cy + sinf(pale_angle) * radius * 0.45f;
+	float pale_share = 0.25f + 0.45f * hash_unit((int)(cy * 433.0f), (int)(cx * 271.0f));
+	const float pale[3] = { 0.92f, 0.42f, 0.40f };
+
+	left = left < 0 ? 0 : left;
+	top = top < 0 ? 0 : top;
+	right = right >= canvas->width ? canvas->width - 1 : right;
+	bottom = bottom >= canvas->height ? canvas->height - 1 : bottom;
+	for (int y = top; y <= bottom; y++)
+	{
+		for (int x = left; x <= right; x++)
+		{
+			float px = ((float)x + 0.5f) / s;
+			float py = ((float)y + 0.5f) / s;
+			float distance = sqrtf((px - cx) * (px - cx) + (py - cy) * (py - cy));
+			float coverage = clampf((radius - distance) * s + 0.5f, 0.0f, 1.0f);
+			float r = distance / radius;
+			float speck = value_noise((float)x / 1.6f, (float)y / 1.6f);
+			float star = sqrtf((px - star_x) * (px - star_x) + (py - star_y) * (py - star_y)) / (radius * 0.22f);
+			float color_here[3];
+			float *pixel;
+
+			if (coverage <= 0.0f)
+			{
+				continue;
+			}
+			for (int k = 0; k < 3; k++)
+			{
+				color_here[k] = mixf(color[k], rim[k], smooth_step(0.55f, 1.0f, r));
+				color_here[k] *= 1.0f + (speck - 0.5f) * 0.04f;
+				// (a paler, pinker side, as it ripens unevenly: its own way)
+				color_here[k] = mixf(color_here[k], pale[k], pale_share * clampf(1.0f - sqrtf((px - pale_x) * (px - pale_x)
+					+ (py - pale_y) * (py - pale_y)) / (radius * 1.1f), 0.0f, 1.0f));
+				// (the dry flower's star: dark, a small ring)
+				color_here[k] = mixf(color_here[k], 0.18f * rim[k] + 0.04f, clampf(1.0f - star, 0.0f, 1.0f) * 0.85f);
+			}
+			pixel = &canvas->pixels[((size_t)y * (size_t)canvas->width + (size_t)x) * 4];
+			for (int k = 0; k < 3; k++)
+			{
+				pixel[k] = color_here[k] * brightness * coverage + pixel[k] * (1.0f - coverage);
+			}
+			pixel[3] = coverage + pixel[3] * (1.0f - coverage);
+		}
+	}
+}
+
+// A point on a quadratic curve, and its heading (radians, 0 up)
+static void quadratic_at(float ax, float ay, float cx, float cy, float bx, float by, float t, float *x, float *y, float *heading)
+{
+	float u = 1.0f - t;
+
+	*x = u * u * ax + 2.0f * u * t * cx + t * t * bx;
+	*y = u * u * ay + 2.0f * u * t * cy + t * t * by;
+	*heading = atan2f(2.0f * u * (cx - ax) + 2.0f * t * (bx - cx), -(2.0f * u * (cy - ay) + 2.0f * t * (by - cy)));
+}
+
+// A shoot's leaves: alternate, out each side in turn, the lower ones
+// longer, those at the tip small, young and close; turned this way and
+// that (some seen edge on)
+static void draw_shoot_leaves(canvas_t *canvas, random_t *random, float ax, float ay, float cx, float cy, float bx, float by, float from,
+	int count, float length, const oval_leaf_paint_t *paint)
+{
+	float side = random_float(random) < 0.5f ? -1.0f : 1.0f;
+
+	for (int i = 0; i < count; i++)
+	{
+		// (closer towards the tip: the last ones bunched round it)
+		float f = ((float)i + random_range(random, -0.25f, 0.25f)) / (float)count;
+		float t = from + (1.0f - from) * clampf(1.0f - (1.0f - f) * (1.0f - f) * 0.85f - 0.15f * (1.0f - f), 0.0f, 1.0f);
+		float tip = clampf((t - 0.8f) / 0.2f, 0.0f, 1.0f);
+		float x;
+		float y;
+		float heading;
+		float out = random_range(random, 0.45f, 0.9f) * mixf(1.0f, 0.6f, tip);
+		float leaf_length = length * random_range(random, 0.8f, 1.15f) * mixf(1.0f, 0.6f, tip * tip);
+		// (now and then one turned over: its pale underside, seen edge on)
+		bool over = random_float(random) < 0.2f;
+		float seen = over ? random_range(random, 0.45f, 0.7f) : random_range(random, 0.78f, 1.0f);
+
+		quadratic_at(ax, ay, cx, cy, bx, by, fminf(t, 1.0f), &x, &y, &heading);
+		draw_oval_leaf(canvas, x, y, heading + side * out, leaf_length, leaf_length * random_range(random, 0.26f, 0.31f),
+			-side * random_range(random, -0.15f, 0.45f), seen, tip * 0.8f, random_range(random, 0.85f, 1.18f),
+			over ? random_range(random, 0.5f, 0.8f) : 0.0f, paint);
+		side = -side;
+	}
+}
+
+static void draw_cranberry(canvas_t *canvas, random_t *random)
+{
+	// (lingonberry's: dark glossy green, a pale midrib, the rim rolled
+	// under darker; the young leaves lighter, yellower)
+	oval_leaf_paint_t leaf = {
+		.blade = { 0.16f, 0.33f, 0.13f }, .midrib = { 0.36f, 0.48f, 0.18f }, .rim = { 0.11f, 0.24f, 0.09f },
+		.young = { 0.36f, 0.52f, 0.18f }, .under = { 0.46f, 0.56f, 0.30f }, .mottle = 0.35f,
+	};
+	paint_t bark = { .dark = { 0.24f, 0.17f, 0.11f }, .light = { 0.50f, 0.38f, 0.26f }, .tip = { 0.42f, 0.28f, 0.14f }, .tip_from = 0.6f,
+		.rough = 0.9f, .bumps = 0.6f };
+	paint_t young_stem = { .dark = { 0.30f, 0.14f, 0.08f }, .light = { 0.56f, 0.32f, 0.18f }, .tip = { 0.40f, 0.42f, 0.16f }, .tip_from = 0.7f,
+		.rough = 0.45f, .bumps = 0.4f };
+	paint_t stalk = { .dark = { 0.32f, 0.10f, 0.08f }, .light = { 0.50f, 0.20f, 0.14f }, .tip = { 0.45f, 0.16f, 0.10f }, .tip_from = 1.0f };
+	float berry_color[3] = { 0.80f, 0.20f, 0.20f };
+	float berry_rim[3] = { 0.52f, 0.07f, 0.14f };
+	float lean = random_range(random, -0.08f, 0.08f);
+	// The stem: from the foot up, woody below, the young shoot above
+	float ax = 0.5f;
+	float ay = canvas->tall - 0.03f;
+	float bx = 0.5f + lean * 2.0f + random_range(random, -0.05f, 0.05f);
+	float by = 0.18f;
+	float cx = 0.5f + random_range(random, -0.12f, 0.12f);
+	float cy = (ay + by) * 0.5f;
+	float wood_t = random_range(random, 0.42f, 0.5f);
+	float mx;
+	float my;
+	float heading;
+	float side = random_float(random) < 0.5f ? -1.0f : 1.0f;
+
+	quadratic_at(ax, ay, cx, cy, bx, by, wood_t, &mx, &my, &heading);
+	// (the old wood in a few crooked pieces, a knob at each joint: last
+	// years' growth)
+	{
+		const int pieces = 4;
+		float last_x = ax;
+		float last_y = ay;
+
+		for (int p = 1; p <= pieces; p++)
+		{
+			float f = (float)p / (float)pieces;
+			float x = mixf(ax, mx, f) + (p < pieces ? random_range(random, -0.035f, 0.035f) : 0.0f);
+			float y = mixf(ay, my, f);
+			float r0 = mixf(0.03f, 0.022f, (float)(p - 1) / (float)pieces);
+			float r1 = mixf(0.03f, 0.022f, f);
+
+			draw_curve(canvas, last_x, last_y, (last_x + x) * 0.5f + random_range(random, -0.012f, 0.012f), (last_y + y) * 0.5f, x, y, r0, r1, &bark);
+			if (p < pieces)
+			{
+				draw_segment(canvas, x, y - 0.012f, r1 * 1.35f, x, y + 0.012f, r1 * 1.35f, 0.0f, 1.0f, &bark);
+				// (a stub of a shoot that fell, now and then)
+				if (random_float(random) < 0.5f)
+				{
+					float stub_side = random_float(random) < 0.5f ? -1.0f : 1.0f;
+
+					draw_segment(canvas, x, y, r1 * 0.8f, x + stub_side * 0.035f, y - 0.025f, r1 * 0.5f, 0.0f, 1.0f, &bark);
+				}
+			}
+			last_x = x;
+			last_y = y;
+		}
+	}
+	draw_curve(canvas, mx, my, (mx + bx) * 0.5f + (cx - 0.5f) * 0.4f, (my + by) * 0.5f, bx, by, 0.021f, 0.009f, &young_stem);
+	// A side shoot out of the young part, the other way from the berries
+	{
+		float t = random_range(random, 0.15f, 0.3f);
+		float sx;
+		float sy;
+		float out = side * random_range(random, 0.55f, 0.75f);
+		float shoot_length = random_range(random, 0.38f, 0.48f);
+		float ex;
+		float ey;
+
+		quadratic_at(mx, my, (mx + bx) * 0.5f, (my + by) * 0.5f, bx, by, t, &sx, &sy, &heading);
+		ex = sx + sinf(heading + out) * shoot_length;
+		ey = sy - cosf(heading + out) * shoot_length;
+		draw_curve(canvas, sx, sy, sx + sinf(heading + out * 1.3f) * shoot_length * 0.5f, sy - cosf(heading + out * 1.3f) * shoot_length * 0.5f,
+			ex, ey, 0.008f, 0.004f, &young_stem);
+		draw_shoot_leaves(canvas, random, sx, sy, sx + sinf(heading + out * 1.3f) * shoot_length * 0.5f,
+			sy - cosf(heading + out * 1.3f) * shoot_length * 0.5f, ex, ey, 0.15f, 8, 0.2f, &leaf);
+	}
+	// The stem's leaves, on its young part
+	draw_shoot_leaves(canvas, random, mx, my, (mx + bx) * 0.5f + (cx - 0.5f) * 0.4f, (my + by) * 0.5f, bx, by, 0.02f, 13, 0.24f, &leaf);
+	// The berries: two or three hanging off a short stalk out of the stem,
+	// on the side away from the shoot
+	if (random_float(random) < 0.85f)
+	{
+		float t = random_range(random, 0.08f, 0.3f);
+		float nx;
+		float ny;
+		int berries = 2 + (random_float(random) < 0.5f ? 1 : 0);
+		float out = -side;
+		float base_x;
+		float base_y;
+
+		quadratic_at(mx, my, (mx + bx) * 0.5f + (cx - 0.5f) * 0.4f, (my + by) * 0.5f, bx, by, t, &nx, &ny, &heading);
+		base_x = nx + out * 0.13f;
+		base_y = ny + 0.01f;
+		draw_curve(canvas, nx, ny, nx + out * 0.08f, ny - 0.03f, base_x, base_y, 0.005f, 0.0035f, &stalk);
+		// (each its own way down off the stalk's end, bunched: the first
+		// out, the next under it and in, the third further out; the
+		// stalks first, the berries over them)
+		float berry_x[3];
+		float berry_y[3];
+		float berry_radius[3];
+		float berry_tint[3];
+
+		for (int b = 0; b < berries; b++)
+		{
+			berry_radius[b] = random_range(random, 0.1f, 0.12f);
+			berry_x[b] = base_x + out * (0.04f + (b == 1 ? 0.03f : (float)b * 0.05f)) + random_range(random, -0.015f, 0.015f);
+			berry_y[b] = base_y + 0.1f + (float)b * 0.12f * (b == 2 ? 0.55f : 1.0f) + random_range(random, -0.01f, 0.01f);
+			berry_tint[b] = random_range(random, -0.12f, 0.12f);
+			{
+				float dx = berry_x[b] - base_x;
+				float dy = berry_y[b] - base_y;
+				float d = sqrtf(dx * dx + dy * dy);
+
+				draw_curve(canvas, base_x, base_y, base_x + dx * 0.4f, base_y + dy * 0.3f, berry_x[b] - dx / d * berry_radius[b] * 0.9f,
+					berry_y[b] - dy / d * berry_radius[b] * 0.9f, 0.0035f, 0.0028f, &stalk);
+			}
+		}
+		for (int b = berries - 1; b >= 0; b--)
+		{
+			float dx = berry_x[b] - base_x;
+			float dy = berry_y[b] - base_y;
+			float d = sqrtf(dx * dx + dy * dy);
+			float color_here[3] = { berry_color[0] * (1.0f + berry_tint[b]), berry_color[1] * (1.0f + 2.0f * berry_tint[b]), berry_color[2] };
+
+			draw_berry(canvas, berry_x[b], berry_y[b], berry_radius[b], dx / d, dy / d, color_here, berry_rim, random_range(random, 0.88f, 1.08f));
+		}
+	}
+}
+
 // --- Ferns ------------------------------------------------------------------------------
 
 // A leaf's color and how it is marked
@@ -1956,7 +2311,7 @@ int main(int argument_count, char **arguments)
 	}
 	if (kind == NULL || path == NULL || width < 16 || width > 4096)
 	{
-		fprintf(stderr, "Usage: potop_twig [--width W] [--seed N] pine|pine_brush|pine_rosette|pine_needles|spruce|juniper|fern|fern_lobed OUT.png\n");
+		fprintf(stderr, "Usage: potop_twig [--width W] [--seed N] pine|pine_brush|pine_rosette|pine_needles|spruce|juniper|cranberry|fern|fern_lobed OUT.png\n");
 		return 1;
 	}
 	// (as tall as the kind's twig is: the pine's branch tip square,
@@ -1999,6 +2354,10 @@ int main(int argument_count, char **arguments)
 	{
 		draw_spruce(&canvas, &random);
 	}
+	else if (strcmp(kind, "cranberry") == 0)
+	{
+		draw_cranberry(&canvas, &random);
+	}
 	else if (strcmp(kind, "fern") == 0)
 	{
 		draw_fern_broad(&canvas, &random);
@@ -2009,11 +2368,11 @@ int main(int argument_count, char **arguments)
 	}
 	else
 	{
-		fprintf(stderr, "potop_twig: no kind '%s' (pine, pine_brush, pine_rosette, pine_needles, spruce, juniper, fern, fern_lobed)\n", kind);
+		fprintf(stderr, "potop_twig: no kind '%s' (pine, pine_brush, pine_rosette, pine_needles, spruce, juniper, cranberry, fern, fern_lobed)\n", kind);
 		free(canvas.pixels);
 		return 1;
 	}
-	if (!finish(&canvas, width, canvas.height / SUPERSAMPLE, path, strcmp(kind, "spruce") == 0 ? 2.0f : 0.0f))
+	if (!finish(&canvas, width, canvas.height / SUPERSAMPLE, path, strcmp(kind, "spruce") == 0 || strcmp(kind, "cranberry") == 0 ? 2.0f : 0.0f))
 	{
 		fprintf(stderr, "potop_twig: could not write %s\n", path);
 		free(canvas.pixels);
