@@ -2126,6 +2126,8 @@ typedef struct
 	int cluster_minimum;
 	int cluster_maximum;
 	float fruit_per_branch;
+	float fruit_bunch;                  // 0: a cluster's stalks from one point, fanned; above: packed on a short hanging stalk
+	float fruit_tip;                    // 0: fruit anywhere on a finest branch's outer part; 1: at its tip
 	int fruits_grown;
 	// The trunk
 	float stem_crown_start;             // a stem's first branches, of its length (a forked one starts higher)
@@ -2536,7 +2538,7 @@ static float fruit_profile(fruit_shape_t shape, float s)
 // picture's row at its height, as wide as the solid is there, so the
 // picture's outline is the solid's (the back shows the picture mirrored).
 // A card fruit: two crossed cards
-static void add_fruit_body(plant_t *plant, vec3 foot, vec3 axis, float length, float width, bool hanging, const cell_place_t *place)
+static void add_fruit_body(plant_t *plant, vec3 foot, vec3 axis, float length, float width, bool hanging, bool on_stalk, const cell_place_t *place)
 {
 	// Small things, but round: about a hundred triangles each (a berry of
 	// a few dozen looked a lumpy pentagon)
@@ -2550,7 +2552,7 @@ static void add_fruit_body(plant_t *plant, vec3 foot, vec3 axis, float length, f
 
 	// (one number for all of it, its stalk's if it has one: it shakes in
 	// the wind as one, as much as its stalk's end, plant.vert)
-	if (plant->fruit_stalk <= 0.0f)
+	if (!on_stalk)
 	{
 		plant->mesh.plant_random = hash_unit((uint32_t)plant->mesh.vertex_count * 2654435761u + 53u);
 	}
@@ -2616,7 +2618,11 @@ static void add_fruit_body(plant_t *plant, vec3 foot, vec3 axis, float length, f
 // fruit's own (its material: it shakes in the wind with the fruit, from
 // still at the branch to as much as the fruit at its end, plant.vert),
 // colored from the middle of the fruit picture's top (its stalk's end)
-static void add_fruit_stalk(plant_t *plant, vec3 start, vec3 direction, float length, float radius, const cell_place_t *place)
+// A piece of a fruit stalk, its shaking from along_start to along_end
+// (0: still, at the branch; 1: as much as the fruit) with one random
+// number (the shaking's own: those of a bunch shake together)
+static void add_fruit_stalk_piece(plant_t *plant, vec3 start, vec3 direction, float length, float radius, const cell_place_t *place,
+	float along_start, float along_end, float random_value)
 {
 	const int rings = 3;
 	const int sides = 4;
@@ -2625,7 +2631,6 @@ static void add_fruit_stalk(plant_t *plant, vec3 start, vec3 direction, float le
 	float u = 0.5f * (place->uv[0] + place->uv[2]);
 	float row = place->uv[1] + 0.01f * (place->uv[3] - place->uv[1]);
 	uint32_t first = (uint32_t)plant->mesh.vertex_count;
-	float random_value = hash_unit((uint32_t)plant->mesh.vertex_count * 2654435761u + 53u);
 
 	for (int i = 0; i <= rings; i++)
 	{
@@ -2633,7 +2638,7 @@ static void add_fruit_stalk(plant_t *plant, vec3 start, vec3 direction, float le
 		// (bending a little down at its end, under the fruit's weight)
 		vec3 center = add(start, add(scale(direction, length * t), v3(0.0f, -0.15f * length * t * t, 0.0f)));
 
-		plant->mesh.plant_along = t;
+		plant->mesh.plant_along = along_start + (along_end - along_start) * t;
 		plant->mesh.plant_random = random_value;
 		for (int k = 0; k <= sides; k++)
 		{
@@ -2657,6 +2662,12 @@ static void add_fruit_stalk(plant_t *plant, vec3 start, vec3 direction, float le
 		}
 	}
 	plant->mesh.plant_along = 1.0f;
+}
+
+static void add_fruit_stalk(plant_t *plant, vec3 start, vec3 direction, float length, float radius, const cell_place_t *place)
+{
+	add_fruit_stalk_piece(plant, start, direction, length, radius, place, 0.0f, 1.0f,
+		hash_unit((uint32_t)plant->mesh.vertex_count * 2654435761u + 53u));
 }
 
 // How likely fruit grows at a point of the crown (--fruit-zone)
@@ -2685,6 +2696,101 @@ static float fruit_zone_chance(const plant_t *plant, vec3 point)
 	}
 }
 
+// A bunch of fruit at a point of a branch going along direction: a short
+// stalk hanging from it (out along the branch a little, more down as
+// bunch says), the fruit round it on their own short stalks, packed
+// close, touching, none in another (each tried in a few places round it,
+// the first that fits kept, or the one least in the others)
+#define BUNCH_MAXIMUM 20
+
+static void add_fruit_bunch(plant_t *plant, vec3 point, vec3 direction, int count)
+{
+	vec3 centers[BUNCH_MAXIMUM];
+	float radii[BUNCH_MAXIMUM];
+	float lengths[BUNCH_MAXIMUM];
+	float widths[BUNCH_MAXIMUM];
+	const cell_place_t *places[BUNCH_MAXIMUM];
+	vec3 down = v3(0.0f, -1.0f, 0.0f);
+	vec3 axis = normalized(add(scale(down, 0.4f + 0.6f * plant->fruit_bunch), scale(direction, 1.0f - 0.6f * plant->fruit_bunch)));
+	float average_radius = 0.0f;
+	float axis_length;
+	float stalk_radius;
+	float random_value = hash_unit((uint32_t)plant->mesh.vertex_count * 2654435761u + 71u);
+
+	count = count > BUNCH_MAXIMUM ? BUNCH_MAXIMUM : count;
+	for (int n = 0; n < count; n++)
+	{
+		float size = random_between(0.85f, 1.15f);
+
+		places[n] = &plant->fruits[random_index(plant->fruit_count)];
+		lengths[n] = plant->fruit_length * size;
+		widths[n] = (plant->fruit_width > 0.0f ? plant->fruit_width : plant->fruit_length * places[n]->aspect) * size;
+		radii[n] = 0.5f * fmaxf(lengths[n], widths[n]);
+		average_radius += radii[n] / (float)count;
+	}
+	// (its axis as long as the fruit need round it, a bit over)
+	axis_length = average_radius * (0.5f + 0.45f * (float)count) + plant->fruit_stalk;
+	stalk_radius = fmaxf(0.0012f, 0.035f * 2.0f * average_radius);
+	add_fruit_stalk_piece(plant, point, axis, axis_length, stalk_radius, places[0], 0.0f, 0.5f, random_value);
+	for (int n = 0; n < count; n++)
+	{
+		vec3 best_center = point;
+		vec3 best_attach = point;
+		float best_overlap = 1e9f;
+		// (its own stalk: the bunch's stalk length, short)
+		float pedicel = fmaxf(plant->fruit_stalk * 0.6f, radii[n] * 0.4f);
+
+		for (int attempt = 0; attempt < 32; attempt++)
+		{
+			// (along the axis, the first at its end; round it; out from it)
+			float along = n == 0 ? 1.0f : random_between(0.25f, 1.0f);
+			vec3 attach = add(point, add(scale(axis, axis_length * along), v3(0.0f, -0.15f * axis_length * along * along, 0.0f)));
+			vec3 out = rotated(perpendicular(axis), axis, random_between(0.0f, 2.0f * PI_F));
+			// (hanging: out from the axis and down, the end one along it)
+			vec3 hang = n == 0 ? normalized(add(axis, scale(down, 0.5f))) : normalized(add(scale(out, 0.9f), scale(down, 0.7f)));
+			vec3 center = add(attach, scale(hang, pedicel + radii[n]));
+			float overlap = 0.0f;
+
+			for (int m = 0; m < n; m++)
+			{
+				vec3 apart = sub(center, centers[m]);
+				float gap = sqrtf(dot(apart, apart)) - 0.97f * (radii[n] + radii[m]);
+
+				overlap += gap < 0.0f ? -gap : 0.0f;
+			}
+			if (overlap < best_overlap)
+			{
+				best_overlap = overlap;
+				best_center = center;
+				best_attach = attach;
+			}
+			if (overlap <= 0.0f)
+			{
+				break;
+			}
+		}
+		centers[n] = best_center;
+		{
+			vec3 hang = normalized(sub(best_center, best_attach));
+			vec3 foot = sub(best_center, scale(hang, lengths[n] * 0.5f));
+			vec3 reach = sub(foot, best_attach);
+			float reach_length = sqrtf(dot(reach, reach));
+
+			// (its stalk from the axis to its foot: aimed a little above
+			// it, for the stalk's droop)
+			if (reach_length > 1e-4f)
+			{
+				vec3 aim = add(reach, v3(0.0f, 0.15f * reach_length, 0.0f));
+
+				add_fruit_stalk_piece(plant, best_attach, normalized(aim), reach_length, stalk_radius * 0.8f, places[n], 0.5f, 1.0f, random_value);
+			}
+			plant->mesh.plant_random = random_value;
+			add_fruit_body(plant, foot, hang, lengths[n], widths[n], true, true, places[n]);
+			plant->fruits_grown++;
+		}
+	}
+}
+
 // A cluster of fruit at a point of a branch going along direction (its
 // radius there)
 static void add_fruit_cluster(plant_t *plant, vec3 point, vec3 direction, float branch_radius)
@@ -2692,6 +2798,11 @@ static void add_fruit_cluster(plant_t *plant, vec3 point, vec3 direction, float 
 	int count = plant->cluster_minimum + random_index(plant->cluster_maximum - plant->cluster_minimum + 1);
 	float azimuth = random_between(0.0f, 2.0f * PI_F);
 
+	if (plant->fruit_bunch > 0.0f && count > 1)
+	{
+		add_fruit_bunch(plant, point, direction, count);
+		return;
+	}
 	for (int n = 0; n < count; n++)
 	{
 		const cell_place_t *place = &plant->fruits[random_index(plant->fruit_count)];
@@ -2729,7 +2840,7 @@ static void add_fruit_cluster(plant_t *plant, vec3 point, vec3 direction, float 
 			add_fruit_stalk(plant, foot, axis, stalk, fmaxf(0.0012f, 0.04f * width), place);
 			foot = add(add(foot, scale(axis, stalk)), v3(0.0f, -0.15f * stalk, 0.0f));
 		}
-		add_fruit_body(plant, foot, axis, length, width, plant->fruit_hang == FRUIT_DOWN, place);
+		add_fruit_body(plant, foot, axis, length, width, plant->fruit_hang == FRUIT_DOWN, plant->fruit_stalk > 0.0f, place);
 		plant->fruits_grown++;
 	}
 }
@@ -2750,7 +2861,8 @@ static void fruit_along(plant_t *plant, vec3 start, vec3 direction, float length
 	count = (int)expected + (random_unit() < expected - floorf(expected) ? 1 : 0);
 	for (int i = 0; i < count; i++)
 	{
-		vec3 point = add(start, scale(direction, length * random_between(0.4f, 0.95f)));
+		// (towards its tip as fruit_tip says: at 1, on its last tenth)
+		vec3 point = add(start, scale(direction, length * random_between(0.4f + 0.5f * plant->fruit_tip, 0.95f + 0.05f * plant->fruit_tip)));
 
 		if (foliage_here(plant, point))
 		{
@@ -7181,6 +7293,8 @@ bool plant_recipe_load(plant_recipe_t *recipe, const char *path)
 			recipe->cluster_maximum = comma != NULL ? (int)strtol(comma + 1, NULL, 10) : recipe->cluster_minimum;
 		}
 		else if (strcmp(key, "fruit_per_branch") == 0) { recipe->fruit_per_branch = strtof(value, NULL); }
+		else if (strcmp(key, "fruit_bunch") == 0) { recipe->fruit_bunch = strtof(value, NULL); }
+		else if (strcmp(key, "fruit_tip") == 0) { recipe->fruit_tip = strtof(value, NULL); }
 		else if (strcmp(key, "crown_start") == 0) { recipe->crown_start = strtof(value, NULL); }
 		else if (strcmp(key, "leaves_from") == 0) { recipe->leaves_from = strtof(value, NULL); }
 		else if (strcmp(key, "dead_branches") == 0) { recipe->dead_branches = strtof(value, NULL); }
@@ -7382,6 +7496,7 @@ bool plant_recipe_save(const plant_recipe_t *recipe, const char *path)
 		recipe->fruit_zone >= 0 && recipe->fruit_zone < 3 ? fruit_zone_names[recipe->fruit_zone] : "kind", (double)recipe->fruit_stalk);
 	fprintf(file, "fruit_cluster = %d, %d\nfruit_per_branch = %g\n", recipe->cluster_minimum, recipe->cluster_maximum,
 		(double)recipe->fruit_per_branch);
+	fprintf(file, "fruit_bunch = %g\nfruit_tip = %g\n", (double)recipe->fruit_bunch, (double)recipe->fruit_tip);
 	fclose(file);
 	return true;
 }
@@ -7809,6 +7924,8 @@ bool plant_grow(const plant_recipe_t *recipe, const plant_atlas_t *atlas, plant_
 	plant.cluster_maximum = recipe->cluster_maximum < plant.cluster_minimum ? plant.cluster_minimum
 		: (recipe->cluster_maximum > 20 ? 20 : recipe->cluster_maximum);
 	plant.fruit_per_branch = fminf(fmaxf(recipe->fruit_per_branch, 0.0f), 50.0f);
+	plant.fruit_bunch = fminf(fmaxf(recipe->fruit_bunch, 0.0f), 1.0f);
+	plant.fruit_tip = fminf(fmaxf(recipe->fruit_tip, 0.0f), 1.0f);
 	if (recipe->leaves.count == 0 && recipe->twigs.count == 0 && kind.shape != SHAPE_MUSHROOM)
 	{
 		plant_error("A plant needs leaves (or twigs, for trees)\n");

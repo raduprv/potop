@@ -291,6 +291,8 @@ typedef struct
 	int cluster_minimum;               // fruit together, their stalks from one point (1)
 	int cluster_maximum;
 	float fruit_per_branch;            // clusters on each finest branch or twig, on average (1)
+	float fruit_bunch;                 // 0: a cluster's stalks from one point, fanned out; up to 1: packed close on a short stalk hanging from the branch (more down)
+	float fruit_tip;                   // 0: fruit anywhere on a finest branch's outer part; 1: at its tip
 	// The crown's shape (trees; below 0: the kind's)
 	float crown_start;                 // the trunk's first branches, of its height (0..1)
 	float leaves_from;                 // foliage only above this much of the height (0: all the way down)

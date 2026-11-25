@@ -1495,6 +1495,8 @@ static void panel(editor_t *editor)
 		nk_property_int(context, "Together, at least", 1, &recipe->cluster_minimum, 20, 1, 0.2f);
 		nk_property_int(context, "Together, at most", recipe->cluster_minimum, &recipe->cluster_maximum, 20, 1, 0.2f);
 		nk_property_float(context, "Clusters per finest branch", 0.0f, &recipe->fruit_per_branch, 50.0f, 0.05f, 0.01f);
+		nk_property_float(context, "Bunch (0: fanned from a point)", 0.0f, &recipe->fruit_bunch, 1.0f, 0.05f, 0.01f);
+		nk_property_float(context, "Towards the tip", 0.0f, &recipe->fruit_tip, 1.0f, 0.05f, 0.01f);
 		nk_tree_pop(context);
 	}
 	// The view
