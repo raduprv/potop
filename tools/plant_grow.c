@@ -442,7 +442,7 @@ static const plant_kind_t kinds[] =
 		// out of them along the ground, their tips lifting a little;
 		// foliage all along: a mat a few meters across, ankle high.
 		// height_meters is the stems' length (the mat's reach out)
-		.name = "creeping", .shape = SHAPE_TREE, .atlas = "conifers", .height_meters = 2.2f, .stems = 11, .stem_lean_degrees = 84.0f,
+		.name = "creeping", .shape = SHAPE_TREE, .atlas = "conifers", .height_meters = 2.2f, .stems = 11, .stem_lean_degrees = 64.0f,
 		.sprawl = true,
 		.levels = 2, .trunk_radius_ratio = 0.008f, .taper = 0.35f, .bend = 0.45f, .crown_start = 0.04f,
 		.children = { 16, 6, 0 }, .length_ratio = { 0.32f, 0.4f, 0.0f }, .down_degrees = { 70.0f, 55.0f, 0.0f },
@@ -2126,6 +2126,7 @@ typedef struct
 	int cluster_minimum;
 	int cluster_maximum;
 	float fruit_per_branch;
+	float branch_flat;                  // trees: branches out of lying ones only to their sides, level (0: all round them; 1: flat)
 	float twig_gap;                     // trees with twigs: no bare stretch longer than this on a branch (meters; 0: any)
 	float fruit_bunch;                  // 0: a cluster's stalks from one point, fanned; above: packed on a short hanging stalk
 	float fruit_tip;                    // 0: fruit anywhere on a finest branch's outer part; 1: at its tip
@@ -4321,6 +4322,16 @@ static void grow(plant_t *plant, int level, vec3 start, vec3 direction, float le
 		branch_at(&branch, t, &point, &heading, &parent_radius);
 		child_length *= level == 0 ? crown_shape(plant, (plant->trunk_u0 + (plant->trunk_u1 - plant->trunk_u0) * t)) : 1.0f - 0.6f * t;
 		child_direction = rotated(heading, child_axis[i], down);
+		if (plant->branch_flat > 0.0f)
+		{
+			// (flat: out to the left and the right of a lying branch, in
+			// turn, level, lifted a little; not off an upright one)
+			vec3 up = v3(0.0f, (i & 1) != 0 ? 1.0f : -1.0f, 0.0f);
+			vec3 level_out = normalized(add(rotated(heading, up, down), v3(0.0f, 0.12f, 0.0f)));
+			float lying = 1.0f - fabsf(heading.y);
+
+			child_direction = normalized(add(scale(child_direction, 1.0f - plant->branch_flat * lying), scale(level_out, plant->branch_flat * lying)));
+		}
 		if (plant->wind_side > 0.0f)
 		{
 			// Short and few on the side the wind comes from
@@ -7345,6 +7356,7 @@ bool plant_recipe_load(plant_recipe_t *recipe, const char *path)
 		else if (strcmp(key, "twig_scale") == 0) { recipe->twig_scale = strtof(value, NULL); }
 		else if (strcmp(key, "twig_share") == 0) { recipe->twig_share = strtof(value, NULL); }
 		else if (strcmp(key, "twig_gap") == 0) { recipe->twig_gap = strtof(value, NULL); }
+		else if (strcmp(key, "branch_flat") == 0) { recipe->branch_flat = strtof(value, NULL); }
 		else if (strcmp(key, "loose_leaves") == 0) { recipe->loose_leaves = strtof(value, NULL); }
 		else if (strcmp(key, "fruit_shape") == 0)
 		{
@@ -7546,6 +7558,10 @@ bool plant_recipe_save(const plant_recipe_t *recipe, const char *path)
 	if (recipe->twig_gap > 0.0f)
 	{
 		fprintf(file, "twig_gap = %g\n", (double)recipe->twig_gap);
+	}
+	if (recipe->branch_flat > 0.0f)
+	{
+		fprintf(file, "branch_flat = %g\n", (double)recipe->branch_flat);
 	}
 	fprintf(file, "crown_start = %g\nleaves_from = %g\ndroop = %g\ntip_lift = %g\ncollar = %g\nroot_flare = %g\n",
 		(double)recipe->crown_start, (double)recipe->leaves_from, (double)recipe->droop, (double)recipe->tip_lift, (double)recipe->collar,
@@ -8014,6 +8030,7 @@ bool plant_grow(const plant_recipe_t *recipe, const plant_atlas_t *atlas, plant_
 	plant.wind_side = kind.wind_side;
 	plant.bark_meters = fmaxf(recipe->bark_meters, 0.05f);
 	plant.twig_share = fminf(fmaxf(recipe->twig_share, 0.0f), 1.0f);
+	plant.branch_flat = fminf(fmaxf(recipe->branch_flat, 0.0f), 1.0f);
 	plant.twig_gap = recipe->twig_gap > 0.0f ? fmaxf(recipe->twig_gap, 0.02f) : 0.0f;
 	plant.loose_leaves = fminf(fmaxf(recipe->loose_leaves, 0.0f), 100.0f);
 	plant.fruit_shape = recipe->fruit_shape >= PLANT_FRUIT_SPHERE && recipe->fruit_shape <= PLANT_FRUIT_CARD ? recipe->fruit_shape

@@ -19,6 +19,10 @@ for seed in 1 2 3; do
 	tools/potop_twig --width 512 --seed $seed juniper plant_plans/twigs/juniper_$seed.png
 done
 for seed in 1 2 3; do
+	tools/potop_twig --width 512 --seed $seed juniper_spread plant_plans/twigs/juniper_spread_$seed.png
+	tools/potop_twig --width 512 --seed $seed juniper_awl plant_plans/twigs/juniper_awl_$seed.png
+done
+for seed in 1 2 3; do
 	tools/potop_twig --width 512 --seed $seed cranberry plant_plans/twigs/cranberry_$seed.png
 done
 for seed in 1 2 3; do

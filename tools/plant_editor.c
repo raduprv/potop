@@ -1217,6 +1217,7 @@ static void panel(editor_t *editor)
 			kind_setting(context, "Twigs in a row past (m; 0: one)", &recipe->twig_meters, plant_kind_twig_meters(kind), 0.0f, 5.0f, 0.05f, 1.0f);
 			nk_property_float(context, "Twig share (with leaves)", 0.0f, &recipe->twig_share, 1.0f, 0.05f, 0.01f);
 			nk_property_float(context, "Longest bare stretch (m; 0: any)", 0.0f, &recipe->twig_gap, 2.0f, 0.01f, 0.005f);
+			nk_property_float(context, "Branches flat (off lying ones)", 0.0f, &recipe->branch_flat, 1.0f, 0.05f, 0.01f);
 			{
 				// (a test: the fir's alone, for now)
 				nk_bool curved = recipe->curved_twigs ? nk_true : nk_false;

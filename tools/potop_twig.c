@@ -2675,6 +2675,383 @@ static void draw_blueberry_leaves(canvas_t *canvas, random_t *random)
 	free(wood.pixels);
 }
 
+// --- Spreading juniper ---------------------------------------------------------------
+
+// A spreading juniper's colors: its scales, their pale bloom, the young
+// tips' paler green
+typedef struct
+{
+	float green[3];
+	float pale[3];
+	float young[3];
+} scale_paint_t;
+
+// One of a cord's scale leaves at (x, y), pointing at angle (radians, 0
+// up), length long, width wide (each side half): a pointed egg, round
+// across (its middle raised, its sides down to a thin pale rim), a dark
+// gland down its back; spike: its point drawn out free past that much of
+// its length (an awl leaf, the juvenile kind). bloom: how much of the
+// pale waxy bloom over it, young: of the young tips' green. Darkens a
+// little what lies under its edge. No light baked in
+static void draw_scale(canvas_t *canvas, float x0, float y0, float angle, float length, float width, float spike, float bloom, float young,
+	const scale_paint_t *paint)
+{
+	float s = canvas->scale;
+	float total = length * (1.0f + spike);
+	float reach = (total + width) * s + 2.0f;
+	int left = (int)floorf(x0 * s - reach);
+	int right = (int)ceilf(x0 * s + reach);
+	int top = (int)floorf(y0 * s - reach);
+	int bottom = (int)ceilf(y0 * s + reach);
+	float along_x = sinf(angle);
+	float along_y = -cosf(angle);
+	float seed = hash_unit((int)(x0 * 3301.0f), (int)(y0 * 2203.0f));
+
+	left = left < 0 ? 0 : left;
+	top = top < 0 ? 0 : top;
+	right = right >= canvas->width ? canvas->width - 1 : right;
+	bottom = bottom >= canvas->height ? canvas->height - 1 : bottom;
+	for (int y = top; y <= bottom; y++)
+	{
+		for (int x = left; x <= right; x++)
+		{
+			float px = ((float)x + 0.5f) / s - x0;
+			float py = ((float)y + 0.5f) / s - y0;
+			float u = px * along_x + py * along_y;
+			float v = px * -along_y + py * along_x;
+			float t = u / length;
+			float half;
+			float coverage;
+			float *pixel = &canvas->pixels[((size_t)y * (size_t)canvas->width + (size_t)x) * 4];
+
+			if (t < -0.2f || t > 1.0f + spike + 0.1f)
+			{
+				continue;
+			}
+			// (an egg widest low, drawn to its point; the spike thin past it)
+			if (t <= 0.0f)
+			{
+				half = 0.0f;
+			}
+			else if (t < 1.0f)
+			{
+				half = 0.5f * width * powf(sinf(PI_F * powf(t, 0.7f)), 0.7f) * (1.0f - 0.25f * t);
+				half = t > 0.75f && spike > 0.0f ? fmaxf(half, 0.5f * width * 0.18f) : half;
+			}
+			else
+			{
+				half = spike > 0.0f ? 0.5f * width * 0.18f * clampf(1.0f - (t - 1.0f) / spike, 0.0f, 1.0f) : 0.0f;
+			}
+			coverage = half > 0.0f ? clampf((half - fabsf(v)) * s + 0.5f, 0.0f, 1.0f) : 0.0f;
+			if (t > -0.1f && t < 1.0f && fabsf(v) - half < width * 0.35f)
+			{
+				darken_under(pixel, fmaxf(fabsf(v) - half, 0.0f), width * 0.35f, 0.45f);
+			}
+			if (coverage <= 0.0f)
+			{
+				continue;
+			}
+			{
+				float across = fabsf(v) / fmaxf(half, 1e-5f);
+				float round = 0.78f + 0.3f * sqrtf(fmaxf(1.0f - across * across, 0.0f));
+				float gland = clampf(1.0f - (across / 0.25f), 0.0f, 1.0f) * clampf(1.0f - fabsf(t - 0.45f) / 0.2f, 0.0f, 1.0f);
+				float speck = value_noise((float)x / 1.3f + seed * 50.0f, (float)y / 1.3f);
+
+				for (int k = 0; k < 3; k++)
+				{
+					float color = mixf(paint->green[k], paint->young[k], young);
+
+					color = mixf(color, paint->pale[k], clampf(bloom * (0.7f + 0.6f * speck), 0.0f, 1.0f));
+					color = mixf(color, paint->pale[k] * 1.08f, smooth_step(0.78f, 0.95f, across) * 0.5f);
+					color *= round * (1.0f - gland * 0.22f) * (0.94f + 0.12f * seed);
+					pixel[k] = color * coverage + pixel[k] * (1.0f - coverage);
+				}
+				pixel[3] = coverage + pixel[3] * (1.0f - coverage);
+			}
+		}
+	}
+}
+
+// A cord of scale leaves along a quadratic curve (a to b over c), width
+// wide at a to width_b at b: its scales in pairs crosswise, one seen face
+// on down its middle, the next pair seen from the side, out each edge;
+// drawn from its tip back, each lower one over the foot of the one above
+// it. young: the young green towards its tip from this far along (1:
+// none); bloom as draw_scale's
+static void draw_scale_cord(canvas_t *canvas, random_t *random, float ax, float ay, float cx, float cy, float bx, float by, float width_a,
+	float width_b, float spike, float bloom, float young_from, const scale_paint_t *cord_paint)
+{
+	const scale_paint_t *paint = cord_paint;
+	float length = 0.0f;
+	float last_x = ax;
+	float last_y = ay;
+	int steps;
+
+	for (int i = 1; i <= 16; i++)
+	{
+		float x;
+		float y;
+		float heading;
+
+		quadratic_at(ax, ay, cx, cy, bx, by, (float)i / 16.0f, &x, &y, &heading);
+		length += sqrtf((x - last_x) * (x - last_x) + (y - last_y) * (y - last_y));
+		last_x = x;
+		last_y = y;
+	}
+	steps = (int)(length / (0.3f * (width_a + width_b) * 0.5f)) + 2;
+	for (int i = steps; i >= 0; i--)
+	{
+		float t = (float)i / (float)steps;
+		float x;
+		float y;
+		float heading;
+		float width = mixf(width_a, width_b, t);
+		// (only its last bit: new growth, a short step, not a gradient
+		// all along it)
+		float young = young_from < 1.0f ? smooth_step(0.8f, 0.88f, t) : 0.0f;
+		// (the bloom thicker towards its tip, where it is fresh)
+		float here_bloom = bloom * random_range(random, 0.6f, 1.3f) * (0.5f + 0.9f * t);
+		// (darker towards its foot, in the shade of what is over it,
+		// brighter out at its tip: the contrast of a thick cushion)
+		float shade = mixf(0.62f, 1.18f, smooth_step(0.0f, 0.9f, t)) * random_range(random, 0.92f, 1.08f);
+		scale_paint_t here = *cord_paint;
+
+		for (int k = 0; k < 3; k++)
+		{
+			here.green[k] *= shade;
+			here.pale[k] *= mixf(0.8f, 1.05f, t);
+		}
+		paint = &here;
+
+		quadratic_at(ax, ay, cx, cy, bx, by, t, &x, &y, &heading);
+		if ((i & 1) == 0)
+		{
+			// (the face-on one, along the middle)
+			draw_scale(canvas, x, y, heading + random_range(random, -0.06f, 0.06f), width * 1.25f, width * 0.95f, spike * 0.5f, here_bloom, young,
+				paint);
+		}
+		else
+		{
+			// (the pair from the side: out each edge, leaning out a little)
+			for (int side = -1; side <= 1; side += 2)
+			{
+				float out_x = cosf(heading) * (float)side * width * 0.28f;
+				float out_y = sinf(heading) * (float)side * width * 0.28f;
+
+				draw_scale(canvas, x + out_x, y + out_y, heading + (float)side * random_range(random, 0.25f, 0.4f) * (1.0f + spike), width * 1.3f,
+					width * 0.5f, spike, here_bloom * 0.8f, young, paint);
+			}
+		}
+	}
+}
+
+// A spreading juniper's shoot from (x, y) at angle, length long: a cord
+// of scales bowed a little, cords out of it alternately, the last two a
+// fork round its tip (no bare end), each of those with a twig or two and
+// a little fork of its own at its end. The smaller first, the shoot over
+// them
+static void draw_juniper_shoot(canvas_t *canvas, random_t *random, float x, float y, float angle, float length, float width, float spike,
+	float bloom, const scale_paint_t *paint)
+{
+	float bow = random_range(random, -0.22f, 0.22f) * length;
+	float point[6] = { x, y, x + sinf(angle) * length * 0.5f + cosf(angle) * bow, y - cosf(angle) * length * 0.5f + sinf(angle) * bow,
+		x + sinf(angle) * length, y - cosf(angle) * length };
+	// (as many as its length needs: the long low ones as full as the
+	// short ones up top)
+	int branchlets = (int)((8.0f + random_float(random) * 3.99f) * fmaxf(length / 0.33f, 0.8f));
+
+	branchlets = branchlets > 18 ? 18 : branchlets;
+	float side = random_float(random) < 0.5f ? -1.0f : 1.0f;
+
+	for (int k = branchlets - 1; k >= 0; k--)
+	{
+		// (the last two: a fork round the tip, closer in, shorter)
+		bool fork = k >= branchlets - 2;
+		float bt = fork ? random_range(random, 0.84f, 0.92f) : 0.15f + 0.65f * ((float)k + random_range(random, 0.1f, 0.8f)) / (float)(branchlets - 2);
+		float lside = (k & 1) != 0 ? side : -side;
+		float lout = lside * (fork ? random_range(random, 0.35f, 0.55f) : random_range(random, 0.5f, 0.9f));
+		float llength = length * (fork ? random_range(random, 0.2f, 0.28f) : random_range(random, 0.52f, 0.7f) * (1.0f - 0.45f * bt));
+		float lbow = random_range(random, -0.2f, 0.2f) * llength;
+		float lx;
+		float ly;
+		float lheading;
+		float l[6];
+		float lwidth = width * 0.8f;
+
+		quadratic_at(point[0], point[1], point[2], point[3], point[4], point[5], bt, &lx, &ly, &lheading);
+		l[0] = lx;
+		l[1] = ly;
+		l[2] = lx + sinf(lheading + lout * 1.1f) * llength * 0.5f + cosf(lheading + lout) * lbow;
+		l[3] = ly - cosf(lheading + lout * 1.1f) * llength * 0.5f + sinf(lheading + lout) * lbow;
+		l[4] = lx + sinf(lheading + lout) * llength;
+		l[5] = ly - cosf(lheading + lout) * llength;
+		{
+			// (its twigs: one or two along a longer one, and a little
+			// fork at its end)
+			int twigs = llength > 0.1f ? 6 : (llength > 0.06f ? 4 : 2);
+
+			for (int m = 0; m < twigs; m++)
+			{
+				bool end = m < 2;
+				float mt = end ? random_range(random, 0.78f, 0.9f) : 0.2f + 0.5f * ((float)(m - 2) + random_range(random, 0.1f, 0.9f)) / (float)(twigs - 2);
+				float mout = (m & 1 ? 1.0f : -1.0f) * (end ? random_range(random, 0.35f, 0.55f) : random_range(random, 0.5f, 0.8f));
+				float mlength = llength * (end ? random_range(random, 0.22f, 0.3f) : random_range(random, 0.4f, 0.55f));
+				float mx;
+				float my;
+				float mheading;
+
+				quadratic_at(l[0], l[1], l[2], l[3], l[4], l[5], mt, &mx, &my, &mheading);
+				draw_scale_cord(canvas, random, mx, my, mx + sinf(mheading + mout) * mlength * 0.5f, my - cosf(mheading + mout) * mlength * 0.5f,
+					mx + sinf(mheading + mout * 0.8f) * mlength, my - cosf(mheading + mout * 0.8f) * mlength, lwidth * 0.8f, lwidth * 0.6f, spike,
+					bloom, 0.5f, paint);
+			}
+		}
+		draw_scale_cord(canvas, random, l[0], l[1], l[2], l[3], l[4], l[5], lwidth, lwidth * 0.62f, spike, bloom, 0.65f, paint);
+	}
+	draw_scale_cord(canvas, random, point[0], point[1], point[2], point[3], point[4], point[5], width, width * 0.62f, spike, bloom, 0.75f, paint);
+}
+
+// A spreading juniper's branch (Juniperus horizontalis and the like): a
+// woody stem bent at each shoot, its bark peeling in strips low down,
+// browner to greener up it and clad in scales from its middle (dry brown
+// ones first, then green); shoots out of it alternately, the last its
+// leader, out of its end; blue green under a pale bloom, the young tips
+// paler. awl: all its leaves awls, spiky, drawn out free (the juvenile
+// kind, a softer, fuzzier look), else scales pressed to the cords
+static void draw_juniper_spread(canvas_t *canvas, random_t *random, bool awl)
+{
+	scale_paint_t paint = { .green = { 0.15f, 0.30f, 0.24f }, .pale = { 0.58f, 0.70f, 0.68f }, .young = { 0.70f, 0.78f, 0.30f } };
+	const float bark_dark[3] = { 0.30f, 0.18f, 0.11f };
+	const float bark_light[3] = { 0.66f, 0.50f, 0.36f };
+	const float young_dark[3] = { 0.26f, 0.26f, 0.15f };
+	const float young_light[3] = { 0.52f, 0.52f, 0.34f };
+	float ax = 0.5f;
+	float ay = canvas->tall - 0.03f;
+	float bx = 0.5f + random_range(random, -0.1f, 0.1f);
+	float by = 0.5f;
+	float cx = 0.5f + random_range(random, -0.14f, 0.14f);
+	float cy = (ay + by) * 0.5f;
+	// (never few: the sparse ones looked thin)
+	int shoots = 11 + (int)(random_float(random) * 2.99f);
+	float side = random_float(random) < 0.5f ? -1.0f : 1.0f;
+	float node_x[16] = { 0 };
+	float node_y[16] = { 0 };
+	float node_t[16];
+	float shoot_out[16];
+	float heading;
+
+	// The nodes: up the stem, on its smooth curve (a gentle S: a slow
+	// sideways wave over the quadratic), a shoot out of each
+	float wave = random_range(random, -0.035f, 0.035f);
+	float wave_phase = random_range(random, 0.0f, 2.0f * PI_F);
+
+	for (int n = 0; n < shoots; n++)
+	{
+		float t = 0.04f + 0.9f * ((float)n + random_range(random, 0.2f, 0.8f)) / (float)shoots;
+		float my_side = (n & 1) != 0 ? side : -side;
+
+		quadratic_at(ax, ay, cx, cy, bx, by, t, &node_x[n], &node_y[n], &heading);
+		node_x[n] += wave * sinf(t * 1.6f * PI_F + wave_phase);
+		node_t[n] = t;
+		shoot_out[n] = my_side * random_range(random, 0.8f, 1.2f) * (1.0f - 0.35f * t);
+	}
+	// The stem first, node to node: wood, browner low and greener up,
+	// thinning; peeling strips low; scales from its middle up
+	{
+		float last_x = ax;
+		float last_y = ay;
+		float stem_length = ay - node_y[shoots - 1];
+
+		for (int n = 0; n < shoots; n++)
+		{
+			float f0 = (ay - last_y) / stem_length;
+			float f1 = (ay - node_y[n]) / stem_length;
+			float r0 = mixf(0.022f, 0.009f, f0);
+			float r1 = mixf(0.022f, 0.009f, f1);
+			// (the control point where the piece's tangents at its ends
+			// meet: the next node's way and the last one's, so the stem
+			// runs on smooth through each node, no corner)
+			float next_x = n + 1 < shoots ? node_x[n + 1] : bx;
+			float before_x = n > 0 ? (n > 1 ? node_x[n - 2] : ax) : ax;
+			float mid_x = (last_x + node_x[n]) * 0.5f + ((last_x - before_x) - (next_x - node_x[n])) * 0.12f;
+			float mid_y = (last_y + node_y[n]) * 0.5f;
+			float green = smooth_step(0.3f, 0.9f, (f0 + f1) * 0.5f);
+			paint_t wood = { .rough = mixf(0.9f, 0.4f, green), .bumps = 0.3f, .tip_from = 1.0f };
+
+			for (int k = 0; k < 3; k++)
+			{
+				wood.dark[k] = mixf(bark_dark[k], young_dark[k], green);
+				wood.light[k] = mixf(bark_light[k], young_light[k], green);
+				wood.tip[k] = wood.light[k];
+			}
+			draw_curve(canvas, last_x, last_y, mid_x, mid_y, node_x[n], node_y[n], r0, r1, &wood);
+			if (f1 < 0.45f)
+			{
+				// (bark peeling in strips)
+				paint_t strip = { .dark = { 0.50f, 0.38f, 0.28f }, .light = { 0.78f, 0.66f, 0.52f }, .tip = { 0.70f, 0.58f, 0.44f },
+					.tip_from = 1.0f, .rough = 0.4f };
+
+				for (int i = 0; i < 2; i++)
+				{
+					float t0 = random_range(random, 0.0f, 0.6f);
+					float t1 = fminf(t0 + random_range(random, 0.2f, 0.4f), 1.0f);
+					float x0;
+					float y0;
+					float x1;
+					float y1;
+					float off = random_range(random, -0.6f, 0.6f) * r0;
+
+					quadratic_at(last_x, last_y, mid_x, mid_y, node_x[n], node_y[n], t0, &x0, &y0, &heading);
+					quadratic_at(last_x, last_y, mid_x, mid_y, node_x[n], node_y[n], t1, &x1, &y1, &heading);
+					draw_curve(canvas, x0 + off, y0, x0 + off, (y0 + y1) * 0.5f, x1 + off, y1, r0 * 0.22f, r1 * 0.15f, &strip);
+				}
+			}
+			if (f1 > 0.35f)
+			{
+				// (scales over it: dry and brown, then green up it; sparse
+				// at first, the wood showing between)
+				float fresh = smooth_step(0.5f, 0.85f, (f0 + f1) * 0.5f);
+				scale_paint_t clad = paint;
+				const float dry[3] = { 0.42f, 0.32f, 0.22f };
+				const float dry_pale[3] = { 0.64f, 0.54f, 0.42f };
+
+				for (int k = 0; k < 3; k++)
+				{
+					clad.green[k] = mixf(dry[k], paint.green[k], fresh);
+					clad.pale[k] = mixf(dry_pale[k], paint.pale[k], fresh);
+				}
+				draw_scale_cord(canvas, random, last_x, last_y, mid_x, mid_y, node_x[n], node_y[n], mixf(1.3f, 2.1f, fresh) * r0,
+					mixf(1.3f, 2.1f, fresh) * r1, 0.0f, 0.15f * fresh, 1.0f, &clad);
+			}
+			last_x = node_x[n];
+			last_y = node_y[n];
+		}
+	}
+	// The shoots over the stem (it shows between them), from the top down
+	// (the lower over those above)
+	for (int n = shoots - 1; n >= 0; n--)
+	{
+		float t = node_t[n];
+		float shoot_length = random_range(random, 0.42f, 0.56f) * (1.0f - 0.45f * t);
+		float spike = awl ? random_range(random, 0.6f, 0.8f) : 0.0f;
+		// (each shoot a little paler or greener, not much)
+		float bloom = random_range(random, 0.22f, 0.34f);
+		float local_heading = n + 1 < shoots ? atan2f(node_x[n + 1] - node_x[n], -(node_y[n + 1] - node_y[n])) : 0.0f;
+		// (each shoot its own green: bluer or yellower, darker or paler)
+		scale_paint_t own = paint;
+		float warm = random_range(random, -1.0f, 1.0f);
+		float light = random_range(random, 0.82f, 1.15f);
+
+		own.green[0] = (paint.green[0] + warm * 0.035f) * light;
+		own.green[1] = (paint.green[1] + warm * 0.02f) * light;
+		own.green[2] = (paint.green[2] - warm * 0.045f) * light;
+		draw_juniper_shoot(canvas, random, node_x[n], node_y[n], local_heading + shoot_out[n], shoot_length, 0.021f, spike, bloom, &own);
+	}
+	// Its leader, on out of its end, a shoot as the others
+	draw_juniper_shoot(canvas, random, node_x[shoots - 1], node_y[shoots - 1], atan2f(bx - cx, -(by - cy)) + random_range(random, -0.15f, 0.15f),
+		random_range(random, 0.3f, 0.38f), 0.021f, awl ? 0.7f : 0.0f, random_range(random, 0.22f, 0.34f), &paint);
+}
+
 // --- Ferns ------------------------------------------------------------------------------
 
 // A leaf's color and how it is marked
@@ -3234,7 +3611,7 @@ int main(int argument_count, char **arguments)
 	}
 	if (kind == NULL || path == NULL || width < 16 || width > 4096)
 	{
-		fprintf(stderr, "Usage: potop_twig [--width W] [--seed N] pine|pine_brush|pine_rosette|pine_needles|spruce|juniper|cranberry|cranberry_leaves|blueberry_leaves|berry_skin|blueberry_skin|fern|fern_lobed OUT.png\n");
+		fprintf(stderr, "Usage: potop_twig [--width W] [--seed N] pine|pine_brush|pine_rosette|pine_needles|spruce|juniper|juniper_spread|juniper_awl|cranberry|cranberry_leaves|blueberry_leaves|berry_skin|blueberry_skin|fern|fern_lobed OUT.png\n");
 		return 1;
 	}
 	// (as tall as the kind's twig is: the pine's branch tip square,
@@ -3286,6 +3663,10 @@ int main(int argument_count, char **arguments)
 	{
 		draw_blueberry_leaves(&canvas, &random);
 	}
+	else if (strcmp(kind, "juniper_spread") == 0 || strcmp(kind, "juniper_awl") == 0)
+	{
+		draw_juniper_spread(&canvas, &random, strcmp(kind, "juniper_awl") == 0);
+	}
 	else if (strcmp(kind, "berry_skin") == 0)
 	{
 		draw_berry_skin(&canvas, &random);
@@ -3304,11 +3685,11 @@ int main(int argument_count, char **arguments)
 	}
 	else
 	{
-		fprintf(stderr, "potop_twig: no kind '%s' (pine, pine_brush, pine_rosette, pine_needles, spruce, juniper, cranberry, cranberry_leaves, blueberry_leaves, berry_skin, blueberry_skin, fern, fern_lobed)\n", kind);
+		fprintf(stderr, "potop_twig: no kind '%s' (pine, pine_brush, pine_rosette, pine_needles, spruce, juniper, juniper_spread, juniper_awl, cranberry, cranberry_leaves, blueberry_leaves, berry_skin, blueberry_skin, fern, fern_lobed)\n", kind);
 		free(canvas.pixels);
 		return 1;
 	}
-	if (!finish(&canvas, width, canvas.height / SUPERSAMPLE, path, strcmp(kind, "spruce") == 0 || strcmp(kind, "cranberry") == 0 || strcmp(kind, "cranberry_leaves") == 0 || strcmp(kind, "blueberry_leaves") == 0 ? 2.0f : 0.0f))
+	if (!finish(&canvas, width, canvas.height / SUPERSAMPLE, path, strcmp(kind, "spruce") == 0 || strcmp(kind, "cranberry") == 0 || strcmp(kind, "cranberry_leaves") == 0 || strcmp(kind, "blueberry_leaves") == 0 || strcmp(kind, "juniper_spread") == 0 || strcmp(kind, "juniper_awl") == 0 ? 2.0f : 0.0f))
 	{
 		fprintf(stderr, "potop_twig: could not write %s\n", path);
 		free(canvas.pixels);
