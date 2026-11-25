@@ -989,6 +989,189 @@ bool settings_set_text(settings_t *settings, const char *section, const char *ke
 	return ok;
 }
 
+// The field of a "section.key"; NULL if there is none
+static const setting_field_t *field_of(const char *full_key)
+{
+	const char *dot = SDL_strchr(full_key, '.');
+
+	if (dot == NULL)
+	{
+		return NULL;
+	}
+	for (size_t i = 0; i < settings_field_count(); i++)
+	{
+		const setting_field_t *field = &setting_fields[i];
+		size_t section_length = SDL_strlen(field->section);
+
+		if ((size_t)(dot - full_key) == section_length && SDL_strncmp(full_key, field->section, section_length) == 0
+			&& SDL_strcmp(dot + 1, field->key) == 0)
+		{
+			return field;
+		}
+	}
+	return NULL;
+}
+
+static size_t field_bytes(const setting_field_t *field)
+{
+	switch (field->type)
+	{
+		case SETTING_BOOL:
+			return sizeof(bool);
+		case SETTING_COLOR:
+			return sizeof(float) * 3;
+		default:
+			return 4;
+	}
+}
+
+// The costs a map may only lower (the rest of the numbers are its look)
+static bool is_cost(const char *full_key)
+{
+	static const char *const costs[] =
+	{
+		"objects.grass_distance_meters", "objects.grass_density", "objects.grass_near_density", "objects.grass_near_meters",
+		"objects.draw_distance_scale", "camera.view_distance_meters", "render.fog_mode", "render.fog_quality", "render.fireflies",
+	};
+
+	for (size_t i = 0; i < SDL_arraysize(costs); i++)
+	{
+		if (SDL_strcmp(full_key, costs[i]) == 0)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool map_settings_set(map_settings_t *map, const char *key, const char *value)
+{
+	const setting_field_t *field = field_of(key);
+	int index = -1;
+
+	if (field == NULL)
+	{
+		return false;
+	}
+	for (int i = 0; i < map->count; i++)
+	{
+		if (SDL_strcmp(map->entries[i].key, key) == 0)
+		{
+			index = i;
+		}
+	}
+	if (value == NULL || value[0] == '\0')
+	{
+		if (index >= 0)
+		{
+			map->entries[index] = map->entries[map->count - 1];
+			map->count--;
+		}
+		return true;
+	}
+	{
+		// (it must read as its type)
+		static settings_t scratch;
+		char section[64];
+
+		bool saw_type = parse_saw_cloud_type;
+		bool saw_value = parse_saw_cloud_value;
+		bool reads;
+
+		SDL_strlcpy(section, key, SDL_min(sizeof(section), (size_t)(SDL_strchr(key, '.') - key) + 1));
+		reads = settings_key_callback(&scratch, section, field->key, value);
+		parse_saw_cloud_type = saw_type;
+		parse_saw_cloud_value = saw_value;
+		if (!reads)
+		{
+			return false;
+		}
+	}
+	if (index < 0)
+	{
+		if (map->count >= MAP_SETTINGS_MAX)
+		{
+			return false;
+		}
+		index = map->count++;
+		SDL_strlcpy(map->entries[index].key, key, sizeof(map->entries[index].key));
+	}
+	SDL_strlcpy(map->entries[index].value, value, sizeof(map->entries[index].value));
+	return true;
+}
+
+const char *map_settings_get(const map_settings_t *map, const char *key)
+{
+	for (int i = 0; i < map->count; i++)
+	{
+		if (SDL_strcmp(map->entries[i].key, key) == 0)
+		{
+			return map->entries[i].value;
+		}
+	}
+	return NULL;
+}
+
+void settings_with_map(settings_t *out, const settings_t *player, const map_settings_t *map)
+{
+	// (each value read into a copy of the player's, then taken over by
+	// the rule: a copy, so a value that does not read leaves the player's)
+	static settings_t scratch;
+
+	*out = *player;
+	if (map == NULL || map->count == 0)
+	{
+		return;
+	}
+	scratch = *player;
+	for (int i = 0; i < map->count; i++)
+	{
+		const map_setting_t *entry = &map->entries[i];
+		const setting_field_t *field = field_of(entry->key);
+		char section[64];
+		void *wanted;
+		void *target;
+		const void *mine;
+
+		if (field == NULL)
+		{
+			continue;
+		}
+		bool saw_type = parse_saw_cloud_type;
+		bool saw_value = parse_saw_cloud_value;
+		bool reads;
+
+		SDL_strlcpy(section, field->section, sizeof(section));
+		reads = settings_key_callback(&scratch, section, field->key, entry->value);
+		parse_saw_cloud_type = saw_type;
+		parse_saw_cloud_value = saw_value;
+		if (!reads)
+		{
+			continue;
+		}
+		wanted = (char *)&scratch + field->offset;
+		target = (char *)out + field->offset;
+		mine = (const char *)player + field->offset;
+		if (field->type == SETTING_BOOL)
+		{
+			// (only off)
+			*(bool *)target = *(const bool *)mine && *(const bool *)wanted;
+		}
+		else if (is_cost(entry->key) && field->type == SETTING_FLOAT)
+		{
+			*(float *)target = SDL_min(*(const float *)mine, *(const float *)wanted);
+		}
+		else if (is_cost(entry->key) && field->type == SETTING_INT)
+		{
+			*(int32_t *)target = SDL_min(*(const int32_t *)mine, *(const int32_t *)wanted);
+		}
+		else
+		{
+			SDL_memcpy(target, wanted, field_bytes(field));
+		}
+	}
+}
+
 bool settings_save_overrides(const settings_t *settings, const settings_t *file_settings)
 {
 	size_t field_count = sizeof(setting_fields) / sizeof(setting_fields[0]);

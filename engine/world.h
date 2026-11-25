@@ -61,8 +61,14 @@
 typedef struct
 {
 	// What it goes by (the application's, given before anything is done
-	// with it): the settings, the soils, whether the ground erodes
+	// with it): the settings, the soils, whether the ground erodes. The
+	// settings are the player's with the map's own on top (map_settings,
+	// settings_with_map), made again at each step in (world_refresh_settings):
+	// change player_settings, not these
 	settings_t *settings;
+	settings_t *player_settings;
+	settings_t map_effective_settings;
+	map_settings_t map_settings;       // the map's own (map.ini's [settings])
 	const soil_settings_t *soils;
 	bool no_erosion;
 	// What the last steps took (seconds; the application reads and clears
@@ -271,6 +277,9 @@ void world_destroy(world_t *world);
 // the plants, the snow on things, the shadows after the sun, the levels of
 // detail)
 void world_follow_settings(world_t *world);
+// The settings the world goes by made again: the player's, the map's on
+// top (every step in does it; after a change of the map's own, too)
+void world_refresh_settings(world_t *world);
 // The settings that rebuild things (textures, shadow maps: Apply)
 void world_apply_render_settings(world_t *world);
 // The vegetation grown anew (what was put by hand stays)

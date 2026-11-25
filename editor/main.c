@@ -4011,6 +4011,7 @@ static void update_interface(testbed_t *game, double frame_seconds)
 	view.far_shadow_off = &game->potop->world.far_shadow_off;
 	view.physics_off = &game->potop->world.physics_off;
 	view.aurora_on = &game->potop->world.aurora.on;
+	view.map_settings = &game->potop->world.map_settings;
 	view.raining = &game->potop->world.water.raining;
 	view.rainbow_on = &game->potop->world.rain.rainbow_on;
 	view.month = &game->potop->settings.render.month;

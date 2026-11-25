@@ -15,6 +15,8 @@ static double milliseconds_since(uint64_t start)
 
 void world_begin_frame(world_t *world, double frame_seconds)
 {
+	// (the player's settings, the map's on top: as they are now)
+	world_refresh_settings(world);
 	const render_settings_t *render = &world->settings->render;
 
 	world->elapsed_seconds += frame_seconds;
@@ -198,6 +200,8 @@ static void follow_actor_lights(world_t *world)
 
 void world_end_frame(world_t *world, const camera_t *camera, float seconds, bool held, bool exact)
 {
+	// (the player's settings, the map's on top: as they are now)
+	world_refresh_settings(world);
 	follow_actor_lights(world);
 	const float step_seconds = 1.0f / (float)SDL_max(1, world->settings->simulation.steps_per_second);
 	float blend = exact ? 1.0f : (float)(world->simulation_accumulator_seconds / step_seconds);

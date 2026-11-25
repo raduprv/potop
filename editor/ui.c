@@ -2242,6 +2242,46 @@ static void world_window(ui_t *ui, const ui_view_t *view)
 	if (nk_begin(context, WORLD_WINDOW, ui->world_bounds, flags))
 	{
 		ui->world_bounds = nk_window_get_bounds(context);
+		// The map's own: what it never has, saved with it (they only turn
+		// off what the player has on; the console's mapset for any other)
+		if (view->map_settings != NULL)
+		{
+			static const struct
+			{
+				const char *label;
+				const char *key;
+				const char *off;
+				const char *tooltip;
+			} offs[] =
+			{
+				{ "This map: no grass", "objects.grass", "false", "The grass blades never made on this map (a desert, ice): their cost saved" },
+				{ "This map: no fog", "render.fog_mode", "0", "No fog on this map, at any hour" },
+				{ "This map: no fireflies", "render.fireflies", "0", "No fireflies on this map's nights" },
+				{ "This map: no puddles", "render.puddles", "false", "No puddles after rain on this map" },
+				{ "This map: no ice", "render.water_ice", "false", "The water never freezes on this map" },
+			};
+
+			section_label(ui, "This map (saved with it)");
+			for (size_t i = 0; i < SDL_arraysize(offs); i++)
+			{
+				bool off = map_settings_get(view->map_settings, offs[i].key) != NULL;
+
+				if (checkbox_row(ui, offs[i].label, &off, offs[i].tooltip))
+				{
+					map_settings_set(view->map_settings, offs[i].key, off ? offs[i].off : NULL);
+				}
+			}
+			if (view->map_settings->count > 0)
+			{
+				char line[64];
+
+				SDL_snprintf(line, sizeof(line), "%d setting%s of its own (console: mapsettings)", view->map_settings->count,
+					view->map_settings->count == 1 ? "" : "s");
+				nk_layout_row_dynamic(context, ROW_HEIGHT, 1);
+				nk_label(context, line, NK_TEXT_LEFT);
+			}
+			section_label(ui, "Shown");
+		}
 		if (view->objects_hidden != NULL)
 		{
 			bool shown = !*view->objects_hidden;

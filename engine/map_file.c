@@ -74,6 +74,7 @@ struct map_file_reader_s
 	int32_t height_band_rows;      // 0: one band (the first baked maps)
 	bool tiles_split;              // the tiles with water and those with ground apart (else: one list, every plane)
 	int32_t part_bytes;            // 0: every layer one entry
+	map_settings_t settings;       // [settings]
 };
 
 bool map_file_path(const char *name, char *path_out, size_t path_out_size)
@@ -289,6 +290,21 @@ static size_t append_text(char *text, size_t capacity, size_t length, const char
 	written = SDL_vsnprintf(text + length, capacity - length, format, arguments);
 	va_end(arguments);
 	return written < 0 ? length : SDL_min(capacity - 1, length + (size_t)written);
+}
+
+// The map's own settings ([settings]), if it has any
+static size_t append_settings(char *text, size_t capacity, size_t length, const map_features_t *features)
+{
+	if (features == NULL || features->settings.count == 0)
+	{
+		return length;
+	}
+	length = append_text(text, capacity, length, "\n[settings]\n");
+	for (int i = 0; i < features->settings.count; i++)
+	{
+		length = append_text(text, capacity, length, "%s = %s\n", features->settings.entries[i].key, features->settings.entries[i].value);
+	}
+	return length;
 }
 
 // The time since mark (milliseconds), and mark moved on to now: the stages'
@@ -739,6 +755,7 @@ static void read_features(map_file_reader_t *reader, map_features_t *features)
 	features->actors_saved = mz_zip_reader_locate_file(&reader->zip, "actors.bin", NULL, 0) >= 0;
 	features->areas = read_feature_entry(reader, "areas.bin", sizeof(map_area_t), &features->area_count);
 	features->areas_saved = mz_zip_reader_locate_file(&reader->zip, "areas.bin", NULL, 0) >= 0;
+	features->settings = reader->settings;
 	if (!features->areas_saved)
 	{
 		// (saved while they were called zones)
@@ -885,6 +902,7 @@ bool map_file_save(const char *path, const terrain_t *terrain, const water_t *wa
 			(double)camera->target_x, (double)camera->target_z, (double)camera->target_height, (double)camera->distance_meters,
 			(double)camera->yaw_degrees, (double)camera->pitch_degrees);
 	}
+	header_length = append_settings(header, header_capacity, header_length, features);
 
 	fill_objects(objects, type_names, type_names_capacity, &type_names_length, saved_objects);
 
@@ -1074,6 +1092,15 @@ static bool header_key(void *user_data, const char *section, const char *key, co
 			return true;
 		}
 		return false;
+	}
+	if (SDL_strcmp(section, "settings") == 0)
+	{
+		// (one it no longer knows: left out, with a word)
+		if (!map_settings_set(&reader->settings, key, value))
+		{
+			SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "map.ini: [settings] %s = %s left out (no such setting, or it does not read)", key, value);
+		}
+		return true;
 	}
 	if (SDL_strcmp(section, "camera") == 0)
 	{
@@ -1828,6 +1855,7 @@ bool map_file_save_baked(const char *path, const terrain_t *terrain, const water
 			(double)camera->target_x, (double)camera->target_z, (double)camera->target_height, (double)camera->distance_meters,
 			(double)camera->yaw_degrees, (double)camera->pitch_degrees);
 	}
+	header_length = append_settings(header, header_capacity, header_length, features);
 	fill_objects(objects, type_names, type_names_capacity, &type_names_length, saved_objects);
 
 	entries[entry_count++] = (archive_entry_t){ "map.ini", header, header_length, header, NULL, 0, 0 };

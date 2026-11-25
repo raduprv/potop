@@ -24,7 +24,10 @@ static void world_progress(world_t *world, const char *stage, float fraction)
 
 void world_init(world_t *world, settings_t *settings, const soil_settings_t *soils)
 {
-	world->settings = settings;
+	world->player_settings = settings;
+	world->settings = &world->map_effective_settings;
+	world->map_settings.count = 0;
+	world_refresh_settings(world);
 	world->soils = soils;
 	world->sky_time_scale = 1.0f;
 	// (no load yet: no frames after one to time)
@@ -41,6 +44,8 @@ void world_init(world_t *world, settings_t *settings, const soil_settings_t *soi
 
 bool world_create_land(world_t *world, int32_t size, float cell_size_meters, bool baked)
 {
+	// (the player's settings, the map's on top: as they are now)
+	world_refresh_settings(world);
 	if (baked ? !terrain_create_baked(&world->terrain, size, cell_size_meters) : !terrain_create(&world->terrain, size, cell_size_meters))
 	{
 		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Out of memory creating the terrain");
@@ -57,6 +62,8 @@ bool world_create_land(world_t *world, int32_t size, float cell_size_meters, boo
 
 bool world_create(world_t *world)
 {
+	// (the player's settings, the map's on top: as they are now)
+	world_refresh_settings(world);
 	world->renderers_created = true;
 	world_progress(world, "Loading the ground's textures", 0.08f);
 	if (!terrain_renderer_create(&world->renderer, &world->settings->render))
@@ -152,6 +159,8 @@ bool world_create(world_t *world)
 
 void world_populate(world_t *world, bool plant)
 {
+	// (the player's settings, the map's on top: as they are now)
+	world_refresh_settings(world);
 	if (plant)
 	{
 		world_progress(world, "Planting the trees, building the villages", 0.96f);

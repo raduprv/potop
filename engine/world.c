@@ -31,6 +31,8 @@ void world_touch_water(world_t *world)
 // ran out; the game cannot go on then.
 bool world_resize(world_t *world, int32_t size, float cell_size_meters, bool baked)
 {
+	// (the player's settings, the map's on top: as they are now)
+	world_refresh_settings(world);
 	bool drain_edges = world->water.drain_edges;
 	bool depth_scaled_pipes = world->water.depth_scaled_pipes;
 	bool created;
@@ -361,6 +363,8 @@ static void fill_sketch_lakes(world_t *world)
 
 bool world_generate(world_t *world, uint32_t seed)
 {
+	// (the player's settings, the map's on top: as they are now)
+	world_refresh_settings(world);
 	bool loaded = false;
 	bool sketched = terrain_sketch_painted(world->generation_sketch);
 
@@ -389,6 +393,9 @@ bool world_generate(world_t *world, uint32_t seed)
 	// (no cover, no overlay: the objects that put them there are new too;
 	// nothing placed on it yet, its waterfalls looked for)
 	material_map_clear(&world->terrain);
+	// (a new map: none of the old one's own settings)
+	world->map_settings.count = 0;
+	world_refresh_settings(world);
 	if (world->particles.created)
 	{
 		map_features_t none;
@@ -427,6 +434,7 @@ bool world_generate(world_t *world, uint32_t seed)
 void world_gather_features(world_t *world, bool baked, map_features_t *features, waterfalls_t *search)
 {
 	SDL_zerop(features);
+	features->settings = world->map_settings;
 	features->lights = world->lights.placed;
 	features->light_count = world->lights.placed_count;
 	features->effects = SDL_calloc(PARTICLES_EMITTERS_MAX, sizeof(map_effect_t));
@@ -483,6 +491,13 @@ void world_gather_features(world_t *world, bool baked, map_features_t *features,
 // placed before, its waterfalls (an active map: looked for)
 void world_apply_features(world_t *world, const map_features_t *features)
 {
+	// (the map's own settings: its, none for a new one)
+	world->map_settings = features->settings;
+	world_refresh_settings(world);
+	if (features->settings.count > 0)
+	{
+		SDL_Log("Map: %d settings of its own over the player's", features->settings.count);
+	}
 	lights_clear_placed(&world->lights);
 	// (the old map's marks go with it)
 	decals_clear(&world->decals);
@@ -530,6 +545,8 @@ void world_apply_features(world_t *world, const map_features_t *features)
 
 void world_step(world_t *world, float step_seconds)
 {
+	// (the player's settings, the map's on top: as they are now)
+	world_refresh_settings(world);
 	uint64_t water_start = SDL_GetPerformanceCounter();
 	uint64_t erosion_start;
 	uint64_t erosion_end;
@@ -631,6 +648,8 @@ bool world_save(world_t *world, session_t *session, const char *path, bool baked
 
 bool world_load(world_t *world, session_t *session, const char *path, map_file_info_t *info_out, bool *complete_out)
 {
+	// (the player's settings, the map's on top: as they are now)
+	world_refresh_settings(world);
 	map_file_reader_t *reader;
 	map_file_info_t info;
 	bool complete;

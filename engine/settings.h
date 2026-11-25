@@ -712,4 +712,34 @@ bool settings_load_data_file(settings_t *settings, const char *relative_path);
 bool settings_set_from_text(settings_t *settings, const char *assignment);
 bool settings_save_overrides(const settings_t *settings, const settings_t *file_settings);
 
+// A map's own settings over the player's (map.ini's [settings]: "render.fog
+// = false"), kept with the map. They never cost the player more than the
+// player chose: a switch the map can only turn off, a cost (the grass's
+// distance and density, how far things are drawn: settings_with_map's
+// list) only lowered; the rest (the look: the sky's colors, the fog's
+// density) set as the map says
+#define MAP_SETTINGS_MAX 64
+#define MAP_SETTING_KEY_LENGTH 96
+#define MAP_SETTING_VALUE_LENGTH 64
+
+typedef struct
+{
+	char key[MAP_SETTING_KEY_LENGTH];      // section.key
+	char value[MAP_SETTING_VALUE_LENGTH];  // as the ini file writes it
+} map_setting_t;
+
+typedef struct
+{
+	int count;
+	map_setting_t entries[MAP_SETTINGS_MAX];
+} map_settings_t;
+
+// One set (a value NULL or empty: taken out); false for a key that is not
+// a setting, a value that does not read, or no room
+bool map_settings_set(map_settings_t *map, const char *key, const char *value);
+// Its value, NULL if the map does not set it
+const char *map_settings_get(const map_settings_t *map, const char *key);
+// The settings the world goes by: the player's, the map's on top as said
+void settings_with_map(settings_t *out, const settings_t *player, const map_settings_t *map);
+
 #endif

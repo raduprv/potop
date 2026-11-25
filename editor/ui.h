@@ -201,6 +201,7 @@ typedef struct
 	bool *far_shadow_off;          // the World window (debugging): the far shadow map off
 	bool *near_shadow_off;         // ... the near one
 	cloud_paint_t *cloud_paint;    // the painted sky (the sky window paints it)
+	map_settings_t *map_settings;  // the World window: the map's own settings (saved with it)
 	terrain_sketch_t *sketch;      // the new map's sketch (the sketch window paints it)
 	sketch_view_t *sketch_view;    // its picture
 	float sky_eye[2];              // where the eye is on the clouds' map (meters, wind taken off)

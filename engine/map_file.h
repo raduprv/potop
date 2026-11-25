@@ -51,6 +51,7 @@
 #include <stdint.h>
 
 #include "camera.h"
+#include "settings.h"
 #include "cloud_paint.h"
 #include "lights.h"
 #include "objects.h"
@@ -200,6 +201,8 @@ typedef struct
 	map_area_t *areas;
 	int area_count;
 	bool areas_saved;
+	// The map's own settings over the player's (map.ini's [settings])
+	map_settings_t settings;
 } map_features_t;
 
 // The sky occlusion's layers of a map: texels per side (about a meter each,

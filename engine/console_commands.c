@@ -234,6 +234,77 @@ void console_run_command(console_t *console, potop_t *potop, const char *line, c
 		settings_get_text(&potop->settings, section, key, value, sizeof(value));
 		SDL_Log("  %s.%s = %s", section, key, value);
 	}
+	else if (SDL_strcmp(command, "mapset") == 0 || SDL_strcmp(command, "mapunset") == 0)
+	{
+		bool set = command[3] == 's';
+		char section[32];
+		const char *key;
+		char full_key[MAP_SETTING_KEY_LENGTH];
+		char text[CONSOLE_INPUT_LENGTH];
+		char value[64];
+
+		if (!has_first || (set && !has_second))
+		{
+			SDL_Log(set ? "mapset <setting> <value>" : "mapunset <setting>");
+			return;
+		}
+		if (!find_setting(first, section, sizeof(section), &key))
+		{
+			return;
+		}
+		SDL_snprintf(full_key, sizeof(full_key), "%s.%s", section, key);
+		text[0] = '\0';
+		if (set)
+		{
+			// The value is the rest of the line (a color is "r, g, b")
+			size_t length;
+
+			while (*after_first == ' ' || *after_first == '\t')
+			{
+				after_first++;
+			}
+			SDL_strlcpy(text, after_first, sizeof(text));
+			length = SDL_strlen(text);
+			while (length > 0 && (text[length - 1] == ' ' || text[length - 1] == '\t'))
+			{
+				text[--length] = '\0';
+			}
+		}
+		if (!map_settings_set(&potop->world.map_settings, full_key, text))
+		{
+			SDL_Log(set ? "'%s' does not read as a value of %s (or the map has %d of its own already)" : "%s: cannot", set ? text : full_key,
+				full_key, MAP_SETTINGS_MAX);
+			return;
+		}
+		world_refresh_settings(&potop->world);
+		settings_get_text(potop->world.settings, section, key, value, sizeof(value));
+		SDL_Log("  the map's %s %s; the world goes by %s (saved with the map)", full_key, set ? text : "taken away", value);
+	}
+	else if (SDL_strcmp(command, "mapsettings") == 0)
+	{
+		const map_settings_t *map = &potop->world.map_settings;
+
+		if (map->count == 0)
+		{
+			SDL_Log("The map has no settings of its own");
+		}
+		for (int i = 0; i < map->count; i++)
+		{
+			const char *dot = SDL_strchr(map->entries[i].key, '.');
+			char section[32];
+			char mine[64];
+			char used[64];
+
+			mine[0] = used[0] = '\0';
+			if (dot != NULL)
+			{
+				SDL_strlcpy(section, map->entries[i].key, SDL_min(sizeof(section), (size_t)(dot - map->entries[i].key) + 1));
+				settings_get_text(&potop->settings, section, dot + 1, mine, sizeof(mine));
+				settings_get_text(potop->world.settings, section, dot + 1, used, sizeof(used));
+			}
+			SDL_Log("  %s = %s (the player's %s: the world goes by %s)", map->entries[i].key, map->entries[i].value, mine, used);
+		}
+	}
 	else if (SDL_strcmp(command, "apply") == 0)
 	{
 		actions->apply_render = true;

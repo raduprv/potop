@@ -60,8 +60,18 @@ static void update_snow_amount(world_t *world)
 
 // Settings the interface changes that are used outside the renderers' own
 // per frame reads
+void world_refresh_settings(world_t *world)
+{
+	if (world->player_settings != NULL)
+	{
+		settings_with_map(&world->map_effective_settings, world->player_settings, &world->map_settings);
+	}
+}
+
 void world_follow_settings(world_t *world)
 {
+	// (the player's settings, the map's on top: as they are now)
+	world_refresh_settings(world);
 	const render_settings_t *render = &world->settings->render;
 
 	world->objects.draw_distance_scale = SDL_max(world->settings->objects.draw_distance_scale, 0.01f);
@@ -126,6 +136,8 @@ void world_follow_settings(world_t *world)
 // textures and the shadow maps
 void world_apply_render_settings(world_t *world)
 {
+	// (the player's settings, the map's on top: as they are now)
+	world_refresh_settings(world);
 	materials_destroy(&world->renderer.materials);
 	if (!materials_load(&world->renderer.materials, &world->settings->render))
 	{
@@ -150,6 +162,8 @@ void world_regrow(world_t *world)
 
 void world_regrow_categories(world_t *world, uint32_t category_mask)
 {
+	// (the player's settings, the map's on top: as they are now)
+	world_refresh_settings(world);
 	objects_clear_spawned(&world->objects, category_mask);
 	// (the water as it stands now: the willows and reeds go by it)
 	water_gpu_sync(&world->water, &world->terrain);

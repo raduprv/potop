@@ -1139,6 +1139,8 @@ static float halton(uint32_t index, uint32_t base)
 
 void world_render(world_t *world, camera_t *camera, const world_render_options_t *options, int pixel_width, int pixel_height)
 {
+	// (the player's settings, the map's on top: as they are now)
+	world_refresh_settings(world);
 	// The temporal anti-aliasing: the buildings drawn a fraction of a pixel
 	// off (eight places in turn; prop_vertex.glsl), the rest as it is; the
 	// camera's view kept for the reprojection

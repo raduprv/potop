@@ -14,6 +14,9 @@ const console_command_t console_commands[] =
 	{ "list", "[part of a name]", "the settings and their values (those whose name has the part)" },
 	{ "get", "<setting>", "a setting's value (section.key, or the key alone where it is the only one)" },
 	{ "set", "<setting> <value>", "changes a setting, as settings.ini writes it (true/false, 1.5, 255, 128, 0)" },
+	{ "mapset", "<setting> <value>", "the map's own setting, saved with it: a switch it can only turn off, a cost only lower; the look as said" },
+	{ "mapunset", "<setting>", "takes the map's own setting away (the player's again)" },
+	{ "mapsettings", "", "the map's own settings, and what the world goes by for each" },
 	{ "apply", "", "rebuilds what waits for Apply in the render settings (texture sizes, shadow maps)" },
 	{ "where", "", "where the eye is and where it looks" },
 	{ "goto", "<x> <z> [height]", "goes to a point of the map (meters; on foot: stands there)" },
@@ -433,7 +436,9 @@ typedef struct
 static bool takes_setting(const char *command, size_t length)
 {
 	return (length == 3 && (SDL_strncmp(command, "set", 3) == 0 || SDL_strncmp(command, "get", 3) == 0))
-		|| (length == 4 && SDL_strncmp(command, "list", 4) == 0);
+		|| (length == 4 && SDL_strncmp(command, "list", 4) == 0)
+		|| (length == 6 && SDL_strncmp(command, "mapset", 6) == 0)
+		|| (length == 8 && SDL_strncmp(command, "mapunset", 8) == 0);
 }
 
 static size_t common_prefix(const char *a, const char *b)
