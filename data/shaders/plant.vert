@@ -114,15 +114,16 @@ vec3 wind_offset(float clock, vec3 position)
 
 		offset += shake * plant.y * size * plant_data.x * wind.z * (0.3 + 0.7 * gust);
 	}
-	// Its fruit with the leaves round it: each as one (all its vertices one
-	// number, the grower's), hanging on its stalk
+	// Its fruit with the leaves round it: each as one (all its vertices and
+	// its stalk's one number, the grower's), its stalk from still at the
+	// branch to as much as the fruit (along it)
 	else if (cut_out.w > 1.5 && plant.y > 0.0)
 	{
 		float fruit_phase = plant_data.z * 6.2831853 * 7.0 + own_phase;
 		vec3 shake = vec3(sin(clock * 11.0 + fruit_phase), 0.4 * sin(clock * 13.0 + fruit_phase * 1.3),
 			cos(clock * 9.0 + fruit_phase * 0.7));
 
-		offset += shake * plant.y * size * 0.6 * wind.z * (0.3 + 0.7 * gust);
+		offset += shake * plant.y * size * 0.6 * plant_data.x * wind.z * (0.3 + 0.7 * gust);
 	}
 	return offset;
 }

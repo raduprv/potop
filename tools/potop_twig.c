@@ -1784,8 +1784,10 @@ static void draw_berry_skin(canvas_t *canvas, random_t *random)
 				value = mixf(value, pale[k] * 0.95f, smooth_step(0.5f, 0.75f, marble) * 0.4f);
 				value = mixf(value, pale[k] * 1.1f, speck * 0.5f);
 				value = mixf(value, calyx_dark[k] * 2.0f, blemish * 0.7f);
-				// (the dimple at the stalk)
+				// (the dimple at the stalk; the very top row the stalk's
+				// own brown: the grower colors the stalk from it)
 				value = mixf(value, rim[k] * 0.6f, smooth_step(0.08f, 0.0f, v) * 0.7f);
+				value = mixf(value, calyx_light[k] * 0.9f, smooth_step(0.035f, 0.02f, v));
 				// (the crown)
 				value = mixf(value, mixf(calyx_dark[k], calyx_light[k], point * smooth_step(crown_edge, 1.0f, v) * 0.9f), crown);
 				pixel[k] = value;

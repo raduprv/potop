@@ -2548,8 +2548,13 @@ static void add_fruit_body(plant_t *plant, vec3 foot, vec3 axis, float length, f
 	float bow = plant->fruit_shape == FRUIT_POD ? 0.12f * length : 0.0f;
 	uint32_t first = (uint32_t)plant->mesh.vertex_count;
 
-	// (one number for all of it: it shakes in the wind as one, plant.vert)
-	plant->mesh.plant_random = hash_unit((uint32_t)plant->mesh.vertex_count * 2654435761u + 53u);
+	// (one number for all of it, its stalk's if it has one: it shakes in
+	// the wind as one, as much as its stalk's end, plant.vert)
+	if (plant->fruit_stalk <= 0.0f)
+	{
+		plant->mesh.plant_random = hash_unit((uint32_t)plant->mesh.vertex_count * 2654435761u + 53u);
+	}
+	plant->mesh.plant_along = 1.0f;
 
 	if (plant->fruit_shape == FRUIT_CARD)
 	{
@@ -2607,16 +2612,51 @@ static void add_fruit_body(plant_t *plant, vec3 foot, vec3 axis, float length, f
 }
 
 // A fruit's stalk: a thin bark tube from a point along a direction
-static void add_fruit_stalk(plant_t *plant, vec3 start, vec3 direction, float length, float radius)
+// A fruit's stalk: a thin tube from a point along a direction, the
+// fruit's own (its material: it shakes in the wind with the fruit, from
+// still at the branch to as much as the fruit at its end, plant.vert),
+// colored from the middle of the fruit picture's top (its stalk's end)
+static void add_fruit_stalk(plant_t *plant, vec3 start, vec3 direction, float length, float radius, const cell_place_t *place)
 {
-	branch_t stalk;
+	const int rings = 3;
+	const int sides = 4;
+	vec3 side = perpendicular(direction);
+	vec3 other = cross(direction, side);
+	float u = 0.5f * (place->uv[0] + place->uv[2]);
+	float row = place->uv[1] + 0.01f * (place->uv[3] - place->uv[1]);
+	uint32_t first = (uint32_t)plant->mesh.vertex_count;
+	float random_value = hash_unit((uint32_t)plant->mesh.vertex_count * 2654435761u + 53u);
 
-	uint8_t level = plant->mesh.bark_level;
+	for (int i = 0; i <= rings; i++)
+	{
+		float t = (float)i / (float)rings;
+		// (bending a little down at its end, under the fruit's weight)
+		vec3 center = add(start, add(scale(direction, length * t), v3(0.0f, -0.15f * length * t * t, 0.0f)));
 
-	trace_branch(&stalk, start, direction, length, radius, 0.7f, 0.0f, 0.0f, length / 3.0f);
-	plant->mesh.bark_level = BARK_LEVEL_STALK;
-	add_tube(plant, &stalk, 4, radius, MATERIAL_BARK);
-	plant->mesh.bark_level = level;
+		plant->mesh.plant_along = t;
+		plant->mesh.plant_random = random_value;
+		for (int k = 0; k <= sides; k++)
+		{
+			float angle = 2.0f * PI_F * (float)k / (float)sides;
+			vec3 out = add(scale(side, cosf(angle)), scale(other, sinf(angle)));
+
+			add_vertex(&plant->mesh, add(center, scale(out, radius * (1.0f - 0.3f * t))), out, direction, cross(out, direction), u, row);
+		}
+	}
+	for (int i = 0; i < rings; i++)
+	{
+		for (int k = 0; k < sides; k++)
+		{
+			uint32_t a = first + (uint32_t)(i * (sides + 1) + k);
+			uint32_t b = a + 1;
+			uint32_t c = a + (uint32_t)(sides + 1);
+			uint32_t d = c + 1;
+
+			add_triangle(&plant->mesh, MATERIAL_FRUIT, a, b, c);
+			add_triangle(&plant->mesh, MATERIAL_FRUIT, b, d, c);
+		}
+	}
+	plant->mesh.plant_along = 1.0f;
 }
 
 // How likely fruit grows at a point of the crown (--fruit-zone)
@@ -2686,8 +2726,8 @@ static void add_fruit_cluster(plant_t *plant, vec3 point, vec3 direction, float 
 		{
 			float stalk = plant->fruit_stalk * random_between(0.8f, 1.2f);
 
-			add_fruit_stalk(plant, foot, axis, stalk, fmaxf(0.0012f, 0.04f * width));
-			foot = add(foot, scale(axis, stalk));
+			add_fruit_stalk(plant, foot, axis, stalk, fmaxf(0.0012f, 0.04f * width), place);
+			foot = add(add(foot, scale(axis, stalk)), v3(0.0f, -0.15f * stalk, 0.0f));
 		}
 		add_fruit_body(plant, foot, axis, length, width, plant->fruit_hang == FRUIT_DOWN, place);
 		plant->fruits_grown++;
