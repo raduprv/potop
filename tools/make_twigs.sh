@@ -15,3 +15,6 @@ done
 for seed in 1 2 3; do
 	tools/potop_twig --width 512 --seed $seed spruce plant_plans/twigs/fir_$seed.png
 done
+for seed in 1 2 3; do
+	tools/potop_twig --width 512 --seed $seed juniper plant_plans/twigs/juniper_$seed.png
+done

@@ -432,6 +432,25 @@ static const plant_kind_t kinds[] =
 		.snow_sag = 0.020f,
 	},
 	{
+		// Taratoare (a creeping shrub: creeping juniper, cranberry, bearberry):
+		// many stems out of one middle lying flat on the ground, each its
+		// own way, long and wandering, hardly turning up; short side shoots
+		// out of them along the ground, their tips lifting a little;
+		// foliage all along: a mat a few meters across, ankle high.
+		// height_meters is the stems' length (the mat's reach out)
+		.name = "creeping", .shape = SHAPE_TREE, .atlas = "conifers", .height_meters = 2.2f, .stems = 11, .stem_lean_degrees = 84.0f,
+		.sprawl = true,
+		.levels = 2, .trunk_radius_ratio = 0.008f, .taper = 0.35f, .bend = 0.45f, .crown_start = 0.04f,
+		.children = { 16, 6, 0 }, .length_ratio = { 0.32f, 0.4f, 0.0f }, .down_degrees = { 70.0f, 55.0f, 0.0f },
+		.down_spread_degrees = 12.0f, .reach = { 0.0f, 0.0f, 0.0f }, .child_radius_ratio = 0.55f, .crown = CROWN_COLUMN,
+		.child_start = 0.06f, .leaves_per_branch = 6, .leaf_size = 0.25f,
+		.twig_scale = 1.1f, .side_twigs = 3.0f, .tip_twig = true, .twig_flat = 0.6f, .fruit_hang = FRUIT_UP, .fruit_zone = FRUIT_OUTER,
+		.droop = 0.02f, .tip_lift = 0.25f, .collar = 0.0f, .root_flare = 0.0f, .leaves_from = 0.05f,
+		.fork_height = 0.0f, .extra_stem_chance = 0.4f, .gnarl = 0.25f, .kinks = 0.15f, .lean_length = 0.92f, .straighten = 0.2f,
+		.moss = 0.00f, .tips = 0.50f, .autumn_colors = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } }, .autumn = 0.0f, .falls = false,
+		.snow_sag = 0.010f,
+	},
+	{
 		// Jneapan (mountain pine, Pinus mugo): many crooked stems out of
 		// the ground, lying out low and turning up, few branches, the
 		// needles in brushes at their ends: a low dome on the rocks
