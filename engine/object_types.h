@@ -90,6 +90,7 @@ typedef struct
 	float front_degrees;           // where the model's front (door, opening) points: 0 = +Z, 90 = +X
 	float draw_distance_meters;    // fades out (dithered) over the last part of this
 	float lod_distance_scale;      // its levels of detail that much farther off (times the settings' objects.lod_distance_scale; 1: as they are)
+	bool no_lod;                   // drawn whole at every distance till its impostor (no_lod = 1: a bush whose coarser levels look poor)
 	object_shadow_t shadow;
 	float footprint_meters;        // radius nothing else solid may grow in (0 = none)
 	// The grass round it (grass_mask.h): how far out from where it meets

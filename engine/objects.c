@@ -3443,7 +3443,20 @@ static bool upload_tables(objects_t *objects)
 			{
 				SDL_memcpy(&models[MODEL_FLOATS * m + 4], objects->impostors[m].sphere, sizeof(float) * 4);
 			}
-			models[MODEL_FLOATS * m + 8] = model->lods ? 1.0f : 0.0f;
+			// (a type of it with no_lod: whole at every distance, its levels
+			// not drawn; the largest say, as lod_distance_scale's)
+			bool whole = false;
+
+			for (int t = 0; t < objects->types.type_count; t++)
+			{
+				const object_type_t *type = &objects->types.types[t];
+
+				if (type->no_lod && (type->model == m || type->damaged_model == m || type->destroyed_model == m))
+				{
+					whole = true;
+				}
+			}
+			models[MODEL_FLOATS * m + 8] = model->lods && !whole ? 1.0f : 0.0f;
 			// Its levels (objects_cull.comp): a tree's by its height on
 			// screen (they leave out its finest branches); a prop's (meshes
 			// of their own, tools/potop_prop) by how far off each is: 2 and
@@ -3455,7 +3468,7 @@ static bool upload_tables(objects_t *objects)
 			models[MODEL_FLOATS * m + 9] = SDL_max(model->bounds_maximum.y - model->bounds_minimum.y, 1.6f * model->horizontal_radius);
 			for (int k = 0; k < model->material_count; k++)
 			{
-				if (model->materials[k].lod_meshes)
+				if (model->materials[k].lod_meshes && !whole)
 				{
 					models[MODEL_FLOATS * m + 8] = 2.0f;
 					SDL_memcpy(&models[MODEL_FLOATS * m + 9], model->lod_errors, sizeof(float) * 3);
@@ -3515,7 +3528,7 @@ static bool upload_tables(objects_t *objects)
 			models[MODEL_FLOATS * m + 23] = model->moss > 0.0f ? model->moss : BUILDING_MOSS;
 			// Each material at each of the model's levels of detail (one if it
 			// has none), of that level's count (level * model_count + m)
-			for (int level = 0; level < (model->lods ? LOD_LEVELS : 1); level++)
+			for (int level = 0; level < (model->lods && !whole ? LOD_LEVELS : 1); level++)
 			{
 				for (int k = 0; k < model->material_count; k++)
 				{
@@ -3540,7 +3553,7 @@ static bool upload_tables(objects_t *objects)
 					objects->draw_levels[objects->draw_count] = level;
 					// What the next level leaves out fades as it nears: the
 					// branches deeper than the ones it keeps (0: nothing)
-					objects->draw_drop_levels[objects->draw_count] = level < LOD_LEVELS - 1 && material->lods && !material->lod_meshes
+					objects->draw_drop_levels[objects->draw_count] = !whole && level < LOD_LEVELS - 1 && material->lods && !material->lod_meshes
 						&& !material->alpha_tested && material->lod_index_count[level] < index_count ? (float)material->lod_keep_level[level] : 0.0f;
 					objects->draw_count++;
 				}

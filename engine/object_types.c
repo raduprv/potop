@@ -240,6 +240,10 @@ static bool apply_key(object_types_t *types, object_type_t *type, bool in_defaul
 	{
 		return parse_float(value, &type->lod_distance_scale);
 	}
+	if (SDL_strcmp(key, "no_lod") == 0)
+	{
+		return ini_value_to_bool(value, &type->no_lod);
+	}
 	if (SDL_strcmp(key, "draw_distance_meters") == 0)
 	{
 		return parse_float(value, &type->draw_distance_meters);
