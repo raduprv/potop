@@ -48,7 +48,7 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform wind_block
 	vec4 wind;                     // xy: where it blows towards (x, z); z: how hard (0..1); w: time (seconds)
 	vec4 gusts;                    // x: 2 pi over the gusts' spacing (per meter); y: how fast they roll (m/s)
 	vec4 plant;                    // x: its top's lean in a gale (meters at size 1); y: its leaves' shaking (meters); z: its lowest point; w: its height
-	vec4 cut_out;                  // x: 1 for a cut out material (the leaves shake); y: the deepest branch level the next level of detail keeps (0: it keeps all); z: its stiffness (0..1)
+	vec4 cut_out;                  // x: 1 for a cut out material (the leaves shake); y: the deepest branch level the next level of detail keeps (0: it keeps all); z: its stiffness (0..1); w: 2 for its fruit (each shakes as one)
 	vec4 season;                   // plant.glsl
 	vec4 snow;                     // plant.glsl (z: how many month_cells; below 0: by the snow)
 	vec4 month_cells[PLANT_MONTH_CELLS];   // plant.glsl
@@ -113,6 +113,16 @@ vec3 wind_offset(float clock, vec3 position)
 			cos(clock * 9.0 + card_phase * 0.7));
 
 		offset += shake * plant.y * size * plant_data.x * wind.z * (0.3 + 0.7 * gust);
+	}
+	// Its fruit with the leaves round it: each as one (all its vertices one
+	// number, the grower's), hanging on its stalk
+	else if (cut_out.w > 1.5 && plant.y > 0.0)
+	{
+		float fruit_phase = plant_data.z * 6.2831853 * 7.0 + own_phase;
+		vec3 shake = vec3(sin(clock * 11.0 + fruit_phase), 0.4 * sin(clock * 13.0 + fruit_phase * 1.3),
+			cos(clock * 9.0 + fruit_phase * 0.7));
+
+		offset += shake * plant.y * size * 0.6 * wind.z * (0.3 + 0.7 * gust);
 	}
 	return offset;
 }

@@ -79,6 +79,7 @@ typedef struct
 	float moss;
 	float tips;
 	float sag;                     // how far its branches sag under the winter's snow (plant.glsl)
+	bool fruit;                    // a plant's fruit (its material named "fruit"): each shakes in the wind as one, as the leaves do
 	bool snow_cover;               // a plant's snow baked in (OBJECT_FILE_SNOW_MATERIAL): the snow lying on its boughs
 	float autumn_first_month;      // its autumn's months (1..12; object_format.h), and when its leaves come again
 	float autumn_last_month;

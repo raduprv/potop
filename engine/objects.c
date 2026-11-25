@@ -5529,7 +5529,8 @@ static int draw_models(const objects_t *objects, SDL_GPURenderPass *pass, bool a
 			// (a building's cut out details shift with its walls for the
 			// temporal anti-aliasing: else the walls move under them and they
 			// flicker where they lie close)
-			wind_uniforms[15] = building_detail(kind, model) ? 1.0f : 0.0f;
+			// (a plant's fruit: 2, each shaking as one, plant.vert)
+			wind_uniforms[15] = building_detail(kind, model) ? 1.0f : (material->fruit ? 2.0f : 0.0f);
 			// A conifer laden with snow (its foliage never falls: its
 			// snowy pictures, plant_month_cells) leans in the wind about half
 			// as far and hardly shakes: the snow is heavy and holds the

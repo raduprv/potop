@@ -2547,6 +2547,9 @@ static void add_fruit_body(plant_t *plant, vec3 foot, vec3 axis, float length, f
 	float bow = plant->fruit_shape == FRUIT_POD ? 0.12f * length : 0.0f;
 	uint32_t first = (uint32_t)plant->mesh.vertex_count;
 
+	// (one number for all of it: it shakes in the wind as one, plant.vert)
+	plant->mesh.plant_random = hash_unit((uint32_t)plant->mesh.vertex_count * 2654435761u + 53u);
+
 	if (plant->fruit_shape == FRUIT_CARD)
 	{
 		// The cards stand on the foot (foliage: lit as the leaves are); the

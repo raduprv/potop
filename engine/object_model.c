@@ -1332,6 +1332,7 @@ static bool load_pobj(object_model_t *model, const char *relative_path, object_t
 			material->tips = plant->tips;
 			material->sag = plant->sag;
 			material->snow_cover = snow_vertices != NULL && SDL_strncmp(source->name, OBJECT_FILE_SNOW_MATERIAL, sizeof(source->name)) == 0;
+			material->fruit = SDL_strncmp(source->name, "fruit", sizeof(source->name)) == 0;
 			material->autumn_first_month = plant->autumn_first_month;
 			material->autumn_last_month = plant->autumn_last_month;
 			material->leaves_month = plant->leaves_month;
