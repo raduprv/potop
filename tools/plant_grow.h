@@ -277,6 +277,7 @@ typedef struct
 	float twig_scale;                  // trees: a twig's length, of the branch it stands for
 	float twig_meters;                 // trees: a finest branch longer than this has twigs one after the other along it (0: one; -1: the kind's)
 	float twig_share;                  // trees with twigs and leaves: the share of the finest branches that are twigs (0.7)
+	float twig_size;                   // trees with twigs: every twig this long, meters, a little more or less (0: as long as the branch it stands for)
 	float branch_flat;                 // trees: branches out of lying ones only out to their sides, level (0: all round them; 1: flat)
 	float twig_gap;                    // trees with twigs: twigs added so no branch is bare longer than this (meters; 0: as grown)
 	bool curved_twigs;                 // trees (for now the fir only): each twig one card, arched across and drooping, instead of two crossed

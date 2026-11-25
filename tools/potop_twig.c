@@ -3032,7 +3032,7 @@ static void draw_juniper_spread(canvas_t *canvas, random_t *random, bool awl)
 	for (int n = shoots - 1; n >= 0; n--)
 	{
 		float t = node_t[n];
-		float shoot_length = random_range(random, 0.42f, 0.56f) * (1.0f - 0.45f * t);
+		float shoot_length = random_range(random, 0.36f, 0.47f) * (1.0f - 0.45f * t);
 		float spike = awl ? random_range(random, 0.6f, 0.8f) : 0.0f;
 		// (each shoot a little paler or greener, not much)
 		float bloom = random_range(random, 0.22f, 0.34f);
