@@ -273,9 +273,11 @@ typedef struct
 	int branches[PLANT_MAX_LEVELS];    // trees: branches out of the trunk, out of each of those...
 	int branch_levels;                 // how many of branches are given (0: the kind's)
 	float branch_length;               // trees: the trunk's branches this many times as long (0: 1)
+	float branch_lengths[PLANT_MAX_LEVELS]; // trees: those out of them ([1]), out of those ([2])... this many times as long, of their parent (0: 1; [0] unused)
 	float twig_scale;                  // trees: a twig's length, of the branch it stands for
 	float twig_meters;                 // trees: a finest branch longer than this has twigs one after the other along it (0: one; -1: the kind's)
 	float twig_share;                  // trees with twigs and leaves: the share of the finest branches that are twigs (0.7)
+	float twig_gap;                    // trees with twigs: twigs added so no branch is bare longer than this (meters; 0: as grown)
 	bool curved_twigs;                 // trees (for now the fir only): each twig one card, arched across and drooping, instead of two crossed
 	bool brushes;                      // trees (pines): each twig a spray of brushes in the round, its pictures one shoot side on, the head picture one end on
 	int brush_strips;                  // brushes: the narrow strips round each needle cone (10)

@@ -2126,6 +2126,7 @@ typedef struct
 	int cluster_minimum;
 	int cluster_maximum;
 	float fruit_per_branch;
+	float twig_gap;                     // trees with twigs: no bare stretch longer than this on a branch (meters; 0: any)
 	float fruit_bunch;                  // 0: a cluster's stalks from one point, fanned; above: packed on a short hanging stalk
 	float fruit_tip;                    // 0: fruit anywhere on a finest branch's outer part; 1: at its tip
 	int fruits_grown;
@@ -4146,6 +4147,46 @@ static void add_dead_branches(plant_t *plant, const branch_t *stem)
 	plant->mesh.bark_level = level;
 }
 
+// Twigs where a branch would be bare longer than twig_gap (--twig-gap):
+// along it from where its branches start (on a stem, where the crown
+// does), one wherever no branch of its own leaves it near, to either side
+// in turn; as long as its finest branches would be, at most a few gaps
+static void fill_bare(plant_t *plant, const branch_t *branch, int level, const float *child_t, int child_count, float twig_length)
+{
+	float first_t = level == 0 ? plant->stem_crown_start : plant->kind->child_start * 0.5f;
+	float step = plant->twig_gap / fmaxf(branch->length, 1e-3f);
+	float side_sign = random_unit() < 0.5f ? -1.0f : 1.0f;
+
+	if (first_t >= 0.97f)
+	{
+		return;
+	}
+	for (float t = first_t + step * random_between(0.3f, 0.7f); t < 0.97f; t += step * random_between(0.85f, 1.15f))
+	{
+		bool near_child = false;
+		vec3 point;
+		vec3 heading;
+		float radius;
+		vec3 out;
+
+		for (int i = 0; i < child_count; i++)
+		{
+			near_child = near_child || fabsf(child_t[i] - t) < step * 0.5f;
+		}
+		if (near_child)
+		{
+			continue;
+		}
+		branch_at(branch, t, &point, &heading, &radius);
+		out = cross(v3(0.0f, 1.0f, 0.0f), heading);
+		out = dot(out, out) > 1e-4f ? normalized(out) : perpendicular(heading);
+		out = scale(rotated(out, heading, random_between(-0.8f, 0.8f)), side_sign);
+		side_sign = -side_sign;
+		add_twig(plant, add(point, scale(out, radius)), normalized(add(out, scale(heading, 0.9f))),
+			fminf(twig_length, plant->twig_gap * 3.0f) * random_between(0.7f, 1.0f));
+	}
+}
+
 // trunk: a trunk's (level 0) lean, its part of the whole trunk, its flare
 static void grow(plant_t *plant, int level, vec3 start, vec3 direction, float length, float radius, const branch_shape_t *trunk)
 {
@@ -4250,6 +4291,17 @@ static void grow(plant_t *plant, int level, vec3 start, vec3 direction, float le
 	if (level > 0 && plant->twig_count > 0 && (kind->side_twigs > 0.0f || kind->tip_twig))
 	{
 		add_side_twigs(plant, &branch, length * kind->length_ratio[level]);
+	}
+	if (plant->twig_gap > 0.0f && plant->twig_count > 0)
+	{
+		// (as long as a finest branch out of here would be)
+		float twig_length = length;
+
+		for (int i = level; i < kind->levels && i < MAX_LEVELS; i++)
+		{
+			twig_length *= kind->length_ratio[i];
+		}
+		fill_bare(plant, &branch, level, child_t, count, twig_length);
 	}
 	// The branches out of this one
 	for (int i = 0; i < count; i++)
@@ -7266,9 +7318,33 @@ bool plant_recipe_load(plant_recipe_t *recipe, const char *path)
 				}
 			}
 		}
-		else if (strcmp(key, "branch_length") == 0) { recipe->branch_length = strtof(value, NULL); }
+		else if (strcmp(key, "branch_length") == 0)
+		{
+			// (the trunk's branches, then those out of them, ...: "0.8, 0.5")
+			char *cursor = value;
+
+			recipe->branch_length = strtof(cursor, &cursor);
+			for (int level = 1; level < PLANT_MAX_LEVELS; level++)
+			{
+				char *after;
+				float number;
+
+				while (*cursor == ',' || *cursor == ' ')
+				{
+					cursor++;
+				}
+				number = strtof(cursor, &after);
+				if (after == cursor)
+				{
+					break;
+				}
+				recipe->branch_lengths[level] = number;
+				cursor = after;
+			}
+		}
 		else if (strcmp(key, "twig_scale") == 0) { recipe->twig_scale = strtof(value, NULL); }
 		else if (strcmp(key, "twig_share") == 0) { recipe->twig_share = strtof(value, NULL); }
+		else if (strcmp(key, "twig_gap") == 0) { recipe->twig_gap = strtof(value, NULL); }
 		else if (strcmp(key, "loose_leaves") == 0) { recipe->loose_leaves = strtof(value, NULL); }
 		else if (strcmp(key, "fruit_shape") == 0)
 		{
@@ -7451,8 +7527,26 @@ bool plant_recipe_save(const plant_recipe_t *recipe, const char *path)
 	{
 		fprintf(file, "%s %d", i > 0 ? "," : "", recipe->branches[i]);
 	}
-	fprintf(file, "\nbranch_length = %g\ntwig_scale = %g\ntwig_share = %g\nloose_leaves = %g\n", (double)recipe->branch_length,
-		(double)recipe->twig_scale, (double)recipe->twig_share, (double)recipe->loose_leaves);
+	{
+		// (the other levels only if any is given)
+		int last = 0;
+
+		for (int level = 1; level < PLANT_MAX_LEVELS; level++)
+		{
+			last = recipe->branch_lengths[level] > 0.0f ? level : last;
+		}
+		fprintf(file, "\nbranch_length = %g", (double)recipe->branch_length);
+		for (int level = 1; level <= last; level++)
+		{
+			fprintf(file, ", %g", (double)(recipe->branch_lengths[level] > 0.0f ? recipe->branch_lengths[level] : 1.0f));
+		}
+	}
+	fprintf(file, "\ntwig_scale = %g\ntwig_share = %g\nloose_leaves = %g\n", (double)recipe->twig_scale, (double)recipe->twig_share,
+		(double)recipe->loose_leaves);
+	if (recipe->twig_gap > 0.0f)
+	{
+		fprintf(file, "twig_gap = %g\n", (double)recipe->twig_gap);
+	}
 	fprintf(file, "crown_start = %g\nleaves_from = %g\ndroop = %g\ntip_lift = %g\ncollar = %g\nroot_flare = %g\n",
 		(double)recipe->crown_start, (double)recipe->leaves_from, (double)recipe->droop, (double)recipe->tip_lift, (double)recipe->collar,
 		(double)recipe->root_flare);
@@ -7770,6 +7864,13 @@ bool plant_grow(const plant_recipe_t *recipe, const plant_atlas_t *atlas, plant_
 	{
 		kind.length_ratio[0] *= fminf(recipe->branch_length, 4.0f);
 	}
+	for (int level = 1; level < PLANT_MAX_LEVELS && level < MAX_LEVELS; level++)
+	{
+		if (recipe->branch_lengths[level] > 0.0f)
+		{
+			kind.length_ratio[level] *= fminf(recipe->branch_lengths[level], 4.0f);
+		}
+	}
 	if (recipe->twig_meters >= 0.0f)
 	{
 		kind.twig_meters = fminf(recipe->twig_meters, 10.0f);
@@ -7913,6 +8014,7 @@ bool plant_grow(const plant_recipe_t *recipe, const plant_atlas_t *atlas, plant_
 	plant.wind_side = kind.wind_side;
 	plant.bark_meters = fmaxf(recipe->bark_meters, 0.05f);
 	plant.twig_share = fminf(fmaxf(recipe->twig_share, 0.0f), 1.0f);
+	plant.twig_gap = recipe->twig_gap > 0.0f ? fmaxf(recipe->twig_gap, 0.02f) : 0.0f;
 	plant.loose_leaves = fminf(fmaxf(recipe->loose_leaves, 0.0f), 100.0f);
 	plant.fruit_shape = recipe->fruit_shape >= PLANT_FRUIT_SPHERE && recipe->fruit_shape <= PLANT_FRUIT_CARD ? recipe->fruit_shape
 		: PLANT_FRUIT_SPHERE;

@@ -1204,9 +1204,19 @@ static void panel(editor_t *editor)
 			}
 			nk_property_float(context, "Branch length (times)", 0.2f, &length, 4.0f, 0.05f, 0.01f);
 			recipe->branch_length = length != 1.0f ? length : 0.0f;
+			for (int level = 1; level < levels && level < PLANT_MAX_LEVELS; level++)
+			{
+				float level_length = recipe->branch_lengths[level] > 0.0f ? recipe->branch_lengths[level] : 1.0f;
+				char name[64];
+
+				snprintf(name, sizeof(name), "Level %d length (times)", level + 1);
+				nk_property_float(context, name, 0.2f, &level_length, 4.0f, 0.05f, 0.01f);
+				recipe->branch_lengths[level] = level_length != 1.0f ? level_length : 0.0f;
+			}
 			float_setting(context, "Twig scale", &recipe->twig_scale, plant_kind_twig_scale(kind), 0.2f, 5.0f, 0.05f);
 			kind_setting(context, "Twigs in a row past (m; 0: one)", &recipe->twig_meters, plant_kind_twig_meters(kind), 0.0f, 5.0f, 0.05f, 1.0f);
 			nk_property_float(context, "Twig share (with leaves)", 0.0f, &recipe->twig_share, 1.0f, 0.05f, 0.01f);
+			nk_property_float(context, "Longest bare stretch (m; 0: any)", 0.0f, &recipe->twig_gap, 2.0f, 0.01f, 0.005f);
 			{
 				// (a test: the fir's alone, for now)
 				nk_bool curved = recipe->curved_twigs ? nk_true : nk_false;
@@ -1281,6 +1291,7 @@ static void panel(editor_t *editor)
 			recipe->leaves_per_branch = -1;
 			recipe->branch_levels = 0;
 			recipe->branch_length = 0.0f;
+			memset(recipe->branch_lengths, 0, sizeof(recipe->branch_lengths));
 			recipe->twig_scale = 0.0f;
 			recipe->crown_start = -1.0f;
 			recipe->leaves_from = -1.0f;
