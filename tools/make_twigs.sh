@@ -21,3 +21,9 @@ done
 for seed in 1 2 3; do
 	tools/potop_twig --width 512 --seed $seed cranberry plant_plans/twigs/cranberry_$seed.png
 done
+for seed in 1 2 3; do
+	tools/potop_twig --width 512 --seed $seed cranberry_leaves plant_plans/twigs/cranberry_leaves_$seed.png
+done
+for seed in 1 2; do
+	tools/potop_twig --width 256 --seed $seed berry_skin plant_plans/twigs/berry_skin_$seed.png
+done

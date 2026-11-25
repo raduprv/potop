@@ -1717,6 +1717,84 @@ static void draw_berry(canvas_t *canvas, float cx, float cy, float radius, float
 	}
 }
 
+// A berry's skin for the plant grower's round fruit (fruit_shape =
+// sphere): the picture wraps round it, its top at the stalk, its bottom at
+// the foot. The whole picture skin: red, marbled paler and pinker, fine
+// pale dots, now and then a blemish; darker towards the stalk (a dimple at
+// the very top) and at the foot the dry flower's crown, five brown points
+// in from the bottom edge; across, it tiles (the left edge meets the right)
+static void draw_berry_skin(canvas_t *canvas, random_t *random)
+{
+	const float color[3] = { 0.86f, 0.22f, 0.22f };
+	const float rim[3] = { 0.58f, 0.08f, 0.15f };
+	const float pale[3] = { 0.96f, 0.50f, 0.48f };
+	const float calyx_dark[3] = { 0.14f, 0.07f, 0.04f };
+	const float calyx_light[3] = { 0.42f, 0.28f, 0.16f };
+	float seed = random_range(random, 0.0f, 100.0f);
+	float pale_u = random_float(random);
+	float pale_share = random_range(random, 0.25f, 0.6f);
+	float crown_turn = random_range(random, 0.0f, 1.0f);
+	int width = canvas->width;
+	int height = canvas->height;
+
+	for (int y = 0; y < height; y++)
+	{
+		for (int x = 0; x < width; x++)
+		{
+			float u = ((float)x + 0.5f) / (float)width;
+			float v = ((float)y + 0.5f) / (float)height;
+			// (round it: the noise on a circle, so it tiles across)
+			float ring_x = cosf(u * 2.0f * PI_F);
+			float ring_y = sinf(u * 2.0f * PI_F);
+			float marble = fractal_noise(ring_x * 2.2f + seed, ring_y * 2.2f + v * 5.0f, 4);
+			float broad = fractal_noise(ring_x * 0.9f + seed * 2.0f, ring_y * 0.9f + v * 1.6f, 3);
+			float pale_here = pale_share * clampf(1.0f - fabsf(remainderf(u - pale_u, 1.0f)) / 0.35f, 0.0f, 1.0f)
+				* clampf(1.0f - fabsf(v - 0.5f) / 0.45f, 0.0f, 1.0f);
+			float point = powf(fabsf(cosf((u + crown_turn) * 5.0f * PI_F)), 3.0f);
+			float crown_edge = 1.0f - (0.06f + 0.1f * point);
+			float crown = smooth_step(crown_edge - 0.008f, crown_edge + 0.008f, v);
+			float speck = 0.0f;
+			float blemish = 0.0f;
+			float *pixel = &canvas->pixels[((size_t)y * (size_t)width + (size_t)x) * 4];
+
+			{
+				// (dots in a grid that tiles across)
+				const int cells_across = 28;
+				float gx = u * (float)cells_across;
+				float gy = v * (float)cells_across * 0.5f;
+				int cell_x = (int)floorf(gx);
+				int cell_y = (int)floorf(gy);
+				int wrapped = cell_x % cells_across;
+				float dot_x = (float)cell_x + 0.2f + 0.6f * hash_unit(wrapped * 7 + 3, cell_y);
+				float dot_y = (float)cell_y + 0.2f + 0.6f * hash_unit(cell_y * 5, wrapped + 9);
+				float dot = sqrtf((gx - dot_x) * (gx - dot_x) * 2.0f + (gy - dot_y) * (gy - dot_y));
+				float which = hash_unit(wrapped * 3 + 1, cell_y * 3 + 11);
+
+				speck = which < 0.5f ? clampf(1.0f - dot / 0.15f, 0.0f, 1.0f) : 0.0f;
+				blemish = which > 0.985f ? clampf(1.0f - dot / 0.25f, 0.0f, 1.0f) : 0.0f;
+			}
+			for (int k = 0; k < 3; k++)
+			{
+				float value = mixf(color[k], rim[k], smooth_step(0.4f, 0.7f, broad) * 0.6f);
+
+				value = mixf(value, rim[k] * 0.85f, smooth_step(0.35f, 0.0f, v) * 0.45f);
+				value = mixf(value, rim[k], smooth_step(0.75f, 0.95f, v) * 0.3f);
+				value *= 1.0f + (marble - 0.5f) * 0.2f;
+				value = mixf(value, pale[k], pale_here);
+				value = mixf(value, pale[k] * 0.95f, smooth_step(0.5f, 0.75f, marble) * 0.4f);
+				value = mixf(value, pale[k] * 1.1f, speck * 0.5f);
+				value = mixf(value, calyx_dark[k] * 2.0f, blemish * 0.7f);
+				// (the dimple at the stalk)
+				value = mixf(value, rim[k] * 0.6f, smooth_step(0.08f, 0.0f, v) * 0.7f);
+				// (the crown)
+				value = mixf(value, mixf(calyx_dark[k], calyx_light[k], point * smooth_step(crown_edge, 1.0f, v) * 0.9f), crown);
+				pixel[k] = value;
+			}
+			pixel[3] = 1.0f;
+		}
+	}
+}
+
 // A point on a quadratic curve, and its heading (radians, 0 up)
 static void quadratic_at(float ax, float ay, float cx, float cy, float bx, float by, float t, float *x, float *y, float *heading)
 {
@@ -1758,7 +1836,7 @@ static void draw_shoot_leaves(canvas_t *canvas, random_t *random, float ax, floa
 	}
 }
 
-static void draw_cranberry(canvas_t *canvas, random_t *random)
+static void draw_cranberry(canvas_t *canvas, random_t *random, bool with_berries)
 {
 	// (lingonberry's: dark glossy green, a pale midrib, the rim rolled
 	// under darker; the young leaves lighter, yellower)
@@ -1862,7 +1940,7 @@ static void draw_cranberry(canvas_t *canvas, random_t *random)
 	draw_shoot_leaves(canvas, random, mx, my, (mx + bx) * 0.5f + (cx - 0.5f) * 0.4f, (my + by) * 0.5f, bx, by, 0.02f, 19, 0.24f, &leaf);
 	// The berries: two or three hanging off a short stalk out of the stem,
 	// on the side away from the shoot
-	if (random_float(random) < 0.85f)
+	if (random_float(random) < 0.85f && with_berries)
 	{
 		// (anywhere from low on the young shoot to near its tip)
 		float t = random_range(random, 0.08f, 0.72f);
@@ -2471,12 +2549,12 @@ int main(int argument_count, char **arguments)
 	}
 	if (kind == NULL || path == NULL || width < 16 || width > 4096)
 	{
-		fprintf(stderr, "Usage: potop_twig [--width W] [--seed N] pine|pine_brush|pine_rosette|pine_needles|spruce|juniper|cranberry|fern|fern_lobed OUT.png\n");
+		fprintf(stderr, "Usage: potop_twig [--width W] [--seed N] pine|pine_brush|pine_rosette|pine_needles|spruce|juniper|cranberry|cranberry_leaves|berry_skin|fern|fern_lobed OUT.png\n");
 		return 1;
 	}
 	// (as tall as the kind's twig is: the pine's branch tip square,
 	// the juniper's twig twice as tall as wide)
-	canvas.tall = strcmp(kind, "pine") == 0 ? 1.75f : (strcmp(kind, "pine_needles") == 0 ? 4.5f : 2.0f);
+	canvas.tall = strcmp(kind, "pine") == 0 ? 1.75f : (strcmp(kind, "pine_needles") == 0 ? 4.5f : (strcmp(kind, "berry_skin") == 0 ? 0.5f : 2.0f));
 	canvas.width = width * SUPERSAMPLE;
 	canvas.height = (int)lroundf((float)width * canvas.tall) * SUPERSAMPLE;
 	canvas.scale = (float)canvas.width;
@@ -2514,9 +2592,13 @@ int main(int argument_count, char **arguments)
 	{
 		draw_spruce(&canvas, &random);
 	}
-	else if (strcmp(kind, "cranberry") == 0)
+	else if (strcmp(kind, "cranberry") == 0 || strcmp(kind, "cranberry_leaves") == 0)
 	{
-		draw_cranberry(&canvas, &random);
+		draw_cranberry(&canvas, &random, strcmp(kind, "cranberry") == 0);
+	}
+	else if (strcmp(kind, "berry_skin") == 0)
+	{
+		draw_berry_skin(&canvas, &random);
 	}
 	else if (strcmp(kind, "fern") == 0)
 	{
@@ -2528,11 +2610,11 @@ int main(int argument_count, char **arguments)
 	}
 	else
 	{
-		fprintf(stderr, "potop_twig: no kind '%s' (pine, pine_brush, pine_rosette, pine_needles, spruce, juniper, cranberry, fern, fern_lobed)\n", kind);
+		fprintf(stderr, "potop_twig: no kind '%s' (pine, pine_brush, pine_rosette, pine_needles, spruce, juniper, cranberry, cranberry_leaves, berry_skin, fern, fern_lobed)\n", kind);
 		free(canvas.pixels);
 		return 1;
 	}
-	if (!finish(&canvas, width, canvas.height / SUPERSAMPLE, path, strcmp(kind, "spruce") == 0 || strcmp(kind, "cranberry") == 0 ? 2.0f : 0.0f))
+	if (!finish(&canvas, width, canvas.height / SUPERSAMPLE, path, strcmp(kind, "spruce") == 0 || strcmp(kind, "cranberry") == 0 || strcmp(kind, "cranberry_leaves") == 0 ? 2.0f : 0.0f))
 	{
 		fprintf(stderr, "potop_twig: could not write %s\n", path);
 		free(canvas.pixels);
