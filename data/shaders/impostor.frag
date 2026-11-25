@@ -175,9 +175,13 @@ void main()
 	vec4 shadow_position = light_view_projection * vec4(shadow_point, 1.0);
 	vec4 near_shadow_position = near_light_view_projection * vec4(shadow_point, 1.0);
 	// (leaves as plant.frag has them: the far map alone, a shadow taking
-	// 70% of the sun, not all)
-	float shadowed = mix(sun_visibility(shadow_position, near_shadow_position), mix(1.0, sun_visibility_far(shadow_position), 0.7), leaf)
-		* cloud_light(position, sun_direction);
+	// 70% of the sun, not all. A plant's wood too: the near map's sharp
+	// shadows of its real twigs fell blotched on the pictures' rough
+	// depth, as they never fall on the plant itself, its leaves going by
+	// the far map: a bush near enough for the near map, not yet for its
+	// model, looked wrong between the two)
+	float sun_seen = plant ? sun_visibility_far(shadow_position) : sun_visibility(shadow_position, near_shadow_position);
+	float shadowed = mix(sun_seen, mix(1.0, sun_visibility_far(shadow_position), 0.7), leaf) * cloud_light(position, sun_direction);
 	// The sun through the leaves, seen against it (plant.frag's), yellower
 	// than what it lights
 	float through = pow(max(dot(-normalize(eye_position - position), sun_direction), 0.0), 3.0) * 0.45 * leaf;
