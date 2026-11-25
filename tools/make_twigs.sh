@@ -27,3 +27,9 @@ done
 for seed in 1 2; do
 	tools/potop_twig --width 256 --seed $seed berry_skin plant_plans/twigs/berry_skin_$seed.png
 done
+for seed in 1 2 3; do
+	tools/potop_twig --width 512 --seed $seed blueberry_leaves plant_plans/twigs/blueberry_leaves_$seed.png
+done
+for seed in 1 2; do
+	tools/potop_twig --width 256 --seed $seed blueberry_skin plant_plans/twigs/blueberry_skin_$seed.png
+done
