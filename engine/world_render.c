@@ -844,7 +844,15 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 		// (what was drawn the frame before hides the blades behind it, as
 		// it hides the objects: objects occlusion off, neither)
 		grass_world.occlusion = world->objects.no_terrain_occlusion ? NULL : world->objects.occlusion;
-		grass_prepare(&world->grass, camera, &world->lit_render, &world->settings->objects, &grass_world);
+		// (the editor's grass layer hidden: not made either, not only not drawn)
+		if (!world->grass_hidden)
+		{
+			grass_prepare(&world->grass, camera, &world->lit_render, &world->settings->objects, &grass_world);
+		}
+		else
+		{
+			world->grass.prepared = false;
+		}
 		trace_mark("grass");
 		terrain_renderer_prepare_draw(&world->renderer, &world->terrain, camera, &world->lit_render);
 		water_renderer_prepare(&world->water_renderer, &world->water, &world->terrain, camera, &world->lit_render);
