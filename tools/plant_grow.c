@@ -206,6 +206,10 @@ typedef struct
 	// The trunk kept straight the way it set out (0: it wanders with bend
 	// and gnarl; 1: straight, a conifer's)
 	float trunk_upright;
+	// The light's middle (crown_normal: the foliage's normals out from it)
+	// this many times the height below the crown's foot, in the middle: a
+	// mat on the ground lit from above, not out to its sides (0: as is)
+	float light_from_below;
 	// Stems grown together: one trunk up to fork_height (of the height),
 	// then stems parting (0: apart from the ground); one stem more than
 	// stems by this chance (by the seed)
@@ -446,7 +450,7 @@ static const plant_kind_t kinds[] =
 		.child_start = 0.06f, .leaves_per_branch = 6, .leaf_size = 0.25f,
 		.twig_scale = 1.1f, .side_twigs = 3.0f, .tip_twig = true, .twig_flat = 0.6f, .fruit_hang = FRUIT_UP, .fruit_zone = FRUIT_OUTER,
 		.droop = 0.02f, .tip_lift = 0.25f, .collar = 0.0f, .root_flare = 0.0f, .leaves_from = 0.05f,
-		.fork_height = 0.0f, .extra_stem_chance = 0.4f, .gnarl = 0.25f, .kinks = 0.15f, .lean_length = 0.92f, .straighten = 0.2f,
+		.fork_height = 0.0f, .extra_stem_chance = 0.4f, .gnarl = 0.25f, .kinks = 0.15f, .lean_length = 0.92f, .straighten = 0.2f, .light_from_below = 1.5f,
 		.moss = 0.00f, .tips = 0.50f, .autumn_colors = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } }, .autumn = 0.0f, .falls = false,
 		.snow_sag = 0.010f,
 	},
@@ -4067,6 +4071,11 @@ static void grow(plant_t *plant, int level, vec3 start, vec3 direction, float le
 		float unused;
 
 		branch_at(&branch, fminf(plant->stem_crown_start, 1.0f), &plant->crown_center, &heading, &unused);
+		if (plant->kind->light_from_below > 0.0f)
+		{
+			// (a mat: from under its middle, so its normals mostly up)
+			plant->crown_center = v3(0.0f, plant->crown_center.y - plant->kind->light_from_below * plant->height, 0.0f);
+		}
 		plant->crown_center_set = true;
 	}
 	if (finest)
@@ -6799,6 +6808,7 @@ float plant_kind_crown_start(int kind) { return kind_at(kind)->crown_start; }
 float plant_kind_leaves_from(int kind) { return kind_at(kind)->leaves_from; }
 float plant_kind_dead_branches(int kind) { return kind_at(kind)->dead_branches; }
 float plant_kind_trunk_upright(int kind) { return kind_at(kind)->trunk_upright; }
+float plant_kind_light_from_below(int kind) { return kind_at(kind)->light_from_below; }
 float plant_kind_droop(int kind) { return kind_at(kind)->droop; }
 float plant_kind_trunk_thickness(int kind) { return kind_at(kind)->trunk_radius_ratio; }
 float plant_kind_trunk_taper(int kind) { return kind_at(kind)->trunk_taper > 0.0f ? kind_at(kind)->trunk_taper : kind_at(kind)->taper; }
@@ -6876,6 +6886,7 @@ void plant_recipe_defaults(plant_recipe_t *recipe)
 	recipe->leaves_from = -1.0f;
 	recipe->dead_branches = -1.0f;
 	recipe->trunk_upright = -1.0f;
+	recipe->light_from_below = -1.0f;
 	recipe->droop = -1.0f;
 	recipe->trunk_thickness = -1.0f;
 	recipe->trunk_taper = -1.0f;
@@ -7128,6 +7139,7 @@ bool plant_recipe_load(plant_recipe_t *recipe, const char *path)
 		else if (strcmp(key, "leaves_from") == 0) { recipe->leaves_from = strtof(value, NULL); }
 		else if (strcmp(key, "dead_branches") == 0) { recipe->dead_branches = strtof(value, NULL); }
 		else if (strcmp(key, "trunk_upright") == 0) { recipe->trunk_upright = strtof(value, NULL); }
+		else if (strcmp(key, "light_from_below") == 0) { recipe->light_from_below = strtof(value, NULL); }
 		else if (strcmp(key, "droop") == 0) { recipe->droop = strtof(value, NULL); }
 		else if (strcmp(key, "trunk_thickness") == 0) { recipe->trunk_thickness = strtof(value, NULL); }
 		else if (strcmp(key, "trunk_taper") == 0) { recipe->trunk_taper = strtof(value, NULL); }
@@ -7287,7 +7299,8 @@ bool plant_recipe_save(const plant_recipe_t *recipe, const char *path)
 	fprintf(file, "curved_twigs = %d\n", recipe->curved_twigs ? 1 : 0);
 	fprintf(file, "brushes = %d\n", recipe->brushes ? 1 : 0);
 	fprintf(file, "brush_strips = %d\nbrush_spacing = %g\n", recipe->brush_strips, (double)recipe->brush_spacing);
-	fprintf(file, "dead_branches = %g\ntrunk_upright = %g\n", (double)recipe->dead_branches, (double)recipe->trunk_upright);
+	fprintf(file, "dead_branches = %g\ntrunk_upright = %g\nlight_from_below = %g\n", (double)recipe->dead_branches, (double)recipe->trunk_upright,
+		(double)recipe->light_from_below);
 	fprintf(file, "snow_bake = %d\n", recipe->snow_bake ? 1 : 0);
 	fprintf(file, "trunk_thickness = %g\ntrunk_taper = %g\nbranch_thickness = %g\nbranch_taper = %g\nthinnest_branch = %g\n",
 		(double)recipe->trunk_thickness, (double)recipe->trunk_taper, (double)recipe->branch_thickness, (double)recipe->branch_taper,
@@ -7612,6 +7625,10 @@ bool plant_grow(const plant_recipe_t *recipe, const plant_atlas_t *atlas, plant_
 	if (recipe->crown_start >= 0.0f)
 	{
 		kind.crown_start = fminf(recipe->crown_start, 0.95f);
+	}
+	if (recipe->light_from_below >= 0.0f)
+	{
+		kind.light_from_below = fminf(recipe->light_from_below, 10.0f);
 	}
 	if (recipe->trunk_upright >= 0.0f)
 	{

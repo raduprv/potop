@@ -1265,6 +1265,7 @@ static void panel(editor_t *editor)
 			kind_setting(context, "One stem more (% chance)", &recipe->extra_stem_chance, plant_kind_extra_stem_chance(kind), 0.0f, 1.0f, 0.01f,
 				100.0f);
 			kind_setting(context, "Trunk upright (straight)", &recipe->trunk_upright, plant_kind_trunk_upright(kind), 0.0f, 3.0f, 0.05f, 1.0f);
+			kind_setting(context, "Lit from below the middle (mats)", &recipe->light_from_below, plant_kind_light_from_below(kind), 0.0f, 10.0f, 0.05f, 1.0f);
 			kind_setting(context, "Gnarl", &recipe->gnarl, plant_kind_gnarl(kind), 0.0f, 3.0f, 0.05f, 1.0f);
 			kind_setting(context, "Kinks", &recipe->kinks, plant_kind_kinks(kind), 0.0f, 2.0f, 0.05f, 1.0f);
 			kind_setting(context, "Wind: lean (degrees)", &recipe->lean_degrees, plant_kind_lean_degrees(kind), 0.0f, 88.0f, 1.0f, 1.0f);
@@ -1285,6 +1286,7 @@ static void panel(editor_t *editor)
 			recipe->leaves_from = -1.0f;
 			recipe->dead_branches = -1.0f;
 			recipe->trunk_upright = -1.0f;
+			recipe->light_from_below = -1.0f;
 			recipe->droop = -1.0f;
 			recipe->trunk_thickness = -1.0f;
 			recipe->trunk_taper = -1.0f;

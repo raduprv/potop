@@ -296,6 +296,7 @@ typedef struct
 	float leaves_from;                 // foliage only above this much of the height (0: all the way down)
 	float dead_branches;               // dead bare branches on a stem under the crown (below 0: the kind's)
 	float trunk_upright;               // the trunk kept straight the way it set out (0 wanders .. 1 straight; below 0: the kind's)
+	float light_from_below;            // the foliage's normals out from this many heights under the crown's foot (a mat lit from above; below 0: the kind's)
 	float droop;                       // how far the branches bend down under their weight
 	float tip_lift;                    // how far their tips turn up again
 	float collar;                      // how much a branch's foot swells where it joins (of its radius)
@@ -393,6 +394,7 @@ float plant_kind_crown_start(int kind);
 float plant_kind_leaves_from(int kind);
 float plant_kind_dead_branches(int kind);
 float plant_kind_trunk_upright(int kind);
+float plant_kind_light_from_below(int kind);
 float plant_kind_droop(int kind);
 float plant_kind_trunk_thickness(int kind);
 float plant_kind_trunk_taper(int kind);
