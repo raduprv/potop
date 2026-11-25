@@ -1862,7 +1862,8 @@ static void draw_cranberry(canvas_t *canvas, random_t *random, bool with_berries
 	float by = 0.18f;
 	float cx = 0.5f + random_range(random, -0.12f, 0.12f);
 	float cy = (ay + by) * 0.5f;
-	float wood_t = random_range(random, 0.2f, 0.26f);
+	// (the leaves-only twig, on its plant's own branches: leafy from its foot)
+	float wood_t = with_berries ? random_range(random, 0.2f, 0.26f) : random_range(random, 0.03f, 0.05f);
 	float mx;
 	float my;
 	float heading;
