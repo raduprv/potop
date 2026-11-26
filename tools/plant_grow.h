@@ -282,6 +282,7 @@ typedef struct
 	float twig_size;                   // trees with twigs: every twig this long, meters, a little more or less (0: as long as the branch it stands for)
 	float branch_flat;                 // trees: branches out of lying ones only out to their sides, level (0: all round them; 1: flat)
 	float twig_gap;                    // trees with twigs: twigs added so no branch is bare longer than this (meters; 0: as grown)
+	bool no_top_leader;                // trees: the trunk ends at its top, no leading branch on out of it
 	bool curved_twigs;                 // trees (for now the fir only): each twig one card, arched across and drooping, instead of two crossed
 	bool brushes;                      // trees (pines): each twig a spray of brushes in the round, its pictures one shoot side on, the head picture one end on
 	int brush_strips;                  // brushes: the narrow strips round each needle cone (10)

@@ -2160,6 +2160,7 @@ typedef struct
 	int cluster_minimum;
 	int cluster_maximum;
 	float fruit_per_branch;
+	bool no_top_leader;                 // the trunk ends at its top (--top-leader 0)
 	float twig_arch;                    // curved twigs: their sides bent down this much of their width (0: a little)
 	float twig_density;                 // trees with twigs: twigs a meter along the branches (0: the kind's)
 	float twig_size;                    // trees with twigs: every twig this long, meters (0: as long as the branch it stands for)
@@ -4633,7 +4634,7 @@ static void grow(plant_t *plant, int level, vec3 start, vec3 direction, float le
 	// The trunk's top not cut off: it goes on as a branch, as thick as it
 	// is there, tapering on and branching as its branches do (a stem only
 	// up to a fork has none: the stems go on from it)
-	if (level == 0 && !finest && kind->levels > 0 && !(shape.u1 > 0.0f && shape.u1 < 0.999f))
+	if (level == 0 && !finest && kind->levels > 0 && !plant->no_top_leader && !(shape.u1 > 0.0f && shape.u1 < 0.999f))
 	{
 		vec3 end = branch.points[branch.count - 1];
 		vec3 way = branch.directions[branch.count - 1];
@@ -7514,6 +7515,7 @@ void plant_recipe_defaults(plant_recipe_t *recipe)
 	recipe->leaves_per_branch = -1;
 	recipe->twig_share = 0.7f;
 	recipe->curved_twigs = false;
+	recipe->no_top_leader = false;
 	recipe->brushes = false;
 	recipe->brush_strips = 10;
 	recipe->brush_spacing = 0.5f;
@@ -7837,6 +7839,7 @@ bool plant_recipe_load(plant_recipe_t *recipe, const char *path)
 		else if (strcmp(key, "stems") == 0) { recipe->stems = atoi(value); }
 		else if (strcmp(key, "twig_length") == 0) { recipe->twig_meters = strtof(value, NULL); }
 		else if (strcmp(key, "curved_twigs") == 0) { recipe->curved_twigs = atoi(value) != 0; }
+		else if (strcmp(key, "top_leader") == 0) { recipe->no_top_leader = atoi(value) == 0; }
 		else if (strcmp(key, "brushes") == 0) { recipe->brushes = atoi(value) != 0; }
 		else if (strcmp(key, "brush_strips") == 0) { recipe->brush_strips = atoi(value); }
 		else if (strcmp(key, "brush_spacing") == 0) { recipe->brush_spacing = strtof(value, NULL); }
@@ -8012,6 +8015,7 @@ bool plant_recipe_save(const plant_recipe_t *recipe, const char *path)
 		(double)recipe->root_flare);
 	fprintf(file, "twig_length = %g\n", (double)recipe->twig_meters);
 	fprintf(file, "curved_twigs = %d\n", recipe->curved_twigs ? 1 : 0);
+	fprintf(file, "top_leader = %d\n", recipe->no_top_leader ? 0 : 1);
 	fprintf(file, "brushes = %d\n", recipe->brushes ? 1 : 0);
 	fprintf(file, "brush_strips = %d\nbrush_spacing = %g\n", recipe->brush_strips, (double)recipe->brush_spacing);
 	fprintf(file, "dead_branches = %g\ntrunk_upright = %g\nlight_from_below = %g\n", (double)recipe->dead_branches, (double)recipe->trunk_upright,
@@ -8499,6 +8503,7 @@ bool plant_grow(const plant_recipe_t *recipe, const plant_atlas_t *atlas, plant_
 	plant.wind_side = kind.wind_side;
 	plant.bark_meters = fmaxf(recipe->bark_meters, 0.05f);
 	plant.twig_share = fminf(fmaxf(recipe->twig_share, 0.0f), 1.0f);
+	plant.no_top_leader = recipe->no_top_leader;
 	plant.twig_arch = recipe->twig_arch > 0.0f ? fminf(recipe->twig_arch, 1.0f) : 0.0f;
 	plant.twig_density = recipe->twig_density > 0.0f ? fminf(recipe->twig_density, 200.0f) : 0.0f;
 	plant.twig_size = recipe->twig_size > 0.0f ? fminf(fmaxf(recipe->twig_size, 0.01f), 5.0f) : 0.0f;

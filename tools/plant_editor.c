@@ -1224,7 +1224,11 @@ static void panel(editor_t *editor)
 				// (one card each, arched, instead of two crossed)
 				nk_bool curved = recipe->curved_twigs ? nk_true : nk_false;
 
-				nk_checkbox_label(context, "Curved twigs (one arched card)", &curved);
+				nk_bool leader = recipe->no_top_leader ? nk_false : nk_true;
+
+				nk_checkbox_label(context, "Trunk's top goes on as a branch", &leader);
+				recipe->no_top_leader = leader == 0;
+				nk_checkbox_label(context, "Curved twigs (one arched plane)", &curved);
 				recipe->curved_twigs = curved != 0;
 				if (recipe->curved_twigs)
 				{
