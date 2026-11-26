@@ -4164,7 +4164,9 @@ static void add_twigs_along(plant_t *plant, const branch_t *branch, int sides, f
 
 			whip.radii[i] = fmaxf(whip.radii[i] * 0.9f * (1.0f - 0.55f * t), 0.002f);
 		}
-		plant->mesh.bark_level = (uint8_t)plant->kind->levels;
+		// (its level its parent's: the levels of detail drop the finest
+		// branches first, as their twigs stood for them; these hold twigs)
+		plant->mesh.bark_level = (uint8_t)(plant->kind->levels > 1 ? plant->kind->levels - 1 : 1);
 		add_tube(plant, &whip, 3, radius * 0.9f, MATERIAL_BARK);
 		add_twig_row(plant, branch);
 		return;
@@ -7081,16 +7083,62 @@ static void finish_lods(mesh_t *mesh)
 		}
 		if (cards > 1 && mesh->index_count[MATERIAL_FOLIAGE] % 6 == 0)
 		{
-			for (size_t c = cards - 1; c > 0; c--)
-			{
-				size_t other = (size_t)(random_unit() * (float)(c + 1));
-				uint32_t swap[6];
+			// Whole cards shuffled: a curved twig is many quads sharing
+			// vertices (one card), a flat picture one quad. A quad starts a
+			// new card when it uses no vertex up to the highest one seen so
+			// far (each card's vertices come after the one before's)
+			size_t *unit_start = checked_realloc(NULL, sizeof(size_t) * (cards + 1));
+			size_t *order;
+			uint32_t *shuffled;
+			size_t units = 0;
+			size_t at = 0;
+			uint32_t highest = 0;
 
-				other = other > c ? c : other;
-				memcpy(swap, &indices[c * 6], sizeof(swap));
-				memcpy(&indices[c * 6], &indices[other * 6], sizeof(swap));
-				memcpy(&indices[other * 6], swap, sizeof(swap));
+			for (size_t c = 0; c < cards; c++)
+			{
+				uint32_t lowest = indices[c * 6];
+				uint32_t top = indices[c * 6];
+
+				for (int k = 1; k < 6; k++)
+				{
+					lowest = indices[c * 6 + k] < lowest ? indices[c * 6 + k] : lowest;
+					top = indices[c * 6 + k] > top ? indices[c * 6 + k] : top;
+				}
+				if (c == 0 || lowest > highest)
+				{
+					unit_start[units++] = c;
+				}
+				highest = c == 0 || top > highest ? top : highest;
 			}
+			unit_start[units] = cards;
+			order = checked_realloc(NULL, sizeof(size_t) * units);
+			shuffled = checked_realloc(NULL, sizeof(uint32_t) * cards * 6);
+			for (size_t u = 0; u < units; u++)
+			{
+				order[u] = u;
+			}
+			for (size_t u = units - 1; u > 0; u--)
+			{
+				size_t other = (size_t)(random_unit() * (float)(u + 1));
+				size_t swap;
+
+				other = other > u ? u : other;
+				swap = order[u];
+				order[u] = order[other];
+				order[other] = swap;
+			}
+			for (size_t u = 0; u < units; u++)
+			{
+				size_t first = unit_start[order[u]];
+				size_t count = unit_start[order[u] + 1] - first;
+
+				memcpy(&shuffled[at * 6], &indices[first * 6], count * 6 * sizeof(uint32_t));
+				at += count;
+			}
+			memcpy(indices, shuffled, sizeof(uint32_t) * cards * 6);
+			free(shuffled);
+			free(order);
+			free(unit_start);
 			mesh->shuffled[MATERIAL_FOLIAGE] = true;
 			// Ranked cards (needle cones' strips): by their ranks, still
 			// shuffled within each, so that a first share keeps every
