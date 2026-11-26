@@ -2684,6 +2684,8 @@ typedef struct
 	float green[3];
 	float pale[3];
 	float young[3];
+	float pressed;                 // 0: the side scales lean out (a juniper's); 1: pressed flat along the cord (a thuja's flat spray)
+	float see_through;             // how much of what lies under shows through the scales (a thuja stem's brown wood)
 } scale_paint_t;
 
 // One of a cord's scale leaves at (x, y), pointing at angle (radians, 0
@@ -2724,7 +2726,7 @@ static void draw_scale(canvas_t *canvas, float x0, float y0, float angle, float 
 			float coverage;
 			float *pixel = &canvas->pixels[((size_t)y * (size_t)canvas->width + (size_t)x) * 4];
 
-			if (t < -0.2f || t > 1.0f + spike + 0.1f)
+			if (t < -0.2f || t > fmaxf(1.0f + spike + 0.1f, 1.3f * paint->pressed))
 			{
 				continue;
 			}
@@ -2735,7 +2737,8 @@ static void draw_scale(canvas_t *canvas, float x0, float y0, float angle, float 
 			}
 			else if (t < 1.0f)
 			{
-				half = 0.5f * width * powf(sinf(PI_F * powf(t, 0.7f)), 0.7f) * (1.0f - 0.25f * t);
+				// (pressed: fuller, blunter, the cord's edge smooth)
+				half = 0.5f * width * powf(sinf(PI_F * powf(t, 0.7f)), mixf(0.7f, 0.4f, paint->pressed)) * (1.0f - 0.25f * t);
 				half = t > 0.75f && spike > 0.0f ? fmaxf(half, 0.5f * width * 0.18f) : half;
 			}
 			else
@@ -2745,28 +2748,76 @@ static void draw_scale(canvas_t *canvas, float x0, float y0, float angle, float 
 			coverage = half > 0.0f ? clampf((half - fabsf(v)) * s + 0.5f, 0.0f, 1.0f) : 0.0f;
 			if (t > -0.1f && t < 1.0f && fabsf(v) - half < width * 0.35f)
 			{
-				darken_under(pixel, fmaxf(fabsf(v) - half, 0.0f), width * 0.35f, 0.45f);
+				// (pressed: none down its sides, those cross over one another
+				// along the cord as laces would)
+				darken_under(pixel, fmaxf(fabsf(v) - half, 0.0f), width * 0.35f, 0.45f * (1.0f - paint->pressed));
 			}
+			// (pressed: its shadow cast past its tip instead, over the foot
+			// of the scale beyond it, a soft band across the cord)
+			if (paint->pressed > 0.0f && t > 0.55f && t < 1.3f && fabsf(v) < width * 0.55f)
+			{
+				float past = t < 1.0f ? smooth_step(0.55f, 0.95f, t) : 1.0f - smooth_step(1.0f, 1.3f, t);
+
+				darken_under(pixel, fmaxf(fabsf(v) - half, 0.0f), width * 0.6f, 0.65f * past * paint->pressed);
+			}
+			coverage *= 1.0f - paint->see_through;
 			if (coverage <= 0.0f)
 			{
 				continue;
 			}
 			{
 				float across = fabsf(v) / fmaxf(half, 1e-5f);
-				float round = 0.78f + 0.3f * sqrtf(fmaxf(1.0f - across * across, 0.0f));
+				// (pressed: flatter across, its rim no outline)
+				float round = mixf(0.78f, 0.9f, paint->pressed) + mixf(0.3f, 0.14f, paint->pressed) * sqrtf(fmaxf(1.0f - across * across, 0.0f));
 				float gland = clampf(1.0f - (across / 0.25f), 0.0f, 1.0f) * clampf(1.0f - fabsf(t - 0.45f) / 0.2f, 0.0f, 1.0f);
 				float speck = value_noise((float)x / 1.3f + seed * 50.0f, (float)y / 1.3f);
+				// (pressed: a small yellowish dot of resin near its tip,
+				// a thuja's)
+				float tip_dot = paint->pressed * clampf(1.0f - across / 0.35f, 0.0f, 1.0f) * clampf(1.0f - fabsf(t - 0.8f) / 0.1f, 0.0f, 1.0f) *
+					(seed > 0.35f ? 1.0f : 0.3f);
+				static const float resin[3] = { 0.70f, 0.64f, 0.28f };
 
 				for (int k = 0; k < 3; k++)
 				{
 					float color = mixf(paint->green[k], paint->young[k], young);
 
 					color = mixf(color, paint->pale[k], clampf(bloom * (0.7f + 0.6f * speck), 0.0f, 1.0f));
-					color = mixf(color, paint->pale[k] * 1.08f, smooth_step(0.78f, 0.95f, across) * 0.5f);
+					color = mixf(color, paint->pale[k] * 1.08f, smooth_step(0.78f, 0.95f, across) * mixf(0.5f, 0.15f, paint->pressed));
 					color *= round * (1.0f - gland * 0.22f) * (0.94f + 0.12f * seed);
+					color = mixf(color, resin[k], tip_dot * 0.55f);
 					pixel[k] = color * coverage + pixel[k] * (1.0f - coverage);
 				}
 				pixel[3] = coverage + pixel[3] * (1.0f - coverage);
+			}
+		}
+	}
+}
+
+// Darkens what lies round a disc at (x0, y0) radius across, fading out
+// over reach past its rim: a pressed cord's shadow on what is under it
+static void darken_disc(canvas_t *canvas, float x0, float y0, float radius, float reach, float strength)
+{
+	float s = canvas->scale;
+	int left = (int)floorf((x0 - radius - reach) * s);
+	int right = (int)ceilf((x0 + radius + reach) * s);
+	int top = (int)floorf((y0 - radius - reach) * s);
+	int bottom = (int)ceilf((y0 + radius + reach) * s);
+
+	left = left < 0 ? 0 : left;
+	top = top < 0 ? 0 : top;
+	right = right >= canvas->width ? canvas->width - 1 : right;
+	bottom = bottom >= canvas->height ? canvas->height - 1 : bottom;
+	for (int y = top; y <= bottom; y++)
+	{
+		for (int x = left; x <= right; x++)
+		{
+			float px = ((float)x + 0.5f) / s - x0;
+			float py = ((float)y + 0.5f) / s - y0;
+			float outside = sqrtf(px * px + py * py) - radius;
+
+			if (outside < reach)
+			{
+				darken_under(&canvas->pixels[((size_t)y * (size_t)canvas->width + (size_t)x) * 4], fmaxf(outside, 0.0f), reach, strength);
 			}
 		}
 	}
@@ -2798,7 +2849,26 @@ static void draw_scale_cord(canvas_t *canvas, random_t *random, float ax, float 
 		last_x = x;
 		last_y = y;
 	}
-	steps = (int)(length / (0.3f * (width_a + width_b) * 0.5f)) + 2;
+	// (pressed: fewer and bigger, a thuja's braid, each scale plain)
+	steps = (int)(length / (mixf(0.3f, 0.48f, cord_paint->pressed) * (width_a + width_b) * 0.5f)) + 2;
+	// (pressed: the cord's own shadow round it on what lies under, each
+	// branchlet told from those under it by that, as its scales are not)
+	if (cord_paint->pressed > 0.0f)
+	{
+		int shadow_steps = (int)(length / (0.6f * (width_a + width_b) * 0.5f)) + 2;
+
+		for (int i = 0; i <= shadow_steps; i++)
+		{
+			float t = (float)i / (float)shadow_steps;
+			float x;
+			float y;
+			float heading;
+			float width = mixf(width_a, width_b, t);
+
+			quadratic_at(ax, ay, cx, cy, bx, by, t, &x, &y, &heading);
+			darken_disc(canvas, x, y, width * 0.5f, width * 0.6f, 0.32f * cord_paint->pressed);
+		}
+	}
 	for (int i = steps; i >= 0; i--)
 	{
 		float t = (float)i / (float)steps;
@@ -2813,7 +2883,9 @@ static void draw_scale_cord(canvas_t *canvas, random_t *random, float ax, float 
 		float here_bloom = bloom * random_range(random, 0.6f, 1.3f) * (0.5f + 0.9f * t);
 		// (darker towards its foot, in the shade of what is over it,
 		// brighter out at its tip: the contrast of a thick cushion)
-		float shade = mixf(0.62f, 1.18f, smooth_step(0.0f, 0.9f, t)) * random_range(random, 0.92f, 1.08f);
+		// (pressed: the scales near alike, a thuja's flat even green)
+		float shade = mixf(mixf(0.62f, 0.86f, cord_paint->pressed), mixf(1.18f, 1.04f, cord_paint->pressed), smooth_step(0.0f, 0.9f, t)) *
+			random_range(random, mixf(0.92f, 0.97f, cord_paint->pressed), mixf(1.08f, 1.03f, cord_paint->pressed));
 		scale_paint_t here = *cord_paint;
 
 		for (int k = 0; k < 3; k++)
@@ -2827,19 +2899,23 @@ static void draw_scale_cord(canvas_t *canvas, random_t *random, float ax, float 
 		if ((i & 1) == 0)
 		{
 			// (the face-on one, along the middle)
-			draw_scale(canvas, x, y, heading + random_range(random, -0.06f, 0.06f), width * 1.25f, width * 0.95f, spike * 0.5f, here_bloom, young,
-				paint);
+			// (pressed: shorter, a rhomb down the middle)
+			draw_scale(canvas, x, y, heading + random_range(random, -0.06f, 0.06f), width * mixf(1.25f, 1.35f, paint->pressed),
+				width * mixf(0.95f, 0.8f, paint->pressed), spike * 0.5f, here_bloom, young, paint);
 		}
 		else
 		{
 			// (the pair from the side: out each edge, leaning out a little)
 			for (int side = -1; side <= 1; side += 2)
 			{
-				float out_x = cosf(heading) * (float)side * width * 0.28f;
-				float out_y = sinf(heading) * (float)side * width * 0.28f;
+				float out_x = cosf(heading) * (float)side * width * mixf(0.28f, 0.24f, paint->pressed);
+				float out_y = sinf(heading) * (float)side * width * mixf(0.28f, 0.24f, paint->pressed);
+				// (pressed: hugging the cord, their tips only a little out,
+				// a scalloped edge)
+				float lean = mixf(random_range(random, 0.25f, 0.4f) * (1.0f + spike), random_range(random, 0.0f, 0.04f), paint->pressed);
 
-				draw_scale(canvas, x + out_x, y + out_y, heading + (float)side * random_range(random, 0.25f, 0.4f) * (1.0f + spike), width * 1.3f,
-					width * 0.5f, spike, here_bloom * 0.8f, young, paint);
+				draw_scale(canvas, x + out_x, y + out_y, heading + (float)side * lean, width * mixf(1.3f, 1.45f, paint->pressed),
+					width * mixf(0.5f, 0.6f, paint->pressed), spike, here_bloom * 0.8f, young, paint);
 			}
 		}
 	}
@@ -3050,6 +3126,210 @@ static void draw_juniper_spread(canvas_t *canvas, random_t *random, bool awl)
 	// Its leader, on out of its end, a shoot as the others
 	draw_juniper_shoot(canvas, random, node_x[shoots - 1], node_y[shoots - 1], atan2f(bx - cx, -(by - cy)) + random_range(random, -0.15f, 0.15f),
 		random_range(random, 0.3f, 0.38f), 0.021f, awl ? 0.7f : 0.0f, random_range(random, 0.22f, 0.34f), &paint);
+}
+
+// --- Thuja ---------------------------------------------------------------------------
+
+// A thuja's branchlet from (x, y) at angle, length long: a flat cord of
+// scales, alternate side nubs off it (short cords, the farther out the
+// shorter), a little fork at its tip; nubs first, the cord over them
+static void draw_thuja_branchlet(canvas_t *canvas, random_t *random, float x, float y, float angle, float length, float width,
+	const scale_paint_t *paint)
+{
+	float bow = random_range(random, -0.1f, 0.1f) * length;
+	float l[6] = { x, y, x + sinf(angle) * length * 0.5f + cosf(angle) * bow, y - cosf(angle) * length * 0.5f + sinf(angle) * bow,
+		x + sinf(angle) * length, y - cosf(angle) * length };
+	int nubs = 2 + (int)(length / (width * 2.2f));
+	float side = random_float(random) < 0.5f ? -1.0f : 1.0f;
+
+	nubs = nubs > 24 ? 24 : nubs;
+	for (int k = nubs - 1; k >= 0; k--)
+	{
+		bool fork = k >= nubs - 2;
+		float t = fork ? random_range(random, 0.86f, 0.92f) : 0.12f + 0.72f * ((float)k + random_range(random, 0.2f, 0.8f)) / (float)(nubs - 2);
+		float nub_side = (k & 1) != 0 ? side : -side;
+		float out = nub_side * (fork ? random_range(random, 0.3f, 0.45f) : random_range(random, 0.55f, 0.8f));
+		float nub_length = length * (fork ? random_range(random, 0.2f, 0.26f) : random_range(random, 0.34f, 0.48f) * (1.0f - 0.5f * t));
+		float nx;
+		float ny;
+		float heading;
+
+		quadratic_at(l[0], l[1], l[2], l[3], l[4], l[5], t, &nx, &ny, &heading);
+		draw_scale_cord(canvas, random, nx, ny, nx + sinf(heading + out) * nub_length * 0.5f, ny - cosf(heading + out) * nub_length * 0.5f,
+			nx + sinf(heading + out * 0.7f) * nub_length, ny - cosf(heading + out * 0.7f) * nub_length, width * 0.95f, width * 0.8f, 0.0f, 0.1f, 0.75f,
+			paint);
+	}
+	draw_scale_cord(canvas, random, l[0], l[1], l[2], l[3], l[4], l[5], width, width * 0.72f, 0.0f, 0.1f, 0.85f, paint);
+}
+
+// A thuja's spray (Thuja occidentalis): a flat fan, a stem up its middle
+// (woody and brown at its foot, scale clad up it), side shoots out of it
+// alternately in one plane, the longest a little below the middle (an
+// elongated diamond), each with branchlets out of it alternately and
+// those with short nubs; all flat cords of pressed scales; a fresh green,
+// yellower at the young tips, each shoot its own shade
+// A thuja spray, a smaller copy of the whole: a scale cord from (x, y)
+// leaving at angle start and bending to angle end (radians, 0 up), length
+// long, alternate sprays one level finer along it, longest at its foot,
+// those on the side facing (sign) the long spread ones, those on the other
+// short and close in, and a finer one at its tip; depth 0 a branchlet
+// Thuja wood: the brown, a little noisy, of the stems under the scales
+static const paint_t thuja_wood = { .dark = { 0.28f, 0.18f, 0.10f }, .light = { 0.66f, 0.48f, 0.26f }, .tip = { 0.42f, 0.30f, 0.18f }, .tip_from = 1.0f,
+	.rough = 0.8f, .bumps = 0.35f };
+
+static void draw_thuja_spray(canvas_t *canvas, random_t *random, float x, float y, float start, float end, float length, float facing,
+	int depth, float width, const scale_paint_t *paint)
+{
+	float p[6];
+	int children;
+	float child_side = random_float(random) < 0.5f ? -1.0f : 1.0f;
+
+	if (depth <= 0)
+	{
+		draw_thuja_branchlet(canvas, random, x, y, start, length, 0.021f, paint);
+		return;
+	}
+	p[0] = x;
+	p[1] = y;
+	p[2] = x + sinf(start) * length * 0.5f;
+	p[3] = y - cosf(start) * length * 0.5f;
+	p[4] = p[2] + sinf(end) * length * 0.55f;
+	p[5] = p[3] - cosf(end) * length * 0.55f;
+	// (its axis brown wood, a little noisy, under the scale chains that
+	// grow along it)
+	if (depth >= 2)
+	{
+		draw_curve(canvas, p[0], p[1], p[2], p[3], p[4], p[5], width * 0.5f, width * 0.32f, &thuja_wood);
+	}
+	// (a shoot's sprays many and close, a pinnate frond; a spray's
+	// branchlets few)
+	children = depth == 1 ? 3 + (int)(length / 0.05f) : 4 + (int)(length / 0.038f);
+	children = children > 11 ? 11 : children;
+	for (int k = children - 1; k >= -1; k--)
+	{
+		bool tip = k < 0;
+		float bt = tip ? random_range(random, 0.86f, 0.92f) : 0.1f + 0.72f * ((float)k + random_range(random, 0.2f, 0.8f)) / (float)children;
+		float bside = (k & 1) != 0 ? child_side : -child_side;
+		bool inner = bside != facing;
+		float bx;
+		float by;
+		float bheading;
+		float bstart;
+		float bend;
+		float blength;
+
+		quadratic_at(p[0], p[1], p[2], p[3], p[4], p[5], bt, &bx, &by, &bheading);
+		if (tip)
+		{
+			bstart = bheading;
+			bend = bheading + (end - start) * 0.3f;
+			blength = length * random_range(random, 0.24f, 0.3f);
+			bside = facing;
+		}
+		else
+		{
+			bstart = bheading + bside * random_range(random, 0.55f, 0.75f) * (inner ? 0.8f : 1.0f);
+			bend = bstart + bside * random_range(random, 0.15f, 0.35f);
+			// (a shoot's sprays shorter than a spray's branchlets: each shoot
+			// a narrow feather, gaps between the shoots, the fan readable)
+			blength = length * (depth >= 2 ? random_range(random, 0.3f, 0.37f) : random_range(random, 0.5f, 0.6f)) * (1.0f - 0.55f * bt) *
+				(inner ? 0.72f : 1.0f);
+		}
+		draw_thuja_spray(canvas, random, bx, by, bstart, bend, blength, bside, depth - 1, width * 0.8f, paint);
+	}
+	// (its own scale chain over the brown, the wood showing through)
+	{
+		scale_paint_t chain = *paint;
+
+		chain.see_through = depth >= 2 ? 0.15f : 0.0f;
+		draw_scale_cord(canvas, random, p[0], p[1], p[2], p[3], p[4], p[5], width * 0.75f, width * 0.55f, 0.0f, 0.1f, 1.0f, &chain);
+	}
+}
+
+static void draw_thuja(canvas_t *canvas, random_t *random)
+{
+	scale_paint_t paint = { .green = { 0.34f, 0.57f, 0.31f }, .pale = { 0.54f, 0.68f, 0.40f }, .young = { 0.37f, 0.59f, 0.31f }, .pressed = 1.0f };
+	paint_t wood = { .dark = { 0.30f, 0.20f, 0.12f }, .light = { 0.62f, 0.46f, 0.30f }, .tip = { 0.46f, 0.42f, 0.22f }, .tip_from = 0.6f,
+		.rough = 0.7f, .bumps = 0.3f };
+	float ax = 0.5f;
+	float ay = canvas->tall - 0.03f;
+	float bx = 0.5f + random_range(random, -0.06f, 0.06f);
+	float by = 0.06f;
+	float cx = 0.5f + random_range(random, -0.08f, 0.08f);
+	float cy = (ay + by) * 0.5f;
+	int shoots = 11 + (int)(random_float(random) * 1.99f);
+	float side = random_float(random) < 0.5f ? -1.0f : 1.0f;
+	float heading;
+	float wood_to = 0.04f;
+	float wx;
+	float wy;
+
+	// The stem's woody foot
+	quadratic_at(ax, ay, cx, cy, bx, by, wood_to, &wx, &wy, &heading);
+	draw_curve(canvas, ax, ay, (ax + wx) * 0.5f, (ay + wy) * 0.5f, wx, wy, 0.026f, 0.02f, &wood);
+	// The side shoots, from the top down (the lower over those above)
+	for (int n = shoots - 1; n >= 0; n--)
+	{
+		float t = 0.02f + 0.86f * ((float)n + random_range(random, 0.2f, 0.8f)) / (float)shoots;
+		float x;
+		float y;
+		float this_side = (n & 1) != 0 ? side : -side;
+		// (an elongated diamond: longest at 35% up)
+		// (long from the bottom up, longest a fifth up)
+		float reach = t < 0.2f ? 0.85f + 0.15f * t / 0.2f : 1.0f - 0.82f * (t - 0.2f) / 0.8f;
+		float length = 0.57f * reach * random_range(random, 0.9f, 1.05f);
+		float out = this_side * random_range(random, 0.42f, 0.55f);
+		float bow = this_side * random_range(random, 0.03f, 0.08f) * length;
+		float p[6];
+		int branchlets = 4 + (int)(length / 0.032f);
+		scale_paint_t own = paint;
+		float warm = random_range(random, -1.0f, 1.0f);
+		float light = random_range(random, 0.88f, 1.12f);
+
+		own.green[0] = (paint.green[0] + warm * 0.025f) * light;
+		own.green[1] = (paint.green[1] + warm * 0.015f) * light;
+		own.green[2] = (paint.green[2] - warm * 0.03f) * light;
+		quadratic_at(ax, ay, cx, cy, bx, by, t, &x, &y, &heading);
+		// (an arch: up along the stem at its foot, curving out and over,
+		// its tip turned down and away from the stem; itself made of
+		// smaller sprays made of smaller still)
+		(void)bow;
+		(void)p;
+		(void)branchlets;
+		draw_thuja_spray(canvas, random, x, y, heading + out * 0.55f, heading + out * random_range(random, 1.8f, 2.2f), length, this_side, 2, 0.024f, &own);
+	}
+	// The stem's scale chain over all, green at its edges, its brown wood
+	// showing in torn streaks down its middle where the old scales have
+	// split (no even stripe: a lace it is not)
+	{
+		scale_paint_t stem = { .green = { 0.30f, 0.42f, 0.22f }, .pale = { 0.48f, 0.52f, 0.32f }, .young = { 0.30f, 0.44f, 0.22f }, .pressed = 1.0f };
+		float top_y = by + 0.17f;
+		float t = 0.0f;
+
+		draw_scale_cord(canvas, random, wx, wy, cx, cy, bx, top_y, 0.024f, 0.015f, 0.0f, 0.1f, 1.0f, &stem);
+		while (t < 0.85f)
+		{
+			float piece = random_range(random, 0.015f, 0.05f);
+			float x0;
+			float y0;
+			float x1;
+			float y1;
+			float xm;
+			float ym;
+			float h;
+			float shift = random_range(random, -0.004f, 0.004f);
+			// (more of them and wider low, where it is oldest)
+			float wide = mixf(0.012f, 0.004f, t) * random_range(random, 0.6f, 1.1f);
+
+			quadratic_at(wx, wy, cx, cy, bx, top_y, t, &x0, &y0, &h);
+			quadratic_at(wx, wy, cx, cy, bx, top_y, t + piece * 0.5f, &xm, &ym, &h);
+			quadratic_at(wx, wy, cx, cy, bx, top_y, t + piece, &x1, &y1, &h);
+			draw_curve(canvas, x0 + shift, y0, xm - shift, ym, x1 + shift * 0.5f, y1, wide, wide * 0.4f, &thuja_wood);
+			t += piece + random_range(random, 0.0f, 0.06f) * (0.3f + t);
+		}
+	}
+	// Its own tip a branchlet
+	draw_thuja_branchlet(canvas, random, bx, by + 0.17f, atan2f(bx - cx, -(by - cy)), 0.15f, 0.02f, &paint);
 }
 
 // --- Bald cypress --------------------------------------------------------------------
@@ -3773,7 +4053,7 @@ int main(int argument_count, char **arguments)
 	}
 	if (kind == NULL || path == NULL || width < 16 || width > 4096)
 	{
-		fprintf(stderr, "Usage: potop_twig [--width W] [--seed N] pine|pine_brush|pine_rosette|pine_needles|spruce|juniper|juniper_spread|juniper_awl|bald_cypress|cranberry|cranberry_leaves|blueberry_leaves|berry_skin|blueberry_skin|fern|fern_lobed OUT.png\n");
+		fprintf(stderr, "Usage: potop_twig [--width W] [--seed N] pine|pine_brush|pine_rosette|pine_needles|spruce|juniper|juniper_spread|juniper_awl|bald_cypress|thuja|cranberry|cranberry_leaves|blueberry_leaves|berry_skin|blueberry_skin|fern|fern_lobed OUT.png\n");
 		return 1;
 	}
 	// (as tall as the kind's twig is: the pine's branch tip square,
@@ -3829,6 +4109,10 @@ int main(int argument_count, char **arguments)
 	{
 		draw_bald_cypress(&canvas, &random);
 	}
+	else if (strcmp(kind, "thuja") == 0)
+	{
+		draw_thuja(&canvas, &random);
+	}
 	else if (strcmp(kind, "juniper_spread") == 0 || strcmp(kind, "juniper_awl") == 0)
 	{
 		draw_juniper_spread(&canvas, &random, strcmp(kind, "juniper_awl") == 0);
@@ -3851,11 +4135,11 @@ int main(int argument_count, char **arguments)
 	}
 	else
 	{
-		fprintf(stderr, "potop_twig: no kind '%s' (pine, pine_brush, pine_rosette, pine_needles, spruce, juniper, juniper_spread, juniper_awl, bald_cypress, cranberry, cranberry_leaves, blueberry_leaves, berry_skin, blueberry_skin, fern, fern_lobed)\n", kind);
+		fprintf(stderr, "potop_twig: no kind '%s' (pine, pine_brush, pine_rosette, pine_needles, spruce, juniper, juniper_spread, juniper_awl, bald_cypress, thuja, cranberry, cranberry_leaves, blueberry_leaves, berry_skin, blueberry_skin, fern, fern_lobed)\n", kind);
 		free(canvas.pixels);
 		return 1;
 	}
-	if (!finish(&canvas, width, canvas.height / SUPERSAMPLE, path, strcmp(kind, "spruce") == 0 || strcmp(kind, "cranberry") == 0 || strcmp(kind, "cranberry_leaves") == 0 || strcmp(kind, "blueberry_leaves") == 0 || strcmp(kind, "juniper_spread") == 0 || strcmp(kind, "juniper_awl") == 0 || strcmp(kind, "bald_cypress") == 0 ? 2.0f : 0.0f))
+	if (!finish(&canvas, width, canvas.height / SUPERSAMPLE, path, strcmp(kind, "spruce") == 0 || strcmp(kind, "cranberry") == 0 || strcmp(kind, "cranberry_leaves") == 0 || strcmp(kind, "blueberry_leaves") == 0 || strcmp(kind, "juniper_spread") == 0 || strcmp(kind, "juniper_awl") == 0 || strcmp(kind, "bald_cypress") == 0 || strcmp(kind, "thuja") == 0 ? 2.0f : 0.0f))
 	{
 		fprintf(stderr, "potop_twig: could not write %s\n", path);
 		free(canvas.pixels);
