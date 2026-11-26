@@ -68,6 +68,11 @@
 //           parted by a net of khaki furrows, their faces of thin flakes,
 //           weathered mauve gray, flaked off in long patches to the rusty
 //           orange under them (and NAME_height.png, NAME_arm.png)
+//   bark_thuja  a thuja's bark, wrapping round a trunk (0.6 m): narrow
+//           fibrous strips in two layers, the weathered tan over the
+//           redder, each streaked with the other, drawn to a torn tip down
+//           the trunk; fine fibers, small scales lifting off, soft shadows
+//           down and to the right (and NAME_height.png, NAME_arm.png)
 //   batten  board and batten: wide hewn boards down the picture (the
 //           adze's scoops across them), a batten nailed over each joint,
 //           round headed nails; old dark wood (--boards: a board's width)
@@ -5789,6 +5794,217 @@ static bool make_bark_cypress(const texture_settings_t *settings, field_t *field
 	return true;
 }
 
+// A thuja's bark (and an old cedar's, a juniper's): many narrow fibrous
+// strips in layers, one over the next, each torn at its lower end into
+// ragged tongues hanging down; their faces finely fibrous, a weathered gray
+// tan, some browner, redder; under them all the inner bark's red brown;
+// each strip casting a shadow on what lies under it.
+#define THUJA_LAYERS 2
+
+// A thuja strip's shape: wide at its upper end (hidden under the strips
+// above), drawn to a point at its lower end, its tip torn into ragged
+// tongues; above 0 inside it
+static float thuja_strip(bark_strand_t strand, float u, float v, float meters, uint32_t seed)
+{
+	float taper = 1.0f - smooth_step(0.35f, 1.0f, strand.along);
+	float torn = stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.004f), 16.0f), (int)fmaxf(roundf(meters / 0.04f), 8.0f), 2, seed + 50u);
+
+	return (0.95f * taper + 0.05f) - fabsf(strand.across) - 0.35f * fmaxf(torn, 0.0f) * smooth_step(0.4f, 0.9f, strand.along) - 0.15f * fmaxf(-torn, 0.0f);
+}
+
+static bark_point_t thuja_bark_sample(float meters, uint32_t seed, float x, float y)
+{
+	float u = x / meters;
+	float v = y / meters;
+	bark_point_t point;
+	// (the light from the upper left: a strip's shadow falls down and to
+	// the right of it, soft: several steps out, fading. A point is in a
+	// strip's shadow when the strip is up and to the left of it: looked
+	// for at the point less these, y growing down the picture)
+	float shadow_du = 0.0025f / meters;
+	float shadow_dv = 0.004f / meters;
+	int top = -1;
+	bark_strand_t surface = { 0 };
+	float shadow = 0.0f;
+	const float gray[3] = { 0.62f, 0.54f, 0.46f };
+	const float brown[3] = { 0.66f, 0.50f, 0.38f };
+	const float red[3] = { 0.62f, 0.40f, 0.29f };
+	const float inner[3] = { 0.52f, 0.32f, 0.24f };
+	const float deep[3] = { 0.19f, 0.12f, 0.09f };
+
+	// The topmost layer with a strip here, and whether a strip of a layer
+	// over that one hangs between here and the light
+	for (int layer = THUJA_LAYERS - 1; layer >= 0; layer--)
+	{
+		uint32_t layer_seed = seed + 1000u * (uint32_t)(layer + 1);
+		bark_strand_t strand = bark_strands(u, v, meters, 0.022f + 0.008f * (float)layer, 0.26f, 1.2f, 0.1f, layer_seed);
+		float here = strand.id > 0.08f ? thuja_strip(strand, u, v, meters, layer_seed) : -1.0f;
+
+		if (top < 0 && here > 0.0f)
+		{
+			top = layer;
+			surface = strand;
+			surface.inside = here;
+		}
+		else if (top < 0)
+		{
+			// (soft: four steps towards the light, the nearer darker, each
+			// edge blurred)
+			float layer_shadow = 0.0f;
+
+			for (int step = 1; step <= 4; step++)
+			{
+				float du = shadow_du * (float)step * 0.75f;
+				float dv = shadow_dv * (float)step * 0.75f;
+				bark_strand_t over = bark_strands(u - du, v - dv, meters, 0.022f + 0.008f * (float)layer, 0.26f, 1.2f, 0.1f, layer_seed);
+
+				if (over.id > 0.08f)
+				{
+					layer_shadow += smooth_step(-0.08f, 0.15f, thuja_strip(over, u - du, v - dv, meters, layer_seed)) * (1.15f - 0.2f * (float)step);
+				}
+			}
+			shadow = fmaxf(shadow, fminf(layer_shadow * 0.28f, 1.0f) * (0.6f - 0.12f * (float)(THUJA_LAYERS - 1 - layer)));
+		}
+	}
+	{
+		float fibers = staggered_noise(u, v, (int)fmaxf(roundf(meters / 0.0025f), 16.0f), (int)fmaxf(roundf(meters / 0.05f), 8.0f), 3, seed + 11u);
+		float fine = staggered_noise(u, v, (int)fmaxf(roundf(meters / 0.0015f), 16.0f), (int)fmaxf(roundf(meters / 0.015f), 16.0f), 2, seed + 12u);
+		// (fine fibers: thin pale and dark lines up each strip, a millimeter
+		// or so apart, long, broken here and there; sharp, not soft)
+		float threads = staggered_noise(u, v, (int)fmaxf(roundf(meters / 0.0012f), 16.0f), (int)fmaxf(roundf(meters / 0.03f), 8.0f), 2, seed + 19u);
+		float thread_line = smooth_step(0.15f, 0.35f, threads);
+		float thread_dark = smooth_step(0.15f, 0.35f, -threads);
+		float mixed = smooth_step(0.05f, 0.45f, stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.006f), 16.0f), (int)fmaxf(roundf(meters / 0.05f), 8.0f), 3,
+			seed + 20u));
+		float crust = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.005f), 16.0f), 4, 0.65f, seed + 13u);
+		// (scaly: little flakes lifting off the strips' faces)
+		float flakes = 1.0f - fabsf(stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.006f), 16.0f), (int)fmaxf(roundf(meters / 0.015f), 16.0f), 3,
+			seed + 18u)) * 3.0f;
+		float blotch = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.1f), 4.0f), 4, 0.6f, seed + 14u);
+		float grit = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.003f), 16.0f), 2, 0.6f, seed + 15u);
+		float hue = top >= 0 ? hash_unit((int)(surface.id * 7919.0f), top, seed + 16u) : 0.0f;
+		float tone = top >= 0 ? 0.94f + 0.12f * hash_unit((int)(surface.id * 7919.0f), top, seed + 17u) : 1.0f;
+		// (a strip's edge: torn fibers, paler, its thin edge showing the red
+		// under it)
+		float edge = top >= 0 ? 1.0f - smooth_step(0.0f, 0.18f, surface.inside) : 0.0f;
+
+		for (int k = 0; k < 3; k++)
+		{
+			float color;
+
+			if (top >= 0)
+			{
+				// (the upper layer the weathered tan, the lower the redder
+				// one under it, a little each its own)
+				float face = top == THUJA_LAYERS - 1 ? mix_float(gray[k], brown[k], 0.3f + 0.4f * hue) : mix_float(brown[k], red[k], 0.4f + 0.5f * hue);
+				// (each mixed with the other in streaks along it: red showing
+				// through the tan, tan fibers on the red)
+				float other = top == THUJA_LAYERS - 1 ? red[k] : gray[k];
+
+				face = mix_float(face, other, 0.55f * mixed);
+
+				// (lit down its length: brighter towards its torn tip, which
+				// stands off a little)
+				float lift = 0.9f + 0.2f * smooth_step(0.3f, 0.9f, surface.along);
+
+				color = face * tone * lift * (1.0f + 0.22f * fibers + 0.08f * fine) * (1.0f + 0.22f * thread_line - 0.25f * thread_dark) * (1.0f + 0.1f * crust) * (1.0f + 0.1f * blotch)
+					* (1.0f - 0.08f * smooth_step(0.75f, 0.98f, flakes));
+				color = mix_float(color, color * 1.18f, edge * 0.7f);
+				// (deeper layers darker: less light gets in)
+				color *= 0.86f + 0.14f * (float)(top + 1) / (float)THUJA_LAYERS;
+			}
+			else
+			{
+				color = mix_float(inner[k], brown[k], 0.45f * mixed) * (1.0f + 0.2f * fibers) * (1.0f + 0.1f * blotch) * (1.0f + 0.2f * thread_line - 0.2f * thread_dark);
+				color = mix_float(color, deep[k], 0.15f);
+			}
+			color *= (1.0f + 0.1f * grit) * (1.0f - shadow * 0.6f);
+			point.color[k] = color;
+		}
+		// Scales: small pointed flakes lifting off the strips, standing
+		// out over them, their tips lit, each casting a long shadow down on
+		// what is under it
+		{
+			uint32_t scale_seed = seed + 9000u;
+			bark_strand_t flake = bark_strands(u, v, meters, 0.012f, 0.1f, 1.0f, 0.08f, scale_seed);
+			float on_flake = flake.id > 0.84f ? smooth_step(0.0f, 0.04f, thuja_strip(flake, u, v, meters, scale_seed)) : 0.0f;
+			float flake_shade = 0.0f;
+
+			for (int step = 1; step <= 4; step++)
+			{
+				float du = 0.0009f * (float)step / meters;
+				float dv = 0.0015f * (float)step / meters;
+				bark_strand_t flake_shadow = bark_strands(u - du, v - dv, meters, 0.012f, 0.1f, 1.0f, 0.08f, scale_seed);
+
+				if (flake_shadow.id > 0.84f)
+				{
+					flake_shade += smooth_step(-0.08f, 0.15f, thuja_strip(flake_shadow, u - du, v - dv, meters, scale_seed)) * (1.15f - 0.2f * (float)step);
+				}
+			}
+			flake_shade = fminf(flake_shade * 0.28f, 1.0f) * (1.0f - on_flake);
+			float flake_tone = hash_unit((int)(flake.id * 6007.0f), 5, scale_seed);
+			float flake_lift = smooth_step(0.2f, 0.9f, flake.along);
+
+			for (int k = 0; k < 3; k++)
+			{
+				float face = mix_float(mix_float(gray[k], brown[k], 0.3f + 0.4f * flake_tone), red[k], 0.45f * mixed);
+				float flake_color = face * (0.95f + 0.3f * flake_lift) * (1.0f + 0.22f * fibers + 0.08f * fine) * (1.0f + 0.22f * thread_line - 0.25f * thread_dark) * (1.0f + 0.1f * grit);
+
+				point.color[k] *= 1.0f - 0.45f * flake_shade;
+				point.color[k] = mix_float(point.color[k], flake_color, on_flake);
+			}
+			point.height = 0.0f;
+			point.height += on_flake * (0.004f + 0.004f * flake_lift);
+		}
+		point.height += (top >= 0 ? 0.0025f * (float)(top + 1) + 0.0012f * smooth_step(0.0f, 0.4f, surface.inside) : 0.0f) + 0.0005f * fibers + 0.0002f * fine + 0.0002f * (thread_line - thread_dark)
+			+ 0.0004f * crust - 0.0003f * smooth_step(0.6f, 0.95f, flakes);
+		point.roughness = clamp_unit(0.84f + 0.06f * (top < 0 ? 1.0f : 0.0f));
+	}
+	return point;
+}
+
+static bool make_bark_thuja(const texture_settings_t *settings, field_t *field)
+{
+	int size = field->size;
+	float pixel_meters = field->meters / (float)size;
+
+#pragma omp parallel for schedule(dynamic, 8)
+	for (int y = 0; y < size; y++)
+	{
+		for (int x = 0; x < size; x++)
+		{
+			int index = y * size + x;
+			float height_sum = 0.0f;
+			float color_sum[3] = { 0.0f, 0.0f, 0.0f };
+			float roughness_sum = 0.0f;
+
+			for (int s = 0; s < 4; s++)
+			{
+				bark_point_t point = thuja_bark_sample(field->meters, settings->seed, ((float)x + 0.25f + 0.5f * (float)(s & 1)) * pixel_meters,
+					((float)y + 0.25f + 0.5f * (float)(s >> 1)) * pixel_meters);
+
+				height_sum += point.height;
+				roughness_sum += point.roughness;
+				for (int k = 0; k < 3; k++)
+				{
+					color_sum[k] += point.color[k];
+				}
+			}
+			field->height[index] = height_sum * 0.25f;
+			field->roughness[index] = roughness_sum * 0.25f;
+			for (int k = 0; k < 3; k++)
+			{
+				field->color[index * 3 + k] = color_sum[k] * 0.25f;
+			}
+		}
+	}
+	shade_hollows(field, (int)fminf(fmaxf(0.003f / pixel_meters, 2.0f), 8.0f), 0.003f, 0.35f);
+	bake_light(field, settings->baked_light);
+	sharpen_color(field, (int)fminf(fmaxf(0.006f / pixel_meters, 3.0f), 16.0f), 0.7f);
+	sharpen_color(field, 1, 1.3f);
+	return true;
+}
+
 // A pine's bark (Pinus): plates up the trunk, a few centimeters across and
 // longer up it, parted by a net of furrows (their floors dark, their walls
 // a fibrous khaki brown); each plate built of thin flakes in layers, the
@@ -6829,6 +7045,7 @@ int main(int argument_count, char **arguments)
 			{ "smithy", 1.6f, { 0.369f, 0.304f, 0.232f } },
 			{ "bark_cypress", 1.0f, { 0.47f, 0.39f, 0.37f } },
 			{ "bark_pine", 1.0f, { 0.45f, 0.37f, 0.36f } },
+			{ "bark_thuja", 0.6f, { 0.54f, 0.43f, 0.35f } },
 		};
 		bool known = false;
 
@@ -6849,7 +7066,7 @@ int main(int argument_count, char **arguments)
 		}
 		if (!known)
 		{
-			fprintf(stderr, "potop_texture: no kind '%s' (sand, clay, mud, grass, rock, canyon, granite, stone, dirt, relief, wet_sand, wet_dirt, needles, leaves, trampled, petals, snow, drystone, coursed, weatherboard, timber, planks, old_timber, batten, smithy, bark_cypress, bark_pine)\n", kind);
+			fprintf(stderr, "potop_texture: no kind '%s' (sand, clay, mud, grass, rock, canyon, granite, stone, dirt, relief, wet_sand, wet_dirt, needles, leaves, trampled, petals, snow, drystone, coursed, weatherboard, timber, planks, old_timber, batten, smithy, bark_cypress, bark_pine, bark_thuja)\n", kind);
 			return 1;
 		}
 	}
@@ -6975,6 +7192,10 @@ int main(int argument_count, char **arguments)
 	else if (strcmp(kind, "bark_pine") == 0)
 	{
 		ok = make_bark_pine(&settings, &field);
+	}
+	else if (strcmp(kind, "bark_thuja") == 0)
+	{
+		ok = make_bark_thuja(&settings, &field);
 	}
 	else
 	{
