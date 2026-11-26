@@ -2126,6 +2126,7 @@ typedef struct
 	int cluster_minimum;
 	int cluster_maximum;
 	float fruit_per_branch;
+	float twig_density;                 // trees with twigs: twigs a meter along the branches (0: the kind's)
 	float twig_size;                    // trees with twigs: every twig this long, meters (0: as long as the branch it stands for)
 	float branch_flat;                  // trees: branches out of lying ones only to their sides, level (0: all round them; 1: flat)
 	float twig_gap;                     // trees with twigs: no bare stretch longer than this on a branch (meters; 0: any)
@@ -3138,6 +3139,17 @@ static void add_twig_one(plant_t *plant, vec3 start, vec3 direction, float lengt
 
 		add_curved_twig(&plant->mesh, start, direction, fabsf(side_face.y) >= fabsf(other_face.y) ? side : other, length, normal, place);
 	}
+	else if (plant->twig_density > 0.0f)
+	{
+		// (dense twigs, --twig-density: one plane each, lying about level,
+		// tilted a little this way or that; the many of them close the
+		// crown, no cross needed)
+		vec3 across = cross(v3(0.0f, 1.0f, 0.0f), direction);
+
+		across = dot(across, across) > 1e-4f ? normalized(across) : perpendicular(direction);
+		across = rotated(across, direction, random_between(-0.4f, 0.4f));
+		add_picture(&plant->mesh, start, direction, across, length, normal, place);
+	}
 	else
 	{
 		add_picture(&plant->mesh, start, direction, side, length, normal, place);
@@ -3149,25 +3161,42 @@ static void add_twig_one(plant_t *plant, vec3 start, vec3 direction, float lengt
 // A twig from start along direction, length long before the kind's
 // twig_scale. With --twig-size, every twig that size (a little more or
 // less), whatever the branch it stands for: a longer one a row of them
-// along it, a shorter one that size anyway
+// along it, a shorter one that size anyway. With --twig-density, that
+// many along each meter of it (the row's twigs to either side in turn,
+// a little, so they do not stack on one line)
 static void add_twig(plant_t *plant, vec3 start, vec3 direction, float length)
 {
 	float wanted = length * plant->kind->twig_scale;
 	int pieces;
+	vec3 side;
 
-	if (plant->twig_size <= 0.0f)
+	if (plant->twig_size <= 0.0f && plant->twig_density <= 0.0f)
 	{
 		add_twig_one(plant, start, direction, length);
 		return;
 	}
-	pieces = (int)ceilf(wanted / (plant->twig_size * 1.3f));
-	pieces = pieces < 1 ? 1 : (pieces > 24 ? 24 : pieces);
+	if (plant->twig_density > 0.0f)
+	{
+		pieces = (int)lroundf(wanted * plant->twig_density);
+	}
+	else
+	{
+		pieces = (int)ceilf(wanted / (plant->twig_size * 1.3f));
+	}
+	pieces = pieces < 1 ? 1 : (pieces > 48 ? 48 : pieces);
+	side = cross(v3(0.0f, 1.0f, 0.0f), direction);
+	side = dot(side, side) > 1e-4f ? normalized(side) : perpendicular(direction);
 	for (int i = 0; i < pieces; i++)
 	{
-		float size = plant->twig_size * random_between(0.9f, 1.1f);
+		float size = plant->twig_size > 0.0f ? plant->twig_size * random_between(0.9f, 1.1f) : wanted / (float)pieces * 1.15f;
 		vec3 from = add(start, scale(direction, wanted * (float)i / (float)pieces));
+		vec3 way = direction;
 
-		add_twig_one(plant, from, direction, size / plant->kind->twig_scale);
+		if (pieces > 1)
+		{
+			way = normalized(add(direction, scale(side, ((i & 1) != 0 ? 0.35f : -0.35f) * random_between(0.6f, 1.2f))));
+		}
+		add_twig_one(plant, from, way, size / plant->kind->twig_scale);
 	}
 }
 
@@ -4059,7 +4088,8 @@ static void add_twigs_along(plant_t *plant, const branch_t *branch, int sides, f
 // grow all along), to either side and forward; and one at its tip
 static void add_side_twigs(plant_t *plant, const branch_t *branch, float child_length)
 {
-	int count = (int)(plant->kind->side_twigs * branch->length + 0.5f);
+	// (--twig-density: that many a meter, else the kind's)
+	int count = (int)((plant->twig_density > 0.0f ? plant->twig_density : plant->kind->side_twigs) * branch->length + 0.5f);
 	float side_sign = random_unit() < 0.5f ? -1.0f : 1.0f;
 
 	for (int i = 0; i < count; i++)
@@ -4316,7 +4346,7 @@ static void grow(plant_t *plant, int level, vec3 start, vec3 direction, float le
 	{
 		add_loose_leaves(plant, &branch);
 	}
-	if (level > 0 && plant->twig_count > 0 && (kind->side_twigs > 0.0f || kind->tip_twig))
+	if (level > 0 && plant->twig_count > 0 && (kind->side_twigs > 0.0f || kind->tip_twig || plant->twig_density > 0.0f))
 	{
 		add_side_twigs(plant, &branch, length * kind->length_ratio[level]);
 	}
@@ -7385,6 +7415,7 @@ bool plant_recipe_load(plant_recipe_t *recipe, const char *path)
 		else if (strcmp(key, "twig_gap") == 0) { recipe->twig_gap = strtof(value, NULL); }
 		else if (strcmp(key, "branch_flat") == 0) { recipe->branch_flat = strtof(value, NULL); }
 		else if (strcmp(key, "twig_size") == 0) { recipe->twig_size = strtof(value, NULL); }
+		else if (strcmp(key, "twig_density") == 0) { recipe->twig_density = strtof(value, NULL); }
 		else if (strcmp(key, "loose_leaves") == 0) { recipe->loose_leaves = strtof(value, NULL); }
 		else if (strcmp(key, "fruit_shape") == 0)
 		{
@@ -7594,6 +7625,10 @@ bool plant_recipe_save(const plant_recipe_t *recipe, const char *path)
 	if (recipe->twig_size > 0.0f)
 	{
 		fprintf(file, "twig_size = %g\n", (double)recipe->twig_size);
+	}
+	if (recipe->twig_density > 0.0f)
+	{
+		fprintf(file, "twig_density = %g\n", (double)recipe->twig_density);
 	}
 	fprintf(file, "crown_start = %g\nleaves_from = %g\ndroop = %g\ntip_lift = %g\ncollar = %g\nroot_flare = %g\n",
 		(double)recipe->crown_start, (double)recipe->leaves_from, (double)recipe->droop, (double)recipe->tip_lift, (double)recipe->collar,
@@ -8062,6 +8097,7 @@ bool plant_grow(const plant_recipe_t *recipe, const plant_atlas_t *atlas, plant_
 	plant.wind_side = kind.wind_side;
 	plant.bark_meters = fmaxf(recipe->bark_meters, 0.05f);
 	plant.twig_share = fminf(fmaxf(recipe->twig_share, 0.0f), 1.0f);
+	plant.twig_density = recipe->twig_density > 0.0f ? fminf(recipe->twig_density, 200.0f) : 0.0f;
 	plant.twig_size = recipe->twig_size > 0.0f ? fminf(fmaxf(recipe->twig_size, 0.01f), 5.0f) : 0.0f;
 	plant.branch_flat = fminf(fmaxf(recipe->branch_flat, 0.0f), 1.0f);
 	plant.twig_gap = recipe->twig_gap > 0.0f ? fmaxf(recipe->twig_gap, 0.02f) : 0.0f;
