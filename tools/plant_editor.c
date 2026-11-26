@@ -1803,6 +1803,17 @@ int main(int argument_count, char **arguments)
 		SDL_Log("The editor cannot start (shaders, font?): %s", SDL_GetError());
 		return 1;
 	}
+	// A ticked box's mark bright (Nuklear's own is a dark square on grey,
+	// which reads as off)
+	{
+		struct nk_style_toggle *toggle = &editor.ui.context.style.checkbox;
+
+		toggle->cursor_normal = nk_style_item_color(nk_rgb(108, 168, 228));
+		toggle->cursor_hover = nk_style_item_color(nk_rgb(140, 190, 240));
+		toggle->normal = nk_style_item_color(nk_rgb(58, 65, 76));
+		toggle->hover = nk_style_item_color(nk_rgb(72, 81, 94));
+		toggle->active = nk_style_item_color(nk_rgb(72, 81, 94));
+	}
 	while (running)
 	{
 		SDL_Event event;
