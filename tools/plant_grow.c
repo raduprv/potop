@@ -2987,6 +2987,19 @@ static const int CURVED_TWIG_ACROSS = 3;
 // (its middle up, a fir's spray seen end on), its tip drooping, twisted a
 // little along it; so seen edge on it still shows (two crossed cards are
 // what a flat one needs for that). Lit with normal, as every card
+// A curved twig laid along its branch (add_twig_row sets it, NULL after):
+// its middle line the branch's own line from t on (straight on past its
+// end), out to one side of it by share of the way along it (the twigs of a
+// row to either side in turn), so a hanging whip's twigs hang with it
+typedef struct
+{
+	const branch_t *branch;
+	float t;
+	float out;
+} twig_follow_t;
+
+static twig_follow_t twig_follow;
+
 static void add_curved_twig(mesh_t *mesh, vec3 base, vec3 along_unit, vec3 across_unit, float length, vec3 normal,
 	const cell_place_t *place, float twig_arch)
 {
@@ -3016,6 +3029,31 @@ static void add_curved_twig(mesh_t *mesh, vec3 base, vec3 along_unit, vec3 acros
 		vec3 face = rotated(up_face, along_unit, angle);
 		// (the droop grows to its tip; the arch flattens a little there)
 		vec3 spine = add(add(base, scale(along_unit, length * t)), v3(0.0f, -droop * t * t, 0.0f));
+
+		if (twig_follow.branch != NULL)
+		{
+			// (along its branch instead: from where it sits, as far along
+			// it as along itself, out to its side more the farther out)
+			const branch_t *branch = twig_follow.branch;
+			float reach = twig_follow.t + length * t / fmaxf(branch->length, 1e-3f);
+			float past = fmaxf(reach - 1.0f, 0.0f) * branch->length;
+			vec3 way;
+			vec3 out;
+			float radius;
+
+			branch_at(branch, fminf(reach, 1.0f), &spine, &way, &radius);
+			spine = add(spine, scale(way, past));
+			out = cross(v3(0.0f, 1.0f, 0.0f), way);
+			out = dot(out, out) > 1e-4f ? normalized(out) : perpendicular(way);
+			spine = add(spine, scale(out, twig_follow.out * length * t));
+			// (its cross-section turned with the branch's way: across it
+			// level, its face up)
+			side = out;
+			face = normalized(cross(way, out));
+			face = face.y < 0.0f ? scale(face, -1.0f) : face;
+			face = rotated(face, way, angle);
+			side = rotated(side, way, angle);
+		}
 
 		mesh->plant_along = t;
 		for (int column = 0; column < columns; column++)
@@ -3275,11 +3313,15 @@ static void add_twig_row(plant_t *plant, const branch_t *branch)
 		branch_at(branch, t, &point, &heading, &radius);
 		side = cross(v3(0.0f, 1.0f, 0.0f), heading);
 		side = dot(side, side) > 1e-4f ? normalized(side) : perpendicular(heading);
-		if (pieces > 1)
-		{
-			heading = normalized(add(heading, scale(side, ((i & 1) != 0 ? 0.35f : -0.35f) * random_between(0.6f, 1.2f))));
-		}
+		float out = pieces > 1 ? ((i & 1) != 0 ? 0.35f : -0.35f) * random_between(0.6f, 1.2f) : 0.0f;
+
+		heading = normalized(add(heading, scale(side, out)));
+		// (a curved one laid along the branch from here, out to its side)
+		twig_follow.branch = branch;
+		twig_follow.t = t;
+		twig_follow.out = out;
 		add_twig_one(plant, point, heading, size / plant->kind->twig_scale);
+		twig_follow.branch = NULL;
 	}
 }
 
