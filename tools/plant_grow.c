@@ -203,6 +203,18 @@ typedef struct
 	// as it grew up): this many to a stem, bare, thin, mostly broken short,
 	// the longer the nearer the crown
 	float dead_branches;
+	// A buttressed trunk (a bald cypress's): its foot swelling out in
+	// ribs, this much of its radius at the ground on the ribs (0: round),
+	// fading up it over buttress_reach of its radius; buttress_ribs of them
+	float buttress;
+	int buttress_ribs;
+	float buttress_reach;
+	// Knees (a bald cypress's pneumatophores): this many knobbly cones of
+	// wood out of the ground round the trunk, out to knee_reach meters
+	// from it, up to knee_height meters tall
+	float knees;
+	float knee_reach;
+	float knee_height;
 	// The trunk kept straight the way it set out (0: it wanders with bend
 	// and gnarl; 1: straight, a conifer's)
 	float trunk_upright;
@@ -408,6 +420,24 @@ static const plant_kind_t kinds[] =
 		.fork_height = 0.75f, .extra_stem_chance = 0.04f, .gnarl = 0.3f, .kinks = 0.35f, .lean_length = 0.3f, .straighten = 0.8f,
 		.moss = 0.30f, .tips = 0.70f, .autumn_colors = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f } }, .autumn = 0.0f, .falls = false,
 		.snow_sag = 0.040f,
+	},
+	{
+		// Chiparos de balta (bald cypress, Taxodium distichum), an old one:
+		// a tall straight trunk, its foot swollen in ribs (buttresses) and
+		// knees out of the ground round it; the crown high, broad and flat
+		// topped, of long level branches, their feathery sprays flat; a
+		// conifer that turns rust in the autumn and drops its needles
+		.name = "bald_cypress", .shape = SHAPE_TREE, .atlas = "conifers", .height_meters = 24.0f, .stems = 1, .stem_lean_degrees = 2.0f,
+		.levels = 2, .trunk_radius_ratio = 0.03f, .taper = 0.2f, .trunk_taper = 0.25f, .bend = 0.08f, .crown_start = 0.4f,
+		.children = { 22, 12, 0 }, .length_ratio = { 0.5f, 0.42f, 0.0f }, .down_degrees = { 84.0f, 60.0f, 0.0f },
+		.down_spread_degrees = 14.0f, .reach = { 0.03f, 0.05f, 0.0f }, .child_radius_ratio = 0.5f, .crown = CROWN_DOME,
+		.child_start = 0.25f, .leaves_per_branch = 5, .leaf_size = 0.4f,
+		.twig_scale = 1.6f, .side_twigs = 2.0f, .tip_twig = true, .twig_flat = 0.8f, .fruit_hang = FRUIT_DOWN, .fruit_zone = FRUIT_OUTER,
+		.droop = 0.01f, .tip_lift = 0.15f, .collar = 0.25f, .root_flare = 0.6f, .leaves_from = 0.42f, .trunk_upright = 0.8f, .dead_branches = 6.0f,
+		.buttress = 1.3f, .buttress_ribs = 9, .buttress_reach = 6.0f, .knees = 30.0f, .knee_reach = 6.0f, .knee_height = 0.9f,
+		.fork_height = 0.0f, .extra_stem_chance = 0.0f, .gnarl = 0.2f, .kinks = 0.25f, .lean_length = 0.3f, .straighten = 0.8f,
+		.moss = 0.50f, .tips = 0.40f, .autumn_colors = { { 0.72f, 0.36f, 0.12f }, { 0.58f, 0.26f, 0.10f } }, .autumn = 1.0f, .falls = true,
+		.snow_sag = 0.020f,
 	},
 	{
 		// Tuia: a narrow column, many short branches pointing up
@@ -2126,6 +2156,7 @@ typedef struct
 	int cluster_minimum;
 	int cluster_maximum;
 	float fruit_per_branch;
+	float twig_arch;                    // curved twigs: their sides bent down this much of their width (0: a little)
 	float twig_density;                 // trees with twigs: twigs a meter along the branches (0: the kind's)
 	float twig_size;                    // trees with twigs: every twig this long, meters (0: as long as the branch it stands for)
 	float branch_flat;                  // trees: branches out of lying ones only to their sides, level (0: all round them; 1: flat)
@@ -2141,6 +2172,14 @@ typedef struct
 	bool crown_center_set;
 	float trunk_taper;                  // a stem's radius at its top, of its foot's
 	float trunk_reference;              // the trunk's radius at its foot: a branch's thickness is of this (the moss)
+	// The trunk's buttress (kind buttress): add_tube swells the tube it is
+	// drawing in ribs while tube_buttress, by these, fading up it over
+	// buttress_meters
+	bool tube_buttress;
+	int rib_count;
+	float rib_angle[16];
+	float rib_strength[16];
+	float buttress_meters;
 	float trunk_children;               // its branches, of the kind's (a fork's trunk has its share)
 	vec3 trunk_end;                     // where the last trunk grown ends, and heads
 	vec3 trunk_end_direction;
@@ -2221,6 +2260,25 @@ static vec3 crown_normal(const plant_t *plant, vec3 point)
 	return normalized(add(normalized(sub(point, plant->crown_center)), v3(0.0f, 0.7f, 0.0f)));
 }
 
+// How much a buttressed trunk's radius swells at angle round it (of its
+// own), height_share of the way down to the ground (1 at it): the ribs
+// out, the hollows between them a little in
+static float buttress_factor(const plant_t *plant, float angle, float height_share)
+{
+	float rib = 0.0f;
+	float width = 2.0f * PI_F / (float)(plant->rib_count > 0 ? plant->rib_count : 1) * 0.42f;
+
+	for (int j = 0; j < plant->rib_count; j++)
+	{
+		float apart = remainderf(angle - plant->rib_angle[j], 2.0f * PI_F);
+
+		rib = fmaxf(rib, plant->rib_strength[j] * expf(-(apart / width) * (apart / width)));
+	}
+	// (the ribs' share falling off faster than the swelling: round low,
+	// fluted a little way up, plain higher)
+	return 1.0f + plant->kind->buttress * (0.45f * height_share + 0.55f * height_share * height_share * (rib - 0.3f) * 1.6f);
+}
+
 // A tube along a branch: a ring at each point, the bark tiled round and
 // along
 static void add_tube(plant_t *plant, const branch_t *branch, int sides, float base_radius, int material)
@@ -2252,8 +2310,22 @@ static void add_tube(plant_t *plant, const branch_t *branch, int sides, float ba
 		{
 			float angle = 2.0f * PI_F * (float)k / (float)sides;
 			vec3 out = rotated(side, heading, angle);
+			float radius = branch->radii[i];
+			vec3 normal = out;
 
-			add_vertex(&plant->mesh, add(branch->points[i], scale(out, branch->radii[i])), out, cross(heading, out), heading,
+			if (plant->tube_buttress)
+			{
+				// (ribs out at the foot: the radius round the ring, and
+				// the normal off it as the surface slopes round)
+				float height_share = expf(-along / plant->buttress_meters);
+				float here = buttress_factor(plant, angle, height_share);
+				float slope = (buttress_factor(plant, angle + 0.02f, height_share) - buttress_factor(plant, angle - 0.02f, height_share)) / 0.04f;
+				vec3 round_way = cross(heading, out);
+
+				normal = normalized(sub(scale(out, here), scale(round_way, slope)));
+				radius *= here;
+			}
+			add_vertex(&plant->mesh, add(branch->points[i], scale(out, radius)), normal, cross(heading, normal), heading,
 				(float)around_repeats * (float)k / (float)sides, along / plant->bark_meters);
 		}
 	}
@@ -2911,11 +2983,13 @@ static const int CURVED_TWIG_ACROSS = 3;
 // little along it; so seen edge on it still shows (two crossed cards are
 // what a flat one needs for that). Lit with normal, as every card
 static void add_curved_twig(mesh_t *mesh, vec3 base, vec3 along_unit, vec3 across_unit, float length, vec3 normal,
-	const cell_place_t *place)
+	const cell_place_t *place, float twig_arch)
 {
 	float width = length * place->aspect;
 	vec3 up_face = normalized(cross(along_unit, across_unit));
-	float arch = width * random_between(0.10f, 0.18f);
+	// (--twig-arch: how far its sides bend down, of its width; else a
+	// little)
+	float arch = width * (twig_arch > 0.0f ? twig_arch * random_between(0.8f, 1.2f) : random_between(0.10f, 0.18f));
 	float droop = length * random_between(0.08f, 0.2f);
 	float twist = random_between(-0.25f, 0.25f);
 	uint32_t first = (uint32_t)mesh->vertex_count;
@@ -3137,7 +3211,8 @@ static void add_twig_one(plant_t *plant, vec3 start, vec3 direction, float lengt
 		vec3 side_face = cross(direction, side);
 		vec3 other_face = cross(direction, other);
 
-		add_curved_twig(&plant->mesh, start, direction, fabsf(side_face.y) >= fabsf(other_face.y) ? side : other, length, normal, place);
+		add_curved_twig(&plant->mesh, start, direction, fabsf(side_face.y) >= fabsf(other_face.y) ? side : other, length, normal, place,
+			plant->twig_arch);
 	}
 	else if (plant->twig_density > 0.0f)
 	{
@@ -4054,6 +4129,19 @@ static void add_twigs_along(plant_t *plant, const branch_t *branch, int sides, f
 
 	if (plant->twig_size > 0.0f || plant->twig_density > 0.0f)
 	{
+		// (its own wood under them: a row of twigs is not one twig whose
+		// stem stands for the branch, they sit on it)
+		branch_t whip = *branch;
+
+		// (thin: a whip, tapering to its tip, the twigs hiding most of it)
+		for (int i = 0; i < whip.count; i++)
+		{
+			float t = whip.count > 1 ? (float)i / (float)(whip.count - 1) : 0.0f;
+
+			whip.radii[i] = fmaxf(whip.radii[i] * 0.6f * (1.0f - 0.6f * t), 0.0015f);
+		}
+		plant->mesh.bark_level = (uint8_t)plant->kind->levels;
+		add_tube(plant, &whip, 3, radius * 0.6f, MATERIAL_BARK);
 		add_twig_row(plant, branch);
 		return;
 	}
@@ -4324,7 +4412,45 @@ static void grow(plant_t *plant, int level, vec3 start, vec3 direction, float le
 		plant->trunk_end_direction = branch.directions[branch.count - 1];
 	}
 	plant->mesh.bark_level = (uint8_t)level;
-	add_tube(plant, &branch, sides, radius, level == 0 ? MATERIAL_TRUNK : MATERIAL_BARK);
+	// (a buttressed trunk's foot: the stem out of the ground, not one out
+	// of a fork above it; more sides, for the ribs)
+	plant->tube_buttress = level == 0 && kind->buttress > 0.0f && plant->rib_count > 0 && plant->trunk_u0 <= 0.0f;
+	if (plant->tube_buttress)
+	{
+		// (its foot in finer rings, where the ribs swell: each piece there
+		// split in four)
+		branch_t fine;
+		float along = 0.0f;
+
+		fine.count = 0;
+		fine.length = branch.length;
+		for (int i = 0; i + 1 < branch.count && fine.count < MAX_POINTS - 1; i++)
+		{
+			float piece = sqrtf(dot(sub(branch.points[i + 1], branch.points[i]), sub(branch.points[i + 1], branch.points[i])));
+			int splits = along < plant->buttress_meters * 1.5f ? 4 : 1;
+
+			for (int k = 0; k < splits && fine.count < MAX_POINTS - 1; k++)
+			{
+				float f = (float)k / (float)splits;
+
+				fine.points[fine.count] = add(scale(branch.points[i], 1.0f - f), scale(branch.points[i + 1], f));
+				fine.directions[fine.count] = normalized(add(scale(branch.directions[i], 1.0f - f), scale(branch.directions[i + 1], f)));
+				fine.radii[fine.count] = branch.radii[i] * (1.0f - f) + branch.radii[i + 1] * f;
+				fine.count++;
+			}
+			along += piece;
+		}
+		fine.points[fine.count] = branch.points[branch.count - 1];
+		fine.directions[fine.count] = branch.directions[branch.count - 1];
+		fine.radii[fine.count] = branch.radii[branch.count - 1];
+		fine.count++;
+		add_tube(plant, &fine, 40, radius, MATERIAL_TRUNK);
+	}
+	else
+	{
+		add_tube(plant, &branch, sides, radius, level == 0 ? MATERIAL_TRUNK : MATERIAL_BARK);
+	}
+	plant->tube_buttress = false;
 	if (level == 0 && kind->dead_branches > 0.0f)
 	{
 		add_dead_branches(plant, &branch);
@@ -4416,6 +4542,66 @@ static void grow(plant_t *plant, int level, vec3 start, vec3 direction, float le
 	}
 }
 
+// A knee (kind knees): a knobbly cone of wood out of the ground, from
+// foot up, height tall, radius wide at its foot, rounded off at its top
+static void add_knee(plant_t *plant, vec3 foot, float height, float radius)
+{
+	branch_t knee;
+	vec3 lean = v3(random_between(-0.25f, 0.25f), 1.0f, random_between(-0.25f, 0.25f));
+	const int sides = 8;
+	uint32_t first = (uint32_t)plant->mesh.vertex_count;
+	uint32_t ring;
+	uint32_t top;
+	vec3 tip;
+	vec3 heading;
+
+	trace_branch(&knee, foot, normalized(lean), height, radius, 0.35f, 1.2f, 0.0f, fmaxf(height / 6.0f, 0.03f));
+	// (swollen low, knobbly up it)
+	for (int i = 0; i < knee.count; i++)
+	{
+		float t = knee.count > 1 ? (float)i / (float)(knee.count - 1) : 0.0f;
+
+		knee.radii[i] *= (1.0f + 0.8f * expf(-t * 6.0f)) * random_between(0.85f, 1.15f);
+	}
+	plant->mesh.bark_level = 1;
+	add_tube(plant, &knee, sides, radius, MATERIAL_TRUNK);
+	// Its top closed: a low dome over its last ring
+	ring = first + (uint32_t)((knee.count - 1) * (sides + 1));
+	heading = knee.directions[knee.count - 1];
+	tip = add(knee.points[knee.count - 1], scale(heading, knee.radii[knee.count - 1] * 0.8f));
+	top = add_vertex(&plant->mesh, tip, heading, perpendicular(heading), cross(heading, perpendicular(heading)), 0.5f, 0.0f);
+	for (int k = 0; k < sides; k++)
+	{
+		add_triangle(&plant->mesh, MATERIAL_TRUNK, ring + (uint32_t)k, ring + (uint32_t)k + 1, top);
+	}
+	plant->mesh.bark_level = 0;
+}
+
+// The knees round a trunk (trunk_radius at its foot): out to knee_reach,
+// none in the buttress, taller the nearer, in a few loose clusters
+static void add_knees(plant_t *plant, float trunk_radius)
+{
+	const plant_kind_t *kind = plant->kind;
+	int count = (int)(kind->knees + 0.5f);
+	float near = trunk_radius * (1.0f + kind->buttress) + 0.3f;
+	float clusters[4];
+
+	for (int c = 0; c < 4; c++)
+	{
+		clusters[c] = random_between(0.0f, 2.0f * PI_F);
+	}
+	for (int i = 0; i < count; i++)
+	{
+		float azimuth = clusters[i % 4] + random_between(-0.7f, 0.7f);
+		float out = near + powf(random_unit(), 0.8f) * fmaxf(kind->knee_reach - near, 0.2f);
+		float closeness = 1.0f - (out - near) / fmaxf(kind->knee_reach - near, 0.2f);
+		float height = kind->knee_height * random_between(0.25f, 1.0f) * (0.4f + 0.6f * closeness);
+		float radius = fmaxf(height * random_between(0.18f, 0.28f), 0.02f);
+
+		add_knee(plant, v3(cosf(azimuth) * out, -0.05f, sinf(azimuth) * out), height + 0.05f, radius);
+	}
+}
+
 static void grow_tree(plant_t *plant)
 {
 	const plant_kind_t *kind = plant->kind;
@@ -4427,6 +4613,14 @@ static void grow_tree(plant_t *plant)
 	branch_shape_t trunk;
 
 	plant->trunk_reference = trunk_radius;
+	// (the buttress's ribs: round the trunk, a little uneven)
+	plant->rib_count = kind->buttress > 0.0f ? (kind->buttress_ribs > 16 ? 16 : kind->buttress_ribs) : 0;
+	plant->buttress_meters = trunk_radius * fmaxf(kind->buttress_reach, 0.5f);
+	for (int j = 0; j < plant->rib_count; j++)
+	{
+		plant->rib_angle[j] = 2.0f * PI_F * ((float)j + random_between(-0.3f, 0.3f)) / (float)plant->rib_count;
+		plant->rib_strength[j] = random_between(0.55f, 1.2f);
+	}
 	vec3 start = v3(0.0f, -0.05f, 0.0f);
 	vec3 fork_direction = v3(0.0f, 1.0f, 0.0f);
 	float lean_azimuth = 0.0f;
@@ -4514,6 +4708,10 @@ static void grow_tree(plant_t *plant)
 		}
 		// Forked: each a little out of the middle, so the two grow out of one
 		grow(plant, 0, fork > 0.0f ? add(start, scale(out, trunk_radius * 0.45f)) : start, direction, stem_height, trunk_radius, &stem);
+	}
+	if (kind->knees > 0.0f)
+	{
+		add_knees(plant, plant->trunk_reference);
 	}
 }
 
@@ -7093,6 +7291,10 @@ plant_fruit_zone_t plant_kind_fruit_zone(int kind) { return kind_at(kind)->fruit
 float plant_kind_crown_start(int kind) { return kind_at(kind)->crown_start; }
 float plant_kind_leaves_from(int kind) { return kind_at(kind)->leaves_from; }
 float plant_kind_dead_branches(int kind) { return kind_at(kind)->dead_branches; }
+float plant_kind_buttress(int kind) { return kind_at(kind)->buttress; }
+float plant_kind_knees(int kind) { return kind_at(kind)->knees; }
+float plant_kind_knee_reach(int kind) { return kind_at(kind)->knee_reach > 0.0f ? kind_at(kind)->knee_reach : 4.0f; }
+float plant_kind_knee_height(int kind) { return kind_at(kind)->knee_height > 0.0f ? kind_at(kind)->knee_height : 0.5f; }
 float plant_kind_trunk_upright(int kind) { return kind_at(kind)->trunk_upright; }
 float plant_kind_light_from_below(int kind) { return kind_at(kind)->light_from_below; }
 float plant_kind_droop(int kind) { return kind_at(kind)->droop; }
@@ -7171,6 +7373,10 @@ void plant_recipe_defaults(plant_recipe_t *recipe)
 	recipe->crown_start = -1.0f;
 	recipe->leaves_from = -1.0f;
 	recipe->dead_branches = -1.0f;
+	recipe->buttress = -1.0f;
+	recipe->knees = -1.0f;
+	recipe->knee_reach = -1.0f;
+	recipe->knee_height = -1.0f;
 	recipe->trunk_upright = -1.0f;
 	recipe->light_from_below = -1.0f;
 	recipe->droop = -1.0f;
@@ -7423,6 +7629,7 @@ bool plant_recipe_load(plant_recipe_t *recipe, const char *path)
 		else if (strcmp(key, "branch_flat") == 0) { recipe->branch_flat = strtof(value, NULL); }
 		else if (strcmp(key, "twig_size") == 0) { recipe->twig_size = strtof(value, NULL); }
 		else if (strcmp(key, "twig_density") == 0) { recipe->twig_density = strtof(value, NULL); }
+		else if (strcmp(key, "twig_arch") == 0) { recipe->twig_arch = strtof(value, NULL); }
 		else if (strcmp(key, "loose_leaves") == 0) { recipe->loose_leaves = strtof(value, NULL); }
 		else if (strcmp(key, "fruit_shape") == 0)
 		{
@@ -7453,6 +7660,10 @@ bool plant_recipe_load(plant_recipe_t *recipe, const char *path)
 		else if (strcmp(key, "crown_start") == 0) { recipe->crown_start = strtof(value, NULL); }
 		else if (strcmp(key, "leaves_from") == 0) { recipe->leaves_from = strtof(value, NULL); }
 		else if (strcmp(key, "dead_branches") == 0) { recipe->dead_branches = strtof(value, NULL); }
+		else if (strcmp(key, "buttress") == 0) { recipe->buttress = strtof(value, NULL); }
+		else if (strcmp(key, "knees") == 0) { recipe->knees = strtof(value, NULL); }
+		else if (strcmp(key, "knee_reach") == 0) { recipe->knee_reach = strtof(value, NULL); }
+		else if (strcmp(key, "knee_height") == 0) { recipe->knee_height = strtof(value, NULL); }
 		else if (strcmp(key, "trunk_upright") == 0) { recipe->trunk_upright = strtof(value, NULL); }
 		else if (strcmp(key, "light_from_below") == 0) { recipe->light_from_below = strtof(value, NULL); }
 		else if (strcmp(key, "droop") == 0) { recipe->droop = strtof(value, NULL); }
@@ -7637,6 +7848,10 @@ bool plant_recipe_save(const plant_recipe_t *recipe, const char *path)
 	{
 		fprintf(file, "twig_density = %g\n", (double)recipe->twig_density);
 	}
+	if (recipe->twig_arch > 0.0f)
+	{
+		fprintf(file, "twig_arch = %g\n", (double)recipe->twig_arch);
+	}
 	fprintf(file, "crown_start = %g\nleaves_from = %g\ndroop = %g\ntip_lift = %g\ncollar = %g\nroot_flare = %g\n",
 		(double)recipe->crown_start, (double)recipe->leaves_from, (double)recipe->droop, (double)recipe->tip_lift, (double)recipe->collar,
 		(double)recipe->root_flare);
@@ -7646,6 +7861,11 @@ bool plant_recipe_save(const plant_recipe_t *recipe, const char *path)
 	fprintf(file, "brush_strips = %d\nbrush_spacing = %g\n", recipe->brush_strips, (double)recipe->brush_spacing);
 	fprintf(file, "dead_branches = %g\ntrunk_upright = %g\nlight_from_below = %g\n", (double)recipe->dead_branches, (double)recipe->trunk_upright,
 		(double)recipe->light_from_below);
+	if (recipe->buttress >= 0.0f || recipe->knees >= 0.0f || recipe->knee_reach >= 0.0f || recipe->knee_height >= 0.0f)
+	{
+		fprintf(file, "buttress = %g\nknees = %g\nknee_reach = %g\nknee_height = %g\n", (double)recipe->buttress, (double)recipe->knees,
+			(double)recipe->knee_reach, (double)recipe->knee_height);
+	}
 	fprintf(file, "snow_bake = %d\n", recipe->snow_bake ? 1 : 0);
 	fprintf(file, "trunk_thickness = %g\ntrunk_taper = %g\nbranch_thickness = %g\nbranch_taper = %g\nthinnest_branch = %g\n",
 		(double)recipe->trunk_thickness, (double)recipe->trunk_taper, (double)recipe->branch_thickness, (double)recipe->branch_taper,
@@ -7970,7 +8190,7 @@ bool plant_grow(const plant_recipe_t *recipe, const plant_atlas_t *atlas, plant_
 		kind.twig_scale = fminf(recipe->twig_scale, 5.0f);
 	}
 	// (a test, for now the fir's alone)
-	kind.twig_curved = recipe->curved_twigs && kind.name != NULL && strcmp(kind.name, "fir") == 0;
+	kind.twig_curved = recipe->curved_twigs;
 	kind.brushes = kind.brushes || recipe->brushes;
 	kind.brush_strips = recipe->brush_strips < 3 ? 3 : (recipe->brush_strips > 32 ? 32 : recipe->brush_strips);
 	kind.brush_spacing = fminf(fmaxf(recipe->brush_spacing, 0.1f), 2.0f);
@@ -7991,6 +8211,26 @@ bool plant_grow(const plant_recipe_t *recipe, const plant_atlas_t *atlas, plant_
 	{
 		kind.dead_branches = fminf(recipe->dead_branches, 60.0f);
 	}
+	if (recipe->buttress >= 0.0f)
+	{
+		kind.buttress = fminf(recipe->buttress, 4.0f);
+		kind.buttress_ribs = kind.buttress_ribs > 0 ? kind.buttress_ribs : 8;
+		kind.buttress_reach = kind.buttress_reach > 0.0f ? kind.buttress_reach : 6.0f;
+	}
+	if (recipe->knees >= 0.0f)
+	{
+		kind.knees = fminf(recipe->knees, 200.0f);
+	}
+	if (recipe->knee_reach >= 0.0f)
+	{
+		kind.knee_reach = fminf(recipe->knee_reach, 30.0f);
+	}
+	if (recipe->knee_height >= 0.0f)
+	{
+		kind.knee_height = fminf(recipe->knee_height, 5.0f);
+	}
+	kind.knee_reach = kind.knee_reach > 0.0f ? kind.knee_reach : 4.0f;
+	kind.knee_height = kind.knee_height > 0.0f ? kind.knee_height : 0.5f;
 	if (recipe->leaves_from >= 0.0f)
 	{
 		kind.leaves_from = fminf(recipe->leaves_from, 0.95f);
@@ -8104,6 +8344,7 @@ bool plant_grow(const plant_recipe_t *recipe, const plant_atlas_t *atlas, plant_
 	plant.wind_side = kind.wind_side;
 	plant.bark_meters = fmaxf(recipe->bark_meters, 0.05f);
 	plant.twig_share = fminf(fmaxf(recipe->twig_share, 0.0f), 1.0f);
+	plant.twig_arch = recipe->twig_arch > 0.0f ? fminf(recipe->twig_arch, 1.0f) : 0.0f;
 	plant.twig_density = recipe->twig_density > 0.0f ? fminf(recipe->twig_density, 200.0f) : 0.0f;
 	plant.twig_size = recipe->twig_size > 0.0f ? fminf(fmaxf(recipe->twig_size, 0.01f), 5.0f) : 0.0f;
 	plant.branch_flat = fminf(fmaxf(recipe->branch_flat, 0.0f), 1.0f);

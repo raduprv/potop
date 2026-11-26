@@ -277,6 +277,7 @@ typedef struct
 	float twig_scale;                  // trees: a twig's length, of the branch it stands for
 	float twig_meters;                 // trees: a finest branch longer than this has twigs one after the other along it (0: one; -1: the kind's)
 	float twig_share;                  // trees with twigs and leaves: the share of the finest branches that are twigs (0.7)
+	float twig_arch;                   // curved twigs: their sides bent down this much of their width (0: a little, 0.1 .. 0.18)
 	float twig_density;                // trees with twigs: twigs a meter along the branches, finest and others (0: the kind's)
 	float twig_size;                   // trees with twigs: every twig this long, meters, a little more or less (0: as long as the branch it stands for)
 	float branch_flat;                 // trees: branches out of lying ones only out to their sides, level (0: all round them; 1: flat)
@@ -302,6 +303,10 @@ typedef struct
 	float crown_start;                 // the trunk's first branches, of its height (0..1)
 	float leaves_from;                 // foliage only above this much of the height (0: all the way down)
 	float dead_branches;               // dead bare branches on a stem under the crown (below 0: the kind's)
+	float buttress;                    // the trunk's foot swollen in ribs, of its radius (below 0: the kind's; 0: round)
+	float knees;                       // knees (pneumatophores) out of the ground round the trunk (below 0: the kind's)
+	float knee_reach;                  // out to this far from the trunk, meters (below 0: the kind's)
+	float knee_height;                 // up to this tall, meters (below 0: the kind's)
 	float trunk_upright;               // the trunk kept straight the way it set out (0 wanders .. 1 straight; below 0: the kind's)
 	float light_from_below;            // the foliage's normals out from this many heights under the crown's foot (a mat lit from above; below 0: the kind's)
 	float droop;                       // how far the branches bend down under their weight
@@ -400,6 +405,10 @@ plant_fruit_zone_t plant_kind_fruit_zone(int kind);
 float plant_kind_crown_start(int kind);
 float plant_kind_leaves_from(int kind);
 float plant_kind_dead_branches(int kind);
+float plant_kind_buttress(int kind);
+float plant_kind_knees(int kind);
+float plant_kind_knee_reach(int kind);
+float plant_kind_knee_height(int kind);
 float plant_kind_trunk_upright(int kind);
 float plant_kind_light_from_below(int kind);
 float plant_kind_droop(int kind);

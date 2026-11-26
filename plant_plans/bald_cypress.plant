@@ -1,0 +1,27 @@
+; A plant's recipe (tools/potop_plant --recipe, tools/plant_editor). Paths as seen from
+; the project's directory; 0 (-1 for leaves_per_branch and the crown's and the trunk's shape: crown_start
+; to wind_side; kind for fruit_hang and fruit_zone; nothing for branches) leaves a
+; setting to the kind.
+
+kind = bald_cypress
+seed = 1
+height = 0
+output = data/objects/bald_cypress.pobj
+atlas = 
+
+bark = data/textures/tuja_bark.png | data/textures/tuja_bark_normal.png
+bark_meters = 2.2
+twig = plant_plans/twigs/bald_cypress_1.png
+twig = plant_plans/twigs/bald_cypress_2.png
+twig = plant_plans/twigs/bald_cypress_3.png
+
+leaf_size = 0
+leaves_per_branch = -1
+branches = 24, 16
+branch_length = 0
+twig_scale = 0
+twig_share = 0.7
+twig_size = 2
+loose_leaves = 0
+curved_twigs = 1
+twig_arch = 0.25

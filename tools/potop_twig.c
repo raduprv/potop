@@ -3052,6 +3052,168 @@ static void draw_juniper_spread(canvas_t *canvas, random_t *random, bool awl)
 		random_range(random, 0.3f, 0.38f), 0.021f, awl ? 0.7f : 0.0f, random_range(random, 0.22f, 0.34f), &paint);
 }
 
+// --- Bald cypress --------------------------------------------------------------------
+
+// A soft flat needle at (x0, y0) pointing at angle (radians, 0 up),
+// length long, half_width each side: narrow at its foot, as wide most of
+// its length, drawn to a blunt point; a faint darker line down its
+// middle, paler at its rim; darkens a little what lies under its edge.
+// No light baked in
+static void draw_flat_needle(canvas_t *canvas, float x0, float y0, float angle, float length, float half_width, const float color[3])
+{
+	float s = canvas->scale;
+	float reach = (length + half_width) * s + 2.0f;
+	int left = (int)floorf(x0 * s - reach);
+	int right = (int)ceilf(x0 * s + reach);
+	int top = (int)floorf(y0 * s - reach);
+	int bottom = (int)ceilf(y0 * s + reach);
+	float along_x = sinf(angle);
+	float along_y = -cosf(angle);
+
+	left = left < 0 ? 0 : left;
+	top = top < 0 ? 0 : top;
+	right = right >= canvas->width ? canvas->width - 1 : right;
+	bottom = bottom >= canvas->height ? canvas->height - 1 : bottom;
+	for (int y = top; y <= bottom; y++)
+	{
+		for (int x = left; x <= right; x++)
+		{
+			float px = ((float)x + 0.5f) / s - x0;
+			float py = ((float)y + 0.5f) / s - y0;
+			float u = px * along_x + py * along_y;
+			float v = px * -along_y + py * along_x;
+			float t = u / length;
+			float half;
+			float coverage;
+			float *pixel = &canvas->pixels[((size_t)y * (size_t)canvas->width + (size_t)x) * 4];
+
+			if (t < -0.1f || t > 1.05f)
+			{
+				continue;
+			}
+			half = t <= 0.0f || t >= 1.0f ? 0.0f : half_width * smooth_step(0.0f, 0.12f, t) * (1.0f - smooth_step(0.78f, 1.0f, t) * 0.9f);
+			coverage = half > 0.0f ? clampf((half - fabsf(v)) * s + 0.5f, 0.0f, 1.0f) : 0.0f;
+			if (fabsf(v) - half < half_width * 1.2f && t > 0.0f && t < 1.0f)
+			{
+				darken_under(pixel, fmaxf(fabsf(v) - half, 0.0f), half_width * 1.2f, 0.3f);
+			}
+			if (coverage <= 0.0f)
+			{
+				continue;
+			}
+			{
+				float across = fabsf(v) / fmaxf(half, 1e-5f);
+				float shade = (0.86f + 0.2f * sqrtf(fmaxf(1.0f - across * across, 0.0f))) * (1.0f - 0.12f * clampf(1.0f - across / 0.25f, 0.0f, 1.0f));
+
+				for (int k = 0; k < 3; k++)
+				{
+					float value = color[k] * shade;
+
+					value = mixf(value, value * 1.12f + 0.03f, smooth_step(0.75f, 1.0f, across) * 0.5f);
+					pixel[k] = value * coverage + pixel[k] * (1.0f - coverage);
+				}
+				pixel[3] = coverage + pixel[3] * (1.0f - coverage);
+			}
+		}
+	}
+}
+
+// A bald cypress's branchlet from (x, y) at angle, length long: a thin
+// green stalk, its needles in two flat ranks out each side, alternate,
+// spreading nearly square to it, the longest in its middle, short at its
+// foot and its tip (none bare); its own green, the very tip's needles the
+// new growth's yellower green
+static void draw_cypress_branchlet(canvas_t *canvas, random_t *random, float x, float y, float angle, float length, const float green[3],
+	const float young[3])
+{
+	paint_t stalk = { .dark = { 0.24f, 0.30f, 0.12f }, .light = { 0.46f, 0.52f, 0.24f }, .tip = { 0.44f, 0.54f, 0.22f }, .tip_from = 1.0f };
+	float bow = random_range(random, -0.12f, 0.12f) * length;
+	float ax = x;
+	float ay = y;
+	float cx = x + sinf(angle) * length * 0.5f + cosf(angle) * bow;
+	float cy = y - cosf(angle) * length * 0.5f + sinf(angle) * bow;
+	float bx = x + sinf(angle) * length;
+	float by = y - cosf(angle) * length;
+	float needle_length = length * random_range(random, 0.2f, 0.26f);
+	float spacing = needle_length * 0.11f;
+	int count = (int)(length / spacing);
+	float side = random_float(random) < 0.5f ? -1.0f : 1.0f;
+
+	draw_curve(canvas, ax, ay, cx, cy, bx, by, 0.0028f, 0.0012f, &stalk);
+	// (from the tip back: each lower pair over the foot of the one above)
+	for (int i = count; i >= 1; i--)
+	{
+		float t = ((float)i - random_range(random, 0.0f, 0.5f)) / (float)count;
+		float px;
+		float py;
+		float heading;
+		float here = needle_length * (0.45f + 0.55f * sinf(PI_F * fminf(0.15f + t * 0.95f, 1.0f))) * random_range(random, 0.9f, 1.1f);
+		float spread = random_range(random, 1.0f, 1.25f) - 0.35f * smooth_step(0.75f, 1.0f, t);
+		float tone = random_range(random, 0.9f, 1.1f);
+		float color[3];
+		float this_side = (i & 1) != 0 ? side : -side;
+
+		quadratic_at(ax, ay, cx, cy, bx, by, fminf(t, 1.0f), &px, &py, &heading);
+		for (int k = 0; k < 3; k++)
+		{
+			// (darker in at the foot, brighter out: the spray's depth)
+			color[k] = mixf(green[k] * mixf(0.7f, 1.12f, t), young[k], smooth_step(0.84f, 0.94f, t)) * tone;
+		}
+		draw_flat_needle(canvas, px, py, heading + this_side * spread, here, here * 0.06f, color);
+	}
+	// (its tip: a little tuft, two short ones forward)
+	{
+		float color[3];
+
+		for (int k = 0; k < 3; k++)
+		{
+			color[k] = young[k];
+		}
+		draw_flat_needle(canvas, bx, by, angle - 0.35f, needle_length * 0.5f, needle_length * 0.04f, color);
+		draw_flat_needle(canvas, bx, by, angle + 0.35f, needle_length * 0.5f, needle_length * 0.04f, color);
+	}
+}
+
+// A bald cypress's spray (Taxodium distichum): a thin woody shoot,
+// browner low, bent a little at each branchlet; the branchlets out of it
+// alternately, level, the longest low, the shortest up by its tip, and one
+// on out of its end (no bare tip): feathery, flat, a fresh light green,
+// each branchlet its own shade
+static void draw_bald_cypress(canvas_t *canvas, random_t *random)
+{
+	const float green[3] = { 0.36f, 0.52f, 0.20f };
+	const float young[3] = { 0.62f, 0.74f, 0.30f };
+	paint_t shoot = { .dark = { 0.26f, 0.18f, 0.10f }, .light = { 0.56f, 0.42f, 0.26f }, .tip = { 0.40f, 0.44f, 0.20f }, .tip_from = 0.4f,
+		.rough = 0.5f, .bumps = 0.3f };
+	float ax = 0.5f;
+	float ay = canvas->tall - 0.03f;
+	float bx = 0.5f + random_range(random, -0.08f, 0.08f);
+	float by = 0.28f;
+	float cx = 0.5f + random_range(random, -0.1f, 0.1f);
+	float cy = (ay + by) * 0.5f;
+	int branchlets = 20 + (int)(random_float(random) * 5.99f);
+	float side = random_float(random) < 0.5f ? -1.0f : 1.0f;
+	float heading;
+
+	draw_curve(canvas, ax, ay, cx, cy, bx, by, 0.009f, 0.003f, &shoot);
+	for (int n = branchlets - 1; n >= 0; n--)
+	{
+		float t = 0.06f + 0.92f * ((float)n + random_range(random, 0.2f, 0.8f)) / (float)branchlets;
+		float x;
+		float y;
+		float this_side = (n & 1) != 0 ? side : -side;
+		float length = random_range(random, 0.4f, 0.52f) * (1.0f - 0.55f * t);
+		float out = this_side * random_range(random, 0.95f, 1.25f) * (1.0f - 0.3f * t);
+		float tone = random_range(random, 0.86f, 1.12f);
+		float warm = random_range(random, -1.0f, 1.0f);
+		float own[3] = { (green[0] + warm * 0.03f) * tone, (green[1] + warm * 0.015f) * tone, (green[2] - warm * 0.03f) * tone };
+
+		quadratic_at(ax, ay, cx, cy, bx, by, t, &x, &y, &heading);
+		draw_cypress_branchlet(canvas, random, x, y, heading + out, length, own, young);
+	}
+	draw_cypress_branchlet(canvas, random, bx, by, atan2f(bx - cx, -(by - cy)), random_range(random, 0.2f, 0.26f), green, young);
+}
+
 // --- Ferns ------------------------------------------------------------------------------
 
 // A leaf's color and how it is marked
@@ -3611,7 +3773,7 @@ int main(int argument_count, char **arguments)
 	}
 	if (kind == NULL || path == NULL || width < 16 || width > 4096)
 	{
-		fprintf(stderr, "Usage: potop_twig [--width W] [--seed N] pine|pine_brush|pine_rosette|pine_needles|spruce|juniper|juniper_spread|juniper_awl|cranberry|cranberry_leaves|blueberry_leaves|berry_skin|blueberry_skin|fern|fern_lobed OUT.png\n");
+		fprintf(stderr, "Usage: potop_twig [--width W] [--seed N] pine|pine_brush|pine_rosette|pine_needles|spruce|juniper|juniper_spread|juniper_awl|bald_cypress|cranberry|cranberry_leaves|blueberry_leaves|berry_skin|blueberry_skin|fern|fern_lobed OUT.png\n");
 		return 1;
 	}
 	// (as tall as the kind's twig is: the pine's branch tip square,
@@ -3663,6 +3825,10 @@ int main(int argument_count, char **arguments)
 	{
 		draw_blueberry_leaves(&canvas, &random);
 	}
+	else if (strcmp(kind, "bald_cypress") == 0)
+	{
+		draw_bald_cypress(&canvas, &random);
+	}
 	else if (strcmp(kind, "juniper_spread") == 0 || strcmp(kind, "juniper_awl") == 0)
 	{
 		draw_juniper_spread(&canvas, &random, strcmp(kind, "juniper_awl") == 0);
@@ -3685,11 +3851,11 @@ int main(int argument_count, char **arguments)
 	}
 	else
 	{
-		fprintf(stderr, "potop_twig: no kind '%s' (pine, pine_brush, pine_rosette, pine_needles, spruce, juniper, juniper_spread, juniper_awl, cranberry, cranberry_leaves, blueberry_leaves, berry_skin, blueberry_skin, fern, fern_lobed)\n", kind);
+		fprintf(stderr, "potop_twig: no kind '%s' (pine, pine_brush, pine_rosette, pine_needles, spruce, juniper, juniper_spread, juniper_awl, bald_cypress, cranberry, cranberry_leaves, blueberry_leaves, berry_skin, blueberry_skin, fern, fern_lobed)\n", kind);
 		free(canvas.pixels);
 		return 1;
 	}
-	if (!finish(&canvas, width, canvas.height / SUPERSAMPLE, path, strcmp(kind, "spruce") == 0 || strcmp(kind, "cranberry") == 0 || strcmp(kind, "cranberry_leaves") == 0 || strcmp(kind, "blueberry_leaves") == 0 || strcmp(kind, "juniper_spread") == 0 || strcmp(kind, "juniper_awl") == 0 ? 2.0f : 0.0f))
+	if (!finish(&canvas, width, canvas.height / SUPERSAMPLE, path, strcmp(kind, "spruce") == 0 || strcmp(kind, "cranberry") == 0 || strcmp(kind, "cranberry_leaves") == 0 || strcmp(kind, "blueberry_leaves") == 0 || strcmp(kind, "juniper_spread") == 0 || strcmp(kind, "juniper_awl") == 0 || strcmp(kind, "bald_cypress") == 0 ? 2.0f : 0.0f))
 	{
 		fprintf(stderr, "potop_twig: could not write %s\n", path);
 		free(canvas.pixels);

@@ -1221,11 +1221,15 @@ static void panel(editor_t *editor)
 			nk_property_float(context, "Longest bare stretch (m; 0: any)", 0.0f, &recipe->twig_gap, 2.0f, 0.01f, 0.005f);
 			nk_property_float(context, "Branches flat (off lying ones)", 0.0f, &recipe->branch_flat, 1.0f, 0.05f, 0.01f);
 			{
-				// (a test: the fir's alone, for now)
+				// (one card each, arched, instead of two crossed)
 				nk_bool curved = recipe->curved_twigs ? nk_true : nk_false;
 
-				nk_checkbox_label(context, "Curved twigs (fir only, test)", &curved);
+				nk_checkbox_label(context, "Curved twigs (one arched card)", &curved);
 				recipe->curved_twigs = curved != 0;
+				if (recipe->curved_twigs)
+				{
+					nk_property_float(context, "Twig arch (of its width; 0: a little)", 0.0f, &recipe->twig_arch, 1.0f, 0.02f, 0.005f);
+				}
 			}
 			{
 				// (pines: twig pictures one brush side on, a head picture it end on)
@@ -1250,6 +1254,10 @@ static void panel(editor_t *editor)
 			kind_setting(context, "Crown starts at (% of height)", &recipe->crown_start, plant_kind_crown_start(kind), 0.0f, 0.95f, 0.01f, 100.0f);
 			kind_setting(context, "Leaves from (% of height)", &recipe->leaves_from, plant_kind_leaves_from(kind), 0.0f, 0.95f, 0.01f, 100.0f);
 			kind_setting(context, "Dead branches under the crown", &recipe->dead_branches, plant_kind_dead_branches(kind), 0.0f, 60.0f, 1.0f, 1.0f);
+			kind_setting(context, "Buttress (ribbed trunk foot)", &recipe->buttress, plant_kind_buttress(kind), 0.0f, 4.0f, 0.05f, 1.0f);
+			kind_setting(context, "Knees out of the ground", &recipe->knees, plant_kind_knees(kind), 0.0f, 200.0f, 1.0f, 1.0f);
+			kind_setting(context, "Knees out to (m)", &recipe->knee_reach, plant_kind_knee_reach(kind), 0.1f, 30.0f, 0.1f, 1.0f);
+			kind_setting(context, "Knees up to (m tall)", &recipe->knee_height, plant_kind_knee_height(kind), 0.05f, 5.0f, 0.05f, 1.0f);
 			kind_setting(context, "Branches droop (x100)", &recipe->droop, plant_kind_droop(kind), 0.0f, 0.5f, 0.005f, 100.0f);
 			kind_setting(context, "Tips turn up", &recipe->tip_lift, plant_kind_tip_lift(kind), 0.0f, 3.0f, 0.05f, 1.0f);
 			kind_setting(context, "Branch collar", &recipe->collar, plant_kind_collar(kind), 0.0f, 3.0f, 0.05f, 1.0f);
@@ -1299,6 +1307,10 @@ static void panel(editor_t *editor)
 			recipe->crown_start = -1.0f;
 			recipe->leaves_from = -1.0f;
 			recipe->dead_branches = -1.0f;
+			recipe->buttress = -1.0f;
+			recipe->knees = -1.0f;
+			recipe->knee_reach = -1.0f;
+			recipe->knee_height = -1.0f;
 			recipe->trunk_upright = -1.0f;
 			recipe->light_from_below = -1.0f;
 			recipe->droop = -1.0f;
@@ -1676,6 +1688,7 @@ int main(int argument_count, char **arguments)
 	int screenshot_frames = 30;
 	bool shoot_now = false;
 	float fixed_distance = 0.0f;              // --distance (the tests'): instead of framing the plant
+	float fixed_look_height = -1.0f;          // --look-height (the tests'): below 0, the framing's
 	int frame_number = 0;
 	bool running = true;
 	bool save_first = false;
@@ -1743,6 +1756,11 @@ int main(int argument_count, char **arguments)
 			float distance = (float)SDL_atof(arguments[++i]);
 
 			fixed_distance = SDL_clamp(distance, 0.1f, 300.0f);
+		}
+		else if (strcmp(arguments[i], "--look-height") == 0 && i + 1 < argument_count)
+		{
+			// (the tests': the height looked at, instead of the plant's middle)
+			fixed_look_height = (float)SDL_atof(arguments[++i]);
 		}
 		else if (strcmp(arguments[i], "--yaw") == 0 && i + 1 < argument_count)
 		{
@@ -1861,6 +1879,10 @@ int main(int argument_count, char **arguments)
 			if (fixed_distance > 0.0f)
 			{
 				editor.distance = fixed_distance;
+			}
+			if (fixed_look_height >= 0.0f)
+			{
+				editor.look_height = fixed_look_height;
 			}
 		}
 
