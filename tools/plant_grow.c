@@ -433,8 +433,8 @@ static const plant_kind_t kinds[] =
 		// conifer that turns rust in the autumn and drops its needles
 		.name = "bald_cypress", .shape = SHAPE_TREE, .atlas = "conifers", .height_meters = 24.0f, .stems = 1, .stem_lean_degrees = 3.0f,
 		.levels = 3, .trunk_radius_ratio = 0.035f, .taper = 0.25f, .trunk_taper = 0.08f, .bend = 0.12f, .crown_start = 0.38f,
-		.children = { 11, 8, 9 }, .length_ratio = { 0.45f, 0.5f, 0.8f }, .down_degrees = { 50.0f, 50.0f, 65.0f },
-		.down_spread_degrees = 14.0f, .reach = { -0.02f, -0.15f, -1.4f }, .child_radius_ratio = 0.62f, .crown = CROWN_ROUND,
+		.children = { 11, 9, 13 }, .length_ratio = { 0.45f, 0.5f, 0.8f }, .down_degrees = { 50.0f, 50.0f, 65.0f },
+		.down_spread_degrees = 14.0f, .reach = { -0.02f, -0.15f, -0.9f }, .child_radius_ratio = 0.62f, .crown = CROWN_ROUND,
 		.child_start = 0.15f, .leaves_per_branch = 5, .leaf_size = 0.4f,
 		.twig_scale = 1.4f, .side_twigs = 0.0f, .tip_twig = false, .twig_flat = 0.0f, .fruit_hang = FRUIT_DOWN, .fruit_zone = FRUIT_OUTER,
 		.droop = 0.05f, .tip_lift = 0.0f, .collar = 0.3f, .root_flare = 0.6f, .leaves_from = 0.3f, .trunk_upright = 0.0f, .stem_rise = 0.5f, .dead_branches = 3.0f,
@@ -4137,8 +4137,9 @@ static void add_twigs_along(plant_t *plant, const branch_t *branch, int sides, f
 		// (its own wood under them: a row of twigs is not one twig whose
 		// stem stands for the branch, they sit on it)
 		branch_t whip = *branch;
-		// (few segments: at most 4, the twigs hiding most of it)
-		int step = (branch->count + 3) / 4;
+		// (few segments: at most 8, the twigs hiding most of it; enough
+		// for a hanging one to curve smooth)
+		int step = (branch->count + 7) / 8;
 
 		step = step < 1 ? 1 : step;
 		whip.count = 0;
@@ -4161,10 +4162,10 @@ static void add_twigs_along(plant_t *plant, const branch_t *branch, int sides, f
 		{
 			float t = whip.count > 1 ? (float)i / (float)(whip.count - 1) : 0.0f;
 
-			whip.radii[i] = fmaxf(whip.radii[i] * 0.6f * (1.0f - 0.6f * t), 0.0015f);
+			whip.radii[i] = fmaxf(whip.radii[i] * 0.9f * (1.0f - 0.55f * t), 0.002f);
 		}
 		plant->mesh.bark_level = (uint8_t)plant->kind->levels;
-		add_tube(plant, &whip, 3, radius * 0.6f, MATERIAL_BARK);
+		add_tube(plant, &whip, 3, radius * 0.9f, MATERIAL_BARK);
 		add_twig_row(plant, branch);
 		return;
 	}
@@ -4430,7 +4431,7 @@ static void grow(plant_t *plant, int level, vec3 start, vec3 direction, float le
 	}
 	// Short thin branches need fewer segments
 	trace_shaped_branch(&branch, start, direction, length, radius, level == 0 ? plant->trunk_taper : kind->taper, kind->bend, reach,
-		level == 0 ? 0.5f : fmaxf(0.3f, length / 8.0f), &shape);
+		level == 0 ? 0.5f : (finest && fabsf(reach) > 0.5f ? fmaxf(0.15f, length / 14.0f) : fmaxf(0.3f, length / 8.0f)), &shape);
 	if (level == 0)
 	{
 		plant->trunk_end = branch.points[branch.count - 1];
