@@ -4630,6 +4630,20 @@ static void grow(plant_t *plant, int level, vec3 start, vec3 direction, float le
 			grow(plant, level + 1, add(point, scale(child_direction, depth)), child_direction, child_length, child_radius, NULL);
 		}
 	}
+	// The trunk's top not cut off: it goes on as a branch, as thick as it
+	// is there, tapering on and branching as its branches do (a stem only
+	// up to a fork has none: the stems go on from it)
+	if (level == 0 && !finest && kind->levels > 0 && !(shape.u1 > 0.0f && shape.u1 < 0.999f))
+	{
+		vec3 end = branch.points[branch.count - 1];
+		vec3 way = branch.directions[branch.count - 1];
+		float end_radius = branch.radii[branch.count - 1];
+		float leader_length = length * kind->length_ratio[0] * fmaxf(crown_shape(plant, 0.97f), 0.3f) * random_between(0.8f, 1.1f);
+
+		// (its collared foot a little down in the trunk, bent a little)
+		way = normalized(add(way, scale(random_direction(), 0.25f)));
+		grow(plant, 1, sub(end, scale(way, end_radius * 1.5f)), way, leader_length, end_radius * 0.9f, NULL);
+	}
 }
 
 // A knee (kind knees): a knobbly cone of wood out of the ground, from
