@@ -57,6 +57,13 @@
 //   old_timber  a beam's face weathered for a lifetime: gray, come apart
 //           in long flakes along the grain, their edges frayed and pale,
 //           brown where the wood under is newly bare (--splinters)
+//   bark_cypress  a bald cypress's bark, wrapping round a trunk (across
+//           the picture round it, down it up the trunk): fibrous strips
+//           shingled up it, frayed at their edges, a crust on their faces,
+//           the worn browner patches finely crazed, the inner bark's red in
+//           the grooves and where a strand has peeled, loose strips lying
+//           over the rest with their shadows, lichen crusts (--moss) (and
+//           NAME_height.png, NAME_arm.png)
 //   batten  board and batten: wide hewn boards down the picture (the
 //           adze's scoops across them), a batten nailed over each joint,
 //           round headed nails; old dark wood (--boards: a board's width)
@@ -5533,6 +5540,252 @@ static bool make_old_timber(const texture_settings_t *settings, field_t *field)
 }
 
 // ---------------------------------------------------------------------------
+// Bark. The picture wraps round a trunk: across it round the trunk (u), down
+// it along the trunk (v), tiling both ways.
+//
+// A bald cypress's (Taxodium distichum), and its kin's: fibrous, in long
+// narrow strips up the trunk, each a lens drawn out to a point at both ends,
+// lying over its neighbours' edges as shingles do; between and under them
+// the inner bark, fresh red brown where a strip has come away; the strips'
+// faces weathered to a mauve gray brown, crusted with pale gray green
+// lichen in patches; here and there a strip's edge lifted, curling off.
+
+typedef struct
+{
+	float height;                      // meters
+	float color[3];
+	float roughness;
+} bark_point_t;
+
+// One layer of fibrous strands up the trunk: columns across it (width
+// meters each, their lines wandering), each column broken into lenses up it
+// (length meters on average, to a point at both ends, frayed at the edges).
+// inside: 1 on a strand's ridge, 0 at its edge, below 0 in the groove
+// between; along: 0..1 up the lens; id: the lens's own number (0..1)
+typedef struct
+{
+	float inside;
+	float along;
+	float across;                      // -1..1 from its middle to its edges
+	float id;
+} bark_strand_t;
+
+static bark_strand_t bark_strands(float u, float v, float meters, float width, float length, float wander, float fray, uint32_t seed)
+{
+	bark_strand_t strand;
+	float columns = fmaxf(roundf(meters / width), 4.0f);
+	float rows = fmaxf(roundf(meters / length), 1.0f);
+	float bend = staggered_noise(u, v, (int)fmaxf(roundf(meters / (width * 5.0f)), 2.0f), (int)fmaxf(roundf(meters / (length * 1.2f)), 2.0f), 3, seed + 1u);
+	float across = u * columns + wander * bend;
+	float column = floorf(across);
+	float within = across - column;
+	int column_index = wrap_index((int)column, (int)columns);
+	float level = v * rows + hash_unit(column_index, 3, seed + 3u) * rows
+		+ 0.4f * staggered_noise(u, v, (int)fmaxf(roundf(meters / (width * 3.0f)), 2.0f), (int)fmaxf(roundf(meters / length), 2.0f), 2, seed + 4u);
+	float lens = floorf(level);
+	int lens_index = wrap_index((int)lens, (int)rows);
+	float id = hash_unit(column_index, lens_index, seed + 5u);
+	float along = level - lens;
+	// (wide nearly all its length, narrowing only near its ends: strips
+	// fill their columns, the grooves between them narrow)
+	float half = 0.5f * (0.55f + 0.45f * powf(fmaxf(sinf(PI_F * along), 0.0f), 0.25f)) * (0.88f + 0.24f * id);
+	float middle = 0.5f + (hash_unit(column_index, lens_index, seed + 6u) - 0.5f) * 0.25f;
+	// (frayed: a ragged wobble a few millimeters along it, and torn teeth,
+	// fibers pulled out, finer still)
+	float frayed = fray * staggered_noise(u, v, (int)fmaxf(roundf(meters / (width * 0.25f)), 16.0f), (int)fmaxf(roundf(meters / (width * 1.5f)), 8.0f), 2, seed + 7u)
+		+ fray * 0.5f * tiling_fractal(u, v, (int)fmaxf(roundf(meters / (width * 0.3f)), 8.0f), 2, 0.5f, seed + 8u);
+	// (teeth: long fibers pulled out at its edge, a few millimeters wide,
+	// a couple of centimeters long, smooth: no speckle; none inside it)
+	float teeth = fray * 1.2f * smooth_step(0.0f, 0.5f, stretched_noise(u, v, (int)fmaxf(roundf(meters / (width * 0.1f)), 16.0f),
+		(int)fmaxf(roundf(meters / (width * 0.6f)), 8.0f), 1, seed + 9u));
+
+	strand.across = (within - middle) / fmaxf(half, 0.02f);
+	strand.inside = 1.0f - (fabsf(within - middle) + frayed) / fmaxf(half, 0.02f);
+	strand.inside -= teeth / fmaxf(half, 0.02f) * (1.0f - smooth_step(0.05f, 0.3f, strand.inside));
+	strand.along = along;
+	strand.id = id;
+	return strand;
+}
+
+static bark_point_t cypress_bark_sample(float meters, uint32_t seed, float lichen_amount, float x, float y)
+{
+	float u = x / meters;
+	float v = y / meters;
+	bark_point_t point;
+	// The strips (a few centimeters wide, a forearm long) and the strands
+	// they split into (a centimeter: only where one has peeled)
+	bark_strand_t strip = bark_strands(u, v, meters, 0.05f, 0.5f, 1.8f, 0.16f, seed + 100u);
+	bark_strand_t strand = bark_strands(u, v, meters, 0.012f, 0.16f, 1.2f, 0.12f, seed + 200u);
+	// Loose strips: narrow ones come away, lying over the others (only
+	// some lenses of their own layer there), each casting a shadow beside
+	// and below it (the light from the upper left)
+	bark_strand_t loose = bark_strands(u, v, meters, 0.03f, 0.35f, 2.4f, 0.22f, seed + 500u);
+	bark_strand_t loose_shadow = bark_strands(u - 0.004f / meters, v - 0.006f / meters, meters, 0.03f, 0.35f, 2.4f, 0.22f, seed + 500u);
+	float loose_here = smooth_step(0.82f, 0.86f, loose.id);
+	// (its own crust and grain, as rough as the rest)
+	float loose_grain = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.006f), 16.0f), 4, 0.65f, seed + 503u);
+	float on_loose = loose_here * smooth_step(0.18f, 0.3f, loose.inside) * smooth_step(0.04f, 0.14f, fminf(loose.along, 1.0f - loose.along));
+	float shadow = smooth_step(0.82f, 0.86f, loose_shadow.id) * smooth_step(0.1f, 0.3f, loose_shadow.inside)
+		* smooth_step(0.04f, 0.14f, fminf(loose_shadow.along, 1.0f - loose_shadow.along)) * (1.0f - on_loose);
+	// (the strips' skin: no combed fibers, a crust of small scales and
+	// flakes, mottled, only a little drawn out up the trunk)
+	// (fine ridges every which way, a hair drawn up the trunk: a crust's
+	// little scales and cracks, no pattern of cells)
+	float scale_edge = 1.0f - fabsf(tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.008f), 16.0f), 3, 0.55f, seed + 300u)) * 3.0f;
+	float flakes = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.01f), 16.0f), 3, 0.6f, seed + 301u);
+	float mottle = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.025f), 16.0f), 4, 0.6f, seed + 302u);
+	float on_strip = smooth_step(-0.02f, 0.03f, strip.inside);
+	// (its edge: a band a few millimeters in where it thins, broken, its
+	// fibers torn and pale; the side lying over its neighbour a lip curled
+	// up a little, a wall of its thickness showing, darker)
+	float edge_band = smooth_step(0.0f, 0.03f, strip.inside) * (1.0f - smooth_step(0.05f, 0.22f, strip.inside));
+	float edge_noise = stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.006f), 16.0f), (int)fmaxf(roundf(meters / 0.025f), 8.0f), 2, seed + 30u);
+	float torn = edge_band * smooth_step(-0.1f, 0.3f, edge_noise);
+	float over_edge = (strip.id < 0.5f ? -strip.across : strip.across) > 0.0f ? 1.0f : 0.0f;
+	// (each strip's face cupped and rumpled, not flat: low across its
+	// middle on some, bulging on others, wavy along)
+	float rumple = staggered_noise(u, v, (int)fmaxf(roundf(meters / 0.03f), 8.0f), (int)fmaxf(roundf(meters / 0.09f), 4.0f), 3, seed + 31u);
+	float cup = (hash_unit((int)(strip.id * 9973.0f), 1, seed + 32u) - 0.5f) * (1.0f - strip.across * strip.across);
+	// (the groove between strips: narrow, its bottom dark; a lens's end
+	// a fine break across, not a gap)
+	float groove = (1.0f - smooth_step(-0.1f, 0.02f, strip.inside)) * (0.6f + 0.4f * smooth_step(0.05f, 0.2f, fminf(strip.along, 1.0f - strip.along)));
+	float fiber_groove = smooth_step(0.55f, 0.95f, scale_edge);
+	// Weathering: the strips' outer layers gray, worn off here and there
+	// to the browner, pinker layer under, and to the inner bark's red
+	// along some strands (where a strand has peeled)
+	float worn = 0.6f * smooth_step(0.05f, 0.45f, tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.06f), 8.0f), 4, 0.6f, seed + 10u)
+		+ 0.4f * tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.25f), 2.0f), 3, 0.6f, seed + 19u));
+	// (the worn, browner patches: a fine crazing of small plates, a few
+	// millimeters, each its own tone, hairline cracks between them)
+	int plate_x;
+	int plate_y;
+	float plate_edge = tiling_cell_edge(u, v, (int)fmaxf(roundf(meters / 0.009f), 16.0f), 0.95f, seed + 400u, &plate_x, &plate_y);
+	float plate_tone = hash_unit(plate_x, plate_y, seed + 401u);
+	float crazed = smooth_step(0.15f, 0.45f, worn) * on_strip;
+	float plate_crack = (1.0f - smooth_step(0.0f, 0.06f, plate_edge)) * crazed;
+	float peeled = smooth_step(0.9f, 0.97f, strand.id) * smooth_step(0.1f, 0.3f, strand.along) * (1.0f - smooth_step(0.7f, 0.9f, strand.along));
+	float tone = 0.85f + 0.3f * strip.id;
+	float blotch = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.12f), 4.0f), 5, 0.62f, seed + 11u);
+	float grit = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.003f), 16.0f), 2, 0.6f, seed + 12u);
+	float dust = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.03f), 16.0f), 3, 0.6f, seed + 13u);
+	// Lichen: crusts in big patches with ragged edges, granular inside,
+	// pale gray green, some spots more blue gray, a few yellow; thin over
+	// the grooves (it follows the surface)
+	float patches = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.35f), 2.0f), 6, 0.65f, seed + 14u);
+	float granules = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.004f), 16.0f), 3, 0.65f, seed + 15u);
+	float specks = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.012f), 16.0f), 3, 0.6f, seed + 16u);
+	// (solid inside a patch, ragged only at its edge)
+	float lichen = smooth_step(0.0f, 0.04f, patches * 2.2f + specks * 0.25f + granules * 0.12f - (1.0f - lichen_amount) * 0.9f) * (1.0f - groove * 0.8f)
+		* (1.0f - peeled);
+	float lichen_hue = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.06f), 8.0f), 3, 0.6f, seed + 17u);
+	float yellow = smooth_step(0.55f, 0.7f, tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.025f), 16.0f), 3, 0.6f, seed + 18u)) * 0.7f;
+	const float gray[3] = { 0.52f, 0.47f, 0.46f };
+	const float pink[3] = { 0.57f, 0.45f, 0.43f };
+	const float inner[3] = { 0.62f, 0.33f, 0.26f };
+	const float deep[3] = { 0.17f, 0.11f, 0.09f };
+	const float lichen_green[3] = { 0.66f, 0.71f, 0.62f };
+	const float lichen_blue[3] = { 0.70f, 0.73f, 0.74f };
+	const float lichen_yellow[3] = { 0.74f, 0.70f, 0.36f };
+	float light = (1.0f + 0.14f * blotch) * (1.0f + 0.12f * dust) * (1.0f + 0.14f * grit) * (1.0f + 0.16f * flakes) * (1.0f + 0.14f * mottle) * tone
+		* (1.0f - 0.14f * fiber_groove);
+
+	for (int k = 0; k < 3; k++)
+	{
+		float color = mix_float(gray[k], pink[k], worn) * light * (1.0f + 0.2f * (plate_tone - 0.5f) * crazed) * (1.0f - 0.45f * plate_crack);
+		float lichen_color = mix_float(mix_float(lichen_green[k], lichen_blue[k], smooth_step(-0.2f, 0.4f, lichen_hue)), lichen_yellow[k], yellow)
+			* (0.82f + 0.3f * granules + 0.1f * specks);
+
+		color = mix_float(color, inner[k] * (0.9f + 0.2f * strand.id) * (1.0f - 0.2f * fiber_groove), peeled);
+		// (the edge: torn fibers paler, the inner bark's red showing
+		// through where it is thin, the curled lip's wall dark)
+		color = mix_float(color, mix_float(color * 1.18f, inner[k], 0.35f), torn * 0.8f);
+		color = mix_float(color, deep[k] * 1.6f, edge_band * over_edge * 0.35f * (1.0f - torn));
+		color *= 1.0f + 0.1f * rumple;
+		// (the grooves: the red inner bark on their walls, dark at their
+		// bottom)
+		color = mix_float(color, inner[k] * 0.7f, smooth_step(0.0f, 0.5f, groove) * 0.7f);
+		color = mix_float(color, deep[k], smooth_step(0.5f, 1.0f, groove) * 0.85f);
+		color = mix_float(color, lichen_color, lichen);
+		// (a loose strip's shadow on what is under it, and the strip
+		// itself: weathered gray on its face, paler where it is torn at its
+		// edges, its own tone)
+		color *= 1.0f - 0.65f * shadow;
+		{
+			float loose_edge = 1.0f - smooth_step(0.3f, 0.5f, loose.inside);
+			float loose_tone = hash_unit((int)(loose.id * 7919.0f), 2, seed + 501u);
+			float loose_color = mix_float(gray[k], pink[k], 0.5f * loose_tone) * (0.85f + 0.25f * hash_unit((int)(loose.id * 7919.0f), 3, seed + 502u))
+				* light * (1.0f + 0.25f * loose_edge * edge_noise) * (0.85f + 0.3f * loose_grain);
+
+			// (some with lichen on them too)
+			loose_color = mix_float(loose_color, mix_float(lichen_green[k], lichen_blue[k], 0.5f) * (0.82f + 0.3f * granules),
+				lichen * smooth_step(0.4f, 0.6f, loose_tone));
+
+			color = mix_float(color, loose_color, on_loose);
+		}
+		point.color[k] = color;
+	}
+	// Height: the strips' ridges, shingled (thicker on the side lying over
+	// the next); the strands and fibers on them; the grooves deep but
+	// narrow; the lichen a thin crust
+	{
+		float over_side = strip.id < 0.5f ? -1.0f : 1.0f;
+		float shingle = clamp_unit(0.5f + 0.5f * over_side * strip.across);
+
+		point.height = on_strip * (0.0025f + 0.0025f * shingle + 0.001f * sqrtf(fmaxf(strip.inside, 0.0f)) + 0.0009f * rumple + 0.0012f * cup
+			+ 0.0008f * edge_band * over_edge * (0.5f + 0.5f * edge_noise) - 0.0012f * edge_band * (1.0f - over_edge) + 0.0004f * torn * edge_noise)
+			- 0.003f * groove
+			+ 0.0003f * (1.0f - fiber_groove) - 0.0003f * plate_crack + 0.0001f * plate_tone * crazed + 0.0003f * flakes + 0.0003f * mottle + 0.0002f * grit
+			- 0.0006f * peeled
+			+ lichen * (0.0004f + 0.0004f * granules);
+	}
+	point.height = mix_float(point.height, 0.008f + 0.0015f * sqrtf(fmaxf(loose.inside, 0.0f)) + 0.0003f * flakes, on_loose);
+	point.roughness = clamp_unit(0.84f + 0.08f * groove + 0.06f * lichen - 0.1f * peeled);
+	return point;
+}
+
+static bool make_bark_cypress(const texture_settings_t *settings, field_t *field)
+{
+	int size = field->size;
+	float pixel_meters = field->meters / (float)size;
+	float lichen = settings->moss >= 0.0f ? settings->moss : 0.55f;
+
+#pragma omp parallel for schedule(dynamic, 8)
+	for (int y = 0; y < size; y++)
+	{
+		for (int x = 0; x < size; x++)
+		{
+			int index = y * size + x;
+			float height_sum = 0.0f;
+			float color_sum[3] = { 0.0f, 0.0f, 0.0f };
+			float roughness_sum = 0.0f;
+
+			for (int s = 0; s < 4; s++)
+			{
+				bark_point_t point = cypress_bark_sample(field->meters, settings->seed, lichen, ((float)x + 0.25f + 0.5f * (float)(s & 1)) * pixel_meters,
+					((float)y + 0.25f + 0.5f * (float)(s >> 1)) * pixel_meters);
+
+				height_sum += point.height;
+				roughness_sum += point.roughness;
+				for (int k = 0; k < 3; k++)
+				{
+					color_sum[k] += point.color[k];
+				}
+			}
+			field->height[index] = height_sum * 0.25f;
+			field->roughness[index] = roughness_sum * 0.25f;
+			for (int k = 0; k < 3; k++)
+			{
+				field->color[index * 3 + k] = color_sum[k] * 0.25f;
+			}
+		}
+	}
+	shade_hollows(field, (int)fminf(fmaxf(0.004f / pixel_meters, 2.0f), 8.0f), 0.004f, 0.5f);
+	bake_light(field, settings->baked_light);
+	sharpen_color(field, (int)fminf(fmaxf(0.008f / pixel_meters, 3.0f), 16.0f), 0.5f);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
 // Board and batten: a wall of wide boards down the picture, a narrow
 // batten nailed over each joint (round headed nails). The boards hewn,
 // not sawn: the adze left a row of shallow scoops down each one, a low
@@ -6416,6 +6669,7 @@ int main(int argument_count, char **arguments)
 			{ "old_timber", 2.4f, { 0.518f, 0.45f, 0.391f } },
 			{ "batten", 1.2f, { 0.366f, 0.297f, 0.241f } },
 			{ "smithy", 1.6f, { 0.369f, 0.304f, 0.232f } },
+			{ "bark_cypress", 1.0f, { 0.47f, 0.39f, 0.37f } },
 		};
 		bool known = false;
 
@@ -6436,7 +6690,7 @@ int main(int argument_count, char **arguments)
 		}
 		if (!known)
 		{
-			fprintf(stderr, "potop_texture: no kind '%s' (sand, clay, mud, grass, rock, canyon, granite, stone, dirt, relief, wet_sand, wet_dirt, needles, leaves, trampled, petals, snow, drystone, coursed, weatherboard, timber, planks, old_timber, batten, smithy)\n", kind);
+			fprintf(stderr, "potop_texture: no kind '%s' (sand, clay, mud, grass, rock, canyon, granite, stone, dirt, relief, wet_sand, wet_dirt, needles, leaves, trampled, petals, snow, drystone, coursed, weatherboard, timber, planks, old_timber, batten, smithy, bark_cypress)\n", kind);
 			return 1;
 		}
 	}
@@ -6555,6 +6809,10 @@ int main(int argument_count, char **arguments)
 	{
 		ok = make_smithy(&settings, &field);
 	}
+	else if (strcmp(kind, "bark_cypress") == 0)
+	{
+		ok = make_bark_cypress(&settings, &field);
+	}
 	else
 	{
 		ok = make_dirt(&settings, &field);
@@ -6563,7 +6821,7 @@ int main(int argument_count, char **arguments)
 		bool drystone = strcmp(kind, "drystone") == 0 || strcmp(kind, "coursed") == 0 || strcmp(kind, "weatherboard") == 0
 			|| strcmp(kind, "timber") == 0 || strcmp(kind, "planks") == 0
 			|| strcmp(kind, "old_timber") == 0 || strcmp(kind, "batten") == 0
-			|| strcmp(kind, "smithy") == 0;
+			|| strcmp(kind, "smithy") == 0 || strncmp(kind, "bark_", 5) == 0;
 
 		ok = ok && write_field(&field, data_directory, name, settings.write_height || drystone || strcmp(kind, "relief") == 0,
 			strcmp(kind, "relief") != 0 && !drystone, drystone);
