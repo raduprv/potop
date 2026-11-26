@@ -1216,7 +1216,7 @@ static void panel(editor_t *editor)
 			float_setting(context, "Twig scale", &recipe->twig_scale, plant_kind_twig_scale(kind), 0.2f, 5.0f, 0.05f);
 			kind_setting(context, "Twigs in a row past (m; 0: one)", &recipe->twig_meters, plant_kind_twig_meters(kind), 0.0f, 5.0f, 0.05f, 1.0f);
 			nk_property_float(context, "Twig share (with leaves)", 0.0f, &recipe->twig_share, 1.0f, 0.05f, 0.01f);
-			nk_property_float(context, "Twig size (m; 0: the branch's)", 0.0f, &recipe->twig_size, 2.0f, 0.01f, 0.005f);
+			nk_property_float(context, "Twig size (m; 0: the branch's)", 0.0f, &recipe->twig_size, 5.0f, 0.02f, 0.005f);
 			nk_property_float(context, "Twigs per meter (0: the kind's)", 0.0f, &recipe->twig_density, 200.0f, 0.5f, 0.1f);
 			nk_property_float(context, "Longest bare stretch (m; 0: any)", 0.0f, &recipe->twig_gap, 2.0f, 0.01f, 0.005f);
 			nk_property_float(context, "Branches flat (off lying ones)", 0.0f, &recipe->branch_flat, 1.0f, 0.05f, 0.01f);
