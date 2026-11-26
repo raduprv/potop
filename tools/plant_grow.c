@@ -218,6 +218,9 @@ typedef struct
 	// The trunk kept straight the way it set out (0: it wanders with bend
 	// and gnarl; 1: straight, a conifer's)
 	float trunk_upright;
+	// How hard a crooked (gnarled) trunk's stems turn up again past a fork
+	// (0: 3, as the trunk below it; less: they stay out as they leaned)
+	float stem_rise;
 	// The light's middle (crown_normal: the foliage's normals out from it)
 	// this many times the height below the crown's foot, in the middle: a
 	// mat on the ground lit from above, not out to its sides (0: as is)
@@ -423,19 +426,20 @@ static const plant_kind_t kinds[] =
 	},
 	{
 		// Chiparos de balta (bald cypress, Taxodium distichum), an old one:
-		// a tall straight trunk, its foot swollen in ribs (buttresses) and
-		// knees out of the ground round it; the crown high, broad and flat
-		// topped, of long level branches, their feathery sprays flat; a
+		// its foot swollen in ribs (buttresses), knees out of the ground
+		// round it; the trunk parting half way up into a few thick crooked
+		// limbs reaching up and out, their branches arching over, the finest
+		// hanging in curtains of feathery sprays; broad, open, irregular; a
 		// conifer that turns rust in the autumn and drops its needles
-		.name = "bald_cypress", .shape = SHAPE_TREE, .atlas = "conifers", .height_meters = 24.0f, .stems = 1, .stem_lean_degrees = 2.0f,
-		.levels = 2, .trunk_radius_ratio = 0.03f, .taper = 0.2f, .trunk_taper = 0.25f, .bend = 0.08f, .crown_start = 0.4f,
-		.children = { 22, 12, 0 }, .length_ratio = { 0.5f, 0.42f, 0.0f }, .down_degrees = { 84.0f, 60.0f, 0.0f },
-		.down_spread_degrees = 14.0f, .reach = { 0.03f, 0.05f, 0.0f }, .child_radius_ratio = 0.5f, .crown = CROWN_DOME,
-		.child_start = 0.25f, .leaves_per_branch = 5, .leaf_size = 0.4f,
-		.twig_scale = 1.6f, .side_twigs = 2.0f, .tip_twig = true, .twig_flat = 0.8f, .fruit_hang = FRUIT_DOWN, .fruit_zone = FRUIT_OUTER,
-		.droop = 0.01f, .tip_lift = 0.15f, .collar = 0.25f, .root_flare = 0.6f, .leaves_from = 0.42f, .trunk_upright = 0.8f, .dead_branches = 6.0f,
+		.name = "bald_cypress", .shape = SHAPE_TREE, .atlas = "conifers", .height_meters = 24.0f, .stems = 1, .stem_lean_degrees = 3.0f,
+		.levels = 3, .trunk_radius_ratio = 0.035f, .taper = 0.25f, .trunk_taper = 0.08f, .bend = 0.12f, .crown_start = 0.38f,
+		.children = { 11, 8, 9 }, .length_ratio = { 0.45f, 0.5f, 0.8f }, .down_degrees = { 50.0f, 50.0f, 65.0f },
+		.down_spread_degrees = 14.0f, .reach = { -0.02f, -0.15f, -1.4f }, .child_radius_ratio = 0.62f, .crown = CROWN_ROUND,
+		.child_start = 0.15f, .leaves_per_branch = 5, .leaf_size = 0.4f,
+		.twig_scale = 1.4f, .side_twigs = 0.0f, .tip_twig = false, .twig_flat = 0.0f, .fruit_hang = FRUIT_DOWN, .fruit_zone = FRUIT_OUTER,
+		.droop = 0.05f, .tip_lift = 0.0f, .collar = 0.3f, .root_flare = 0.6f, .leaves_from = 0.3f, .trunk_upright = 0.0f, .stem_rise = 0.5f, .dead_branches = 3.0f,
 		.buttress = 1.3f, .buttress_ribs = 9, .buttress_reach = 6.0f, .knees = 30.0f, .knee_reach = 6.0f, .knee_height = 0.9f,
-		.fork_height = 0.0f, .extra_stem_chance = 0.0f, .gnarl = 0.2f, .kinks = 0.25f, .lean_length = 0.3f, .straighten = 0.8f,
+		.fork_height = 0.0f, .extra_stem_chance = 0.0f, .gnarl = 0.35f, .kinks = 0.35f, .lean_length = 0.3f, .straighten = 0.8f,
 		.moss = 0.50f, .tips = 0.40f, .autumn_colors = { { 0.72f, 0.36f, 0.12f }, { 0.58f, 0.26f, 0.10f } }, .autumn = 1.0f, .falls = true,
 		.snow_sag = 0.020f,
 	},
@@ -2401,6 +2405,7 @@ typedef struct
 	// A trunk kept to the way it set out (its random bend and gnarl pulled
 	// back, per meter): a conifer's leader grows straight up
 	float upright;
+	float rise;                         // a crooked trunk's turning up (0: 3)
 	bool trunk;
 } branch_shape_t;
 
@@ -2492,7 +2497,7 @@ static void trace_shaped_branch(branch_t *branch, vec3 start, vec3 direction, fl
 		else if (shape != NULL && shape->trunk && gnarl > 0.0f)
 		{
 			// A crooked trunk still grows up, on the whole
-			heading = normalized(add(heading, v3(0.0f, 3.0f * step / fmaxf(length, 0.5f), 0.0f)));
+			heading = normalized(add(heading, v3(0.0f, (shape->rise > 0.0f ? shape->rise : 3.0f) * step / fmaxf(length, 0.5f), 0.0f)));
 		}
 		if (!leaning && shape != NULL && shape->trunk && shape->upright > 0.0f)
 		{
@@ -4132,8 +4137,26 @@ static void add_twigs_along(plant_t *plant, const branch_t *branch, int sides, f
 		// (its own wood under them: a row of twigs is not one twig whose
 		// stem stands for the branch, they sit on it)
 		branch_t whip = *branch;
+		// (few segments: at most 4, the twigs hiding most of it)
+		int step = (branch->count + 3) / 4;
 
-		// (thin: a whip, tapering to its tip, the twigs hiding most of it)
+		step = step < 1 ? 1 : step;
+		whip.count = 0;
+		for (int i = 0; i < branch->count; i += step)
+		{
+			whip.points[whip.count] = branch->points[i];
+			whip.directions[whip.count] = branch->directions[i];
+			whip.radii[whip.count] = branch->radii[i];
+			whip.count++;
+		}
+		if ((branch->count - 1) % step != 0)
+		{
+			whip.points[whip.count] = branch->points[branch->count - 1];
+			whip.directions[whip.count] = branch->directions[branch->count - 1];
+			whip.radii[whip.count] = branch->radii[branch->count - 1];
+			whip.count++;
+		}
+		// (thin: a whip, tapering to its tip)
 		for (int i = 0; i < whip.count; i++)
 		{
 			float t = whip.count > 1 ? (float)i / (float)(whip.count - 1) : 0.0f;
@@ -4373,6 +4396,8 @@ static void grow(plant_t *plant, int level, vec3 start, vec3 direction, float le
 	shape.kink_radians = level > 0 || plant->kinked_trunk ? kind->kinks * 0.6f : 0.0f;
 	shape.knob = level == 0 ? kind->knob : 0.0f;
 	shape.upright = level == 0 ? kind->trunk_upright : 0.0f;
+	// (a stem past a fork: its own rise)
+	shape.rise = level == 0 && plant->trunk_u0 > 0.0f ? kind->stem_rise : 0.0f;
 	shape.thinnest = kind->thinnest_radius;
 	// Where the branches out of this one leave it: round it by the golden
 	// angle, from where the crown starts (on the trunk) or a little way
@@ -4424,10 +4449,17 @@ static void grow(plant_t *plant, int level, vec3 start, vec3 direction, float le
 
 		fine.count = 0;
 		fine.length = branch.length;
+		// (as many pieces split as fit: every point of the trunk kept, or
+		// it would run straight past its bends, its branches off it)
+		int spare = MAX_POINTS - branch.count;
+
 		for (int i = 0; i + 1 < branch.count && fine.count < MAX_POINTS - 1; i++)
 		{
 			float piece = sqrtf(dot(sub(branch.points[i + 1], branch.points[i]), sub(branch.points[i + 1], branch.points[i])));
 			int splits = along < plant->buttress_meters * 1.5f ? 4 : 1;
+
+			splits = splits - 1 > spare ? spare + 1 : splits;
+			spare -= splits - 1;
 
 			for (int k = 0; k < splits && fine.count < MAX_POINTS - 1; k++)
 			{
@@ -4535,10 +4567,23 @@ static void grow(plant_t *plant, int level, vec3 start, vec3 direction, float le
 			}
 			child_length *= 1.0f - 0.7f * plant->wind_side * windward;
 		}
-		// The swollen foot of a collared branch sits deeper in its parent
-		grow(plant, level + 1, add(point, scale(child_direction, parent_radius * (0.5f - 0.35f * fminf(kind->collar, 1.0f)))),
-			child_direction, child_length,
-			fminf(parent_radius * kind->child_radius_ratio, child_length * 0.05f), NULL);
+		// The swollen foot of a collared branch sits deeper in its parent;
+		// a thick one's foot all in it (its end ring, as wide as it is
+		// there, not out of its parent's side): as far out as its radius
+		// lets it, back past the middle if it must
+		{
+			float child_radius = fminf(parent_radius * kind->child_radius_ratio, child_length * 0.05f);
+			float foot_radius;
+
+			// (its collared foot never wider than its parent there: its end
+			// ring would show out of the parent's sides)
+			child_radius = fminf(child_radius, 0.8f * parent_radius / (1.0f + fmaxf(kind->collar, 0.0f)));
+			foot_radius = child_radius * (1.0f + fminf(kind->collar, 1.0f));
+			float depth = fminf(parent_radius * (0.5f - 0.35f * fminf(kind->collar, 1.0f)), fmaxf(parent_radius - foot_radius * 1.15f,
+				-0.5f * parent_radius));
+
+			grow(plant, level + 1, add(point, scale(child_direction, depth)), child_direction, child_length, child_radius, NULL);
+		}
 	}
 }
 

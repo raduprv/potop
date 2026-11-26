@@ -17,7 +17,7 @@ twig = plant_plans/twigs/bald_cypress_3.png
 
 leaf_size = 0
 leaves_per_branch = -1
-branches = 24, 16
+branches =
 branch_length = 0
 twig_scale = 0
 twig_share = 0.7
