@@ -231,6 +231,22 @@ from an older version get their terrain difference baked in once).
   kept with the baked map or cached on disk (by the terrain's and the
   objects' hash), and/or fewer directions a frame.
 
+- Plant roots on slopes (Nov 2026): a grown tree is rigid, so on uneven
+  ground its buttress, root flare and surface roots float on one side and
+  sink on the other. Plan agreed: the roots, the buttress and the trunk's
+  foot a material of their own (MATERIAL_ROOT) in the grown model, drawn
+  with plant.vert built with #define ROOTS (and plant_shadow.vert the
+  same): each vertex moved up/down by the ground under it (the R32F
+  height texture, 4 texels by textureGather, the cells being 1 m) minus
+  the ground at the trunk's foot (instance_placement), weighted 1 at the
+  ground to 0 some 1.5-2 m up (from the vertex's height in the model: no
+  new data in the .pobj). No wind there. The usual plant shader untouched
+  (no texture, no branch in it); one draw more per plant type
+  (instanced). Impostors stay baked on flat ground; far LODs may drop the
+  roots. Collision stays the trunk's capsule. The bald cypress's knees
+  become separate small objects (a few variants made by the grower)
+  scattered round it by the editor's placement rules, not part of it.
+
 ## Buildings and the village (Nov 2026)
 
 - BUG: impostors (and far buildings and trees still drawn as meshes)
