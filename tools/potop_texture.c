@@ -64,6 +64,10 @@
 //           the grooves and where a strand has peeled, loose strips lying
 //           over the rest with their shadows, lichen crusts (--moss) (and
 //           NAME_height.png, NAME_arm.png)
+//   bark_pine  a pine's bark, wrapping round a trunk: long plates up it
+//           parted by a net of khaki furrows, their faces of thin flakes,
+//           weathered mauve gray, flaked off in long patches to the rusty
+//           orange under them (and NAME_height.png, NAME_arm.png)
 //   batten  board and batten: wide hewn boards down the picture (the
 //           adze's scoops across them), a batten nailed over each joint,
 //           round headed nails; old dark wood (--boards: a board's width)
@@ -5785,6 +5789,160 @@ static bool make_bark_cypress(const texture_settings_t *settings, field_t *field
 	return true;
 }
 
+// A pine's bark (Pinus): plates up the trunk, a few centimeters across and
+// longer up it, parted by a net of furrows (their floors dark, their walls
+// a fibrous khaki brown); each plate built of thin flakes in layers, the
+// outer ones weathered a mauve gray, the inner ones bright orange where the
+// outer have flaked off; a dark pit here and there.
+
+// Cells longer up the picture than across it (across of them round it,
+// down of them up it, tiling): the nearest one's number, and how far the
+// point is from its edge (picture units, about)
+static float long_cells(float u, float v, int across, int down, float jitter, uint32_t seed, int *id_x, int *id_y)
+{
+	float px = u * (float)across;
+	float py = v * (float)down;
+	int ix = (int)floorf(px);
+	int iy = (int)floorf(py);
+	float best = 1e9f;
+	float second = 1e9f;
+
+	for (int dy = -1; dy <= 1; dy++)
+	{
+		for (int dx = -1; dx <= 1; dx++)
+		{
+			int gx = wrap_index(ix + dx, across);
+			int gy = wrap_index(iy + dy, down);
+			float cx = (float)(ix + dx) + 0.5f + (hash_unit(gx, gy, seed) - 0.5f) * jitter;
+			float cy = (float)(iy + dy) + 0.5f + (hash_unit(gx, gy, seed + 1u) - 0.5f) * jitter;
+			float ex = (cx - px) / (float)across;
+			float ey = (cy - py) / (float)down;
+			float distance = sqrtf(ex * ex + ey * ey);
+
+			if (distance < best)
+			{
+				second = best;
+				best = distance;
+				*id_x = gx;
+				*id_y = gy;
+			}
+			else if (distance < second)
+			{
+				second = distance;
+			}
+		}
+	}
+	return 0.5f * (second - best);
+}
+
+static bark_point_t pine_bark_sample(float meters, uint32_t seed, float x, float y)
+{
+	float u = x / meters;
+	float v = y / meters;
+	bark_point_t point;
+	int across = (int)fmaxf(roundf(meters / 0.026f), 4.0f);
+	int down = (int)fmaxf(roundf(meters / 0.22f), 2.0f);
+	// (the plates' outlines wandering: no straight edges)
+	float warp_u = u + 0.25f / (float)across * tiling_fractal(u, v, across / 2 > 2 ? across / 2 : 2, 3, 0.55f, seed + 1u);
+	float warp_v = v + 0.15f / (float)down * tiling_fractal(u, v, across / 2 > 2 ? across / 2 : 2, 3, 0.55f, seed + 2u);
+	int plate_x;
+	int plate_y;
+	float plate_edge = long_cells(warp_u, warp_v, across, down, 0.9f, seed + 3u, &plate_x, &plate_y) * meters;
+	float plate_id = hash_unit(plate_x, plate_y, seed + 4u);
+	// Texture over all: grit, mottling, the furrow walls' fibers
+	float grit = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.003f), 16.0f), 2, 0.6f, seed + 12u);
+	float mottle = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.02f), 16.0f), 4, 0.62f, seed + 13u);
+	float blotch = tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.15f), 4.0f), 4, 0.6f, seed + 14u);
+	float fibers = staggered_noise(u, v, (int)fmaxf(roundf(meters / 0.004f), 16.0f), (int)fmaxf(roundf(meters / 0.02f), 16.0f), 2, seed + 15u);
+	// (the furrows between them: wider here, narrower there, ragged)
+	float furrow_half = 0.0065f + 0.0035f * tiling_fractal(u, v, across, 2, 0.5f, seed + 5u)
+		+ 0.0025f * tiling_fractal(u, v, across * 4, 3, 0.6f, seed + 6u);
+	float on_plate = smooth_step(furrow_half * 0.6f + 0.002f * mottle, furrow_half * 1.5f + 0.002f * mottle, plate_edge);
+	float furrow_floor = (1.0f - smooth_step(0.0f, furrow_half * 0.35f, plate_edge)) * smooth_step(-0.2f, 0.4f, blotch);
+	// Flakes on each plate: smaller cells, each layer its own height; the
+	// outer ones gray, flaked off to the orange under them in patches
+	int flake_x;
+	int flake_y;
+	float flake_edge = long_cells(warp_u + 0.2f / (float)across * tiling_fractal(u, v, across * 2, 2, 0.6f, seed + 7u), warp_v, across * 3, down * 2, 0.95f,
+		seed + 8u, &flake_x, &flake_y) * meters;
+	float flake_id = hash_unit(flake_x, flake_y, seed + 9u);
+	// (the flaked patches drawn out up the trunk, as the plates are)
+	float flaked_patch = stretched_noise(u, v, (int)fmaxf(roundf(meters / 0.03f), 8.0f), (int)fmaxf(roundf(meters / 0.12f), 4.0f), 3, seed + 10u);
+	// (where it has flaked: long patches up the trunk, their edges along
+	// the flakes' own)
+	float orange = smooth_step(0.04f, 0.12f, flaked_patch + 0.12f * (flake_id - 0.5f) + 0.1f * (plate_id - 0.5f));
+	float flake_line = (1.0f - smooth_step(0.0f, 0.0012f, flake_edge)) * on_plate;
+	float pit = smooth_step(0.996f, 0.999f, hash_unit(flake_x, flake_y, seed + 11u)) * smooth_step(0.0005f, 0.003f, flake_edge);
+	const float gray[3] = { 0.44f, 0.37f, 0.33f };
+	const float gray_brown[3] = { 0.43f, 0.31f, 0.24f };
+	const float orange_color[3] = { 0.48f, 0.30f, 0.17f };
+	const float khaki[3] = { 0.42f, 0.37f, 0.27f };
+	const float deep[3] = { 0.17f, 0.12f, 0.08f };
+
+	for (int k = 0; k < 3; k++)
+	{
+		float face = mix_float(gray[k], gray_brown[k], smooth_step(-0.3f, 0.5f, blotch) * 0.7f) * (0.88f + 0.24f * plate_id);
+		float inner = orange_color[k] * (0.85f + 0.3f * flake_id) * (1.0f + 0.12f * mottle);
+		float color = mix_float(face * (1.0f + 0.14f * mottle), inner, orange);
+		float wall = khaki[k] * (0.8f + 0.2f * fibers) * (1.0f + 0.25f * mottle) * (1.0f + 0.18f * blotch) * (1.0f + 0.15f * grit);
+
+		color *= (1.0f + 0.12f * grit) * (1.0f - 0.15f * flake_line);
+		color = mix_float(wall, color, on_plate);
+		color = mix_float(color, deep[k], furrow_floor * 0.6f);
+		// (a pit: a lighter brown, the bark's under-layer bare)
+		color = mix_float(color, gray_brown[k] * 0.85f, pit * 0.9f);
+		point.color[k] = color;
+	}
+	// Height: plates up, rounded off towards their edges; each flake its
+	// layer (the orange ones lower, under the gray); the furrows deep
+	point.height = on_plate * (0.005f * smooth_step(0.0f, 0.02f, plate_edge - furrow_half * 0.6f) + 0.0012f * (1.0f - orange) + 0.0006f * flake_id
+		- 0.0004f * flake_line) - 0.004f * furrow_floor + 0.0008f * fibers * (1.0f - on_plate) + 0.0008f * mottle * (1.0f - on_plate) + 0.0002f * grit + 0.0003f * mottle - 0.0015f * pit;
+	point.roughness = clamp_unit(0.82f + 0.08f * (1.0f - on_plate) - 0.06f * orange);
+	return point;
+}
+
+static bool make_bark_pine(const texture_settings_t *settings, field_t *field)
+{
+	int size = field->size;
+	float pixel_meters = field->meters / (float)size;
+
+#pragma omp parallel for schedule(dynamic, 8)
+	for (int y = 0; y < size; y++)
+	{
+		for (int x = 0; x < size; x++)
+		{
+			int index = y * size + x;
+			float height_sum = 0.0f;
+			float color_sum[3] = { 0.0f, 0.0f, 0.0f };
+			float roughness_sum = 0.0f;
+
+			for (int s = 0; s < 4; s++)
+			{
+				bark_point_t point = pine_bark_sample(field->meters, settings->seed, ((float)x + 0.25f + 0.5f * (float)(s & 1)) * pixel_meters,
+					((float)y + 0.25f + 0.5f * (float)(s >> 1)) * pixel_meters);
+
+				height_sum += point.height;
+				roughness_sum += point.roughness;
+				for (int k = 0; k < 3; k++)
+				{
+					color_sum[k] += point.color[k];
+				}
+			}
+			field->height[index] = height_sum * 0.25f;
+			field->roughness[index] = roughness_sum * 0.25f;
+			for (int k = 0; k < 3; k++)
+			{
+				field->color[index * 3 + k] = color_sum[k] * 0.25f;
+			}
+		}
+	}
+	shade_hollows(field, (int)fminf(fmaxf(0.004f / pixel_meters, 2.0f), 8.0f), 0.004f, 0.25f);
+	bake_light(field, settings->baked_light);
+	sharpen_color(field, (int)fminf(fmaxf(0.008f / pixel_meters, 3.0f), 16.0f), 0.8f);
+	sharpen_color(field, 1, 1.4f);
+	return true;
+}
+
 // ---------------------------------------------------------------------------
 // Board and batten: a wall of wide boards down the picture, a narrow
 // batten nailed over each joint (round headed nails). The boards hewn,
@@ -6670,6 +6828,7 @@ int main(int argument_count, char **arguments)
 			{ "batten", 1.2f, { 0.366f, 0.297f, 0.241f } },
 			{ "smithy", 1.6f, { 0.369f, 0.304f, 0.232f } },
 			{ "bark_cypress", 1.0f, { 0.47f, 0.39f, 0.37f } },
+			{ "bark_pine", 1.0f, { 0.45f, 0.37f, 0.36f } },
 		};
 		bool known = false;
 
@@ -6690,7 +6849,7 @@ int main(int argument_count, char **arguments)
 		}
 		if (!known)
 		{
-			fprintf(stderr, "potop_texture: no kind '%s' (sand, clay, mud, grass, rock, canyon, granite, stone, dirt, relief, wet_sand, wet_dirt, needles, leaves, trampled, petals, snow, drystone, coursed, weatherboard, timber, planks, old_timber, batten, smithy, bark_cypress)\n", kind);
+			fprintf(stderr, "potop_texture: no kind '%s' (sand, clay, mud, grass, rock, canyon, granite, stone, dirt, relief, wet_sand, wet_dirt, needles, leaves, trampled, petals, snow, drystone, coursed, weatherboard, timber, planks, old_timber, batten, smithy, bark_cypress, bark_pine)\n", kind);
 			return 1;
 		}
 	}
@@ -6812,6 +6971,10 @@ int main(int argument_count, char **arguments)
 	else if (strcmp(kind, "bark_cypress") == 0)
 	{
 		ok = make_bark_cypress(&settings, &field);
+	}
+	else if (strcmp(kind, "bark_pine") == 0)
+	{
+		ok = make_bark_pine(&settings, &field);
 	}
 	else
 	{
