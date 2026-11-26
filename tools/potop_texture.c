@@ -5681,11 +5681,11 @@ static bark_point_t cypress_bark_sample(float meters, uint32_t seed, float liche
 	float yellow = smooth_step(0.55f, 0.7f, tiling_fractal(u, v, (int)fmaxf(roundf(meters / 0.025f), 16.0f), 3, 0.6f, seed + 18u)) * 0.7f;
 	const float gray[3] = { 0.52f, 0.47f, 0.46f };
 	const float pink[3] = { 0.57f, 0.45f, 0.43f };
-	const float inner[3] = { 0.62f, 0.33f, 0.26f };
+	const float inner[3] = { 0.52f, 0.31f, 0.26f };
 	const float deep[3] = { 0.17f, 0.11f, 0.09f };
-	const float lichen_green[3] = { 0.66f, 0.71f, 0.62f };
-	const float lichen_blue[3] = { 0.70f, 0.73f, 0.74f };
-	const float lichen_yellow[3] = { 0.74f, 0.70f, 0.36f };
+	const float lichen_green[3] = { 0.68f, 0.70f, 0.58f };
+	const float lichen_blue[3] = { 0.70f, 0.70f, 0.64f };
+	const float lichen_yellow[3] = { 0.74f, 0.70f, 0.40f };
 	float light = (1.0f + 0.14f * blotch) * (1.0f + 0.12f * dust) * (1.0f + 0.14f * grit) * (1.0f + 0.16f * flakes) * (1.0f + 0.14f * mottle) * tone
 		* (1.0f - 0.14f * fiber_groove);
 

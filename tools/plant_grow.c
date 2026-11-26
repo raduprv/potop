@@ -4659,13 +4659,16 @@ static void add_knee(plant_t *plant, vec3 foot, float height, float radius)
 	vec3 tip;
 	vec3 heading;
 
-	trace_branch(&knee, foot, normalized(lean), height, radius, 0.35f, 1.2f, 0.0f, fmaxf(height / 6.0f, 0.03f));
-	// (swollen low, knobbly up it)
+	trace_branch(&knee, foot, normalized(lean), height, radius, 0.35f, 0.5f, 0.0f, fmaxf(height / 8.0f, 0.02f));
+	// (stout: swollen at the ground, a little narrower up it, its top a
+	// rounded knob, lumpy all along)
 	for (int i = 0; i < knee.count; i++)
 	{
 		float t = knee.count > 1 ? (float)i / (float)(knee.count - 1) : 0.0f;
+		float dome = smooth_step(0.5f, 1.0f, t);
 
-		knee.radii[i] *= (1.0f + 0.8f * expf(-t * 6.0f)) * random_between(0.85f, 1.15f);
+		knee.radii[i] = radius * (1.0f + 0.7f * expf(-t * 5.0f)) * (0.8f + 0.2f * (1.0f - t)) * sqrtf(fmaxf(1.0f - dome * dome, 0.04f))
+			* random_between(0.88f, 1.12f);
 	}
 	plant->mesh.bark_level = 1;
 	add_tube(plant, &knee, sides, radius, MATERIAL_TRUNK);
@@ -4700,7 +4703,7 @@ static void add_knees(plant_t *plant, float trunk_radius)
 		float out = near + powf(random_unit(), 0.8f) * fmaxf(kind->knee_reach - near, 0.2f);
 		float closeness = 1.0f - (out - near) / fmaxf(kind->knee_reach - near, 0.2f);
 		float height = kind->knee_height * random_between(0.25f, 1.0f) * (0.4f + 0.6f * closeness);
-		float radius = fmaxf(height * random_between(0.18f, 0.28f), 0.02f);
+		float radius = fmaxf(height * random_between(0.32f, 0.48f), 0.03f);
 
 		add_knee(plant, v3(cosf(azimuth) * out, -0.05f, sinf(azimuth) * out), height + 0.05f, radius);
 	}
