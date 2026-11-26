@@ -4638,7 +4638,9 @@ static void grow(plant_t *plant, int level, vec3 start, vec3 direction, float le
 		vec3 end = branch.points[branch.count - 1];
 		vec3 way = branch.directions[branch.count - 1];
 		float end_radius = branch.radii[branch.count - 1];
-		float leader_length = length * kind->length_ratio[0] * fmaxf(crown_shape(plant, 0.97f), 0.3f) * random_between(0.8f, 1.1f);
+		// (short: the top's last bit, as long as a branch there would be,
+		// at most a tenth of the stem; longer it stood up as a second top)
+		float leader_length = fminf(length * kind->length_ratio[0] * crown_shape(plant, 0.97f), length * 0.1f) * random_between(0.8f, 1.1f);
 
 		// (its collared foot a little down in the trunk, bent a little)
 		way = normalized(add(way, scale(random_direction(), 0.25f)));
