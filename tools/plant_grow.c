@@ -3159,44 +3159,47 @@ static void add_twig_one(plant_t *plant, vec3 start, vec3 direction, float lengt
 }
 
 // A twig from start along direction, length long before the kind's
-// twig_scale. With --twig-size, every twig that size (a little more or
-// less), whatever the branch it stands for: a longer one a row of them
-// along it, a shorter one that size anyway. With --twig-density, that
-// many along each meter of it (the row's twigs to either side in turn,
-// a little, so they do not stack on one line)
+// twig_scale (a side twig, a filling one, one at a branch's tip): with
+// --twig-size that size instead (a little more or less), whatever
+// length it was to have
 static void add_twig(plant_t *plant, vec3 start, vec3 direction, float length)
 {
-	float wanted = length * plant->kind->twig_scale;
-	int pieces;
-	vec3 side;
+	if (plant->twig_size > 0.0f)
+	{
+		length = plant->twig_size * random_between(0.9f, 1.1f) / plant->kind->twig_scale;
+	}
+	add_twig_one(plant, start, direction, length);
+}
 
-	if (plant->twig_size <= 0.0f && plant->twig_density <= 0.0f)
-	{
-		add_twig_one(plant, start, direction, length);
-		return;
-	}
-	if (plant->twig_density > 0.0f)
-	{
-		pieces = (int)lroundf(wanted * plant->twig_density);
-	}
-	else
-	{
-		pieces = (int)ceilf(wanted / (plant->twig_size * 1.3f));
-	}
+// The twigs of a finest branch with --twig-size or --twig-density: as
+// leaves along it, their feet on it from its foot to near its tip, each
+// out along it where it is, to either side in turn a little; as many as
+// the density says a meter (else spaced by most of their size); each
+// that size (else as long as the space they stand for)
+static void add_twig_row(plant_t *plant, const branch_t *branch)
+{
+	int pieces = plant->twig_density > 0.0f ? (int)lroundf(branch->length * plant->twig_density)
+		: (int)ceilf(branch->length / (plant->twig_size * 0.6f));
+
 	pieces = pieces < 1 ? 1 : (pieces > 48 ? 48 : pieces);
-	side = cross(v3(0.0f, 1.0f, 0.0f), direction);
-	side = dot(side, side) > 1e-4f ? normalized(side) : perpendicular(direction);
 	for (int i = 0; i < pieces; i++)
 	{
-		float size = plant->twig_size > 0.0f ? plant->twig_size * random_between(0.9f, 1.1f) : wanted / (float)pieces * 1.15f;
-		vec3 from = add(start, scale(direction, wanted * (float)i / (float)pieces));
-		vec3 way = direction;
+		float t = ((float)i + random_between(0.15f, 0.45f)) / (float)pieces;
+		vec3 point;
+		vec3 heading;
+		float radius;
+		vec3 side;
+		float size = plant->twig_size > 0.0f ? plant->twig_size * random_between(0.9f, 1.1f)
+			: branch->length / (float)pieces * 1.15f * plant->kind->twig_scale;
 
+		branch_at(branch, t, &point, &heading, &radius);
+		side = cross(v3(0.0f, 1.0f, 0.0f), heading);
+		side = dot(side, side) > 1e-4f ? normalized(side) : perpendicular(heading);
 		if (pieces > 1)
 		{
-			way = normalized(add(direction, scale(side, ((i & 1) != 0 ? 0.35f : -0.35f) * random_between(0.6f, 1.2f))));
+			heading = normalized(add(heading, scale(side, ((i & 1) != 0 ? 0.35f : -0.35f) * random_between(0.6f, 1.2f))));
 		}
-		add_twig_one(plant, from, way, size / plant->kind->twig_scale);
+		add_twig_one(plant, point, heading, size / plant->kind->twig_scale);
 	}
 }
 
@@ -4049,8 +4052,12 @@ static void add_twigs_along(plant_t *plant, const branch_t *branch, int sides, f
 		return;
 	}
 
-	// (with a twig size, add_twig makes the row itself)
-	if (twig_meters <= 0.0f || branch->length * plant->kind->twig_scale <= twig_meters * 1.3f || plant->twig_size > 0.0f)
+	if (plant->twig_size > 0.0f || plant->twig_density > 0.0f)
+	{
+		add_twig_row(plant, branch);
+		return;
+	}
+	if (twig_meters <= 0.0f || branch->length * plant->kind->twig_scale <= twig_meters * 1.3f)
 	{
 		add_twig(plant, foot, chord_length > 1e-4f ? scale(chord, 1.0f / chord_length) : branch->directions[0], chord_length);
 		return;
