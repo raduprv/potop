@@ -700,13 +700,17 @@ static void pile_scene_draw(soft_render_t *renderer, const soft_render_camera_t 
 	int i;
 
 	soft_render_begin(renderer, camera, SKY_COLOR);
-	soft_render_set_object(renderer, 1);
-	soft_render_ground(renderer, 0.0f, 0.0f, 0.0f, 40.0f, 1.0f, GROUND_COLOR_FIRST, GROUND_COLOR_SECOND);
+	// The pieces first, their backs not drawn (they are closed), then
+	// the ground, of which only what shows between them is filled
+	renderer->cull_back_faces = true;
 	for (i = 0; i < pile.piece_count; i++)
 	{
 		soft_render_set_object(renderer, (uint32_t)i + 2);
 		draw_piece(renderer, &pile.pieces[i]);
 	}
+	renderer->cull_back_faces = false;
+	soft_render_set_object(renderer, 1);
+	soft_render_ground(renderer, 0.0f, 0.0f, 0.0f, 40.0f, 1.0f, GROUND_COLOR_FIRST, GROUND_COLOR_SECOND);
 	if (draw_outlines)
 	{
 		soft_render_outlines(renderer);

@@ -21,6 +21,9 @@
 #define MARK_DEPTH_BIAS 1.01f
 #define AMBIENT_BRIGHTNESS 0.30f
 #define OUTLINE_BRIGHTNESS 0.25f
+// The ground's tiles are tried against the picture this many by this
+// many at a time
+#define GROUND_BLOCK_TILES 8
 #define SPHERE_STACK_COUNT 8
 #define SPHERE_SLICE_COUNT 12
 #define CYLINDER_SIDES_MAX 64
@@ -319,9 +322,18 @@ static void rasterize_triangle(soft_render_t *renderer, const screen_corner_t *c
 	float weight_a;
 	float weight_b;
 	float weight_c;
+	float inverse_w_step_x;
 	uint32_t object_id = renderer->current_object_id;
-	int64_t x;
+	uint32_t packed_color;
 	int64_t y;
+
+	// (A pixel is four bytes, red first, the last always 255: written as
+	// one number, whichever way round this machine keeps its bytes)
+	{
+		uint8_t pixel_bytes[4] = { color[0], color[1], color[2], 255 };
+
+		memcpy(&packed_color, pixel_bytes, sizeof(packed_color));
+	}
 
 	if (area == 0)
 	{
@@ -396,35 +408,85 @@ static void rasterize_triangle(soft_render_t *renderer, const screen_corner_t *c
 	weight_b = inverse_w_b / (float)area;
 	weight_c = inverse_w_c / (float)area;
 
+	// (The biases go into the edges once: inside is all three not negative)
+	edge_ab_row += edge_ab_bias;
+	edge_bc_row += edge_bc_bias;
+	edge_ca_row += edge_ca_bias;
+	inverse_w_step_x = (float)edge_bc_step_x * weight_a + (float)edge_ca_step_x * weight_b + (float)edge_ab_step_x * weight_c;
+
 	for (y = first_y; y <= last_y; y++)
 	{
-		int64_t edge_ab = edge_ab_row;
-		int64_t edge_bc = edge_bc_row;
-		int64_t edge_ca = edge_ca_row;
-		int64_t pixel = y * renderer->width + first_x;
+		// The pixels of this row that are inside: each edge, a straight
+		// line along the row, gives the first or the last of them. No
+		// pixel outside is looked at.
+		int64_t span_first = 0;
+		int64_t span_last = last_x - first_x;
+		int64_t edge_rows[3];
+		int64_t edge_steps[3];
+		int edge;
 
-		for (x = first_x; x <= last_x; x++)
+		edge_rows[0] = edge_ab_row;
+		edge_rows[1] = edge_bc_row;
+		edge_rows[2] = edge_ca_row;
+		edge_steps[0] = edge_ab_step_x;
+		edge_steps[1] = edge_bc_step_x;
+		edge_steps[2] = edge_ca_step_x;
+		for (edge = 0; edge < 3; edge++)
 		{
-			// All three not negative: their sign bits or'ed is clear
-			if (((edge_ab + edge_ab_bias) | (edge_bc + edge_bc_bias) | (edge_ca + edge_ca_bias)) >= 0)
+			int64_t value = edge_rows[edge];
+			int64_t step = edge_steps[edge];
+
+			if (step > 0)
 			{
-				float inverse_w = (float)edge_bc * weight_a + (float)edge_ca * weight_b + (float)edge_ab * weight_c;
-
-				if (inverse_w > renderer->depth[pixel])
+				// Not negative from the pixel where it has risen to 0
+				if (value < 0)
 				{
-					uint8_t *destination = &renderer->color[pixel * 4];
+					int64_t first = (-value + step - 1) / step;
 
-					renderer->depth[pixel] = inverse_w;
-					renderer->object_ids[pixel] = object_id;
-					destination[0] = color[0];
-					destination[1] = color[1];
-					destination[2] = color[2];
+					if (first > span_first)
+					{
+						span_first = first;
+					}
 				}
 			}
-			edge_ab += edge_ab_step_x;
-			edge_bc += edge_bc_step_x;
-			edge_ca += edge_ca_step_x;
-			pixel++;
+			else if (step < 0)
+			{
+				// Not negative up to the pixel where it falls under 0
+				int64_t last = value >= 0 ? value / -step : -1;
+
+				if (last < span_last)
+				{
+					span_last = last;
+				}
+			}
+			else if (value < 0)
+			{
+				span_last = -1;
+			}
+		}
+		if (span_first <= span_last)
+		{
+			int64_t pixel = y * renderer->width + first_x + span_first;
+			int64_t pixel_end = pixel + (span_last - span_first);
+			// 1 / w at the first pixel (the edges there without their
+			// biases), then stepped along the row
+			float inverse_w = (float)(edge_bc_row - edge_bc_bias + span_first * edge_bc_step_x) * weight_a
+				+ (float)(edge_ca_row - edge_ca_bias + span_first * edge_ca_step_x) * weight_b
+				+ (float)(edge_ab_row - edge_ab_bias + span_first * edge_ab_step_x) * weight_c;
+			float *depth = renderer->depth;
+			uint32_t *object_ids = renderer->object_ids;
+			uint32_t *colors = (uint32_t *)(void *)renderer->color;
+
+			for (; pixel <= pixel_end; pixel++)
+			{
+				if (inverse_w > depth[pixel])
+				{
+					depth[pixel] = inverse_w;
+					object_ids[pixel] = object_id;
+					colors[pixel] = packed_color;
+				}
+				inverse_w += inverse_w_step_x;
+			}
 		}
 		edge_ab_row += edge_ab_step_y;
 		edge_bc_row += edge_bc_step_y;
@@ -495,12 +557,16 @@ void soft_render_begin(soft_render_t *renderer, const soft_render_camera_t *came
 	renderer->near_distance = camera->near_distance > 0.0f ? camera->near_distance : 0.05f;
 
 	color_to_bytes(background_color, 1.0f, background);
-	for (i = 0; i < pixel_count; i++)
 	{
-		renderer->color[i * 4 + 0] = background[0];
-		renderer->color[i * 4 + 1] = background[1];
-		renderer->color[i * 4 + 2] = background[2];
-		renderer->color[i * 4 + 3] = 255;
+		uint8_t pixel_bytes[4] = { background[0], background[1], background[2], 255 };
+		uint32_t *colors = (uint32_t *)(void *)renderer->color;
+		uint32_t packed_color;
+
+		memcpy(&packed_color, pixel_bytes, sizeof(packed_color));
+		for (i = 0; i < pixel_count; i++)
+		{
+			colors[i] = packed_color;
+		}
 	}
 	memset(renderer->depth, 0, pixel_count * sizeof(float));
 	memset(renderer->object_ids, 0, pixel_count * sizeof(uint32_t));
@@ -781,6 +847,31 @@ void soft_render_sphere(soft_render_t *renderer, const float center[3], float ra
 	}
 }
 
+// True when the flat shape with these corners cannot be in the picture:
+// all of them behind the eye, or all off the same side
+static bool corners_are_out_of_sight(const soft_render_t *renderer, float corners[][3], int corner_count)
+{
+	bool all_behind = true;
+	bool all_left = true;
+	bool all_right = true;
+	bool all_under = true;
+	bool all_over = true;
+	int i;
+
+	for (i = 0; i < corner_count; i++)
+	{
+		clip_corner_t corner;
+
+		world_to_clip(renderer, corners[i], &corner);
+		all_behind = all_behind && corner.w < renderer->near_distance;
+		all_left = all_left && corner.x < -corner.w;
+		all_right = all_right && corner.x > corner.w;
+		all_under = all_under && corner.y < -corner.w;
+		all_over = all_over && corner.y > corner.w;
+	}
+	return all_behind || all_left || all_right || all_under || all_over;
+}
+
 void soft_render_ground(soft_render_t *renderer, float center_x, float center_z, float height_y, float half_size, float tile_size, uint32_t color_a, uint32_t color_b)
 {
 	int first_tile_x = (int)floorf((center_x - half_size) / tile_size);
@@ -796,6 +887,25 @@ void soft_render_ground(soft_render_t *renderer, float center_x, float center_z,
 	{
 		for (tile_x = first_tile_x; tile_x < last_tile_x; tile_x++)
 		{
+			// At the start of each block of tiles: if none of the block can
+			// be in the picture, its tiles in this row are skipped
+			if ((tile_x - first_tile_x) % GROUND_BLOCK_TILES == 0)
+			{
+				int block_z = first_tile_z + ((tile_z - first_tile_z) / GROUND_BLOCK_TILES) * GROUND_BLOCK_TILES;
+				float block_x0 = (float)tile_x * tile_size;
+				float block_x1 = block_x0 + (float)GROUND_BLOCK_TILES * tile_size;
+				float block_z0 = (float)block_z * tile_size;
+				float block_z1 = block_z0 + (float)GROUND_BLOCK_TILES * tile_size;
+				float block_corners[4][3] = {
+					{block_x0, height_y, block_z0}, {block_x0, height_y, block_z1},
+					{block_x1, height_y, block_z1}, {block_x1, height_y, block_z0} };
+
+				if (corners_are_out_of_sight(renderer, block_corners, 4))
+				{
+					tile_x += GROUND_BLOCK_TILES - 1;
+					continue;
+				}
+			}
 			float x0 = (float)tile_x * tile_size;
 			float x1 = x0 + tile_size;
 			float z0 = (float)tile_z * tile_size;
@@ -812,21 +922,28 @@ void soft_render_ground(soft_render_t *renderer, float center_x, float center_z,
 
 void soft_render_outlines(soft_render_t *renderer)
 {
+	const uint32_t *object_ids = renderer->object_ids;
+	int width = renderer->width;
 	int x;
 	int y;
 
+	// A pixel is darkened when the one to its right or the one under it
+	// is of another object (the last column looks only down, the last
+	// row only right)
 	for (y = 0; y < renderer->height; y++)
 	{
-		for (x = 0; x < renderer->width; x++)
-		{
-			int pixel = y * renderer->width + x;
-			uint32_t object_id = renderer->object_ids[pixel];
-			bool at_border = (x + 1 < renderer->width && renderer->object_ids[pixel + 1] != object_id)
-				|| (y + 1 < renderer->height && renderer->object_ids[pixel + renderer->width] != object_id);
+		const uint32_t *row = &object_ids[(size_t)y * (size_t)width];
+		const uint32_t *row_under = y + 1 < renderer->height ? row + width : row;
+		uint8_t *colors = &renderer->color[(size_t)y * (size_t)width * 4];
 
-			if (at_border)
+		for (x = 0; x < width; x++)
+		{
+			uint32_t object_id = row[x];
+			uint32_t right = x + 1 < width ? row[x + 1] : object_id;
+
+			if (((right ^ object_id) | (row_under[x] ^ object_id)) != 0)
 			{
-				uint8_t *destination = &renderer->color[pixel * 4];
+				uint8_t *destination = &colors[x * 4];
 
 				destination[0] = (uint8_t)((float)destination[0] * OUTLINE_BRIGHTNESS);
 				destination[1] = (uint8_t)((float)destination[1] * OUTLINE_BRIGHTNESS);

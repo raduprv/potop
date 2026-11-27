@@ -948,9 +948,13 @@ static void cabin_scene_draw(soft_render_t *renderer, const soft_render_camera_t
 	int i;
 
 	soft_render_begin(renderer, camera, SKY_COLOR);
+	// The pieces first, their backs not drawn (they are closed), then
+	// the ground, of which only what shows between them is filled
+	renderer->cull_back_faces = true;
+	damage_model_draw_solids(&model, renderer, 2);
+	renderer->cull_back_faces = false;
 	soft_render_set_object(renderer, 1);
 	soft_render_ground(renderer, 0.0f, 0.0f, 0.0f, 40.0f, 1.0f, GROUND_COLOR_FIRST, GROUND_COLOR_SECOND);
-	damage_model_draw_solids(&model, renderer, 2);
 	if (draw_outlines)
 	{
 		soft_render_outlines(renderer);
