@@ -172,39 +172,6 @@ float burn_noise(vec3 at)
 		mix(burn_hash(cell + vec3(0.0, 1.0, 1.0)), burn_hash(cell + vec3(1.0, 1.0, 1.0)), blend.x), blend.y), blend.z);
 }
 
-// The char's cracks: how far from the nearest crack between its cells
-// (an alligator's hide; second nearest seed's distance less the nearest's)
-float burn_cracks(vec3 at)
-{
-	vec3 cell = floor(at);
-	float nearest = 8.0;
-	float second = 8.0;
-
-	for (int k = -1; k <= 1; k++)
-	{
-		for (int j = -1; j <= 1; j++)
-		{
-			for (int i = -1; i <= 1; i++)
-			{
-				vec3 other = cell + vec3(float(i), float(j), float(k));
-				vec3 seed = other + vec3(burn_hash(other), burn_hash(other + 17.0), burn_hash(other + 31.0)) * 0.8 + 0.1;
-				float distance = length(seed - at);
-
-				if (distance < nearest)
-				{
-					second = nearest;
-					nearest = distance;
-				}
-				else if (distance < second)
-				{
-					second = distance;
-				}
-			}
-		}
-	}
-	return second - nearest;
-}
-
 vec3 burn_rotate(vec4 rotation, vec3 vector)
 {
 	vec3 twice_cross = 2.0 * cross(rotation.xyz, vector);
@@ -345,8 +312,10 @@ void main()
 
 	vec3 albedo = pow(color.rgb, vec3(2.2));
 	// On fire (burning.h): scorched a little ahead of the front, then
-	// charred black, cracked into scales, embers glowing in the cracks while
-	// it burns, gray ash after; dull all over
+	// charred black, then glowing through as solid embers (a coal's glow,
+	// mottled, hotter and cooler patches drifting, a thin black skin coming
+	// and going over it), dying down to gray ash spreading in patches; dull
+	// all over
 	float burn_char = 0.0;
 	vec3 burn_glow = vec3(0.0);
 
@@ -354,35 +323,35 @@ void main()
 	{
 		float char_seconds = max(burn_timing.y, 1e-3);
 		float burn_seconds = max(burn_timing.z, 1e-3);
+		float time = highlight_parameters.w;
 		float scorch = smoothstep(-8.0, 0.0, burn_seconds_since);
 		// (long along the grain: the model turned so that it runs along X)
-		float crack = burn_cracks(burn_model * vec3(7.0, 16.0, 16.0));
-		// (the crack's width in the pixel's footprint: thin cracks far off
-		// blur into a dim glow instead of glittering)
-		float crack_blur = fwidth(crack);
-		// (0 on a crack, 1 well inside a scale)
-		float scale_inside = smoothstep(0.02, 0.16, crack);
-		float ash = smoothstep(burn_seconds * 0.8, burn_seconds * 1.02, burn_seconds_since);
-		// (the scales a little lighter where they bulge, gray when they
-		// are ash)
-		vec3 char_color = mix(vec3(0.008, 0.007, 0.006), vec3(0.022, 0.020, 0.019), scale_inside);
-		vec3 ash_color = mix(vec3(0.05, 0.048, 0.046), vec3(0.30, 0.29, 0.28) * (0.8 + 0.4 * burn_noise(burn_model * 23.0)), scale_inside);
+		vec3 grain = burn_model * vec3(3.0, 8.0, 8.0);
+		float patches = burn_noise(grain) * 0.6 + burn_noise(grain * 2.3 + 7.1) * 0.3 + burn_noise(grain * 5.7 + 3.3) * 0.1;
+		// (the ash comes in patches, the coolest first)
+		float ash_progress = smoothstep(burn_seconds * 0.7, burn_seconds * 1.02, burn_seconds_since);
+		float ash = smoothstep(patches + 0.1, patches + 0.3, ash_progress * 1.3);
+		vec3 char_color = vec3(0.010, 0.009, 0.008) * (0.7 + 0.6 * patches);
+		vec3 ash_color = vec3(0.30, 0.29, 0.28) * (0.75 + 0.5 * burn_noise(grain * 4.0));
 
-		burn_char = smoothstep(0.0, char_seconds, burn_seconds_since + char_seconds * 0.15 * (1.0 - scale_inside));
+		burn_char = smoothstep(0.0, char_seconds, burn_seconds_since + char_seconds * 0.2 * (patches - 0.5));
 		albedo *= 1.0 - 0.45 * scorch * (1.0 - burn_char);
 		albedo = mix(albedo, char_color, burn_char);
 		albedo = mix(albedo, ash_color, ash);
-		// Embers: in the cracks, flickering, from the time it is charred
-		// enough until it is burnt out; a dim glow over the whole of it
-		// while its flames are up
+		// The embers: from the time it is charred enough until it is burnt
+		// out, over all of it but the ash
 		{
-			float burning_now = smoothstep(0.0, char_seconds * 0.5, burn_seconds_since) * (1.0 - smoothstep(burn_seconds * 0.6, burn_seconds, burn_seconds_since));
-			float flicker = 0.55 + 0.45 * burn_noise(burn_model * 4.0 + vec3(0.0, highlight_parameters.w * 0.7, highlight_parameters.w * 0.3));
-			float crack_width = max(0.035, crack_blur * 1.5);
-			float in_crack = (1.0 - smoothstep(0.0, crack_width, crack)) * (0.035 / crack_width);
-			float hot = in_crack * 2.5 + (1.0 - scale_inside) * 0.12 + 0.025;
+			float burning_now = smoothstep(char_seconds * 0.3, char_seconds, burn_seconds_since)
+				* (1.0 - smoothstep(burn_seconds * 0.6, burn_seconds, burn_seconds_since));
+			// (hot and cool patches drifting slowly, a quicker shimmer on top)
+			float heat = burn_noise(grain * 1.5 + vec3(time * 0.08, time * 0.05, 0.0)) * 0.7
+				+ burn_noise(grain * 4.0 + vec3(0.0, time * 0.4, time * 0.3)) * 0.3;
+			// (a thin black skin over the coolest, coming and going)
+			float skin = smoothstep(0.38, 0.22, heat + 0.15 * (burn_noise(grain * 9.0 + time * 0.2) - 0.5));
+			vec3 ember_color = mix(vec3(0.55, 0.05, 0.01), vec3(1.0, 0.38, 0.06), smoothstep(0.3, 0.85, heat));
+			float strength = mix(0.25, 2.2, smoothstep(0.2, 0.9, heat)) * (1.0 - 0.85 * skin);
 
-			burn_glow = vec3(1.0, 0.30, 0.05) * hot * burning_now * flicker * (1.0 - ash * 0.8);
+			burn_glow = ember_color * strength * burning_now * (1.0 - ash);
 		}
 	}
 	// Wet in the rain (rain.h): darker, the more the surface faces up, and
