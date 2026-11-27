@@ -448,7 +448,7 @@ static void build_beam_on_pillars(float center_x, float center_z)
 static void build_span(float center_x, float center_z, bool is_log, float crate_half_size, bool with_prop)
 {
 	b3Vec3 pillar_half_extents = make_vector(0.15f, 0.75f, 0.15f);
-	b3Vec3 plank_half_extents = make_vector(2.0f, 0.08f, 0.15f);
+	b3Vec3 plank_half_extents = make_vector(2.0f, 0.025f, 0.15f);
 	float span_half_height = is_log ? LOG_FLAT_TO_FLAT * 0.5f : plank_half_extents.y;
 	float span_y = 1.5f + span_half_height;
 	int span;
@@ -495,6 +495,239 @@ static void build_bend_structures(void)
 	build_span(0.0f, 0.0f, false, 0.20f, false);
 	// A log: a ball knocks it off its pillars whole, a fast one breaks it
 	build_span(5.0f, 0.0f, true, 0.0f, false);
+}
+
+// ---------------------------------------------------------------------
+// The house scene
+
+#define HOUSE_HALF_X 2.0f
+#define HOUSE_HALF_Z 1.5f
+#define HOUSE_POST_COUNT 5
+#define HOUSE_WALL_ROWS 11
+#define HOUSE_ROOF_ROWS 11
+// Half the side of the frame's square timbers; half the thickness and
+// half the width of the boards
+#define HOUSE_TIMBER 0.05f
+#define HOUSE_BOARD_THICKNESS 0.0125f
+#define HOUSE_BOARD_WIDTH 0.1f
+#define HOUSE_POST_HALF_HEIGHT 1.1f
+#define HOUSE_EAVE_OVERHANG 0.25f
+#define HOUSE_ROOF_RISE 1.5f
+
+// A timber frame house, all nailed: sills on the foundation, posts,
+// plates on the posts, boards across the posts outside (with a door in
+// the front wall and a window in the back one), and on the plates a
+// roof of five trusses (a tie beam, two rafters, a collar beside them)
+// with boards across the rafters. The gables are open.
+static void build_house(float center_x, float center_z)
+{
+	const float timber = HOUSE_TIMBER;
+	const float sill_top = 2.0f * timber;
+	const float post_y = sill_top + HOUSE_POST_HALF_HEIGHT;
+	const float post_top = sill_top + 2.0f * HOUSE_POST_HALF_HEIGHT;
+	const float plate_y = post_top + timber;
+	const float tie_y = post_top + 3.0f * timber;
+	const float tie_top = post_top + 4.0f * timber;
+	const float eave_run = HOUSE_HALF_Z + HOUSE_EAVE_OVERHANG;
+	const float slope_length = sqrtf(eave_run * eave_run + HOUSE_ROOF_RISE * HOUSE_ROOF_RISE);
+	const float slope_angle = atan2f(HOUSE_ROOF_RISE, eave_run);
+	const float slope_sine = sinf(slope_angle);
+	const float slope_cosine = cosf(slope_angle);
+	// (The rafters' axes meet here, over the middle of the house)
+	const float ridge_y = tie_top + 0.07f + HOUSE_ROOF_RISE;
+	const float rafter_start = 0.08f;
+	const uint32_t frame_color = 0x9C6B3C;
+	int sills_x[2];
+	int sills_z[2];
+	int plates_x[2];
+	int plates_z[2];
+	int posts[2][HOUSE_POST_COUNT];
+	int side_posts[2];
+	int rafters[2][HOUSE_POST_COUNT];
+	int side;
+	int post;
+	int row;
+
+	// The sills and the plates: those along x run the whole length, those
+	// along z fit between them
+	for (side = 0; side < 2; side++)
+	{
+		float sign = side == 0 ? 1.0f : -1.0f;
+		float z = center_z + sign * HOUSE_HALF_Z;
+		float x = center_x + sign * HOUSE_HALF_X;
+		int end;
+
+		sills_x[side] = damage_model_add_box(&model, make_vector(center_x, timber, z), b3Quat_identity,
+			make_vector(HOUSE_HALF_X + timber, timber, timber), DAMAGE_MATERIAL_WOOD, frame_color);
+		plates_x[side] = damage_model_add_box(&model, make_vector(center_x, plate_y, z), b3Quat_identity,
+			make_vector(HOUSE_HALF_X + timber, timber, timber), DAMAGE_MATERIAL_WOOD, frame_color);
+		sills_z[side] = damage_model_add_box(&model, make_vector(x, timber, center_z), b3Quat_identity,
+			make_vector(timber, timber, HOUSE_HALF_Z - timber), DAMAGE_MATERIAL_WOOD, frame_color);
+		plates_z[side] = damage_model_add_box(&model, make_vector(x, plate_y, center_z), b3Quat_identity,
+			make_vector(timber, timber, HOUSE_HALF_Z - timber), DAMAGE_MATERIAL_WOOD, frame_color);
+		// (A sill lies on the foundation all along: held under every
+		// post and at its ends)
+		for (end = 0; end < HOUSE_POST_COUNT; end++)
+		{
+			damage_model_add_link(&model, sills_x[side], DAMAGE_GROUND,
+				make_vector(center_x - HOUSE_HALF_X + (float)end * (2.0f * HOUSE_HALF_X / (float)(HOUSE_POST_COUNT - 1)), 0.0f, z), DAMAGE_LINK_FOUNDATION);
+		}
+		for (end = -1; end <= 1; end++)
+		{
+			damage_model_add_link(&model, sills_z[side], DAMAGE_GROUND, make_vector(x, 0.0f, center_z + (float)end * 1.2f), DAMAGE_LINK_FOUNDATION);
+		}
+	}
+	for (side = 0; side < 2; side++)
+	{
+		float x = center_x + (side == 0 ? HOUSE_HALF_X : -HOUSE_HALF_X);
+		int wall;
+
+		for (wall = 0; wall < 2; wall++)
+		{
+			float z = center_z + (wall == 0 ? 1.0f : -1.0f) * (HOUSE_HALF_Z - timber);
+
+			damage_model_add_link(&model, sills_z[side], sills_x[wall], make_vector(x, timber, z), DAMAGE_LINK_NAILS);
+			damage_model_add_link(&model, plates_z[side], plates_x[wall], make_vector(x, plate_y, z), DAMAGE_LINK_NAILS);
+		}
+	}
+
+	// The posts: five in each long wall, one in the middle of each short
+	// one
+	for (side = 0; side < 2; side++)
+	{
+		float sign = side == 0 ? 1.0f : -1.0f;
+		float z = center_z + sign * HOUSE_HALF_Z;
+		float x = center_x + sign * HOUSE_HALF_X;
+
+		for (post = 0; post < HOUSE_POST_COUNT; post++)
+		{
+			float post_x = center_x - HOUSE_HALF_X + (float)post * (2.0f * HOUSE_HALF_X / (float)(HOUSE_POST_COUNT - 1));
+
+			posts[side][post] = damage_model_add_box(&model, make_vector(post_x, post_y, z), b3Quat_identity,
+				make_vector(timber, HOUSE_POST_HALF_HEIGHT, timber), DAMAGE_MATERIAL_WOOD, frame_color);
+			damage_model_add_link(&model, posts[side][post], sills_x[side], make_vector(post_x, sill_top, z), DAMAGE_LINK_NAILS);
+			damage_model_add_link(&model, plates_x[side], posts[side][post], make_vector(post_x, post_top, z), DAMAGE_LINK_NAILS);
+		}
+		side_posts[side] = damage_model_add_box(&model, make_vector(x, post_y, center_z), b3Quat_identity,
+			make_vector(timber, HOUSE_POST_HALF_HEIGHT, timber), DAMAGE_MATERIAL_WOOD, frame_color);
+		damage_model_add_link(&model, side_posts[side], sills_z[side], make_vector(x, sill_top, center_z), DAMAGE_LINK_NAILS);
+		damage_model_add_link(&model, plates_z[side], side_posts[side], make_vector(x, post_top, center_z), DAMAGE_LINK_NAILS);
+	}
+
+	// The boards of the walls, each nailed to every post it crosses. In
+	// the front wall (+z) the door is between the third and fourth posts,
+	// all but the top row; in the back wall the window is between the
+	// second and third posts, four rows
+	for (row = 0; row < HOUSE_WALL_ROWS; row++)
+	{
+		float y = sill_top + HOUSE_BOARD_WIDTH + (float)row * 2.0f * HOUSE_BOARD_WIDTH;
+		uint32_t color = (row & 1) ? 0xBC9C64 : 0xC8A870;
+
+		for (side = 0; side < 2; side++)
+		{
+			float sign = side == 0 ? 1.0f : -1.0f;
+			float board_z = center_z + sign * (HOUSE_HALF_Z + timber + HOUSE_BOARD_THICKNESS);
+			float nail_z = center_z + sign * (HOUSE_HALF_Z + timber);
+			float board_x = center_x + sign * (HOUSE_HALF_X + timber + HOUSE_BOARD_THICKNESS);
+			float nail_x = center_x + sign * (HOUSE_HALF_X + timber);
+			// (The posts where an opening starts and ends; none: -1)
+			int opening_start = -1;
+			int first_post = 0;
+			int board;
+			int end;
+
+			if (side == 0 && row < HOUSE_WALL_ROWS - 1)
+			{
+				opening_start = 2;
+			}
+			if (side == 1 && row >= 5 && row <= 8)
+			{
+				opening_start = 1;
+			}
+			while (first_post < HOUSE_POST_COUNT)
+			{
+				int last_post = opening_start >= first_post ? opening_start : HOUSE_POST_COUNT - 1;
+				float start_x = -HOUSE_HALF_X + (float)first_post - timber;
+				float end_x = -HOUSE_HALF_X + (float)last_post + timber;
+
+				board = damage_model_add_box(&model, make_vector(center_x + (start_x + end_x) * 0.5f, y, board_z), b3Quat_identity,
+					make_vector((end_x - start_x) * 0.5f, HOUSE_BOARD_WIDTH, HOUSE_BOARD_THICKNESS), DAMAGE_MATERIAL_WOOD, color);
+				for (post = first_post; post <= last_post; post++)
+				{
+					damage_model_add_link(&model, board, posts[side][post], make_vector(center_x - HOUSE_HALF_X + (float)post, y, nail_z), DAMAGE_LINK_NAILS);
+				}
+				first_post = last_post + 1;
+			}
+
+			// The short wall at this side's end of x
+			board = damage_model_add_box(&model, make_vector(board_x, y, center_z), b3Quat_identity,
+				make_vector(HOUSE_BOARD_THICKNESS, HOUSE_BOARD_WIDTH, HOUSE_HALF_Z + timber), DAMAGE_MATERIAL_WOOD, color);
+			for (end = 0; end < 2; end++)
+			{
+				damage_model_add_link(&model, board, posts[end][side == 0 ? HOUSE_POST_COUNT - 1 : 0],
+					make_vector(nail_x, y, center_z + (end == 0 ? HOUSE_HALF_Z : -HOUSE_HALF_Z)), DAMAGE_LINK_NAILS);
+			}
+			damage_model_add_link(&model, board, side_posts[side], make_vector(nail_x, y, center_z), DAMAGE_LINK_NAILS);
+		}
+	}
+
+	// The trusses, one over each pair of posts: a tie beam across the
+	// plates, two rafters from its ends up to the ridge, and a collar
+	// beside the rafters half way up
+	for (post = 0; post < HOUSE_POST_COUNT; post++)
+	{
+		float x = center_x - HOUSE_HALF_X + (float)post;
+		float collar_x = x + (post == HOUSE_POST_COUNT - 1 ? -2.0f : 2.0f) * timber;
+		float half_way = slope_length * 0.5f;
+		float collar_y = ridge_y - slope_sine * half_way;
+		float collar_reach = slope_cosine * half_way;
+		int tie = damage_model_add_box(&model, make_vector(x, tie_y, center_z), b3Quat_identity, make_vector(timber, timber, eave_run), DAMAGE_MATERIAL_WOOD, frame_color);
+		int collar = damage_model_add_box(&model, make_vector(collar_x, collar_y, center_z), b3Quat_identity,
+			make_vector(timber, timber, collar_reach + 2.0f * timber), DAMAGE_MATERIAL_WOOD, 0x8A5A30);
+
+		for (side = 0; side < 2; side++)
+		{
+			float sign = side == 0 ? 1.0f : -1.0f;
+			float middle = (rafter_start + slope_length) * 0.5f;
+
+			damage_model_add_link(&model, tie, plates_x[side], make_vector(x, post_top + 2.0f * timber, center_z + sign * HOUSE_HALF_Z), DAMAGE_LINK_NAILS);
+			rafters[side][post] = damage_model_add_box(&model,
+				make_vector(x, ridge_y - slope_sine * middle, center_z + sign * slope_cosine * middle),
+				b3MakeQuatFromAxisAngle(make_vector(1.0f, 0.0f, 0.0f), sign * slope_angle),
+				make_vector(timber, timber, (slope_length - rafter_start) * 0.5f), DAMAGE_MATERIAL_WOOD, frame_color);
+			damage_model_add_link(&model, rafters[side][post], tie, make_vector(x, tie_top, center_z + sign * (eave_run - timber)), DAMAGE_LINK_NAILS);
+			damage_model_add_link(&model, collar, rafters[side][post],
+				make_vector((x + collar_x) * 0.5f, collar_y, center_z + sign * collar_reach), DAMAGE_LINK_NAILS);
+		}
+		damage_model_add_link(&model, rafters[0][post], rafters[1][post], make_vector(x, ridge_y, center_z), DAMAGE_LINK_NAILS);
+	}
+
+	// The boards of the roof, across the rafters, nailed to each
+	for (side = 0; side < 2; side++)
+	{
+		float sign = side == 0 ? 1.0f : -1.0f;
+		b3Quat rotation = b3MakeQuatFromAxisAngle(make_vector(1.0f, 0.0f, 0.0f), sign * slope_angle);
+
+		for (row = 0; row < HOUSE_ROOF_ROWS; row++)
+		{
+			float along = 0.2f + (float)row * 2.0f * HOUSE_BOARD_WIDTH;
+			float on_rafter_y = ridge_y - slope_sine * along + slope_cosine * timber;
+			float on_rafter_z = center_z + sign * (slope_cosine * along + slope_sine * timber);
+			int board = damage_model_add_box(&model,
+				make_vector(center_x, on_rafter_y + slope_cosine * HOUSE_BOARD_THICKNESS, on_rafter_z + sign * slope_sine * HOUSE_BOARD_THICKNESS), rotation,
+				make_vector(HOUSE_HALF_X + HOUSE_EAVE_OVERHANG, HOUSE_BOARD_THICKNESS, HOUSE_BOARD_WIDTH), DAMAGE_MATERIAL_WOOD, (row & 1) ? 0x7A4E2C : 0x8A5A30);
+
+			for (post = 0; post < HOUSE_POST_COUNT; post++)
+			{
+				damage_model_add_link(&model, board, rafters[side][post], make_vector(center_x - HOUSE_HALF_X + (float)post, on_rafter_y, on_rafter_z), DAMAGE_LINK_NAILS);
+			}
+		}
+	}
+}
+
+static void build_house_structures(void)
+{
+	build_house(0.0f, 0.0f);
 }
 
 static void build_cabin_structures(void)
@@ -600,6 +833,29 @@ static bool cabin_scene_open(void)
 	build_structures = build_cabin_structures;
 	build_world();
 	return true;
+}
+
+static bool house_scene_open(void)
+{
+	if (build_structures != build_house_structures)
+	{
+		inspected_piece = -1;
+	}
+	build_structures = build_house_structures;
+	build_world();
+	return true;
+}
+
+static void house_scene_default_camera(soft_render_camera_t *camera)
+{
+	camera->eye[0] = 5.5f;
+	camera->eye[1] = 3.2f;
+	camera->eye[2] = 7.5f;
+	camera->target[0] = 0.0f;
+	camera->target[1] = 1.8f;
+	camera->target[2] = 0.0f;
+	camera->vertical_field_of_view_degrees = 60.0f;
+	camera->near_distance = 0.05f;
 }
 
 static bool bend_scene_open(void)
@@ -763,6 +1019,21 @@ const damage_scene_t cabin_scene =
 	.open = cabin_scene_open,
 	.close = cabin_scene_close,
 	.default_camera = cabin_scene_default_camera,
+	.seek = cabin_scene_seek,
+	.draw = cabin_scene_draw,
+	.describe = cabin_scene_describe,
+	.checksum = cabin_scene_checksum,
+	.cast_ray = cabin_scene_cast_ray,
+	.inspect = cabin_scene_inspect,
+};
+
+const damage_scene_t house_scene =
+{
+	.name = "house",
+	.about = "a nailed timber frame house: posts, boards, a roof of trusses with boards across",
+	.open = house_scene_open,
+	.close = cabin_scene_close,
+	.default_camera = house_scene_default_camera,
 	.seek = cabin_scene_seek,
 	.draw = cabin_scene_draw,
 	.describe = cabin_scene_describe,

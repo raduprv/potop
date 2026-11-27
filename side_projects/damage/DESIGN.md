@@ -190,7 +190,7 @@ Known and left so:
 
 - A piece is rigid in the support pass, so on three or more supports in
   a row it leans on all alike wherever its load is. The propped plank is
-  reckoned 86% bent untouched, more than a real one would be, and a prop
+  reckoned 84% bent untouched, more than a real one would be, and a prop
   right under a load takes a third of it, not most.
 - The two halves of a cut piece no longer hold each other in any way: a
   snapped prop still stands (Box3D stacks it), but the support pass no
@@ -225,6 +225,28 @@ Known and left so:
   (a brick faces it with little area), then goes all at once at twice
   that: a real wall would give way to the push on the whole of it.
 - A notch is as strong against sliding out along the log as across it.
+
+## The house scene, and what it changed
+
+- A nailed timber frame house (scene `house`, the default now): sills
+  on the foundation, posts, plates, boards across the posts with a door
+  and a window, five trusses (tie beam, two rafters, a collar) and
+  boards across the rafters. 120 pieces, 369 links. `house_show.txt`
+  throws balls at it and sets off a blast inside.
+- How much bending a piece bears now depends on which way it is pushed:
+  how deep it is that way, squared, times how wide. A board bears far
+  more on its edge than on its face (before, its thin side was always
+  taken, and the house cut itself to bits standing still).
+- Wood is ten times stronger in bending than it was (`bend` in the
+  ini): at the old number a 10 cm square timber bore 300 Nm, about a
+  twentieth of a real one, and the frame's sills and plates were near
+  their limit from the weight of the house alone. The bend scene's
+  plank is 5 cm thick now instead of 16, so it breaks under the same
+  crates as before.
+- The support pass spreads load over every link alike, boards and all,
+  so in a frame like this small loads show up in odd places (a sill
+  between two foundation points was "bent" by the posts on it until it
+  was held under each post). Real strengths leave room for that.
 
 ## The model
 

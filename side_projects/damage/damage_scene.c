@@ -8,10 +8,11 @@
 #include "pile_scene.h"
 #include "test_scene.h"
 
-#define SCENE_COUNT 6
+#define SCENE_COUNT 7
 
 static const damage_scene_t *const scenes[SCENE_COUNT] =
 {
+	&house_scene,
 	&bend_scene,
 	&support_scene,
 	&cabin_scene,

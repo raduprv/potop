@@ -268,7 +268,7 @@ static void draw_hud(const damage_scene_t *scene, soft_render_t *renderer, int f
 			"LEFT MOUSE: THROW A BALL   X: A BLAST (SHIFT: STRONGER)   RIGHT MOUSE: LOOK INTO A PIECE\n"
 			"BACKSPACE: TAKE THE LAST ONE BACK   DELETE: ALL\n"
 			"SPACE: PAUSE   RIGHT LEFT: A FRAME ON, BACK (SHIFT: TEN)\n"
-			"[ ]: SLOWER, FASTER   R: FRAME 0   1 TO 6: SCENE\n"
+			"[ ]: SLOWER, FASTER   R: FRAME 0   1 TO 7: SCENE\n"
 			"O: OUTLINES   B: DEBUG MARKS\n"
 			"P: SAVE PNG   C: PRINT CAMERA\n"
 			"H: THESE KEYS   ESC: QUIT");

@@ -34,6 +34,7 @@
 #include "damage_scene.h"
 
 extern const damage_scene_t bend_scene;
+extern const damage_scene_t house_scene;
 extern const damage_scene_t cabin_scene;
 extern const damage_scene_t support_scene;
 

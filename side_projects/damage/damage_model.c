@@ -106,7 +106,7 @@ void damage_settings_default(damage_settings_t *settings)
 	settings->crush[DAMAGE_MATERIAL_GLASS] = 9000.0f;
 	settings->piece_threshold[DAMAGE_MATERIAL_WOOD] = 6000.0f;
 	settings->piece_hit_points[DAMAGE_MATERIAL_WOOD] = 12000.0f;
-	settings->bend[DAMAGE_MATERIAL_WOOD] = 300000.0f;
+	settings->bend[DAMAGE_MATERIAL_WOOD] = 3000000.0f;
 	settings->snap[DAMAGE_MATERIAL_WOOD] = 150000.0f;
 	settings->piece_threshold[DAMAGE_MATERIAL_BRICK] = 5000.0f;
 	settings->piece_hit_points[DAMAGE_MATERIAL_BRICK] = 6000.0f;
@@ -399,32 +399,52 @@ static void measure_piece(const damage_model_t *model, damage_piece_t *piece)
 }
 
 // The bending moment a long piece bears, for each newton meter (or
-// newton second meter) of its material's strength: its thickness squared
-// times its width, across its length
-static float piece_section(const damage_piece_t *piece)
+// newton second meter) of its material's strength, against a push from
+// a direction (in the building's frame; only its part across the piece
+// counts): how deep the piece is that way, squared, times how wide. A
+// board bears far more pushed on its edge than on its face.
+static float piece_section(const damage_piece_t *piece, b3Vec3 direction)
 {
 	float half_sizes[3];
-	float thickness = 1e30f;
-	float width = 0.0f;
+	float inverse_squared = 0.0f;
+	float across_squared = 0.0f;
 	int k;
 
 	piece_half_sizes(piece, half_sizes);
 	for (k = 0; k < 3; k++)
 	{
+		b3Vec3 own = { k == 0 ? 1.0f : 0.0f, k == 1 ? 1.0f : 0.0f, k == 2 ? 1.0f : 0.0f };
+		int other = 3 - k - piece->long_axis;
+		float part;
+		float section;
+
 		if (k == piece->long_axis)
 		{
 			continue;
 		}
-		if (2.0f * half_sizes[k] < thickness)
-		{
-			thickness = 2.0f * half_sizes[k];
-		}
-		if (2.0f * half_sizes[k] > width)
-		{
-			width = 2.0f * half_sizes[k];
-		}
+		// (Pushed along this one of its two sides across: deep along it,
+		// wide along the other)
+		part = b3Dot(direction, b3RotateVector(piece->local.q, own));
+		section = 8.0f * half_sizes[k] * half_sizes[k] * half_sizes[other];
+		inverse_squared += part * part / (section * section);
+		across_squared += part * part;
 	}
-	return thickness * thickness * width;
+	if (across_squared < 1e-12f)
+	{
+		// (A push along the piece: as if on its face)
+		float thin = half_sizes[(piece->long_axis + 1) % 3];
+		float wide = half_sizes[(piece->long_axis + 2) % 3];
+
+		if (thin > wide)
+		{
+			float swap = thin;
+
+			thin = wide;
+			wide = swap;
+		}
+		return 8.0f * thin * thin * wide;
+	}
+	return sqrtf(across_squared / inverse_squared);
 }
 
 // A long piece's direction in the building's frame
@@ -1159,7 +1179,7 @@ static bool snap_piece(damage_model_t *model, int piece_index, b3Vec3 world_poin
 
 		bending = to_start > 0.0f && to_end > 0.0f ? 0.5f * across_impulse * to_start * to_end / (to_start + to_end) : 0.0f;
 	}
-	if (bending <= model->settings.snap[piece->material] * piece_section(piece))
+	if (bending <= model->settings.snap[piece->material] * piece_section(piece, direction))
 	{
 		return false;
 	}
@@ -1620,8 +1640,7 @@ static void work_out_support(damage_model_t *model, int frame_index)
 		float half_sizes[3];
 		double half_length;
 		double weight;
-		double limit;
-		double worst_bending = 0.0;
+		double worst_bent = 0.0;
 		double worst_position = 0.0;
 		int load_count = 0;
 		int sample;
@@ -1641,7 +1660,6 @@ static void work_out_support(damage_model_t *model, int frame_index)
 		piece_half_sizes(piece, half_sizes);
 		half_length = (double)half_sizes[piece->long_axis];
 		weight = (double)piece->mass * (double)GRAVITY;
-		limit = (double)model->settings.bend[piece->material] * (double)piece_section(piece);
 
 		for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1] && load_count < BEND_LOADS_MAX; k++)
 		{
@@ -1721,14 +1739,25 @@ static void work_out_support(damage_model_t *model, int frame_index)
 			turning[1] -= along * axis[1];
 			turning[2] -= along * axis[2];
 			bending = sqrt(turning[0] * turning[0] + turning[1] * turning[1] + turning[2] * turning[2]);
-			if (bending > worst_bending)
+			if (bending > 1e-9)
 			{
-				worst_bending = bending;
-				worst_position = position;
+				// (What turns it so pushes it across both the turning and
+				// its length: that way is how deep it must be)
+				b3Vec3 push = {
+					(float)((axis[1] * turning[2] - axis[2] * turning[1]) / bending),
+					(float)((axis[2] * turning[0] - axis[0] * turning[2]) / bending),
+					(float)((axis[0] * turning[1] - axis[1] * turning[0]) / bending) };
+				double bent = bending / ((double)model->settings.bend[piece->material] * (double)piece_section(piece, push));
+
+				if (bent > worst_bent)
+				{
+					worst_bent = bent;
+					worst_position = position;
+				}
 			}
 		}
-		piece->bent = (float)(worst_bending / limit);
-		if (worst_bending > limit)
+		piece->bent = (float)worst_bent;
+		if (worst_bent > 1.0)
 		{
 			request_cut(model, piece_index, (float)worst_position);
 		}
