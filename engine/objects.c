@@ -4760,9 +4760,22 @@ static void cull_pass(objects_t *objects, pass_t pass, const frustum_t *frustum,
 	{
 		return;
 	}
-	if (!objects->gpu_tables_ready && !upload_tables(objects))
+	if (!objects->gpu_tables_ready)
 	{
-		return;
+		uint64_t start = SDL_GetPerformanceCounter();
+		bool made = upload_tables(objects);
+
+		double milliseconds = 1000.0 * (double)(SDL_GetPerformanceCounter() - start) / (double)SDL_GetPerformanceFrequency();
+
+		// (made again while the game runs: a procedural model came)
+		if (milliseconds >= 2.0)
+		{
+			SDL_Log("Objects: the draw tables made in %.1f ms", milliseconds);
+		}
+		if (!made)
+		{
+			return;
+		}
 	}
 	objects_sort(objects);
 	if (!flush_slots(objects) || objects->slot_count == 0 || objects->record_buffer == NULL)

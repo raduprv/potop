@@ -974,6 +974,39 @@ void console_run_command(console_t *console, potop_t *potop, const char *line, c
 			return;
 		}
 		camera_pixel_ray(&potop->camera, 0.5f, 0.5f, 1, 1, &origin, &direction);
+		// A blast of so many kilograms where the middle of the screen looks
+		// (the first thing there: a piece, the ground), on the buildings alone
+		if (SDL_strcmp(first, "blast") == 0)
+		{
+			float from[3] = { origin.x, origin.y, origin.z };
+			float to[3] = { origin.x + direction.x * 300.0f, origin.y + direction.y * 300.0f, origin.z + direction.z * 300.0f };
+			float kilograms = SDL_max((float)SDL_atof(after_first), 0.0f);
+			physics_cast_t cast;
+
+			if (kilograms <= 0.0f)
+			{
+				kilograms = 3.0f;
+			}
+			if (!physics_cast_segment(&potop->world.physics, from, to, &cast))
+			{
+				// (the ground beyond the physics' tiles)
+				if (!terrain_raycast(&potop->world.terrain, origin, direction, 300.0f, &ground_hit))
+				{
+					SDL_Log("Wrecks: nothing there for a blast (300 m at most)");
+					return;
+				}
+				cast.point[0] = ground_hit.x;
+				cast.point[1] = ground_hit.y + 0.5f;
+				cast.point[2] = ground_hit.z;
+			}
+			{
+				// (a little back from what it hit, towards the eye)
+				float at[3] = { cast.point[0] - direction.x * 0.2f, cast.point[1] - direction.y * 0.2f, cast.point[2] - direction.z * 0.2f };
+
+				wrecks_blast(&potop->world.wrecks, at, kilograms);
+			}
+			return;
+		}
 		if (!terrain_raycast(&potop->world.terrain, origin, direction, 300.0f, &ground_hit))
 		{
 			SDL_Log("Wrecks: look at the ground where it should stand (300 m at most)");

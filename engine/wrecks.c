@@ -677,7 +677,17 @@ void wrecks_after_step(wrecks_t *wrecks, float step_seconds)
 	{
 		if (wrecks->buildings[b].used && wreck_model_is_busy(wrecks->buildings[b].model))
 		{
+			uint64_t start = SDL_GetPerformanceCounter();
+			double milliseconds;
+
 			wreck_model_after_step(wrecks->buildings[b].model, wrecks->frame_index, step_seconds);
+			milliseconds = 1000.0 * (double)(SDL_GetPerformanceCounter() - start) / (double)SDL_GetPerformanceFrequency();
+			// (the slow steps, to see what a collapse costs)
+			if (milliseconds >= 4.0)
+			{
+				SDL_Log("Wrecks: %s's step: %.1f ms (support pass %d rounds)", wrecks->buildings[b].name, milliseconds,
+					wrecks->buildings[b].model->support_iterations);
+			}
 		}
 	}
 	wrecks->frame_index++;
@@ -762,7 +772,14 @@ void wrecks_update_objects(wrecks_t *wrecks, objects_t *objects, const terrain_t
 			// object for it, of its size's procedural type
 			if (index < 0)
 			{
+				uint64_t start = SDL_GetPerformanceCounter();
 				int type = piece_type(wrecks, objects, piece);
+				double milliseconds = 1000.0 * (double)(SDL_GetPerformanceCounter() - start) / (double)SDL_GetPerformanceFrequency();
+
+				if (milliseconds >= 2.0)
+				{
+					SDL_Log("Wrecks: a piece's model made in %.1f ms", milliseconds);
+				}
 
 				if (type < 0 || !finite_pose(&transform) || transform.p.x < 0.0f || transform.p.z < 0.0f || transform.p.x >= map_meters || transform.p.z >= map_meters
 					|| !objects_add(objects, terrain, type, transform.p.x, transform.p.z, 0.0f, 1.0f, -1))
@@ -905,8 +922,14 @@ void wrecks_blast(wrecks_t *wrecks, const float position[3], float kilograms)
 	{
 		if (wrecks->buildings[b].used)
 		{
+			uint64_t start = SDL_GetPerformanceCounter();
+			int broken = wrecks->buildings[b].model->broken_link_count;
+
 			wreck_model_blast_kilograms(wrecks->buildings[b].model, (b3Vec3){ position[0], position[1], position[2] }, kilograms,
 				wrecks->frame_index);
+			SDL_Log("Wrecks: %.1f kg on %s: %d links broken, %.1f ms", (double)kilograms, wrecks->buildings[b].name,
+				wrecks->buildings[b].model->broken_link_count - broken,
+				1000.0 * (double)(SDL_GetPerformanceCounter() - start) / (double)SDL_GetPerformanceFrequency());
 		}
 	}
 }
