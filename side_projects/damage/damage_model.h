@@ -79,6 +79,7 @@ typedef enum
 	DAMAGE_LINK_MORTAR,                // brick to brick
 	DAMAGE_LINK_FOUNDATION,            // anything to the ground
 	DAMAGE_LINK_GLAZING,               // a pane to what frames it
+	DAMAGE_LINK_NOTCH,                 // wood lying in wood with no nails: held by what presses on it
 	DAMAGE_LINK_TYPE_COUNT
 } damage_link_type_t;
 
@@ -96,8 +97,14 @@ typedef struct
 	// ten) and, as a cantilever, newton meters (a weight times how far to
 	// the side it is held)
 	float compression;                 // pressed together
-	float pull;                        // pulled apart, or held from the side
+	float pull;                        // pulled apart
+	float slide;                       // held from the side
 	float cantilever;
+	// What being pressed adds, for each newton it is pressed with (from
+	// the last support pass): newtons it bears from the side (and that,
+	// at joint_arm, turning), and newton seconds to its threshold
+	float grip;
+	float preload;
 } damage_link_settings_t;
 
 // The numbers of damage.ini (damage_settings_load)
@@ -133,6 +140,10 @@ typedef struct
 	float shape_gap;                   // meters a collision shape is smaller than its piece, all round
 	float ball_radius;                 // the ball the viewer throws: meters
 	float ball_density;                // kilograms a cubic meter
+	// The blasts the viewer sets off: newton seconds a square meter of
+	// what faces them
+	float blast_strength;
+	float blast_big_strength;
 } damage_settings_t;
 
 typedef struct

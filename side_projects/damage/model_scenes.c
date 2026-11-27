@@ -138,7 +138,9 @@ static void build_cabin(float center_x, float center_z)
 		bool x_runs_through = (course & 1) == 0;
 
 		// Each log to the one under it in its own wall (to the ground in
-		// the first course): near both its ends
+		// the first course): near both its ends. No nails in the walls:
+		// a log lies in the groove of the one under and in the notches
+		// of those it crosses
 		for (wall = 0; wall < 4; wall++)
 		{
 			for (side = -1; side <= 1; side += 2)
@@ -154,7 +156,7 @@ static void build_cabin(float center_x, float center_z)
 				}
 				else
 				{
-					damage_model_add_link(&model, logs[course][wall], logs[course - 1][wall], point, DAMAGE_LINK_NAILS);
+					damage_model_add_link(&model, logs[course][wall], logs[course - 1][wall], point, DAMAGE_LINK_NOTCH);
 				}
 			}
 		}
@@ -175,18 +177,18 @@ static void build_cabin(float center_x, float center_z)
 
 				if (x_runs_through)
 				{
-					damage_model_add_link(&model, along_z_log, along_x_log, make_vector(center_x + corner_x, y, center_z + corner_z + inward_z), DAMAGE_LINK_NAILS);
+					damage_model_add_link(&model, along_z_log, along_x_log, make_vector(center_x + corner_x, y, center_z + corner_z + inward_z), DAMAGE_LINK_NOTCH);
 				}
 				else
 				{
-					damage_model_add_link(&model, along_x_log, along_z_log, make_vector(center_x + corner_x + inward_x, y, center_z + corner_z), DAMAGE_LINK_NAILS);
+					damage_model_add_link(&model, along_x_log, along_z_log, make_vector(center_x + corner_x + inward_x, y, center_z + corner_z), DAMAGE_LINK_NOTCH);
 				}
 				if (course > 0)
 				{
 					int through_log = x_runs_through ? along_x_log : along_z_log;
 					int through_log_under = x_runs_through ? logs[course - 1][2 + side_x] : logs[course - 1][side_z];
 
-					damage_model_add_link(&model, through_log, through_log_under, make_vector(center_x + corner_x, y_under, center_z + corner_z), DAMAGE_LINK_NAILS);
+					damage_model_add_link(&model, through_log, through_log_under, make_vector(center_x + corner_x, y_under, center_z + corner_z), DAMAGE_LINK_NOTCH);
 				}
 			}
 		}

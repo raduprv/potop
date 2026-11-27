@@ -196,6 +196,36 @@ Known and left so:
   snapped prop still stands (Box3D stacks it), but the support pass no
   longer counts it as holding anything, so what leaned on it may break.
 
+## What step 6 made and found
+
+- A link has a limit against sliding (`slide`) apart from the one
+  against being pulled apart (`pull`); for the old link types they are
+  the same number.
+- A new link type, `notch`: wood lying in wood with no nails (a log in
+  the notch of the one it crosses, or in the groove of the one under).
+  It does not hold against being lifted out, only against sliding, and
+  what presses on it (from the last support pass) holds it more:
+  `grip` newtons more from the side for each newton pressed (and that,
+  at `joint_arm`, more turning), and `preload` newton seconds more that
+  it shrugs off of a hit.
+- The cabin's walls are all notches now (the roof beams are still
+  nailed, the first course is on the foundation). Untouched, its worst
+  link is at a third of its limit. The same ball that knocks a log out
+  near the top only hurts links near the bottom.
+- A blast now also breaks long pieces across (pushed where they are
+  nearest the blast), and pushes the parts of what it cut. The viewer's
+  two strengths are in the ini (`[blast]`), five times what they were:
+  the old ones did nothing to the cabin or the wall.
+
+Known and left so:
+
+- A blast gives each piece its push by itself, with nothing shielding
+  anything, and hurts links only as a hit on each piece does. So a wall
+  of small bricks shrugs off a blast that takes the top off the cabin
+  (a brick faces it with little area), then goes all at once at twice
+  that: a real wall would give way to the push on the whole of it.
+- A notch is as strong against sliding out along the log as across it.
+
 ## The model
 
 Not a CAD grade simulation: if it shows in the game it is in, if it only
@@ -277,6 +307,6 @@ again until quiet.
    simplest damage (a ball, a blast). **Done** (what it found is above).
 4. The support pass, with its three test cases. **Done** (above).
 5. Bending and cutting of long pieces, piece hit points. **Done** (above).
-6. The notched corner link and explosions.
+6. The notched corner link and explosions. **Done** (above).
 
 Radu tests each step himself before the next is started.

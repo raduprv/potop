@@ -37,6 +37,7 @@
 
 #include "command_line.h"
 #include "damage_events.h"
+#include "damage_model.h"
 #include "damage_scene.h"
 #include "soft_render.h"
 #include "soft_render_png.h"
@@ -53,8 +54,6 @@
 // What the keys throw and set off
 #define BALL_START_METERS 0.6f
 #define BALL_METERS_PER_SECOND 16.0f
-#define BLAST_STRENGTH 600.0f
-#define BLAST_BIG_STRENGTH 1800.0f
 #define BLAST_REACH_METERS 200.0f
 // A blast is put this far before what the cross points at, not inside it
 #define BLAST_BACK_METERS 0.15f
@@ -181,10 +180,14 @@ static void throw_ball(const soft_render_camera_t *camera, int frame_index, bool
 static void set_off_blast(const damage_scene_t *scene, const soft_render_camera_t *camera, int frame_index, bool big)
 {
 	damage_event_t event;
+	damage_settings_t settings;
 	float forward[3];
 	float hit_point[3];
 	int i;
 
+	// (Read every time: the file may have been changed)
+	damage_settings_default(&settings);
+	damage_settings_load(&settings, "damage.ini");
 	for (i = 0; i < 3; i++)
 	{
 		forward[i] = camera->target[i] - camera->eye[i];
@@ -196,7 +199,7 @@ static void set_off_blast(const damage_scene_t *scene, const soft_render_camera_
 	memset(&event, 0, sizeof(event));
 	event.frame_index = frame_index;
 	event.kind = DAMAGE_EVENT_BLAST;
-	event.strength = big ? BLAST_BIG_STRENGTH : BLAST_STRENGTH;
+	event.strength = big ? settings.blast_big_strength : settings.blast_strength;
 	for (i = 0; i < 3; i++)
 	{
 		event.position[i] = hit_point[i] - forward[i] * BLAST_BACK_METERS;

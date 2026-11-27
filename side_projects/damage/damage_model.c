@@ -62,8 +62,6 @@ static double solver_direction[DAMAGE_PIECES_MAX * 6];
 static double solver_product[DAMAGE_PIECES_MAX * 6];
 static double solver_diagonal[DAMAGE_PIECES_MAX * 6];
 static float piece_compressions[DAMAGE_PIECES_MAX];
-static b3Vec3 blast_impulses[DAMAGE_PIECES_MAX];
-static b3Vec3 blast_points[DAMAGE_PIECES_MAX];
 
 static b3Vec3 make_vector(float x, float y, float z)
 {
@@ -91,7 +89,10 @@ static void set_link_defaults(damage_link_settings_t *link, float threshold, flo
 	link->hit_points = hit_points;
 	link->compression = compression;
 	link->pull = pull;
+	link->slide = pull;
 	link->cantilever = cantilever;
+	link->grip = 0.0f;
+	link->preload = 0.0f;
 }
 
 void damage_settings_default(damage_settings_t *settings)
@@ -122,6 +123,10 @@ void damage_settings_default(damage_settings_t *settings)
 	set_link_defaults(&settings->links[DAMAGE_LINK_MORTAR], 60.0f, 200.0f, 500000.0f, 3000.0f, 900.0f);
 	set_link_defaults(&settings->links[DAMAGE_LINK_FOUNDATION], 300.0f, 1500.0f, 1000000.0f, 5000.0f, 5000.0f);
 	set_link_defaults(&settings->links[DAMAGE_LINK_GLAZING], 30.0f, 60.0f, 100000.0f, 500.0f, 200.0f);
+	set_link_defaults(&settings->links[DAMAGE_LINK_NOTCH], 60.0f, 400.0f, 200000.0f, 300.0f, 300.0f);
+	settings->links[DAMAGE_LINK_NOTCH].slide = 2500.0f;
+	settings->links[DAMAGE_LINK_NOTCH].grip = 0.6f;
+	settings->links[DAMAGE_LINK_NOTCH].preload = 0.1f;
 	settings->hop_falloff = 0.5f;
 	settings->hit_speed = 1.0f;
 	settings->rubble_pieces = 3;
@@ -133,6 +138,8 @@ void damage_settings_default(damage_settings_t *settings)
 	settings->shape_gap = 0.003f;
 	settings->ball_radius = 0.2f;
 	settings->ball_density = 7800.0f;
+	settings->blast_strength = 3000.0f;
+	settings->blast_big_strength = 6000.0f;
 }
 
 static bool read_float(const char *value, float *result)
@@ -158,9 +165,21 @@ static bool read_link_key(damage_link_settings_t *link, const char *key, const c
 	{
 		return read_float(value, &link->pull);
 	}
+	if (strcmp(key, "slide") == 0)
+	{
+		return read_float(value, &link->slide);
+	}
 	if (strcmp(key, "cantilever") == 0)
 	{
 		return read_float(value, &link->cantilever);
+	}
+	if (strcmp(key, "grip") == 0)
+	{
+		return read_float(value, &link->grip);
+	}
+	if (strcmp(key, "preload") == 0)
+	{
+		return read_float(value, &link->preload);
 	}
 	return false;
 }
@@ -262,6 +281,18 @@ static bool read_settings_key(void *user, const char *section, const char *key, 
 		}
 		return false;
 	}
+	if (strcmp(section, "blast") == 0)
+	{
+		if (strcmp(key, "strength") == 0)
+		{
+			return read_float(value, &settings->blast_strength);
+		}
+		if (strcmp(key, "big_strength") == 0)
+		{
+			return read_float(value, &settings->blast_big_strength);
+		}
+		return false;
+	}
 	if (strcmp(section, "wood") == 0)
 	{
 		return read_material_key(settings, DAMAGE_MATERIAL_WOOD, key, value);
@@ -289,6 +320,10 @@ static bool read_settings_key(void *user, const char *section, const char *key, 
 	if (strcmp(section, "glazing") == 0)
 	{
 		return read_link_key(&settings->links[DAMAGE_LINK_GLAZING], key, value);
+	}
+	if (strcmp(section, "notch") == 0)
+	{
+		return read_link_key(&settings->links[DAMAGE_LINK_NOTCH], key, value);
 	}
 	return false;
 }
@@ -818,11 +853,14 @@ static void break_link(damage_model_t *model, int link_index, int frame_index)
 	model->support_dirty = true;
 }
 
-// A share of an impulse on a link. True when that broke it.
+// A share of an impulse on a link. True when that broke it. (What
+// presses on the link, as the last support pass found it, adds to what
+// it shrugs off: preload.)
 static bool hurt_link(damage_model_t *model, int link_index, float share, int frame_index)
 {
 	damage_link_t *link = &model->links[link_index];
-	float threshold = model->settings.links[link->type].threshold;
+	const damage_link_settings_t *limits = &model->settings.links[link->type];
+	float threshold = limits->threshold + limits->preload * link->static_compression;
 
 	if (link->broken || share <= threshold)
 	{
@@ -1533,20 +1571,20 @@ static void work_out_support(damage_model_t *model, int frame_index)
 		sideways = (float)sqrt(across_x * across_x + across_y * across_y + across_z * across_z);
 		moment = (float)(turn_stiffness * sqrt(turned[0] * turned[0] + turned[1] * turned[1] + turned[2] * turned[2]));
 
-		// (What holds from the side is taken to bear what it bears pulled,
-		// until sliding has limits of its own)
+		// (Pressed, it bears more from the side by its grip; so with
+		// turning, as much as that grip would hold at joint_arm)
 		overload = compression / limits->compression;
 		if (pull / limits->pull > overload)
 		{
 			overload = pull / limits->pull;
 		}
-		if (sideways / limits->pull > overload)
+		if (sideways / (limits->slide + limits->grip * compression) > overload)
 		{
-			overload = sideways / limits->pull;
+			overload = sideways / (limits->slide + limits->grip * compression);
 		}
-		if (moment / limits->cantilever > overload)
+		if (moment / (limits->cantilever + limits->grip * compression * model->settings.joint_arm) > overload)
 		{
-			overload = moment / limits->cantilever;
+			overload = moment / (limits->cantilever + limits->grip * compression * model->settings.joint_arm);
 		}
 		link->overload = overload;
 		link->static_compression = compression;
@@ -1987,47 +2025,79 @@ static float blast_reach(const damage_model_t *model, b3Vec3 blast_position, b3V
 
 void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, int frame_index)
 {
+	int piece_count_before = model->piece_count;
 	int i;
 
-	// What each piece gets, as things stand; the damage of it to the
-	// links; then, once the groups are made anew, the push on what is loose
-	for (i = 0; i < model->piece_count; i++)
+	// What each piece gets, as things stand, and the damage of it: to the
+	// piece, to its links, and a long piece may break across (pushed
+	// where it is nearest the blast)
+	for (i = 0; i < piece_count_before; i++)
 	{
+		const damage_piece_t *piece = &model->pieces[i];
 		b3Transform transform;
 		b3Vec3 direction;
+		b3Vec3 nearest;
 		float reach;
 		float impulse;
 
-		blast_impulses[i] = b3Vec3_zero;
-		if (model->pieces[i].group == DAMAGE_GONE)
+		if (piece->group == DAMAGE_GONE)
 		{
 			continue;
 		}
 		transform = piece_world_transform(model, i);
 		reach = blast_reach(model, position, transform.p, &direction);
-		impulse = strength * reach * exposed_area(&model->pieces[i], transform.q, direction);
-
-		blast_points[i] = transform.p;
-		blast_impulses[i] = b3MulSV(impulse, direction);
-		if (impulse > 0.0f)
-		{
-			hurt_piece(model, i, impulse, frame_index);
-			damage_piece(model, i, impulse, frame_index);
-		}
-	}
-	rebuild_dirty_groups(model);
-	for (i = 0; i < model->piece_count; i++)
-	{
-		const damage_group_t *group;
-
-		if (model->pieces[i].group == DAMAGE_GONE || b3Length(blast_impulses[i]) <= 0.0f)
+		impulse = strength * reach * exposed_area(piece, transform.q, direction);
+		if (impulse <= 0.0f)
 		{
 			continue;
 		}
-		group = &model->groups[model->pieces[i].group];
-		if (!group->anchored)
+		nearest = transform.p;
+		if (piece->long_axis >= 0)
 		{
-			b3Body_ApplyLinearImpulse(group->body, blast_impulses[i], blast_points[i], true);
+			b3Vec3 own_axis = { piece->long_axis == 0 ? 1.0f : 0.0f, piece->long_axis == 1 ? 1.0f : 0.0f, piece->long_axis == 2 ? 1.0f : 0.0f };
+			b3Vec3 world_axis = b3RotateVector(transform.q, own_axis);
+			float half_sizes[3];
+			float along = b3Dot(b3Sub(position, transform.p), world_axis);
+
+			piece_half_sizes(piece, half_sizes);
+			along = along > half_sizes[piece->long_axis] ? half_sizes[piece->long_axis] : (along < -half_sizes[piece->long_axis] ? -half_sizes[piece->long_axis] : along);
+			nearest = b3Add(transform.p, b3MulSV(along, world_axis));
+		}
+		if (!hurt_piece(model, i, impulse, frame_index))
+		{
+			snap_piece(model, i, nearest, direction, impulse);
+		}
+		damage_piece(model, i, impulse, frame_index);
+	}
+	make_pending_cuts(model);
+	rebuild_dirty_groups(model);
+
+	// Then the push on what is loose now (worked out again: pieces were
+	// cut)
+	for (i = 0; i < model->piece_count; i++)
+	{
+		const damage_piece_t *piece = &model->pieces[i];
+		const damage_group_t *group;
+		b3Transform transform;
+		b3Vec3 direction;
+		float reach;
+		float impulse;
+
+		if (piece->group == DAMAGE_GONE)
+		{
+			continue;
+		}
+		group = &model->groups[piece->group];
+		if (group->anchored)
+		{
+			continue;
+		}
+		transform = piece_world_transform(model, i);
+		reach = blast_reach(model, position, transform.p, &direction);
+		impulse = strength * reach * exposed_area(piece, transform.q, direction);
+		if (impulse > 0.0f)
+		{
+			b3Body_ApplyLinearImpulse(group->body, b3MulSV(impulse, direction), transform.p, true);
 		}
 	}
 	for (i = 0; i < model->projectile_count; i++)
@@ -2190,7 +2260,7 @@ int damage_model_shape_piece(b3ShapeId shape)
 void damage_model_draw_inspection(const damage_model_t *model, soft_render_t *renderer, int piece_index, int text_x, int text_y, int text_scale)
 {
 	static const char *const material_names[DAMAGE_MATERIAL_COUNT] = {"WOOD", "BRICK", "GLASS"};
-	static const char *const link_names[DAMAGE_LINK_TYPE_COUNT] = {"NAILS", "MORTAR", "FOUNDATION", "GLAZING"};
+	static const char *const link_names[DAMAGE_LINK_TYPE_COUNT] = {"NAILS", "MORTAR", "FOUNDATION", "GLAZING", "NOTCH"};
 	const damage_piece_t *piece;
 	const damage_group_t *group;
 	b3Transform frame;
