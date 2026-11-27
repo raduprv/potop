@@ -1098,7 +1098,9 @@ int objects_procedural_type(objects_t *objects, const char *key, const float *ve
 	// (the draw tables made again with it, before the next draw; the
 	// shadows' shared buffers kept: it is not in them)
 	release_tables_keeping(objects, true);
-	objects->grid_dirty = true;
+	// (the grid as it was: no object has the type yet, and its objects
+	// come as strays. Marked dirty, every model a cut piece made sorted all
+	// the map's objects again, and the physics matched every body again)
 	return free_type;
 }
 

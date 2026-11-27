@@ -974,6 +974,16 @@ void console_run_command(console_t *console, potop_t *potop, const char *line, c
 			return;
 		}
 		camera_pixel_ray(&potop->camera, 0.5f, 0.5f, 1, 1, &origin, &direction);
+		// The ball gun's ball (explosives.ini's ball) thrown from the eye
+		// where the screen's middle looks, as the weapon throws it
+		if (SDL_strcmp(first, "ball") == 0)
+		{
+			float from[3] = { origin.x + direction.x * 0.9f, origin.y + direction.y * 0.9f, origin.z + direction.z * 0.9f };
+			float towards[3] = { direction.x, direction.y, direction.z };
+
+			explosives_throw(&potop->session.explosives, &potop->world, explosives_find(&potop->session.explosives, "ball"), from, towards, -1);
+			return;
+		}
 		// A blast of so many kilograms where the middle of the screen looks
 		// (the first thing there: a piece, the ground), on the buildings alone
 		if (SDL_strcmp(first, "blast") == 0)
