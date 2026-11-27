@@ -248,6 +248,30 @@ Known and left so:
   between two foundation points was "bent" by the posts on it until it
   was held under each post). Real strengths leave room for that.
 
+## Blasts on what stands, as one push
+
+- A blast's pushes on the standing pieces are put on them all at once
+  and the same springs solved as in the support pass: what goes through
+  each link is what hurts it. Neighbors pushed alike do not strain the
+  link between them; the links round the pushed part, and those that
+  hold it to the ground, bear it. Long pieces are cut by the bending
+  the same solve gives them, against `snap`.
+- `blast_inertia`: each piece's own mass takes up part of the push on
+  the way (a spring from each piece to where it stands, as stiff as its
+  mass times this). At 0 everything goes down to the foundation and the
+  smallest blast shears a whole building off its base; too much and
+  nothing but the piece hit feels it. 0.005 is a first guess.
+- `blast_shielding`: a ray from the blast to each piece's middle; if it
+  meets another piece or the ground first, the piece loses that part
+  of its push (0.8).
+- What is already loose is hurt piece by piece, as before.
+- Seen with these numbers: 3000 inside the cabin only shakes bits off,
+  6000 leaves its first course; the brick wall loses an end to 6000
+  and stands; 3000 inside the house blows it apart, the same outside
+  the front wall snaps its boards, which stay hanging by their nails.
+  All of it turns sharply on `blast_inertia` and the links' thresholds:
+  to be tuned by eye.
+
 ## The model
 
 Not a CAD grade simulation: if it shows in the game it is in, if it only

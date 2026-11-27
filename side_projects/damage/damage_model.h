@@ -129,6 +129,8 @@ typedef struct
 	float breakthrough_speed_kept;     // of its speed before the hit, what a thing keeps when its hit broke links
 	float blast_radius;                // meters at full strength
 	float blast_falloff;               // meters beyond that over which it fades to nothing
+	float blast_inertia;               // for each kilogram of a piece, how many links' worth of a blast's push its own mass takes up
+	float blast_shielding;             // of its push, what a piece loses when another is between its middle and the blast (0: nothing shields)
 	float long_ratio;                  // a piece this many times longer than it is thick or wide is long: it can bend
 	float cut_min_length;              // meters: no piece is cut into one shorter than this
 	float cut_clearance;               // meters: a cut is at least this far past the edge of a piece linked to the one cut

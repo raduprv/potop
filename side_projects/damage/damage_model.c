@@ -62,6 +62,11 @@ static double solver_direction[DAMAGE_PIECES_MAX * 6];
 static double solver_product[DAMAGE_PIECES_MAX * 6];
 static double solver_diagonal[DAMAGE_PIECES_MAX * 6];
 static float piece_compressions[DAMAGE_PIECES_MAX];
+static b3Vec3 blast_impulses[DAMAGE_PIECES_MAX];
+// How stiffly each unknown is held where it is by nothing but its
+// piece's own mass: nothing when weights are solved for (they have all
+// the time in the world), something when a blast is
+static double solver_inertia[DAMAGE_PIECES_MAX * 6];
 
 static b3Vec3 make_vector(float x, float y, float z)
 {
@@ -133,6 +138,8 @@ void damage_settings_default(damage_settings_t *settings)
 	settings->breakthrough_speed_kept = 0.85f;
 	settings->blast_radius = 1.5f;
 	settings->blast_falloff = 3.0f;
+	settings->blast_shielding = 0.8f;
+	settings->blast_inertia = 0.005f;
 	settings->collapse_seconds = 1.5f;
 	settings->joint_arm = 0.15f;
 	settings->shape_gap = 0.003f;
@@ -238,6 +245,14 @@ static bool read_settings_key(void *user, const char *section, const char *key, 
 		if (strcmp(key, "blast_radius") == 0)
 		{
 			return read_float(value, &settings->blast_radius);
+		}
+		if (strcmp(key, "blast_inertia") == 0)
+		{
+			return read_float(value, &settings->blast_inertia);
+		}
+		if (strcmp(key, "blast_shielding") == 0)
+		{
+			return read_float(value, &settings->blast_shielding);
 		}
 		if (strcmp(key, "blast_falloff") == 0)
 		{
@@ -1363,43 +1378,160 @@ static void springs_product(const damage_model_t *model, const double *unknowns,
 			product[first + 5] += sign * (arm_x * apart[1] - arm_y * apart[0] + turn_stiffness * turned[2]);
 		}
 	}
+	for (i = 0; i < unknown_count; i++)
+	{
+		product[i] += solver_inertia[i] * unknowns[i];
+	}
 }
 
-// The support pass: where everything that stands settles under its own
-// weight with every link a spring (see damage_model.h), found by
-// conjugate gradients from where it settled last time; then what every
-// link bears against what it can. Pieces pressed harder than their
-// material bears are crushed: their links break.
-static void work_out_support(damage_model_t *model, int frame_index)
+// How bent a long piece is, as many times what it bears, and where
+// along it that is worst. Its links' forces on it (from where the
+// solver left the pieces: unknowns) and what is spread along it
+// (own_load: its weight, or a blast's push), taken up to a place along
+// it, turn about that place: the part of that turning across the piece
+// is the bending there. strength: its material's, against this kind of
+// load (bend or snap).
+static double piece_bending(const damage_model_t *model, int piece_index, const double *unknowns, const double own_load[3], double strength, double *worst_position_result)
 {
+	const damage_piece_t *piece = &model->pieces[piece_index];
 	double turn_stiffness = (double)model->settings.joint_arm * (double)model->settings.joint_arm;
+	double load_positions[BEND_LOADS_MAX];
+	double load_forces[BEND_LOADS_MAX][3];
+	double load_moments[BEND_LOADS_MAX][3];
+	double axis[3];
+	float half_sizes[3];
+	double half_length;
+	double worst_bent = 0.0;
+	double worst_position = 0.0;
+	int load_count = 0;
+	int sample;
+	int k;
+
+	{
+		b3Vec3 direction = piece_axis(piece);
+
+		axis[0] = (double)direction.x;
+		axis[1] = (double)direction.y;
+		axis[2] = (double)direction.z;
+	}
+	piece_half_sizes(piece, half_sizes);
+	half_length = (double)half_sizes[piece->long_axis];
+
+	for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1] && load_count < BEND_LOADS_MAX; k++)
+	{
+		const damage_link_t *link = &model->links[model->piece_links[k]];
+		double apart[3];
+		double turned[3];
+		// (The spring pulls piece a back the way it came apart, and
+		// piece b the other way)
+		double sign = link->piece_a == piece_index ? -1.0 : 1.0;
+		double arm[3];
+
+		if (link->broken)
+		{
+			continue;
+		}
+		link_strain(model, link, unknowns, apart, turned);
+		arm[0] = (double)link->local_point.x - (double)piece->local.p.x;
+		arm[1] = (double)link->local_point.y - (double)piece->local.p.y;
+		arm[2] = (double)link->local_point.z - (double)piece->local.p.z;
+		load_positions[load_count] = arm[0] * axis[0] + arm[1] * axis[1] + arm[2] * axis[2];
+		// The force, and its turning about the piece's MIDDLE (moved to
+		// the place looked at below) with the link's own turning
+		load_forces[load_count][0] = sign * apart[0];
+		load_forces[load_count][1] = sign * apart[1];
+		load_forces[load_count][2] = sign * apart[2];
+		load_moments[load_count][0] = arm[1] * load_forces[load_count][2] - arm[2] * load_forces[load_count][1] + sign * turn_stiffness * turned[0];
+		load_moments[load_count][1] = arm[2] * load_forces[load_count][0] - arm[0] * load_forces[load_count][2] + sign * turn_stiffness * turned[1];
+		load_moments[load_count][2] = arm[0] * load_forces[load_count][1] - arm[1] * load_forces[load_count][0] + sign * turn_stiffness * turned[2];
+		load_count++;
+	}
+
+	for (sample = 0; sample < BEND_SAMPLES + load_count; sample++)
+	{
+		// Evenly along it, then just before each link
+		double position = sample < BEND_SAMPLES ? -half_length + 2.0 * half_length * ((double)sample + 0.5) / (double)BEND_SAMPLES : load_positions[sample - BEND_SAMPLES];
+		double force[3] = {0.0, 0.0, 0.0};
+		double moment[3] = {0.0, 0.0, 0.0};
+		double part_share;
+		double part_middle;
+		double turning[3];
+		double along;
+		double bending;
+		int load;
+
+		if (position <= -half_length || position >= half_length)
+		{
+			continue;
+		}
+		// All that acts on the part before this place: the links there...
+		for (load = 0; load < load_count; load++)
+		{
+			if (load_positions[load] < position)
+			{
+				force[0] += load_forces[load][0];
+				force[1] += load_forces[load][1];
+				force[2] += load_forces[load][2];
+				moment[0] += load_moments[load][0];
+				moment[1] += load_moments[load][1];
+				moment[2] += load_moments[load][2];
+			}
+		}
+		// ...and that part's share of what is spread along the piece (its
+		// weight, or a blast's push), at the part's own middle
+		part_share = (position + half_length) / (2.0 * half_length);
+		part_middle = (position - half_length) * 0.5;
+		for (k = 0; k < 3; k++)
+		{
+			force[k] += own_load[k] * part_share;
+		}
+		moment[0] += part_middle * part_share * (axis[1] * own_load[2] - axis[2] * own_load[1]);
+		moment[1] += part_middle * part_share * (axis[2] * own_load[0] - axis[0] * own_load[2]);
+		moment[2] += part_middle * part_share * (axis[0] * own_load[1] - axis[1] * own_load[0]);
+		// Its turning about the place itself: about the middle, less
+		// the place's arm crossed with the force
+		turning[0] = moment[0] - position * (axis[1] * force[2] - axis[2] * force[1]);
+		turning[1] = moment[1] - position * (axis[2] * force[0] - axis[0] * force[2]);
+		turning[2] = moment[2] - position * (axis[0] * force[1] - axis[1] * force[0]);
+		// (Turning about the piece's own length twists it, it does not
+		// bend it)
+		along = turning[0] * axis[0] + turning[1] * axis[1] + turning[2] * axis[2];
+		turning[0] -= along * axis[0];
+		turning[1] -= along * axis[1];
+		turning[2] -= along * axis[2];
+		bending = sqrt(turning[0] * turning[0] + turning[1] * turning[1] + turning[2] * turning[2]);
+		if (bending > 1e-9)
+		{
+			// (What turns it so pushes it across both the turning and
+			// its length: that way is how deep it must be)
+			b3Vec3 push = {
+				(float)((axis[1] * turning[2] - axis[2] * turning[1]) / bending),
+				(float)((axis[2] * turning[0] - axis[0] * turning[2]) / bending),
+				(float)((axis[0] * turning[1] - axis[1] * turning[0]) / bending) };
+			double bent = bending / (strength * (double)piece_section(piece, push));
+
+			if (bent > worst_bent)
+			{
+				worst_bent = bent;
+				worst_position = position;
+			}
+		}
+	}
+	*worst_position_result = worst_position;
+	return worst_bent;
+}
+
+// What stands: every piece a walk over whole links reaches from one a
+// whole link holds to the ground (the rest is loose, Box3D's business).
+// Each gets its place among the solver's unknowns, in support_unknowns
+// (-1: it does not stand), and walk_queue lists them. How many there are.
+static int find_standing(const damage_model_t *model)
+{
 	int queue_start = 0;
 	int queue_end = 0;
-	int unknown_count;
-	double load_squared = 0.0;
-	double residual_scaled = 0.0;
-	int round = 0;
 	int i;
 	int k;
 
-	model->support_dirty = false;
-	model->overloaded_count = 0;
-	for (i = 0; i < model->link_count; i++)
-	{
-		model->links[i].overload = 0.0f;
-		model->links[i].static_compression = 0.0f;
-		model->links[i].static_pull = 0.0f;
-		model->links[i].static_sideways = 0.0f;
-		model->links[i].static_moment = 0.0f;
-		model->links[i].held_piece = -1;
-	}
-	for (i = 0; i < model->piece_count; i++)
-	{
-		model->pieces[i].pressed = 0.0f;
-	}
-
-	// What stands: every piece a walk over whole links reaches from one a
-	// whole link holds to the ground. The rest is loose, Box3D's business.
 	for (i = 0; i < model->piece_count; i++)
 	{
 		support_unknowns[i] = -1;
@@ -1435,36 +1567,25 @@ static void work_out_support(damage_model_t *model, int frame_index)
 			}
 		}
 	}
-	unknown_count = queue_end * 6;
-	for (i = 0; i < model->piece_count; i++)
-	{
-		if (support_unknowns[i] < 0)
-		{
-			// Forgotten: if it ever stood again it would start from rest
-			memset(&model->support_solution[i * 6], 0, 6 * sizeof(double));
-		}
-	}
-	if (unknown_count == 0)
-	{
-		model->support_iterations = 0;
-		return;
-	}
+	return queue_end;
+}
 
-	// The weights; where the pieces settled last time; and how stiffly
-	// each unknown is held by its own links alone, which the solver
-	// divides by to be at home with turns and moves alike
-	for (i = 0; i < queue_end; i++)
-	{
-		int piece_index = walk_queue[i];
+// Where the standing pieces settle with every link a spring, under the
+// loads in solver_load, starting from solver_x and leaving the answer
+// there: conjugate gradients. How many rounds it took.
+static int solve_springs(const damage_model_t *model, int standing_count, double load_squared)
+{
+	double turn_stiffness = (double)model->settings.joint_arm * (double)model->settings.joint_arm;
+	int unknown_count = standing_count * 6;
+	double residual_scaled = 0.0;
+	int round;
+	int i;
 
-		for (k = 0; k < 6; k++)
-		{
-			solver_load[i * 6 + k] = 0.0;
-			solver_x[i * 6 + k] = model->support_solution[piece_index * 6 + k];
-			solver_diagonal[i * 6 + k] = 0.0;
-		}
-		solver_load[i * 6 + 1] = -(double)model->pieces[piece_index].mass * (double)GRAVITY;
-		load_squared += solver_load[i * 6 + 1] * solver_load[i * 6 + 1];
+	// How stiffly each unknown is held by its own links alone, which the
+	// solver divides by to be at home with turns and moves alike
+	for (i = 0; i < unknown_count; i++)
+	{
+		solver_diagonal[i] = solver_inertia[i];
 	}
 	for (i = 0; i < model->link_count; i++)
 	{
@@ -1551,7 +1672,75 @@ static void work_out_support(damage_model_t *model, int frame_index)
 		}
 		residual_scaled = next_residual_scaled;
 	}
-	model->support_iterations = round;
+	return round;
+}
+
+// The support pass: where everything that stands settles under its own
+// weight with every link a spring (see damage_model.h), found by
+// conjugate gradients from where it settled last time; then what every
+// link bears against what it can. Pieces pressed harder than their
+// material bears are crushed: their links break.
+static void work_out_support(damage_model_t *model, int frame_index)
+{
+	double turn_stiffness = (double)model->settings.joint_arm * (double)model->settings.joint_arm;
+	int queue_end = 0;
+	int unknown_count;
+	double load_squared = 0.0;
+	int i;
+	int k;
+
+	model->support_dirty = false;
+	model->overloaded_count = 0;
+	for (i = 0; i < model->link_count; i++)
+	{
+		model->links[i].overload = 0.0f;
+		model->links[i].static_compression = 0.0f;
+		model->links[i].static_pull = 0.0f;
+		model->links[i].static_sideways = 0.0f;
+		model->links[i].static_moment = 0.0f;
+		model->links[i].held_piece = -1;
+	}
+	for (i = 0; i < model->piece_count; i++)
+	{
+		model->pieces[i].pressed = 0.0f;
+	}
+
+	queue_end = find_standing(model);
+	unknown_count = queue_end * 6;
+	for (i = 0; i < model->piece_count; i++)
+	{
+		if (support_unknowns[i] < 0)
+		{
+			// Forgotten: if it ever stood again it would start from rest
+			memset(&model->support_solution[i * 6], 0, 6 * sizeof(double));
+		}
+	}
+	if (unknown_count == 0)
+	{
+		model->support_iterations = 0;
+		return;
+	}
+
+	// The weights; where the pieces settled last time; and how stiffly
+	// each unknown is held by its own links alone, which the solver
+	// divides by to be at home with turns and moves alike
+	for (i = 0; i < queue_end; i++)
+	{
+		int piece_index = walk_queue[i];
+
+		for (k = 0; k < 6; k++)
+		{
+			solver_load[i * 6 + k] = 0.0;
+			solver_x[i * 6 + k] = model->support_solution[piece_index * 6 + k];
+		}
+		solver_load[i * 6 + 1] = -(double)model->pieces[piece_index].mass * (double)GRAVITY;
+		load_squared += solver_load[i * 6 + 1] * solver_load[i * 6 + 1];
+	}
+	for (i = 0; i < unknown_count; i++)
+	{
+		solver_inertia[i] = 0.0;
+	}
+	model->support_iterations = solve_springs(model, queue_end, load_squared);
 	for (i = 0; i < queue_end; i++)
 	{
 		memcpy(&model->support_solution[walk_queue[i] * 6], &solver_x[i * 6], 6 * sizeof(double));
@@ -1625,137 +1814,21 @@ static void work_out_support(damage_model_t *model, int frame_index)
 		}
 	}
 
-	// The long pieces: what bends each one. Its links' forces on it and its
-	// own weight, taken up to a place along it, turn about that place:
-	// the part of that turning across the piece is the bending there.
-	// Where it is most, and more than the piece bears, it is cut.
+	// The long pieces: where one is bent by more than it bears, it is cut
 	for (i = 0; i < queue_end; i++)
 	{
 		int piece_index = walk_queue[i];
 		damage_piece_t *piece = &model->pieces[piece_index];
-		double load_positions[BEND_LOADS_MAX];
-		double load_forces[BEND_LOADS_MAX][3];
-		double load_moments[BEND_LOADS_MAX][3];
-		double axis[3];
-		float half_sizes[3];
-		double half_length;
-		double weight;
-		double worst_bent = 0.0;
+		double own_weight[3] = { 0.0, -(double)piece->mass * (double)GRAVITY, 0.0 };
 		double worst_position = 0.0;
-		int load_count = 0;
-		int sample;
+		double worst_bent;
 
 		piece->bent = 0.0f;
 		if (piece->long_axis < 0)
 		{
 			continue;
 		}
-		{
-			b3Vec3 direction = piece_axis(piece);
-
-			axis[0] = (double)direction.x;
-			axis[1] = (double)direction.y;
-			axis[2] = (double)direction.z;
-		}
-		piece_half_sizes(piece, half_sizes);
-		half_length = (double)half_sizes[piece->long_axis];
-		weight = (double)piece->mass * (double)GRAVITY;
-
-		for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1] && load_count < BEND_LOADS_MAX; k++)
-		{
-			const damage_link_t *link = &model->links[model->piece_links[k]];
-			double apart[3];
-			double turned[3];
-			// (The spring pulls piece a back the way it came apart, and
-			// piece b the other way)
-			double sign = link->piece_a == piece_index ? -1.0 : 1.0;
-			double arm[3];
-
-			if (link->broken)
-			{
-				continue;
-			}
-			link_strain(model, link, solver_x, apart, turned);
-			arm[0] = (double)link->local_point.x - (double)piece->local.p.x;
-			arm[1] = (double)link->local_point.y - (double)piece->local.p.y;
-			arm[2] = (double)link->local_point.z - (double)piece->local.p.z;
-			load_positions[load_count] = arm[0] * axis[0] + arm[1] * axis[1] + arm[2] * axis[2];
-			// The force, and its turning about the piece's MIDDLE (moved to
-			// the place looked at below) with the link's own turning
-			load_forces[load_count][0] = sign * apart[0];
-			load_forces[load_count][1] = sign * apart[1];
-			load_forces[load_count][2] = sign * apart[2];
-			load_moments[load_count][0] = arm[1] * load_forces[load_count][2] - arm[2] * load_forces[load_count][1] + sign * turn_stiffness * turned[0];
-			load_moments[load_count][1] = arm[2] * load_forces[load_count][0] - arm[0] * load_forces[load_count][2] + sign * turn_stiffness * turned[1];
-			load_moments[load_count][2] = arm[0] * load_forces[load_count][1] - arm[1] * load_forces[load_count][0] + sign * turn_stiffness * turned[2];
-			load_count++;
-		}
-
-		for (sample = 0; sample < BEND_SAMPLES + load_count; sample++)
-		{
-			// Evenly along it, then just before each link
-			double position = sample < BEND_SAMPLES ? -half_length + 2.0 * half_length * ((double)sample + 0.5) / (double)BEND_SAMPLES : load_positions[sample - BEND_SAMPLES];
-			double force[3] = {0.0, 0.0, 0.0};
-			double moment[3] = {0.0, 0.0, 0.0};
-			double part_weight;
-			double part_middle;
-			double turning[3];
-			double along;
-			double bending;
-			int load;
-
-			if (position <= -half_length || position >= half_length)
-			{
-				continue;
-			}
-			// All that acts on the part before this place: the links there...
-			for (load = 0; load < load_count; load++)
-			{
-				if (load_positions[load] < position)
-				{
-					force[0] += load_forces[load][0];
-					force[1] += load_forces[load][1];
-					force[2] += load_forces[load][2];
-					moment[0] += load_moments[load][0];
-					moment[1] += load_moments[load][1];
-					moment[2] += load_moments[load][2];
-				}
-			}
-			// ...and that part's own weight, at its own middle
-			part_weight = weight * (position + half_length) / (2.0 * half_length);
-			part_middle = (position - half_length) * 0.5;
-			force[1] -= part_weight;
-			moment[0] += part_middle * axis[2] * part_weight;
-			moment[2] -= part_middle * axis[0] * part_weight;
-			// Its turning about the place itself: about the middle, less
-			// the place's arm crossed with the force
-			turning[0] = moment[0] - position * (axis[1] * force[2] - axis[2] * force[1]);
-			turning[1] = moment[1] - position * (axis[2] * force[0] - axis[0] * force[2]);
-			turning[2] = moment[2] - position * (axis[0] * force[1] - axis[1] * force[0]);
-			// (Turning about the piece's own length twists it, it does not
-			// bend it)
-			along = turning[0] * axis[0] + turning[1] * axis[1] + turning[2] * axis[2];
-			turning[0] -= along * axis[0];
-			turning[1] -= along * axis[1];
-			turning[2] -= along * axis[2];
-			bending = sqrt(turning[0] * turning[0] + turning[1] * turning[1] + turning[2] * turning[2]);
-			if (bending > 1e-9)
-			{
-				// (What turns it so pushes it across both the turning and
-				// its length: that way is how deep it must be)
-				b3Vec3 push = {
-					(float)((axis[1] * turning[2] - axis[2] * turning[1]) / bending),
-					(float)((axis[2] * turning[0] - axis[0] * turning[2]) / bending),
-					(float)((axis[0] * turning[1] - axis[1] * turning[0]) / bending) };
-				double bent = bending / ((double)model->settings.bend[piece->material] * (double)piece_section(piece, push));
-
-				if (bent > worst_bent)
-				{
-					worst_bent = bent;
-					worst_position = position;
-				}
-			}
-		}
+		worst_bent = piece_bending(model, piece_index, solver_x, own_weight, (double)model->settings.bend[piece->material], &worst_position);
 		piece->bent = (float)worst_bent;
 		if (worst_bent > 1.0)
 		{
@@ -2052,64 +2125,157 @@ static float blast_reach(const damage_model_t *model, b3Vec3 blast_position, b3V
 	return 1.0f - beyond / model->settings.blast_falloff;
 }
 
+// What a blast gives a piece, newton seconds, and which way: by how far
+// it is, how much of it faces the blast, and whether another piece or
+// the ground is between its middle and the blast (then it gets what
+// blast_shielding leaves of it)
+static float blast_on_piece(const damage_model_t *model, b3Vec3 position, float strength, int piece_index, b3Vec3 *direction)
+{
+	const damage_piece_t *piece = &model->pieces[piece_index];
+	b3Transform transform = piece_world_transform(model, piece_index);
+	float reach = blast_reach(model, position, transform.p, direction);
+	float impulse = strength * reach * exposed_area(piece, transform.q, *direction);
+
+	if (impulse > 0.0f && model->settings.blast_shielding > 0.0f)
+	{
+		b3RayResult result = b3World_CastRayClosest(model->world, position, b3Sub(transform.p, position), b3DefaultQueryFilter());
+
+		if (result.hit && damage_model_shape_piece(result.shapeId) != piece_index)
+		{
+			impulse *= 1.0f - model->settings.blast_shielding;
+		}
+	}
+	return impulse;
+}
+
+// A blast. Every piece gets its push (blast_on_piece), which costs the
+// piece itself hit points. For what stands, the pushes are then put on
+// the pieces all at once, as their weights are in the support pass, and
+// the springs solved: what goes through each link is what hurts it (two
+// neighbors pushed alike do not strain the link between them; the links
+// that hold the pushed part to the rest, and to the ground, bear it
+// all; but each piece's own mass takes up some on the way: blast_inertia),
+// and a long piece bent by more than it bears from a hit is cut.
+// What is loose already is hurt piece by piece, as by a hit. Then the
+// groups are made anew and what is loose is pushed.
 void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, int frame_index)
 {
+	double turn_stiffness = (double)model->settings.joint_arm * (double)model->settings.joint_arm;
 	int piece_count_before = model->piece_count;
+	int standing_count;
+	double load_squared = 0.0;
 	int i;
 
-	// What each piece gets, as things stand, and the damage of it: to the
-	// piece, to its links, and a long piece may break across (pushed
-	// where it is nearest the blast)
 	for (i = 0; i < piece_count_before; i++)
 	{
-		const damage_piece_t *piece = &model->pieces[i];
-		b3Transform transform;
-		b3Vec3 direction;
-		b3Vec3 nearest;
-		float reach;
-		float impulse;
+		b3Vec3 direction = b3Vec3_zero;
+		float impulse = model->pieces[i].group == DAMAGE_GONE ? 0.0f : blast_on_piece(model, position, strength, i, &direction);
 
-		if (piece->group == DAMAGE_GONE)
+		blast_impulses[i] = b3MulSV(impulse, direction);
+		if (impulse > 0.0f)
+		{
+			hurt_piece(model, i, impulse, frame_index);
+		}
+	}
+
+	// (A blast is over before much can move: each piece's own mass takes
+	// up part of its push, and of what its links pass to it, as a spring
+	// to where it stands would; so the push fades from link to link
+	// instead of all going down to the ground)
+	standing_count = find_standing(model);
+	for (i = 0; i < standing_count; i++)
+	{
+		const damage_piece_t *piece = &model->pieces[walk_queue[i]];
+		float half_sizes[3];
+		double held = (double)model->settings.blast_inertia * (double)piece->mass;
+		double reach_squared;
+		int k;
+
+		piece_half_sizes(piece, half_sizes);
+		reach_squared = ((double)half_sizes[0] * (double)half_sizes[0] + (double)half_sizes[1] * (double)half_sizes[1] + (double)half_sizes[2] * (double)half_sizes[2]) / 3.0;
+		for (k = 0; k < 6; k++)
+		{
+			solver_load[i * 6 + k] = 0.0;
+			solver_x[i * 6 + k] = 0.0;
+			solver_inertia[i * 6 + k] = k < 3 ? held : held * reach_squared;
+		}
+	}
+	for (i = 0; i < piece_count_before; i++)
+	{
+		float impulse = b3Length(blast_impulses[i]);
+
+		if (impulse <= 0.0f || model->pieces[i].group == DAMAGE_GONE)
 		{
 			continue;
 		}
-		transform = piece_world_transform(model, i);
-		reach = blast_reach(model, position, transform.p, &direction);
-		impulse = strength * reach * exposed_area(piece, transform.q, direction);
-		if (impulse <= 0.0f)
+		if (support_unknowns[i] >= 0)
 		{
-			continue;
+			// (What stands is in bodies that have not moved: the
+			// building's frame is the world's)
+			solver_load[support_unknowns[i] * 6 + 0] = (double)blast_impulses[i].x;
+			solver_load[support_unknowns[i] * 6 + 1] = (double)blast_impulses[i].y;
+			solver_load[support_unknowns[i] * 6 + 2] = (double)blast_impulses[i].z;
+			load_squared += (double)impulse * (double)impulse;
 		}
-		nearest = transform.p;
-		if (piece->long_axis >= 0)
+		else
 		{
-			b3Vec3 own_axis = { piece->long_axis == 0 ? 1.0f : 0.0f, piece->long_axis == 1 ? 1.0f : 0.0f, piece->long_axis == 2 ? 1.0f : 0.0f };
-			b3Vec3 world_axis = b3RotateVector(transform.q, own_axis);
-			float half_sizes[3];
-			float along = b3Dot(b3Sub(position, transform.p), world_axis);
+			b3Transform transform = piece_world_transform(model, i);
 
-			piece_half_sizes(piece, half_sizes);
-			along = along > half_sizes[piece->long_axis] ? half_sizes[piece->long_axis] : (along < -half_sizes[piece->long_axis] ? -half_sizes[piece->long_axis] : along);
-			nearest = b3Add(transform.p, b3MulSV(along, world_axis));
+			snap_piece(model, i, transform.p, b3MulSV(1.0f / impulse, blast_impulses[i]), impulse);
+			damage_piece(model, i, impulse, frame_index);
 		}
-		if (!hurt_piece(model, i, impulse, frame_index))
+	}
+	if (load_squared > 0.0)
+	{
+		solve_springs(model, standing_count, load_squared);
+		for (i = 0; i < model->link_count; i++)
 		{
-			snap_piece(model, i, nearest, direction, impulse);
+			const damage_link_t *link = &model->links[i];
+			double apart[3];
+			double turned[3];
+			double through;
+
+			if (link->broken || support_unknowns[link->piece_a] < 0)
+			{
+				continue;
+			}
+			// (Its turning counts as the push that would turn it so at
+			// joint_arm)
+			link_strain(model, link, solver_x, apart, turned);
+			through = sqrt(apart[0] * apart[0] + apart[1] * apart[1] + apart[2] * apart[2])
+				+ turn_stiffness * sqrt(turned[0] * turned[0] + turned[1] * turned[1] + turned[2] * turned[2]) / (double)model->settings.joint_arm;
+			hurt_link(model, i, (float)through, frame_index);
 		}
-		damage_piece(model, i, impulse, frame_index);
+		for (i = 0; i < standing_count; i++)
+		{
+			int piece_index = walk_queue[i];
+			const damage_piece_t *piece = &model->pieces[piece_index];
+			// (Its push less what its own mass took up, both spread along it)
+			double own_push[3] = {
+				(double)blast_impulses[piece_index].x - solver_inertia[i * 6 + 0] * solver_x[i * 6 + 0],
+				(double)blast_impulses[piece_index].y - solver_inertia[i * 6 + 1] * solver_x[i * 6 + 1],
+				(double)blast_impulses[piece_index].z - solver_inertia[i * 6 + 2] * solver_x[i * 6 + 2] };
+			double worst_position = 0.0;
+
+			if (piece->long_axis < 0 || piece->crushed || piece_index >= piece_count_before)
+			{
+				continue;
+			}
+			if (piece_bending(model, piece_index, solver_x, own_push, (double)model->settings.snap[piece->material], &worst_position) > 1.0)
+			{
+				request_cut(model, piece_index, (float)worst_position);
+			}
+		}
 	}
 	make_pending_cuts(model);
 	rebuild_dirty_groups(model);
 
-	// Then the push on what is loose now (worked out again: pieces were
-	// cut)
+	// The push on what is loose now (worked out again: pieces were cut)
 	for (i = 0; i < model->piece_count; i++)
 	{
 		const damage_piece_t *piece = &model->pieces[i];
 		const damage_group_t *group;
-		b3Transform transform;
 		b3Vec3 direction;
-		float reach;
 		float impulse;
 
 		if (piece->group == DAMAGE_GONE)
@@ -2121,12 +2287,10 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 		{
 			continue;
 		}
-		transform = piece_world_transform(model, i);
-		reach = blast_reach(model, position, transform.p, &direction);
-		impulse = strength * reach * exposed_area(piece, transform.q, direction);
+		impulse = blast_on_piece(model, position, strength, i, &direction);
 		if (impulse > 0.0f)
 		{
-			b3Body_ApplyLinearImpulse(group->body, b3MulSV(impulse, direction), transform.p, true);
+			b3Body_ApplyLinearImpulse(group->body, b3MulSV(impulse, direction), piece_world_transform(model, i).p, true);
 		}
 	}
 	for (i = 0; i < model->projectile_count; i++)
