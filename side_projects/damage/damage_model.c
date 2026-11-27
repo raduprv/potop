@@ -154,6 +154,7 @@ void damage_settings_default(damage_settings_t *settings)
 	settings->cut_min_length = 0.3f;
 	settings->cut_clearance = 0.05f;
 	set_link_defaults(&settings->links[DAMAGE_LINK_NAILS], 150.0f, 600.0f, 200000.0f, 4000.0f, 2500.0f);
+	settings->links[DAMAGE_LINK_NAILS].pull = 1000.0f;
 	set_link_defaults(&settings->links[DAMAGE_LINK_MORTAR], 60.0f, 200.0f, 500000.0f, 3000.0f, 900.0f);
 	set_link_defaults(&settings->links[DAMAGE_LINK_FOUNDATION], 300.0f, 1500.0f, 1000000.0f, 5000.0f, 5000.0f);
 	set_link_defaults(&settings->links[DAMAGE_LINK_GLAZING], 30.0f, 60.0f, 100000.0f, 500.0f, 200.0f);
@@ -179,8 +180,8 @@ void damage_settings_default(damage_settings_t *settings)
 	settings->shape_gap = 0.003f;
 	settings->ball_radius = 0.2f;
 	settings->ball_density = 7800.0f;
-	settings->blast_strength = 3000.0f;
-	settings->blast_big_strength = 6000.0f;
+	settings->blast_strength = 1500.0f;
+	settings->blast_big_strength = 3000.0f;
 }
 
 static bool read_float(const char *value, float *result)
@@ -1438,6 +1439,30 @@ static void springs_product(const damage_model_t *model, const double *unknowns,
 	}
 }
 
+// What a sudden push through a link (a blast's, or the shock of a fall)
+// counts for against its threshold and hit points, from how the solver
+// left its two pieces (link_strain). Which way it goes matters as it
+// does standing still: what slides the link counts in full, what pulls
+// it apart counts for more by as much as the link bears less pulled
+// than slid, what presses it together for as much less as it bears more
+// pressed. A board is blown off its posts from behind far more easily
+// than it is driven through them from in front. Its turning counts as
+// the push that would turn it so at joint_arm.
+static double link_through(const damage_model_t *model, const damage_link_t *link, const double apart[3], const double turned[3])
+{
+	const damage_link_settings_t *limits = &model->settings.links[link->type];
+	double turn_stiffness = (double)model->settings.joint_arm * (double)model->settings.joint_arm;
+	double along = apart[0] * (double)link->local_normal.x + apart[1] * (double)link->local_normal.y + apart[2] * (double)link->local_normal.z;
+	double across_x = apart[0] - along * (double)link->local_normal.x;
+	double across_y = apart[1] - along * (double)link->local_normal.y;
+	double across_z = apart[2] - along * (double)link->local_normal.z;
+	// (piece_a come nearer piece_b: pressed together)
+	double lengthwise = along > 0.0 ? along * (double)limits->slide / (double)limits->pull : -along * (double)limits->slide / (double)limits->compression;
+
+	return lengthwise + sqrt(across_x * across_x + across_y * across_y + across_z * across_z)
+		+ turn_stiffness * sqrt(turned[0] * turned[0] + turned[1] * turned[1] + turned[2] * turned[2]) / (double)model->settings.joint_arm;
+}
+
 // How bent a long piece is, as many times what it bears, and where
 // along it that is worst. Its links' forces on it (from where the
 // solver left the pieces: unknowns) and what is spread along it
@@ -2130,8 +2155,7 @@ static void shock_through_group(damage_model_t *model, int group_index, int fram
 			continue;
 		}
 		link_strain(model, link, solver_x, apart, turned);
-		through = sqrt(apart[0] * apart[0] + apart[1] * apart[1] + apart[2] * apart[2])
-			+ turn_stiffness * sqrt(turned[0] * turned[0] + turned[1] * turned[1] + turned[2] * turned[2]) / (double)model->settings.joint_arm;
+		through = link_through(model, link, apart, turned);
 		hurt_link(model, i, (float)through, frame_index);
 	}
 	for (i = 0; i < count; i++)
@@ -2400,7 +2424,6 @@ static b3Vec3 blast_on_piece(const damage_model_t *model, b3Vec3 position, float
 // with; of no use for what still stands).
 static void push_through_links(damage_model_t *model, const b3Vec3 *pushes, const b3Vec3 *turnings, int piece_count_before, int frame_index)
 {
-	double turn_stiffness = (double)model->settings.joint_arm * (double)model->settings.joint_arm;
 	int slice_count = model->settings.blast_slices > 1 ? model->settings.blast_slices : 1;
 	int slice;
 	int i;
@@ -2507,8 +2530,7 @@ static void push_through_links(damage_model_t *model, const b3Vec3 *pushes, cons
 			// (Its turning counts as the push that would turn it so at
 			// joint_arm)
 			link_strain(model, link, solver_x, apart, turned);
-			through = sqrt(apart[0] * apart[0] + apart[1] * apart[1] + apart[2] * apart[2])
-				+ turn_stiffness * sqrt(turned[0] * turned[0] + turned[1] * turned[1] + turned[2] * turned[2]) / (double)model->settings.joint_arm;
+			through = link_through(model, link, apart, turned);
 			if (slice == slice_count)
 			{
 				hurt_link(model, i, (float)through, frame_index);

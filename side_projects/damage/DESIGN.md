@@ -351,6 +351,21 @@ presses on everything until it finds a way out.
   is now taken in five parts along its length, each pushed, faded and
   shielded by itself, and how the sum turns the piece about its middle
   goes into the solve, so the nails near the blast bear the most.
+- Found by Radu: a blast in a corner of the house did little, one just
+  beside it threw the whole house into the air. In both, nearly every
+  link was hurt and none of the boards' nails broke (a board's five
+  nails bore more together than a blast ever put on the board); what
+  gave, or just did not, were the few links at the foot of the frame,
+  and with them went everything at once or nothing. Which way a push
+  goes through a link now matters (link_through): pulling it apart
+  counts for slide / pull times a sliding push, pressing it together
+  for slide / compression. Nails bear a quarter pulled out of what they
+  bear across (`pull` 1000), so a blast inside blows the boards off the
+  posts, and one outside presses them on and does far less; a notch,
+  which holds next to nothing against being lifted, lets a log go
+  easily. The same goes for the shock of a fall.
+- With that, blasts break far more, and the viewer's two strengths are
+  halved (1500 and 3000).
 - The physics ground is 1 km to a side now (40 m are drawn): what was
   thrown past its edge fell for ever.
 - `blast_gas` is 0.5: at 1 a blast of 3000 on the floor left nothing of
