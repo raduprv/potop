@@ -11,6 +11,7 @@ layout(location = 0) in vec4 particle_position_size;
 layout(location = 1) in vec4 particle_color;
 layout(location = 2) in vec4 particle_extra;
 layout(location = 3) in vec4 particle_velocity;
+layout(location = 4) in vec4 particle_look;
 
 layout(std140, set = UNIFORM_SET, binding = 1) uniform particle_draw_block
 {
@@ -20,6 +21,10 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform particle_draw_block
 	float sky_light;               // of light, what comes from the sky (less where the sky is hidden: sky_occlusion.glsl)
 	vec3 fog_sky_color;            // what far away fades into (as drawn: sRGB)
 	float pixel_per_distance;      // a pixel's size, meters, a meter from the eye
+	vec4 depth_to_distance;        // x, y: the scene's depth to the distance along the view, y / (depth - x); zw: 1 / its size
+	float particle_seconds;       // the particles' clock (paused with them)
+	float has_depth;               // 1: the scene's depth is there (the soft ones fade)
+	vec2 draw_padding;
 };
 
 layout(set = TEXTURE_SET, binding = 0) uniform sampler2D sky_occlusion_texture;   // R8 a cell (sky_occlusion.h)
@@ -34,6 +39,7 @@ layout(location = 3) flat out float emissive;
 layout(location = 4) out float view_distance;
 layout(location = 5) out float above_surface;               // meters this point of it is over the ground or water under its middle
 layout(location = 6) flat out float sky_seen_here;          // how much of the sky its middle sees (the glowing ones: all)
+layout(location = 7) flat out vec4 look;                    // distortion, random number, soft (meters), age (0..1)
 
 void main()
 {
@@ -64,6 +70,7 @@ void main()
 		view_distance = 0.0;
 		above_surface = 0.0;
 		sky_seen_here = 0.0;
+		look = vec4(0.0);
 		return;
 	}
 
@@ -96,5 +103,6 @@ void main()
 	emissive = particle_extra.z;
 	view_distance = length(world - eye_position);
 	above_surface = world.y - particle_extra.w;
-	sky_seen_here = particle_extra.z > 0.5 ? 1.0 : sky_seen_above(position.xz, position.y - particle_extra.w);
+	sky_seen_here = particle_extra.z > 0.0 ? 1.0 : sky_seen_above(position.xz, position.y - particle_extra.w);
+	look = particle_look;
 }

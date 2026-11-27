@@ -22,6 +22,7 @@ struct render_t
 	vec4 color;                        // 0..1, alpha last
 	vec4 extra;                        // turn (radians), texture layer, emissive (1) or lit (0), the ground or water under it
 	vec4 velocity;                     // meters per second; stretch (seconds of motion it is drawn long)
+	vec4 look;                         // distortion, random number (0..1), soft (meters), age (0..1)
 };
 
 // Must match pack_effect in particles.c
@@ -38,6 +39,7 @@ struct effect_t
 	vec4 direction;                    // normalized; cosine of the spread
 	vec4 extra;                        // outward speed, stretch (negative: -1 - stretch, born upright), color stops, size stops
 	vec4 flash;                        // seconds a burst (0: no flashing), seconds a flash, flashes a burst, how together (0..1)
+	vec4 look_extra;                   // distortion, soft (meters), -, -
 };
 
 // Must match emit_request in particles.c

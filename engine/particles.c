@@ -19,7 +19,8 @@
 #define STATE_FREE_FIRST 32
 
 // Floats a packed effect takes in the uniform block (std140: 13 vec4)
-#define EFFECT_FLOATS 56
+#define EFFECT_FLOATS 60
+#define RENDER_FLOATS 20
 #define EMIT_FLOATS 20
 
 typedef struct
@@ -209,6 +210,7 @@ static void default_effect(particles_effect_t *effect, const char *name)
 	SDL_strlcpy(effect->name, name, sizeof(effect->name));
 	effect->texture_layer = LAYER_DOT;
 	effect->texture_frames = 1;
+	effect->intensity = 1.0f;
 	effect->rate = 20.0f;
 	effect->count = 50;
 	effect->duration_seconds = 0.0f;
@@ -381,6 +383,18 @@ static bool load_key(void *user_data, const char *section, const char *key, cons
 		effect->emissive = SDL_strcasecmp(value, "additive") == 0 || SDL_strcasecmp(value, "glow") == 0;
 		return effect->emissive || SDL_strcasecmp(value, "alpha") == 0;
 	}
+	if (SDL_strcmp(key, "intensity") == 0)
+	{
+		return ini_value_to_float(value, &effect->intensity);
+	}
+	if (SDL_strcmp(key, "distortion") == 0)
+	{
+		return ini_value_to_float(value, &effect->distortion);
+	}
+	if (SDL_strcmp(key, "soft") == 0)
+	{
+		return ini_value_to_float(value, &effect->soft_meters);
+	}
 	if (SDL_strcmp(key, "emit") == 0)
 	{
 		effect->burst = SDL_strcasecmp(value, "burst") == 0;
@@ -513,7 +527,7 @@ static bool load_key(void *user_data, const char *section, const char *key, cons
 	return false;
 }
 
-// 13 vec4, as effect_t in particles_common.glsl
+// 15 vec4, as effect_t in particles_common.glsl
 static void pack_effect(const particles_effect_t *effect, float out[EFFECT_FLOATS])
 {
 	SDL_memset(out, 0, sizeof(float) * EFFECT_FLOATS);
@@ -534,7 +548,8 @@ static void pack_effect(const particles_effect_t *effect, float out[EFFECT_FLOAT
 	out[32] = (float)effect->texture_layer;
 	out[33] = (float)effect->texture_frames;
 	out[34] = effect->frames_per_second;
-	out[35] = effect->emissive ? 1.0f : 0.0f;
+	// (glowing: its intensity, above 0; lit: 0)
+	out[35] = effect->emissive ? SDL_max(effect->intensity, 0.01f) : 0.0f;
 	out[36] = (float)effect->collide;
 	out[37] = effect->bounce;
 	out[38] = effect->spin_minimum;
@@ -554,6 +569,8 @@ static void pack_effect(const particles_effect_t *effect, float out[EFFECT_FLOAT
 	out[53] = effect->flash_seconds;
 	out[54] = effect->flash_count;
 	out[55] = effect->flash_sync;
+	out[56] = effect->distortion;
+	out[57] = effect->soft_meters;
 }
 
 static void upload_effects(particles_t *particles)
@@ -642,18 +659,23 @@ typedef struct
 	float sky_light;
 	float fog_sky_color[3];
 	float pixel_per_distance;      // a pixel's size, meters, a meter from the eye
+	float depth_to_distance[4];    // x, y: the scene's depth to the distance along the view, y / (depth - x); zw: 1 / its size
+	float time_seconds;
+	float has_depth;               // 1: the scene's depth is there (the soft ones fade)
+	float padding[2];
 } particle_draw_uniforms_t;
 
 static bool create_pipelines(particles_t *particles)
 {
 	gpu_compute_layout_t layout = { 0, 2, 3, 1, GROUP_SIZE, 0, 0 };
-	static const SDL_GPUVertexBufferDescription render_buffer = { 0, sizeof(float) * 16, SDL_GPU_VERTEXINPUTRATE_INSTANCE, 0 };
-	static const SDL_GPUVertexAttribute attributes[4] =
+	static const SDL_GPUVertexBufferDescription render_buffer = { 0, sizeof(float) * RENDER_FLOATS, SDL_GPU_VERTEXINPUTRATE_INSTANCE, 0 };
+	static const SDL_GPUVertexAttribute attributes[5] =
 	{
 		{ 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, 0 },
 		{ 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, sizeof(float) * 4 },
 		{ 2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, sizeof(float) * 8 },
 		{ 3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, sizeof(float) * 12 },
+		{ 4, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, sizeof(float) * 16 },
 	};
 	SDL_GPUShader *vertex;
 	SDL_GPUShader *fragment;
@@ -667,7 +689,7 @@ static bool create_pipelines(particles_t *particles)
 	particles->simulate_pipeline = gpu_load_compute("particles_simulate.comp", &layout);
 
 	vertex = gpu_load_shader("particles.vert", 2, 0, 2);
-	fragment = gpu_load_shader("particles.frag", 1, 0, 2);
+	fragment = gpu_load_shader("particles.frag", 2, 0, 2);
 	if (vertex != NULL && fragment != NULL)
 	{
 		SDL_zero(info);
@@ -676,7 +698,7 @@ static bool create_pipelines(particles_t *particles)
 		info.vertex_buffers = &render_buffer;
 		info.vertex_buffer_count = 1;
 		info.vertex_attributes = attributes;
-		info.vertex_attribute_count = 4;
+		info.vertex_attribute_count = 5;
 		info.primitive = SDL_GPU_PRIMITIVETYPE_TRIANGLESTRIP;
 		info.cull = SDL_GPU_CULLMODE_NONE;
 		info.depth_test = true;
@@ -707,16 +729,18 @@ bool particles_create(particles_t *particles, int capacity)
 
 	particles->particle_buffer = gpu_create_buffer(read_write, (uint32_t)(sizeof(float) * 12 * (size_t)particles->capacity));
 	particles->render_buffer = gpu_create_buffer(read_write | SDL_GPU_BUFFERUSAGE_VERTEX,
-		(uint32_t)(sizeof(float) * 16 * (size_t)particles->capacity));
+		(uint32_t)(sizeof(float) * RENDER_FLOATS * (size_t)particles->capacity));
 	particles->effect_buffer = gpu_create_buffer(SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ,
 		(uint32_t)(sizeof(float) * EFFECT_FLOATS * PARTICLES_EFFECTS_MAX));
 	particles->emit_buffer = gpu_create_buffer(SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ,
 		(uint32_t)(sizeof(float) * EMIT_FLOATS * PARTICLES_EMITS_MAX));
 	particles->state_buffer = gpu_create_buffer(read_write, (uint32_t)(sizeof(uint32_t) * (STATE_FREE_FIRST + 3 * (size_t)particles->capacity)));
 	particles->argument_buffer = gpu_create_buffer(SDL_GPU_BUFFERUSAGE_INDIRECT, (uint32_t)(sizeof(uint32_t) * STATE_FREE_FIRST));
+	particles->blank_depth = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D, gpu.depth_format, 1, 1, 1, 1,
+		SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER);
 	if (particles->particle_buffer == NULL || particles->render_buffer == NULL || particles->effect_buffer == NULL
 		|| particles->emit_buffer == NULL || particles->state_buffer == NULL
-		|| particles->argument_buffer == NULL)
+		|| particles->argument_buffer == NULL || particles->blank_depth == NULL)
 	{
 		SDL_LogError(SDL_LOG_CATEGORY_RENDER, "Particles: the GPU refused the buffers, no particles");
 		particles_destroy(particles);
@@ -729,7 +753,7 @@ bool particles_create(particles_t *particles, int capacity)
 	upload_effects(particles);
 	particles->created = particles->texture_array != NULL;
 	SDL_Log("Particles: room for %d (%.1f MB on the GPU)", particles->capacity,
-		(double)((size_t)particles->capacity * (12 + 16 + 3) * sizeof(float)) / (1024.0 * 1024.0));
+		(double)((size_t)particles->capacity * (12 + RENDER_FLOATS + 3) * sizeof(float)) / (1024.0 * 1024.0));
 	return particles->created;
 }
 
@@ -760,6 +784,14 @@ void particles_destroy(particles_t *particles)
 	if (particles->texture_array != NULL)
 	{
 		SDL_ReleaseGPUTexture(gpu.device, particles->texture_array);
+	}
+	if (particles->scene_depth != NULL)
+	{
+		SDL_ReleaseGPUTexture(gpu.device, particles->scene_depth);
+	}
+	if (particles->blank_depth != NULL)
+	{
+		SDL_ReleaseGPUTexture(gpu.device, particles->blank_depth);
 	}
 	SDL_zerop(particles);
 }
@@ -1154,7 +1186,11 @@ void particles_draw(particles_t *particles, SDL_GPURenderPass *pass, const camer
 	vec3_t sun = terrain_renderer_sun_direction(settings);
 	particle_draw_uniforms_t uniforms;
 	SDL_GPUBufferBinding vertex_binding = { particles->render_buffer, 0 };
-	SDL_GPUTextureSamplerBinding texture_binding = { particles->texture_array, gpu.linear_clamp };
+	SDL_GPUTextureSamplerBinding texture_bindings[2] =
+	{
+		{ particles->texture_array, gpu.linear_clamp },
+		{ particles->depth_captured ? particles->scene_depth : particles->blank_depth, gpu.nearest_clamp },
+	};
 
 	if (!particles->created)
 	{
@@ -1172,14 +1208,62 @@ void particles_draw(particles_t *particles, SDL_GPURenderPass *pass, const camer
 	uniforms.sky_light = SDL_min(0.55f * settings->ambient_intensity, uniforms.light);
 	SDL_memcpy(uniforms.fog_sky_color, settings->sky_color, sizeof(uniforms.fog_sky_color));
 	uniforms.pixel_per_distance = 2.0f / (SDL_max(camera->projection.m[5], 1e-3f) * (float)SDL_max(target_height, 1));
+	uniforms.depth_to_distance[0] = 0.5f - 0.5f * camera->projection.m[10];
+	uniforms.depth_to_distance[1] = 0.5f * camera->projection.m[14];
+	uniforms.depth_to_distance[2] = 1.0f / (float)SDL_max(particles->depth_width, 1);
+	uniforms.depth_to_distance[3] = 1.0f / (float)SDL_max(particles->depth_height, 1);
+	uniforms.time_seconds = particles->time_seconds;
+	uniforms.has_depth = particles->depth_captured ? 1.0f : 0.0f;
 
 	SDL_BindGPUGraphicsPipeline(pass, particles->draw_pipeline);
 	SDL_PushGPUVertexUniformData(gpu.command_buffer, 1, &uniforms, sizeof(uniforms));
 	SDL_PushGPUFragmentUniformData(gpu.command_buffer, 1, &uniforms, sizeof(uniforms));
 	SDL_BindGPUVertexBuffers(pass, 0, &vertex_binding, 1);
-	SDL_BindGPUFragmentSamplers(pass, 0, &texture_binding, 1);
+	SDL_BindGPUFragmentSamplers(pass, 0, texture_bindings, 2);
 	scene_ground_bind_sky_vertex(pass, 0);
 	// Slot by slot (the living list's order changes each frame: the alpha
 	// ones, unsorted, would flicker); the free slots draw nothing
 	SDL_DrawGPUPrimitivesIndirect(pass, particles->argument_buffer, (uint32_t)(sizeof(uint32_t) * STATE_DRAW), 1);
+	particles->depth_captured = false;
+}
+
+void particles_capture_depth(particles_t *particles, SDL_GPUTexture *depth_texture, int width, int height)
+{
+	SDL_GPUCopyPass *copy;
+	SDL_GPUTextureLocation source;
+	SDL_GPUTextureLocation destination;
+
+	particles->depth_captured = false;
+	if (!particles->created || gpu.command_buffer == NULL || depth_texture == NULL || width <= 0 || height <= 0)
+	{
+		return;
+	}
+	if (particles->depth_width != width || particles->depth_height != height || particles->scene_depth == NULL)
+	{
+		if (particles->scene_depth != NULL)
+		{
+			SDL_ReleaseGPUTexture(gpu.device, particles->scene_depth);
+		}
+		particles->scene_depth = gpu_create_texture(SDL_GPU_TEXTURETYPE_2D, gpu.depth_format, (uint32_t)width, (uint32_t)height, 1, 1,
+			SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER);
+		particles->depth_width = particles->scene_depth != NULL ? width : 0;
+		particles->depth_height = particles->scene_depth != NULL ? height : 0;
+		if (particles->scene_depth == NULL)
+		{
+			SDL_LogError(SDL_LOG_CATEGORY_RENDER, "Particles: cannot make the %d x %d copy of the depth: %s", width, height, SDL_GetError());
+			return;
+		}
+	}
+	copy = SDL_BeginGPUCopyPass(gpu.command_buffer);
+	if (copy == NULL)
+	{
+		return;
+	}
+	SDL_zero(source);
+	SDL_zero(destination);
+	source.texture = depth_texture;
+	destination.texture = particles->scene_depth;
+	SDL_CopyGPUTextureToTexture(copy, &source, &destination, (uint32_t)width, (uint32_t)height, 1, false);
+	SDL_EndGPUCopyPass(copy);
+	particles->depth_captured = true;
 }

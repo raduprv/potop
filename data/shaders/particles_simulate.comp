@@ -206,5 +206,6 @@ void main()
 
 		renders[index].extra = vec4(particles[index].data.z, look.x + frame, look.w, surface_height(position));
 		renders[index].velocity = vec4(velocity, stretch >= 0.0 ? stretch : -1.0 - stretch);
+		renders[index].look = vec4(effects[effect_index].look_extra.x, particles[index].data.y, effects[effect_index].look_extra.y, t);
 	}
 }

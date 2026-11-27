@@ -70,6 +70,9 @@ typedef struct
 	int texture_frames;
 	float frames_per_second;           // 0: the frames play once over the particle's life
 	bool emissive;                     // glows (added to what is behind) instead of being lit and covering it
+	float intensity;                   // a glowing one's colors times this (linear light, past white: what the bloom catches); 1 as set
+	float distortion;                  // how far its texture is bent by a moving noise (a flame's licking; 0: none), a share of its size
+	float soft_meters;                 // fades out this close in front of what is behind it (no hard line where it goes into a log; 0: none)
 	// Emitting
 	bool burst;                        // count over duration seconds, then done; else rate a second for ever
 	float rate;
@@ -168,6 +171,13 @@ typedef struct
 	SDL_GPUBuffer *emit_buffer;        // this frame's emit requests
 	SDL_GPUTexture *texture_array;
 	int texture_layer_count;
+	// The scene's depth so far, for the soft ones (particles_capture_depth);
+	// a blank one bound when there is none this frame
+	SDL_GPUTexture *scene_depth;
+	SDL_GPUTexture *blank_depth;
+	int depth_width;
+	int depth_height;
+	bool depth_captured;               // this frame's copy is there (the draw uses it, then forgets it)
 } particles_t;
 
 // Loads data/particles.ini, makes the textures, the shaders and the GPU
@@ -203,6 +213,11 @@ uint32_t particles_nearest_emitter(const particles_t *particles, float x, float 
 // The compute passes go into gpu_commands().
 void particles_update(particles_t *particles, float seconds, SDL_GPUTexture *height_texture, SDL_GPUTexture *water_texture, int map_cells,
 	float cell_size_meters);
+
+// Copies the scene's depth so far (outside a render pass: between the
+// scene target's pause and resume), for the soft particles' fading where
+// they go into things. Without it they are drawn hard edged
+void particles_capture_depth(particles_t *particles, SDL_GPUTexture *depth_texture, int width, int height);
 
 // Draws the living particles in the scene's pass (after everything else;
 // its scene block pushed)

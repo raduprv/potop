@@ -1026,6 +1026,20 @@ static void render_frame(world_t *world, camera_t *camera, const world_render_op
 		}
 		trace_mark("fog");
 		lights_draw_cores(&world->lights, pass, camera);
+		// (the scene's depth so far, for the soft particles: a copy, outside
+		// the pass, only while some are playing)
+		if (particles_emitter_count(&world->particles) > 0)
+		{
+			render_target_pause(&world->scene_target, pass);
+			particles_capture_depth(&world->particles, world->scene_target.depth_texture, world->scene_target.width,
+				world->scene_target.height);
+			pass = render_target_resume(&world->scene_target);
+			if (pass == NULL)
+			{
+				return;
+			}
+			scene_uniforms_push(&scene);
+		}
 		particles_draw(&world->particles, pass, camera, &world->lit_render, scene_height);
 		trace_mark("lights, particles");
 		// The rainbow and the rain over everything (the clouds too), with
