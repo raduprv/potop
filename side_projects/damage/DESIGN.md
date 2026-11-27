@@ -401,6 +401,18 @@ presses on everything until it finds a way out.
   (750 Ns to break one nailed link, when 290 Ns is all a kilogram of
   TNT puts on a 4 m board a meter away). The viewer's bombs are 3 and
   9 kg until that is put right.
+- Links no longer have thresholds and hit points in newton seconds
+  (those were set by a 260 kg ball and were far too strong for light
+  pieces). A link lets go when a sudden push has done so much work on
+  it: what it bears (the newtons of the support pass, by the way it is
+  strained) times how far it gives (`give`, meters). A push between two
+  pieces is worth the push squared over twice their reduced mass, so
+  what breaks a link depends on how heavy the pieces it joins are. The
+  first part of what it can take springs back (`link_elastic`). This
+  is used for blasts, for the shock of a fall and for hits (a hit's
+  share is taken as sliding the link; the hit rule itself is as it
+  was). `preload` is gone: a pressed notch grips more, and that is in
+  what it bears. The ball is 33 kg now (density 1000).
 - The physics ground is 1 km to a side now (40 m are drawn): what was
   thrown past its edge fell for ever.
 - `blast_gas` is 0.5: at 1 a blast of 3000 on the floor left nothing of

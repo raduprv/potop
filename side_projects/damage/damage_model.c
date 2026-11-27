@@ -22,6 +22,9 @@
 // The support pass: it stops when what is left unbalanced is this small a
 // part of the weight, or after this many rounds
 #define SUPPORT_TOLERANCE 1e-5
+// A hit's share smaller than this is not passed on from piece to piece
+// (newton seconds)
+#define HIT_SHARE_MIN 1.0f
 // A long piece is taken in this many parts along its length when a
 // blast's push on it is worked out
 #define BLAST_PARTS 5
@@ -119,16 +122,14 @@ static const float *rotation_floats(const b3Quat *rotation)
 // ---------------------------------------------------------------------
 // Settings
 
-static void set_link_defaults(damage_link_settings_t *link, float threshold, float hit_points, float compression, float pull, float cantilever)
+static void set_link_defaults(damage_link_settings_t *link, float compression, float pull, float cantilever, float give)
 {
-	link->threshold = threshold;
-	link->hit_points = hit_points;
 	link->compression = compression;
 	link->pull = pull;
 	link->slide = pull;
 	link->cantilever = cantilever;
+	link->give = give;
 	link->grip = 0.0f;
-	link->preload = 0.0f;
 }
 
 void damage_settings_default(damage_settings_t *settings)
@@ -155,15 +156,15 @@ void damage_settings_default(damage_settings_t *settings)
 	settings->long_ratio = 4.0f;
 	settings->cut_min_length = 0.3f;
 	settings->cut_clearance = 0.05f;
-	set_link_defaults(&settings->links[DAMAGE_LINK_NAILS], 150.0f, 600.0f, 200000.0f, 4000.0f, 2500.0f);
+	set_link_defaults(&settings->links[DAMAGE_LINK_NAILS], 200000.0f, 4000.0f, 2500.0f, 0.02f);
 	settings->links[DAMAGE_LINK_NAILS].pull = 1000.0f;
-	set_link_defaults(&settings->links[DAMAGE_LINK_MORTAR], 60.0f, 200.0f, 500000.0f, 3000.0f, 900.0f);
-	set_link_defaults(&settings->links[DAMAGE_LINK_FOUNDATION], 300.0f, 1500.0f, 1000000.0f, 5000.0f, 5000.0f);
-	set_link_defaults(&settings->links[DAMAGE_LINK_GLAZING], 30.0f, 60.0f, 100000.0f, 500.0f, 200.0f);
-	set_link_defaults(&settings->links[DAMAGE_LINK_NOTCH], 60.0f, 400.0f, 200000.0f, 300.0f, 300.0f);
+	set_link_defaults(&settings->links[DAMAGE_LINK_MORTAR], 500000.0f, 3000.0f, 900.0f, 0.002f);
+	set_link_defaults(&settings->links[DAMAGE_LINK_FOUNDATION], 1000000.0f, 5000.0f, 5000.0f, 0.01f);
+	set_link_defaults(&settings->links[DAMAGE_LINK_GLAZING], 100000.0f, 500.0f, 200.0f, 0.002f);
+	set_link_defaults(&settings->links[DAMAGE_LINK_NOTCH], 200000.0f, 300.0f, 300.0f, 0.05f);
 	settings->links[DAMAGE_LINK_NOTCH].slide = 2500.0f;
 	settings->links[DAMAGE_LINK_NOTCH].grip = 0.6f;
-	settings->links[DAMAGE_LINK_NOTCH].preload = 0.1f;
+	settings->link_elastic = 0.1f;
 	settings->hop_falloff = 0.5f;
 	settings->hit_speed = 1.0f;
 	settings->rubble_pieces = 3;
@@ -182,7 +183,7 @@ void damage_settings_default(damage_settings_t *settings)
 	settings->joint_arm = 0.15f;
 	settings->shape_gap = 0.003f;
 	settings->ball_radius = 0.2f;
-	settings->ball_density = 7800.0f;
+	settings->ball_density = 1000.0f;
 	settings->blast_kilograms = 3.0f;
 	settings->blast_big_kilograms = 9.0f;
 }
@@ -194,13 +195,9 @@ static bool read_float(const char *value, float *result)
 
 static bool read_link_key(damage_link_settings_t *link, const char *key, const char *value)
 {
-	if (strcmp(key, "threshold") == 0)
+	if (strcmp(key, "give") == 0)
 	{
-		return read_float(value, &link->threshold);
-	}
-	if (strcmp(key, "hit_points") == 0)
-	{
-		return read_float(value, &link->hit_points);
+		return read_float(value, &link->give);
 	}
 	if (strcmp(key, "compression") == 0)
 	{
@@ -221,10 +218,6 @@ static bool read_link_key(damage_link_settings_t *link, const char *key, const c
 	if (strcmp(key, "grip") == 0)
 	{
 		return read_float(value, &link->grip);
-	}
-	if (strcmp(key, "preload") == 0)
-	{
-		return read_float(value, &link->preload);
 	}
 	return false;
 }
@@ -307,6 +300,10 @@ static bool read_settings_key(void *user, const char *section, const char *key, 
 		if (strcmp(key, "blast_charge_density") == 0)
 		{
 			return read_float(value, &settings->blast_charge_density);
+		}
+		if (strcmp(key, "link_elastic") == 0)
+		{
+			return read_float(value, &settings->link_elastic);
 		}
 		if (strcmp(key, "blast_inertia") == 0)
 		{
@@ -625,7 +622,7 @@ int damage_model_add_link(damage_model_t *model, int piece_a, int piece_b, b3Vec
 	link->local_point = point;
 	link->local_normal = link_normal(model, piece_a, piece_b, point);
 	link->held_piece = -1;
-	link->hit_points_left = model->settings.links[type].hit_points;
+	link->hit_points_left = 1.0f;
 	return model->link_count++;
 }
 
@@ -950,20 +947,67 @@ static void break_link(damage_model_t *model, int link_index, int frame_index)
 	model->support_dirty = true;
 }
 
-// A share of an impulse on a link. True when that broke it. (What
-// presses on the link, as the last support pass found it, adds to what
-// it shrugs off: preload.)
-static bool hurt_link(damage_model_t *model, int link_index, float share, int frame_index)
+// How much of a link a sudden push uses up (1: all of it), the push
+// given as its parts through the link, newton seconds: pulling it apart,
+// pressing it together, sliding it, and turning it (newton meter
+// seconds).
+//
+// A link lets go when it has taken up so much work: what it bears (the
+// newtons of the support pass, by the way it is strained) times how far
+// it gives before it lets go (give, meters). A push of so many newton
+// seconds between two pieces sets them moving against each other with
+// the push squared over twice their reduced mass in joules, and that is
+// the work the link must take up: so a nail that holds a light board
+// lets go at a far smaller push than one that holds a log. Turning is
+// taken as a push at joint_arm. Of what it can take, the first part
+// (link_elastic) springs back and costs it nothing.
+static float link_harm(const damage_model_t *model, const damage_link_t *link, double pulled, double pressed, double slid, double turned)
+{
+	const damage_link_settings_t *limits = &model->settings.links[link->type];
+	double mass = (double)model->pieces[link->piece_a].mass;
+	double grip = (double)limits->grip * (double)link->static_compression;
+	double turn_push = turned / (double)model->settings.joint_arm;
+	double used;
+
+	if (link->piece_b != DAMAGE_GROUND)
+	{
+		double other_mass = (double)model->pieces[link->piece_b].mass;
+
+		mass = mass * other_mass / (mass + other_mass);
+	}
+	used = (pulled * pulled / (double)limits->pull
+		+ pressed * pressed / (double)limits->compression
+		+ slid * slid / ((double)limits->slide + grip)
+		+ turn_push * turn_push / (((double)limits->cantilever + grip * (double)model->settings.joint_arm) / (double)model->settings.joint_arm))
+		/ (2.0 * mass * (double)limits->give);
+	return used > (double)model->settings.link_elastic ? (float)(used - (double)model->settings.link_elastic) : 0.0f;
+}
+
+// The same, from how the solver left the link's two pieces (link_strain)
+static float link_harm_from_strain(const damage_model_t *model, const damage_link_t *link, const double apart[3], const double turned[3])
+{
+	double turn_stiffness = (double)model->settings.joint_arm * (double)model->settings.joint_arm;
+	double along = apart[0] * (double)link->local_normal.x + apart[1] * (double)link->local_normal.y + apart[2] * (double)link->local_normal.z;
+	double across_x = apart[0] - along * (double)link->local_normal.x;
+	double across_y = apart[1] - along * (double)link->local_normal.y;
+	double across_z = apart[2] - along * (double)link->local_normal.z;
+
+	// (piece_a come nearer piece_b: pressed together)
+	return link_harm(model, link, along > 0.0 ? along : 0.0, along < 0.0 ? -along : 0.0,
+		sqrt(across_x * across_x + across_y * across_y + across_z * across_z),
+		turn_stiffness * sqrt(turned[0] * turned[0] + turned[1] * turned[1] + turned[2] * turned[2]));
+}
+
+// Takes that much of a link (link_harm). True when that broke it.
+static bool hurt_link(damage_model_t *model, int link_index, float harm, int frame_index)
 {
 	damage_link_t *link = &model->links[link_index];
-	const damage_link_settings_t *limits = &model->settings.links[link->type];
-	float threshold = limits->threshold + limits->preload * link->static_compression;
 
-	if (link->broken || share <= threshold)
+	if (link->broken || harm <= 0.0f)
 	{
 		return false;
 	}
-	link->hit_points_left -= share - threshold;
+	link->hit_points_left -= harm;
 	if (link->hit_points_left > 0.0f)
 	{
 		return false;
@@ -1268,7 +1312,6 @@ static bool snap_piece(damage_model_t *model, int piece_index, b3Vec3 world_poin
 // which shares that among its own. True when a link broke.
 static bool damage_piece(damage_model_t *model, int piece_index, float impulse, int frame_index)
 {
-	float smallest_threshold = model->settings.links[0].threshold;
 	bool broke = false;
 	int queue_start = 0;
 	int queue_end = 0;
@@ -1277,13 +1320,6 @@ static bool damage_piece(damage_model_t *model, int piece_index, float impulse, 
 	if (model->pieces[piece_index].group == DAMAGE_GONE || model->groups[model->pieces[piece_index].group].rubble)
 	{
 		return false;
-	}
-	for (k = 1; k < DAMAGE_LINK_TYPE_COUNT; k++)
-	{
-		if (model->settings.links[k].threshold < smallest_threshold)
-		{
-			smallest_threshold = model->settings.links[k].threshold;
-		}
 	}
 
 	walk_stamp++;
@@ -1323,7 +1359,9 @@ static bool damage_piece(damage_model_t *model, int piece_index, float impulse, 
 				continue;
 			}
 			walk_link_stamps[link_index] = walk_stamp;
-			if (hurt_link(model, link_index, share, frame_index))
+			// (Which way the share goes through the link is not known
+			// here: taken as sliding it)
+			if (hurt_link(model, link_index, link_harm(model, link, 0.0, 0.0, (double)share, 0.0), frame_index))
 			{
 				broke = true;
 			}
@@ -1332,7 +1370,7 @@ static bool damage_piece(damage_model_t *model, int piece_index, float impulse, 
 				continue;
 			}
 			other = link->piece_a == current ? link->piece_b : link->piece_a;
-			if (walk_piece_stamps[other] != walk_stamp && passed_on > smallest_threshold)
+			if (walk_piece_stamps[other] != walk_stamp && passed_on > HIT_SHARE_MIN)
 			{
 				walk_piece_stamps[other] = walk_stamp;
 				walk_amounts[other] = passed_on;
@@ -1444,30 +1482,6 @@ static void springs_product(const damage_model_t *model, const double *unknowns,
 	{
 		product[i] += solver_inertia[i] * unknowns[i];
 	}
-}
-
-// What a sudden push through a link (a blast's, or the shock of a fall)
-// counts for against its threshold and hit points, from how the solver
-// left its two pieces (link_strain). Which way it goes matters as it
-// does standing still: what slides the link counts in full, what pulls
-// it apart counts for more by as much as the link bears less pulled
-// than slid, what presses it together for as much less as it bears more
-// pressed. A board is blown off its posts from behind far more easily
-// than it is driven through them from in front. Its turning counts as
-// the push that would turn it so at joint_arm.
-static double link_through(const damage_model_t *model, const damage_link_t *link, const double apart[3], const double turned[3])
-{
-	const damage_link_settings_t *limits = &model->settings.links[link->type];
-	double turn_stiffness = (double)model->settings.joint_arm * (double)model->settings.joint_arm;
-	double along = apart[0] * (double)link->local_normal.x + apart[1] * (double)link->local_normal.y + apart[2] * (double)link->local_normal.z;
-	double across_x = apart[0] - along * (double)link->local_normal.x;
-	double across_y = apart[1] - along * (double)link->local_normal.y;
-	double across_z = apart[2] - along * (double)link->local_normal.z;
-	// (piece_a come nearer piece_b: pressed together)
-	double lengthwise = along > 0.0 ? along * (double)limits->slide / (double)limits->pull : -along * (double)limits->slide / (double)limits->compression;
-
-	return lengthwise + sqrt(across_x * across_x + across_y * across_y + across_z * across_z)
-		+ turn_stiffness * sqrt(turned[0] * turned[0] + turned[1] * turned[1] + turned[2] * turned[2]) / (double)model->settings.joint_arm;
 }
 
 // How bent a long piece is, as many times what it bears, and where
@@ -1977,7 +1991,7 @@ static void give_way(damage_model_t *model, int frame_index, float step_seconds)
 		{
 			continue;
 		}
-		link->hit_points_left -= model->settings.links[link->type].hit_points * link->overload * step_seconds / model->settings.collapse_seconds;
+		link->hit_points_left -= link->overload * step_seconds / model->settings.collapse_seconds;
 		if (link->hit_points_left <= 0.0f)
 		{
 			break_link(model, link_index, frame_index);
@@ -2155,15 +2169,13 @@ static void shock_through_group(damage_model_t *model, int group_index, int fram
 		const damage_link_t *link = &model->links[i];
 		double apart[3];
 		double turned[3];
-		double through;
 
 		if (link->broken || support_unknowns[link->piece_a] < 0)
 		{
 			continue;
 		}
 		link_strain(model, link, solver_x, apart, turned);
-		through = link_through(model, link, apart, turned);
-		hurt_link(model, i, (float)through, frame_index);
+		hurt_link(model, i, link_harm_from_strain(model, link, apart, turned), frame_index);
 	}
 	for (i = 0; i < count; i++)
 	{
@@ -2527,10 +2539,9 @@ static void push_through_links(damage_model_t *model, const b3Vec3 *pushes, cons
 		for (i = 0; i < model->link_count; i++)
 		{
 			const damage_link_t *link = &model->links[i];
-			const damage_link_settings_t *limits = &model->settings.links[link->type];
 			double apart[3];
 			double turned[3];
-			double through;
+			float harm;
 
 			if (link->broken || support_unknowns[link->piece_a] < 0)
 			{
@@ -2539,12 +2550,12 @@ static void push_through_links(damage_model_t *model, const b3Vec3 *pushes, cons
 			// (Its turning counts as the push that would turn it so at
 			// joint_arm)
 			link_strain(model, link, solver_x, apart, turned);
-			through = link_through(model, link, apart, turned);
+			harm = link_harm_from_strain(model, link, apart, turned);
 			if (slice == slice_count)
 			{
-				hurt_link(model, i, (float)through, frame_index);
+				hurt_link(model, i, harm, frame_index);
 			}
-			else if (through - (double)(limits->threshold + limits->preload * link->static_compression) >= (double)link->hit_points_left)
+			else if (harm >= link->hit_points_left)
 			{
 				break_link(model, i, frame_index);
 			}
@@ -2947,7 +2958,7 @@ void damage_model_draw_marks(const damage_model_t *model, soft_render_t *rendere
 			}
 			else
 			{
-				bool hurt = link->hit_points_left < model->settings.links[link->type].hit_points;
+				bool hurt = link->hit_points_left < 1.0f;
 
 				if (link->overload > 1.0f)
 				{
@@ -3097,9 +3108,9 @@ void damage_model_draw_inspection(const damage_model_t *model, soft_render_t *re
 		{
 			snprintf(other_name, sizeof(other_name), "%d", other);
 		}
-		snprintf(text, sizeof(text), "%s TO %s: PRESS %.0f  PULL %.0f  SIDE %.0f N  TURN %.0f NM  %.0f%% OF LIMIT  HP %.0f/%.0f",
+		snprintf(text, sizeof(text), "%s TO %s: PRESS %.0f  PULL %.0f  SIDE %.0f N  TURN %.0f NM  %.0f%% OF LIMIT  %.0f%% LEFT",
 			link_names[link->type], other_name, (double)link->static_compression, (double)link->static_pull, (double)link->static_sideways,
-			(double)link->static_moment, (double)(100.0f * link->overload), (double)link->hit_points_left, (double)model->settings.links[link->type].hit_points);
+			(double)link->static_moment, (double)(100.0f * link->overload), (double)(100.0f * link->hit_points_left));
 		soft_render_text(renderer, text_x, text_y, text_scale, link->overload > 1.0f ? LINK_OVERLOADED_COLOR : LABEL_COLOR, text);
 		text_y += line_height;
 	}
@@ -3138,7 +3149,7 @@ void damage_model_describe(const damage_model_t *model, char *text, int text_siz
 	{
 		const damage_link_t *link = &model->links[i];
 
-		if (!link->broken && link->hit_points_left < model->settings.links[link->type].hit_points)
+		if (!link->broken && link->hit_points_left < 1.0f)
 		{
 			hurt_count++;
 		}

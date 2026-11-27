@@ -91,8 +91,6 @@ typedef enum
 
 typedef struct
 {
-	float threshold;                   // newton seconds: a share of an impulse under this does nothing
-	float hit_points;                  // newton seconds over the threshold it takes, in all, before it breaks
 	// What it bears standing still, in newtons (a kilogram weighs about
 	// ten) and, as a cantilever, newton meters (a weight times how far to
 	// the side it is held)
@@ -100,11 +98,13 @@ typedef struct
 	float pull;                        // pulled apart
 	float slide;                       // held from the side
 	float cantilever;
+	// How far it gives before it lets go, meters: with what it bears,
+	// the work a sudden push must do on it to break it (link_harm)
+	float give;
 	// What being pressed adds, for each newton it is pressed with (from
 	// the last support pass): newtons it bears from the side (and that,
-	// at joint_arm, turning), and newton seconds to its threshold
+	// at joint_arm, turning)
 	float grip;
-	float preload;
 } damage_link_settings_t;
 
 // The numbers of damage.ini (damage_settings_load)
@@ -135,6 +135,7 @@ typedef struct
 	float blast_impulse_per_kilogram;
 	float blast_falloff_power;
 	float blast_charge_density;
+	float link_elastic;                // of what a link can take of a sudden push, the part that springs back and costs it nothing
 	float blast_inertia;               // for each kilogram of a piece, how many links' worth of a blast's push its own mass takes up
 	float air_drag;                    // newtons the air pushes back with for each square meter that faces the way a piece goes, at 1 m/s (and by the speed squared)
 	int blast_slices;                  // a blast's push comes on what stands in this many parts, links breaking between them
@@ -189,7 +190,7 @@ typedef struct
 	damage_link_type_t type;
 	b3Vec3 local_point;                // where it is, in the building's frame
 	b3Vec3 local_normal;               // across the joint, from piece_b towards piece_a (up for the ground)
-	float hit_points_left;
+	float hit_points_left;             // what is left of it: 1 whole, 0 broken (sudden pushes and overloads use it up)
 	bool broken;
 	int broken_frame;
 	// From the last support pass: how many times its limit it bears (over
