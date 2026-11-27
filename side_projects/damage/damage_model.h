@@ -139,6 +139,7 @@ typedef struct
 	float blast_gas;
 	float blast_gas_venting;
 	float blast_gas_rush;
+	float blast_harm;                  // how many times harder on links and pieces a blast's newton second is than a hit's
 	float blast_shielding;             // of its push, what a piece loses when another is between its middle and the blast (0: nothing shields)
 	float long_ratio;                  // a piece this many times longer than it is thick or wide is long: it can bend
 	float cut_min_length;              // meters: no piece is cut into one shorter than this

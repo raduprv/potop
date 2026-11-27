@@ -170,6 +170,7 @@ void damage_settings_default(damage_settings_t *settings)
 	settings->blast_falloff = 3.0f;
 	settings->blast_shielding = 0.8f;
 	settings->blast_inertia = 0.005f;
+	settings->blast_harm = 5.0f;
 	settings->blast_slices = 8;
 	settings->blast_gas = 0.5f;
 	settings->blast_gas_venting = 3.0f;
@@ -180,8 +181,8 @@ void damage_settings_default(damage_settings_t *settings)
 	settings->shape_gap = 0.003f;
 	settings->ball_radius = 0.2f;
 	settings->ball_density = 7800.0f;
-	settings->blast_strength = 1500.0f;
-	settings->blast_big_strength = 3000.0f;
+	settings->blast_strength = 300.0f;
+	settings->blast_big_strength = 600.0f;
 }
 
 static bool read_float(const char *value, float *result)
@@ -300,6 +301,10 @@ static bool read_settings_key(void *user, const char *section, const char *key, 
 		if (strcmp(key, "blast_slices") == 0)
 		{
 			return sscanf(value, "%d", &settings->blast_slices) == 1;
+		}
+		if (strcmp(key, "blast_harm") == 0)
+		{
+			return read_float(value, &settings->blast_harm);
 		}
 		if (strcmp(key, "blast_inertia") == 0)
 		{
@@ -2530,7 +2535,7 @@ static void push_through_links(damage_model_t *model, const b3Vec3 *pushes, cons
 			// (Its turning counts as the push that would turn it so at
 			// joint_arm)
 			link_strain(model, link, solver_x, apart, turned);
-			through = link_through(model, link, apart, turned);
+			through = (double)model->settings.blast_harm * link_through(model, link, apart, turned);
 			if (slice == slice_count)
 			{
 				hurt_link(model, i, (float)through, frame_index);
@@ -2557,7 +2562,7 @@ static void push_through_links(damage_model_t *model, const b3Vec3 *pushes, cons
 			{
 				own_push[k] = solver_load[i * 6 + k] - solver_inertia[i * 6 + k] * solver_x[i * 6 + k];
 			}
-			if (piece_bending(model, piece_index, solver_x, own_push, (double)model->settings.snap[piece->material], &worst_position) > 1.0)
+			if (piece_bending(model, piece_index, solver_x, own_push, (double)model->settings.snap[piece->material] / (double)model->settings.blast_harm, &worst_position) > 1.0)
 			{
 				request_cut(model, piece_index, (float)worst_position);
 			}
@@ -2782,7 +2787,7 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 		impulse = b3Length(blast_impulses[i]);
 		if (impulse > 0.0f)
 		{
-			hurt_piece(model, i, impulse, frame_index);
+			hurt_piece(model, i, impulse * model->settings.blast_harm, frame_index);
 		}
 	}
 

@@ -366,6 +366,20 @@ presses on everything until it finds a way out.
   easily. The same goes for the shock of a fall.
 - With that, blasts break far more, and the viewer's two strengths are
   halved (1500 and 3000).
+- Found by Radu: a blast of 1500 on the floor by the window threw the
+  whole house (1.3 t) up at 17 m/s, to 11 m; in a corner, at 7 m/s.
+  Not a fault of the solve: 1500 Ns a square meter under a roof of
+  16 square meters is that much push, and it took that much to break
+  the links, whose thresholds and hit points were set by a 260 kg ball
+  (750 Ns to break one nailed link: that alone would send the 12 kg
+  board it holds off at 60 m/s). `blast_harm` (5): a blast's newton
+  second counts that many times a hit's on links, on pieces' hit points
+  and on their bending; the viewer's strengths are a fifth of what they
+  were (300 and 600). The same blast by the window now breaks about as
+  much and sends the house up at 3 m/s. A truer cure would be links
+  whose strength against sudden pushes goes by the mass of what they
+  hold; not done.
+- At 300 and 600 the brick wall, in the open, is not touched at all.
 - The physics ground is 1 km to a side now (40 m are drawn): what was
   thrown past its edge fell for ever.
 - `blast_gas` is 0.5: at 1 a blast of 3000 on the floor left nothing of
