@@ -265,10 +265,14 @@ Known and left so:
   meets another piece or the ground first, the piece loses that part
   of its push (0.8).
 - What is already loose is hurt piece by piece, as before.
-- A blast's push on a loose piece is by its area, so thin boards left
-  at hundreds of meters a second (found by Radu: the second blast,
-  once the first had snapped them loose). `blast_speed_max` caps what a
-  blast gives a piece at its mass times that speed.
+- A blast's push on a loose piece is by its area, so a thin board
+  leaves at hundreds of meters a second (15 kg a square meter, pushed
+  with 3000 Ns a square meter: 200 m/s). That much is as it would be;
+  what was missing is the air. `air_drag`: each loose moving piece is
+  pushed back at its middle by how much of it faces the way it goes,
+  times its speed squared (0.7: real air). The board is down to some
+  tens of meters a second within a few meters, and falls broadside at
+  about 14 m/s; logs and bricks hardly feel it.
 - Seen with these numbers: 3000 inside the cabin only shakes bits off,
   6000 leaves its first course; the brick wall loses an end to 6000
   and stands; 3000 inside the house blows it apart, the same outside

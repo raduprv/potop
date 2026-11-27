@@ -22,6 +22,9 @@
 // The support pass: it stops when what is left unbalanced is this small a
 // part of the weight, or after this many rounds
 #define SUPPORT_TOLERANCE 1e-5
+// The air is not reckoned with for what moves slower than this (meters
+// a second)
+#define AIR_DRAG_SPEED_MIN 2.0f
 #define SUPPORT_ROUNDS_MAX 4000
 // A long piece's bending is looked at where its links are and at this
 // many places evenly along it; and a piece's links looked at, at most
@@ -140,7 +143,7 @@ void damage_settings_default(damage_settings_t *settings)
 	settings->blast_falloff = 3.0f;
 	settings->blast_shielding = 0.8f;
 	settings->blast_inertia = 0.005f;
-	settings->blast_speed_max = 12.0f;
+	settings->air_drag = 0.7f;
 	settings->collapse_seconds = 1.5f;
 	settings->joint_arm = 0.15f;
 	settings->shape_gap = 0.003f;
@@ -247,9 +250,9 @@ static bool read_settings_key(void *user, const char *section, const char *key, 
 		{
 			return read_float(value, &settings->blast_radius);
 		}
-		if (strcmp(key, "blast_speed_max") == 0)
+		if (strcmp(key, "air_drag") == 0)
 		{
-			return read_float(value, &settings->blast_speed_max);
+			return read_float(value, &settings->air_drag);
 		}
 		if (strcmp(key, "blast_inertia") == 0)
 		{
@@ -1904,6 +1907,53 @@ static void give_way(damage_model_t *model, int frame_index, float step_seconds)
 	}
 }
 
+static b3Transform piece_world_transform(const damage_model_t *model, int piece_index);
+static float exposed_area(const damage_piece_t *piece, b3Quat rotation, b3Vec3 direction);
+
+// The air on what is loose and moving: against each piece, at its
+// middle, by how much of it faces the way it goes and by its speed
+// squared. A thin board thrown by a blast leaves very fast and is slow
+// again a few meters on; a log or a brick hardly feels it.
+static void drag_through_air(damage_model_t *model, float step_seconds)
+{
+	int i;
+
+	if (model->settings.air_drag <= 0.0f)
+	{
+		return;
+	}
+	for (i = 0; i < model->piece_count; i++)
+	{
+		const damage_piece_t *piece = &model->pieces[i];
+		const damage_group_t *group;
+		b3Transform transform;
+		b3Vec3 velocity;
+		float speed;
+		float slowing;
+
+		if (piece->group == DAMAGE_GONE)
+		{
+			continue;
+		}
+		group = &model->groups[piece->group];
+		if (group->anchored || !b3Body_IsAwake(group->body))
+		{
+			continue;
+		}
+		transform = piece_world_transform(model, i);
+		velocity = b3Body_GetWorldPointVelocity(group->body, transform.p);
+		speed = b3Length(velocity);
+		if (speed < AIR_DRAG_SPEED_MIN)
+		{
+			continue;
+		}
+		// How much of its speed the step's drag would take, were the
+		// piece alone; taken so that it can never be more than all of it
+		slowing = model->settings.air_drag * exposed_area(piece, transform.q, b3MulSV(1.0f / speed, velocity)) * speed * step_seconds / piece->mass;
+		b3Body_ApplyLinearImpulse(group->body, b3MulSV(-piece->mass * slowing / (1.0f + slowing), velocity), transform.p, false);
+	}
+}
+
 void damage_model_before_step(damage_model_t *model)
 {
 	int i;
@@ -2074,6 +2124,7 @@ void damage_model_after_step(damage_model_t *model, int frame_index, float step_
 	make_pending_cuts(model);
 	rebuild_dirty_groups(model);
 	remove_crushed(model);
+	drag_through_air(model, step_seconds);
 }
 
 static b3Transform piece_world_transform(const damage_model_t *model, int piece_index)
@@ -2292,14 +2343,7 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 		{
 			continue;
 		}
-		// (No more than would set the piece itself going at
-		// blast_speed_max: a thin board faces a blast with much area and
-		// little mass, and would leave at hundreds of meters a second)
 		impulse = blast_on_piece(model, position, strength, i, &direction);
-		if (impulse > piece->mass * model->settings.blast_speed_max)
-		{
-			impulse = piece->mass * model->settings.blast_speed_max;
-		}
 		if (impulse > 0.0f)
 		{
 			b3Body_ApplyLinearImpulse(group->body, b3MulSV(impulse, direction), piece_world_transform(model, i).p, true);
