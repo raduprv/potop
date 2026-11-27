@@ -124,6 +124,7 @@ typedef struct
 	float blast_falloff;               // meters beyond that over which it fades to nothing
 	float long_ratio;                  // a piece this many times longer than it is thick or wide is long: it can bend
 	float cut_min_length;              // meters: no piece is cut into one shorter than this
+	float cut_clearance;               // meters: a cut is at least this far past the edge of a piece linked to the one cut
 	float collapse_seconds;            // how long a link loaded to just its limit lasts (twice the load: half as long)
 	// How stiff a link is against the pieces turning apart, as a length
 	// (meters): it resists turning as two springs this far apart would.

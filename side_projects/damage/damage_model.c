@@ -117,6 +117,7 @@ void damage_settings_default(damage_settings_t *settings)
 	settings->snap[DAMAGE_MATERIAL_GLASS] = 3000.0f;
 	settings->long_ratio = 4.0f;
 	settings->cut_min_length = 0.3f;
+	settings->cut_clearance = 0.05f;
 	set_link_defaults(&settings->links[DAMAGE_LINK_NAILS], 150.0f, 600.0f, 200000.0f, 4000.0f, 2500.0f);
 	set_link_defaults(&settings->links[DAMAGE_LINK_MORTAR], 60.0f, 200.0f, 500000.0f, 3000.0f, 900.0f);
 	set_link_defaults(&settings->links[DAMAGE_LINK_FOUNDATION], 300.0f, 1500.0f, 1000000.0f, 5000.0f, 5000.0f);
@@ -238,6 +239,10 @@ static bool read_settings_key(void *user, const char *section, const char *key, 
 		if (strcmp(key, "long_ratio") == 0)
 		{
 			return read_float(value, &settings->long_ratio);
+		}
+		if (strcmp(key, "cut_clearance") == 0)
+		{
+			return read_float(value, &settings->cut_clearance);
 		}
 		if (strcmp(key, "cut_min_length") == 0)
 		{
@@ -864,13 +869,19 @@ static bool hurt_piece(damage_model_t *model, int piece_index, float impulse, in
 // middle), when the graph is no longer being walked. The place is moved
 // in from the ends so no part is shorter than cut_min_length; a piece
 // too short for two such parts is left whole, and so is one already
-// waiting to be cut. True when the cut will be made.
+// waiting to be cut. Then it is moved off any piece linked to this one
+// (by cut_clearance past its edge, where that leaves both parts long
+// enough): a plank breaks at the edge of what holds it, not over it,
+// where its loose part would be left lying on a sliver of its support.
+// True when the cut will be made.
 static bool request_cut(damage_model_t *model, int piece_index, float position)
 {
 	const damage_piece_t *piece = &model->pieces[piece_index];
+	b3Vec3 axis;
 	float half_sizes[3];
 	float furthest;
 	int i;
+	int k;
 
 	if (piece->long_axis < 0 || model->piece_count + model->pending_cut_count >= DAMAGE_PIECES_MAX)
 	{
@@ -889,8 +900,61 @@ static bool request_cut(damage_model_t *model, int piece_index, float position)
 			return false;
 		}
 	}
+	position = position > furthest ? furthest : (position < -furthest ? -furthest : position);
+	axis = piece_axis(piece);
+	for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1]; k++)
+	{
+		const damage_link_t *link = &model->links[model->piece_links[k]];
+		const damage_piece_t *other;
+		int other_index = link->piece_a == piece_index ? link->piece_b : link->piece_a;
+		float other_half_sizes[3];
+		float other_middle;
+		float other_reach = 0.0f;
+		float before;
+		float after;
+		int axis_index;
+
+		if (link->broken || other_index < 0)
+		{
+			continue;
+		}
+		// Where along this piece the other one is, and how far it
+		// reaches either way
+		other = &model->pieces[other_index];
+		piece_half_sizes(other, other_half_sizes);
+		other_middle = b3Dot(b3Sub(other->local.p, piece->local.p), axis);
+		for (axis_index = 0; axis_index < 3; axis_index++)
+		{
+			b3Vec3 unit = { axis_index == 0 ? 1.0f : 0.0f, axis_index == 1 ? 1.0f : 0.0f, axis_index == 2 ? 1.0f : 0.0f };
+
+			other_reach += fabsf(b3Dot(b3RotateVector(other->local.q, unit), axis)) * other_half_sizes[axis_index];
+		}
+		before = other_middle - other_reach - model->settings.cut_clearance;
+		after = other_middle + other_reach + model->settings.cut_clearance;
+		if (position <= before || position >= after)
+		{
+			continue;
+		}
+		// To the nearer edge if both parts stay long enough, else to
+		// the other, else it stays
+		if (position - before > after - position)
+		{
+			float swap = before;
+
+			before = after;
+			after = swap;
+		}
+		if (before >= -furthest && before <= furthest)
+		{
+			position = before;
+		}
+		else if (after >= -furthest && after <= furthest)
+		{
+			position = after;
+		}
+	}
 	model->pending_cut_pieces[model->pending_cut_count] = piece_index;
-	model->pending_cut_positions[model->pending_cut_count] = position > furthest ? furthest : (position < -furthest ? -furthest : position);
+	model->pending_cut_positions[model->pending_cut_count] = position;
 	model->pending_cut_count++;
 	return true;
 }

@@ -175,7 +175,9 @@ as it is stiff. No rules about who rests on whom are left.
   at the hit. A hit past the last such link is a plank struck on its
   free end.
 - A cut makes two pieces out of one (no stub shorter than
-  `cut_min_length`), each link goes to the half it is on, and the group
+  `cut_min_length`; and `cut_clearance` past the edge of any piece
+  linked to it, or the loose part is left lying on a sliver of its
+  support), each link goes to the half it is on, and the group
   is remade. The cut is flat, as by a laser, as agreed.
 - The bend scene: a plank under a heavy crate with a prop in the middle
   (take the prop out and the plank breaks under the crate by itself), a
