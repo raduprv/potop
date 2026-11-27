@@ -140,6 +140,7 @@ void damage_settings_default(damage_settings_t *settings)
 	settings->blast_falloff = 3.0f;
 	settings->blast_shielding = 0.8f;
 	settings->blast_inertia = 0.005f;
+	settings->blast_speed_max = 12.0f;
 	settings->collapse_seconds = 1.5f;
 	settings->joint_arm = 0.15f;
 	settings->shape_gap = 0.003f;
@@ -245,6 +246,10 @@ static bool read_settings_key(void *user, const char *section, const char *key, 
 		if (strcmp(key, "blast_radius") == 0)
 		{
 			return read_float(value, &settings->blast_radius);
+		}
+		if (strcmp(key, "blast_speed_max") == 0)
+		{
+			return read_float(value, &settings->blast_speed_max);
 		}
 		if (strcmp(key, "blast_inertia") == 0)
 		{
@@ -2287,7 +2292,14 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 		{
 			continue;
 		}
+		// (No more than would set the piece itself going at
+		// blast_speed_max: a thin board faces a blast with much area and
+		// little mass, and would leave at hundreds of meters a second)
 		impulse = blast_on_piece(model, position, strength, i, &direction);
+		if (impulse > piece->mass * model->settings.blast_speed_max)
+		{
+			impulse = piece->mass * model->settings.blast_speed_max;
+		}
 		if (impulse > 0.0f)
 		{
 			b3Body_ApplyLinearImpulse(group->body, b3MulSV(impulse, direction), piece_world_transform(model, i).p, true);

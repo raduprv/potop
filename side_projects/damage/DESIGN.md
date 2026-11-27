@@ -265,6 +265,10 @@ Known and left so:
   meets another piece or the ground first, the piece loses that part
   of its push (0.8).
 - What is already loose is hurt piece by piece, as before.
+- A blast's push on a loose piece is by its area, so thin boards left
+  at hundreds of meters a second (found by Radu: the second blast,
+  once the first had snapped them loose). `blast_speed_max` caps what a
+  blast gives a piece at its mass times that speed.
 - Seen with these numbers: 3000 inside the cabin only shakes bits off,
   6000 leaves its first course; the brick wall loses an end to 6000
   and stands; 3000 inside the house blows it apart, the same outside
