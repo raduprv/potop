@@ -40,6 +40,10 @@ typedef struct
 	// where a blast aimed from the screen goes. False when there is
 	// nothing; NULL in a scene with nothing to hit.
 	bool (*cast_ray)(const float origin[3], const float direction[3], float distance, float hit_point[3]);
+	// Picks what the ray hits first to be looked into (the scene then
+	// draws what it knows of it with every frame, until a ray that hits
+	// nothing lets go of it). NULL in a scene with nothing to look into.
+	void (*inspect)(const float origin[3], const float direction[3], float distance);
 } damage_scene_t;
 
 int damage_scene_count(void);

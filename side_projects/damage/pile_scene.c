@@ -811,6 +811,7 @@ const damage_scene_t pile_scene =
 	.describe = pile_scene_describe,
 	.checksum = pile_scene_checksum,
 	.cast_ray = pile_scene_cast_ray,
+	.inspect = NULL,
 };
 
 const damage_scene_t sandbox_scene =
@@ -825,4 +826,5 @@ const damage_scene_t sandbox_scene =
 	.describe = pile_scene_describe,
 	.checksum = pile_scene_checksum,
 	.cast_ray = pile_scene_cast_ray,
+	.inspect = NULL,
 };

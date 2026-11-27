@@ -890,6 +890,13 @@ static void work_out_support(damage_model_t *model, int frame_index)
 	{
 		model->links[i].overload = 0.0f;
 		model->links[i].static_compression = 0.0f;
+		model->links[i].static_pull = 0.0f;
+		model->links[i].static_sideways = 0.0f;
+		model->links[i].static_moment = 0.0f;
+	}
+	for (i = 0; i < model->piece_count; i++)
+	{
+		model->pieces[i].pressed = 0.0f;
 	}
 
 	// What stands: every piece a walk over whole links reaches from one a
@@ -1102,6 +1109,9 @@ static void work_out_support(damage_model_t *model, int frame_index)
 		}
 		link->overload = overload;
 		link->static_compression = compression;
+		link->static_pull = pull;
+		link->static_sideways = sideways;
+		link->static_moment = moment;
 		if (overload > 1.0f)
 		{
 			model->overloaded_links[model->overloaded_count++] = i;
@@ -1120,6 +1130,7 @@ static void work_out_support(damage_model_t *model, int frame_index)
 	{
 		int piece_index = walk_queue[i];
 
+		model->pieces[piece_index].pressed = piece_compressions[piece_index] * 0.5f;
 		if (piece_compressions[piece_index] * 0.5f > model->settings.crush[model->pieces[piece_index].material])
 		{
 			model->pieces[piece_index].crushed = true;
@@ -1563,6 +1574,116 @@ void damage_model_draw_marks(const damage_model_t *model, soft_render_t *rendere
 			snprintf(text, sizeof(text), "%.0f NS", (double)hit->impulse);
 			soft_render_text(renderer, (int)screen_x + 6, (int)screen_y - 4, 1, LABEL_COLOR, text);
 		}
+	}
+}
+
+int damage_model_shape_piece(b3ShapeId shape)
+{
+	if (!b3Shape_IsValid(shape))
+	{
+		return -1;
+	}
+	return (int)(intptr_t)b3Shape_GetUserData(shape) - 1;
+}
+
+void damage_model_draw_inspection(const damage_model_t *model, soft_render_t *renderer, int piece_index, int text_x, int text_y, int text_scale)
+{
+	static const char *const material_names[DAMAGE_MATERIAL_COUNT] = {"WOOD", "BRICK", "GLASS"};
+	static const char *const link_names[DAMAGE_LINK_TYPE_COUNT] = {"NAILS", "MORTAR", "FOUNDATION", "GLAZING"};
+	const damage_piece_t *piece;
+	const damage_group_t *group;
+	b3Transform frame;
+	b3Vec3 center;
+	char text[160];
+	int line_height = (7 + 2) * text_scale;
+	int whole_count = 0;
+	int broken_count = 0;
+	int k;
+
+	if (piece_index < 0 || piece_index >= model->piece_count)
+	{
+		return;
+	}
+	piece = &model->pieces[piece_index];
+	if (piece->group == DAMAGE_GONE)
+	{
+		snprintf(text, sizeof(text), "PIECE %d: %s, GONE", piece_index, material_names[piece->material]);
+		soft_render_text(renderer, text_x, text_y, text_scale, LABEL_COLOR, text);
+		return;
+	}
+	group = &model->groups[piece->group];
+	frame = b3Body_GetTransform(group->body);
+	center = b3Add(frame.p, b3RotateVector(frame.q, piece->local.p));
+
+	// Its links, each as a line from its middle to the link and on to the
+	// middle of what the link holds it to (straight down for the ground)
+	renderer->marks_on_top = true;
+	renderer->line_width_pixels = 2;
+	for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1]; k++)
+	{
+		const damage_link_t *link = &model->links[model->piece_links[k]];
+		b3Vec3 point = b3Add(frame.p, b3RotateVector(frame.q, link->local_point));
+		b3Vec3 other_end;
+		uint32_t color = link->overload > 1.0f ? LINK_OVERLOADED_COLOR : (link->overload > 0.5f ? LINK_HURT_COLOR : LINK_WHOLE_COLOR);
+		int other;
+
+		if (link->broken)
+		{
+			broken_count++;
+			continue;
+		}
+		whole_count++;
+		other = link->piece_a == piece_index ? link->piece_b : link->piece_a;
+		if (other == DAMAGE_GROUND)
+		{
+			other_end = b3Sub(point, make_vector(0.0f, 0.15f, 0.0f));
+		}
+		else
+		{
+			other_end = b3Add(frame.p, b3RotateVector(frame.q, model->pieces[other].local.p));
+		}
+		soft_render_line(renderer, vector_floats(&center), vector_floats(&point), color);
+		soft_render_line(renderer, vector_floats(&point), vector_floats(&other_end), color);
+		soft_render_point(renderer, vector_floats(&point), 6, color);
+	}
+	soft_render_point(renderer, vector_floats(&center), 8, LABEL_COLOR);
+	renderer->line_width_pixels = 1;
+	renderer->marks_on_top = false;
+
+	snprintf(text, sizeof(text), "PIECE %d: %s, %.0f KG, %s (GROUP OF %d)", piece_index, material_names[piece->material], (double)piece->mass,
+		group->anchored ? "STANDS" : (group->rubble ? "RUBBLE" : "LOOSE"), group->piece_count);
+	soft_render_text(renderer, text_x, text_y, text_scale, LABEL_COLOR, text);
+	text_y += line_height;
+	snprintf(text, sizeof(text), "PRESSED %.0f N OF %.0f (%.0f%%)   LINKS: %d WHOLE, %d BROKEN", (double)piece->pressed, (double)model->settings.crush[piece->material],
+		(double)(100.0f * piece->pressed / model->settings.crush[piece->material]), whole_count, broken_count);
+	soft_render_text(renderer, text_x, text_y, text_scale, LABEL_COLOR, text);
+	text_y += line_height;
+
+	// (What a link bears is known only for what stands: for a loose piece
+	// the last pass left zeros)
+	for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1]; k++)
+	{
+		const damage_link_t *link = &model->links[model->piece_links[k]];
+		int other = link->piece_a == piece_index ? link->piece_b : link->piece_a;
+		char other_name[16];
+
+		if (link->broken)
+		{
+			continue;
+		}
+		if (other == DAMAGE_GROUND)
+		{
+			snprintf(other_name, sizeof(other_name), "GROUND");
+		}
+		else
+		{
+			snprintf(other_name, sizeof(other_name), "%d", other);
+		}
+		snprintf(text, sizeof(text), "%s TO %s: PRESS %.0f  PULL %.0f  SIDE %.0f N  TURN %.0f NM  %.0f%% OF LIMIT  HP %.0f/%.0f",
+			link_names[link->type], other_name, (double)link->static_compression, (double)link->static_pull, (double)link->static_sideways,
+			(double)link->static_moment, (double)(100.0f * link->overload), (double)link->hit_points_left, (double)model->settings.links[link->type].hit_points);
+		soft_render_text(renderer, text_x, text_y, text_scale, link->overload > 1.0f ? LINK_OVERLOADED_COLOR : LABEL_COLOR, text);
+		text_y += line_height;
 	}
 }
 

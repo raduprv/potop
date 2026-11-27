@@ -246,4 +246,5 @@ const damage_scene_t test_scene =
 	.describe = test_scene_describe,
 	.checksum = test_scene_checksum,
 	.cast_ray = NULL,
+	.inspect = NULL,
 };

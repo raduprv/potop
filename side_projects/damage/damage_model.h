@@ -126,6 +126,7 @@ typedef struct
 	uint32_t color;
 	float mass;                        // kilograms
 	bool crushed;                      // bore more than its material does: its links broke and it is gone
+	float pressed;                     // newtons through it, from the last support pass (against its material's crush)
 } damage_piece_t;
 
 typedef struct
@@ -142,6 +143,11 @@ typedef struct
 	// 1: giving way), and how hard it is pressed, in newtons
 	float overload;
 	float static_compression;
+	// The rest of what it bears, for looking at: pulled apart and
+	// sideways (newtons), turning (newton meters)
+	float static_pull;
+	float static_sideways;
+	float static_moment;
 } damage_link_t;
 
 typedef struct
@@ -256,6 +262,16 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 // their impulses, shown through the solids
 void damage_model_draw_solids(const damage_model_t *model, soft_render_t *renderer, uint32_t first_object_id);
 void damage_model_draw_marks(const damage_model_t *model, soft_render_t *renderer, int frame_index, bool draw_debug);
+
+// The piece a shape belongs to (a ray cast's hit, say), -1 for a shape
+// that is no piece
+int damage_model_shape_piece(b3ShapeId shape);
+
+// One piece looked into: its links drawn through the solids as lines to
+// what they hold it to (green lightly loaded, yellow over half its
+// limit, orange overloaded), and written out from the given corner what
+// it is and what each of its links bears
+void damage_model_draw_inspection(const damage_model_t *model, soft_render_t *renderer, int piece_index, int text_x, int text_y, int text_scale);
 
 // A line about the model's state
 void damage_model_describe(const damage_model_t *model, char *text, int text_size);

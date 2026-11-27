@@ -65,6 +65,9 @@ static damage_model_t model;
 static bool settings_missing_was_said;
 // Which scene's things build_world puts up
 static void (*build_structures)(void);
+// The piece being looked into (-1: none). It is kept through going back
+// in time: the same piece can be watched over a replay.
+static int inspected_piece = -1;
 
 static b3Vec3 make_vector(float x, float y, float z)
 {
@@ -525,6 +528,10 @@ static void step_world(void)
 
 static bool cabin_scene_open(void)
 {
+	if (build_structures != build_cabin_structures)
+	{
+		inspected_piece = -1;
+	}
 	build_structures = build_cabin_structures;
 	build_world();
 	return true;
@@ -532,6 +539,10 @@ static bool cabin_scene_open(void)
 
 static bool support_scene_open(void)
 {
+	if (build_structures != build_support_structures)
+	{
+		inspected_piece = -1;
+	}
 	build_structures = build_support_structures;
 	build_world();
 	return true;
@@ -601,6 +612,10 @@ static void cabin_scene_draw(soft_render_t *renderer, const soft_render_camera_t
 		soft_render_outlines(renderer);
 	}
 	damage_model_draw_marks(&model, renderer, cabin.frame_index, draw_debug);
+	if (inspected_piece >= 0)
+	{
+		damage_model_draw_inspection(&model, renderer, inspected_piece, 6, 74, 2);
+	}
 
 	for (i = first_blast; i < cabin.blast_count; i++)
 	{
@@ -645,6 +660,14 @@ static bool cabin_scene_cast_ray(const float origin[3], const float direction[3]
 	return true;
 }
 
+static void cabin_scene_inspect(const float origin[3], const float direction[3], float distance)
+{
+	b3RayResult result = b3World_CastRayClosest(cabin.world, make_vector(origin[0], origin[1], origin[2]),
+		make_vector(direction[0] * distance, direction[1] * distance, direction[2] * distance), b3DefaultQueryFilter());
+
+	inspected_piece = result.hit ? damage_model_shape_piece(result.shapeId) : -1;
+}
+
 const damage_scene_t cabin_scene =
 {
 	.name = "cabin",
@@ -657,6 +680,7 @@ const damage_scene_t cabin_scene =
 	.describe = cabin_scene_describe,
 	.checksum = cabin_scene_checksum,
 	.cast_ray = cabin_scene_cast_ray,
+	.inspect = cabin_scene_inspect,
 };
 
 const damage_scene_t support_scene =
@@ -671,4 +695,5 @@ const damage_scene_t support_scene =
 	.describe = cabin_scene_describe,
 	.checksum = cabin_scene_checksum,
 	.cast_ray = cabin_scene_cast_ray,
+	.inspect = cabin_scene_inspect,
 };

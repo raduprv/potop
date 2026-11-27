@@ -10,6 +10,8 @@
 //                    the other way round, the old school way; I turns that)
 //   Tab              let the mouse go, take it back (a click takes it back too)
 //   left mouse       throw a steel ball where the cross points (Shift: twice as fast)
+//   right mouse      look into the piece the cross points at: what it is,
+//                    what each of its links bears (at nothing: let go of it)
 //   X                a blast where the cross points (Shift: a big one)
 //   Backspace        take the last ball or blast back
 //   Delete           take them all back
@@ -260,7 +262,7 @@ static void draw_hud(const damage_scene_t *scene, soft_render_t *renderer, int f
 		soft_render_text(renderer, 6, renderer->height - 9 * 18 - 6, 2, HUD_COLOR,
 			"W A S D MOVE, Q E DOWN UP, SHIFT FASTER\n"
 			"MOUSE: LOOK ROUND (I: UP AND DOWN THE OTHER WAY)   TAB: LET THE MOUSE GO\n"
-			"LEFT MOUSE: THROW A BALL   X: A BLAST (SHIFT: STRONGER)\n"
+			"LEFT MOUSE: THROW A BALL   X: A BLAST (SHIFT: STRONGER)   RIGHT MOUSE: LOOK INTO A PIECE\n"
 			"BACKSPACE: TAKE THE LAST ONE BACK   DELETE: ALL\n"
 			"SPACE: PAUSE   RIGHT LEFT: A FRAME ON, BACK (SHIFT: TEN)\n"
 			"[ ]: SLOWER, FASTER   R: FRAME 0   1 TO 5: SCENE\n"
@@ -411,6 +413,16 @@ int main(int argument_count, char **arguments)
 					view_camera_to_render_camera(&view_camera, &camera);
 					throw_ball(&camera, frame_index, (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
 				}
+			}
+			else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_RIGHT && scene->inspect != NULL)
+			{
+				float forward[3];
+
+				view_camera_to_render_camera(&view_camera, &camera);
+				forward[0] = camera.target[0] - camera.eye[0];
+				forward[1] = camera.target[1] - camera.eye[1];
+				forward[2] = camera.target[2] - camera.eye[2];
+				scene->inspect(camera.eye, forward, BLAST_REACH_METERS);
 			}
 			else if (event.type == SDL_EVENT_MOUSE_MOTION && looking)
 			{

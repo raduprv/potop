@@ -4,14 +4,16 @@
 //
 //   damage_shot --out shot.png [--scene NAME] [--frame N] [--size WxH]
 //               [--camera ex,ey,ez,tx,ty,tz] [--no-outlines] [--debug]
-//               [--events FILE.txt]
+//               [--events FILE.txt] [--inspect ex,ey,ez,tx,ty,tz]
 //   damage_shot --out sheet.png --sheet FIRST,STEP,COUNT [--columns N] ...
 //   damage_shot --list
 //
 // --sheet puts COUNT frames (FIRST, FIRST + STEP, ...) on one picture,
 // each of the --size given and with its frame's number on it. --debug
 // adds the scene's debug marks (contacts and their impulses). --events
-// replays the balls and blasts damage_view saved (P) with a picture. The
+// replays the balls and blasts damage_view saved (P) with a picture.
+// --inspect looks into the piece a ray from the first point towards the
+// second hits (what damage_view does at a right click). The
 // checksum printed is the scene's at the last frame drawn: the same
 // number from damage_view (P) means the same world.
 
@@ -56,7 +58,7 @@ static int print_usage(void)
 	fprintf(stderr,
 		"usage: damage_shot --out FILE.png [--scene NAME] [--frame N] [--size WxH]\n"
 		"                   [--camera ex,ey,ez,tx,ty,tz] [--no-outlines] [--debug]\n"
-		"                   [--events FILE.txt]\n"
+		"                   [--events FILE.txt] [--inspect ex,ey,ez,tx,ty,tz]\n"
 		"                   [--sheet FIRST,STEP,COUNT] [--columns N]\n"
 		"       damage_shot --list\n"
 		"scenes:\n");
@@ -79,8 +81,10 @@ int main(int argument_count, char **arguments)
 	bool draw_outlines = true;
 	bool draw_debug = false;
 	bool camera_given = false;
+	bool inspect_given = false;
 	soft_render_camera_t camera;
 	soft_render_camera_t given_camera;
+	soft_render_camera_t inspect_ray;
 	soft_render_t renderer;
 	clock_t start_clock;
 	int i;
@@ -136,6 +140,10 @@ int main(int argument_count, char **arguments)
 		else if (strcmp(argument, "--events") == 0 && damage_events_load(value))
 		{
 		}
+		else if (strcmp(argument, "--inspect") == 0 && command_line_read_camera(value, &inspect_ray))
+		{
+			inspect_given = true;
+		}
 		else if (strcmp(argument, "--columns") == 0 && sscanf(value, "%d", &column_count) == 1 && column_count >= 1)
 		{
 		}
@@ -167,6 +175,20 @@ int main(int argument_count, char **arguments)
 	{
 		fprintf(stderr, "damage_shot: the scene '%s' cannot be made\n", scene->name);
 		return 1;
+	}
+
+	if (inspect_given && scene->inspect != NULL)
+	{
+		float direction[3];
+
+		for (i = 0; i < 3; i++)
+		{
+			direction[i] = inspect_ray.target[i] - inspect_ray.eye[i];
+		}
+		// (From the first point as far as the second; the ray is cast in
+		// the scene as it starts, and what it picks is then watched
+		// through all the frames drawn)
+		scene->inspect(inspect_ray.eye, direction, 1.0f);
 	}
 
 	start_clock = clock();
