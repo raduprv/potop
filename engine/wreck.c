@@ -1,12 +1,11 @@
-// The damage model: see damage_model.h
+// The wreck model: see wreck.h
 
-#include "damage_model.h"
+#include "wreck.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 
-#include "damage_ini.h"
 
 #define PI 3.14159265358979f
 // A log is a prism of this many flat sides, lying on a flat one (as in
@@ -48,59 +47,48 @@
 #define BEND_LOADS_MAX 48
 #define RESTORED_BODIES_MAX 256
 
-#define BROKEN_SHOWN_FRAMES 90
-#define HIT_SHOWN_FRAMES 30
-#define ASLEEP_COLOR 0x707070
-#define PROJECTILE_COLOR 0x505868
-#define LINK_WHOLE_COLOR 0x30E040
-#define LINK_HURT_COLOR 0xFFE040
-#define LINK_BROKEN_COLOR 0xFF3020
-#define LINK_OVERLOADED_COLOR 0xFF8000
-#define CRUSHED_COLOR 0x303030
-#define HIT_COLOR 0xFF2020
-#define LABEL_COLOR 0xFFFFFF
 
 // Scratch for walking the graph (one walk at a time: nothing here is
 // used from two threads)
-static int walk_queue[DAMAGE_PIECES_MAX];
-static float walk_amounts[DAMAGE_PIECES_MAX];
-static int walk_piece_stamps[DAMAGE_PIECES_MAX];
-static int walk_link_stamps[DAMAGE_LINKS_MAX];
+static int walk_queue[WRECK_PIECES_MAX];
+static float walk_amounts[WRECK_PIECES_MAX];
+static int walk_piece_stamps[WRECK_PIECES_MAX];
+static int walk_link_stamps[WRECK_LINKS_MAX];
 static int walk_stamp;
-static int group_members[DAMAGE_PIECES_MAX];
-static int group_parts[DAMAGE_PIECES_MAX];
+static int group_members[WRECK_PIECES_MAX];
+static int group_parts[WRECK_PIECES_MAX];
 // The support pass's unknowns: six a standing piece (how far it moved
 // along x, y, z, how far it turned about them), -1 for one that does not
 // stand; and the vectors of its solver
-static int support_unknowns[DAMAGE_PIECES_MAX];
-static double solver_x[DAMAGE_PIECES_MAX * 6];
-static double solver_load[DAMAGE_PIECES_MAX * 6];
-static double solver_residual[DAMAGE_PIECES_MAX * 6];
-static double solver_scaled[DAMAGE_PIECES_MAX * 6];
-static double solver_direction[DAMAGE_PIECES_MAX * 6];
-static double solver_product[DAMAGE_PIECES_MAX * 6];
-static double solver_diagonal[DAMAGE_PIECES_MAX * 6];
-static float piece_compressions[DAMAGE_PIECES_MAX];
-static b3Vec3 blast_impulses[DAMAGE_PIECES_MAX];
-static bool blast_was_standing[DAMAGE_PIECES_MAX];
-static float blast_shares[DAMAGE_PIECES_MAX];
-static b3Vec3 gas_impulses[DAMAGE_PIECES_MAX];
-static b3Vec3 gas_turnings[DAMAGE_PIECES_MAX];
-static b3Vec3 blast_turnings[DAMAGE_PIECES_MAX];
-static float gas_factors[DAMAGE_PIECES_MAX];
-static int gas_island_sizes[DAMAGE_PIECES_MAX];
+static int support_unknowns[WRECK_PIECES_MAX];
+static double solver_x[WRECK_PIECES_MAX * 6];
+static double solver_load[WRECK_PIECES_MAX * 6];
+static double solver_residual[WRECK_PIECES_MAX * 6];
+static double solver_scaled[WRECK_PIECES_MAX * 6];
+static double solver_direction[WRECK_PIECES_MAX * 6];
+static double solver_product[WRECK_PIECES_MAX * 6];
+static double solver_diagonal[WRECK_PIECES_MAX * 6];
+static float piece_compressions[WRECK_PIECES_MAX];
+static b3Vec3 blast_impulses[WRECK_PIECES_MAX];
+static bool blast_was_standing[WRECK_PIECES_MAX];
+static float blast_shares[WRECK_PIECES_MAX];
+static b3Vec3 gas_impulses[WRECK_PIECES_MAX];
+static b3Vec3 gas_turnings[WRECK_PIECES_MAX];
+static b3Vec3 blast_turnings[WRECK_PIECES_MAX];
+static float gas_factors[WRECK_PIECES_MAX];
+static int gas_island_sizes[WRECK_PIECES_MAX];
 // The rays that look for a blast's way out: which way each goes, and the
 // standing piece it ends on (GAS_RAY_OUT: it got out; GAS_RAY_GROUND)
 static b3Vec3 gas_ray_directions[GAS_RAYS];
 static int gas_ray_pieces[GAS_RAYS];
 // The loose groups that hit something in the step being worked on, and
 // the pieces of theirs that did the hitting
-static bool shock_groups[DAMAGE_PIECES_MAX];
-static bool shock_pieces[DAMAGE_PIECES_MAX];
+static bool shock_groups[WRECK_PIECES_MAX];
+static bool shock_pieces[WRECK_PIECES_MAX];
 // How stiffly each unknown is held where it is by nothing but its
 // piece's own mass: nothing when weights are solved for (they have all
 // the time in the world), something when a blast is
-static double solver_inertia[DAMAGE_PIECES_MAX * 6];
+static double solver_inertia[WRECK_PIECES_MAX * 6];
 
 static b3Vec3 make_vector(float x, float y, float z)
 {
@@ -109,20 +97,10 @@ static b3Vec3 make_vector(float x, float y, float z)
 	return vector;
 }
 
-static const float *vector_floats(const b3Vec3 *vector)
-{
-	return (const float *)vector;
-}
-
-static const float *rotation_floats(const b3Quat *rotation)
-{
-	return (const float *)rotation;
-}
-
 // ---------------------------------------------------------------------
 // Settings
 
-static void set_link_defaults(damage_link_settings_t *link, float compression, float pull, float cantilever, float give)
+static void set_link_defaults(wreck_link_settings_t *link, float compression, float pull, float cantilever, float give)
 {
 	link->compression = compression;
 	link->pull = pull;
@@ -132,38 +110,38 @@ static void set_link_defaults(damage_link_settings_t *link, float compression, f
 	link->grip = 0.0f;
 }
 
-void damage_settings_default(damage_settings_t *settings)
+void wreck_settings_default(wreck_settings_t *settings)
 {
 	memset(settings, 0, sizeof(*settings));
-	settings->densities[DAMAGE_MATERIAL_WOOD] = 600.0f;
-	settings->densities[DAMAGE_MATERIAL_BRICK] = 1800.0f;
-	settings->densities[DAMAGE_MATERIAL_GLASS] = 2500.0f;
-	settings->crush[DAMAGE_MATERIAL_WOOD] = 300000.0f;
-	settings->crush[DAMAGE_MATERIAL_BRICK] = 500000.0f;
-	settings->crush[DAMAGE_MATERIAL_GLASS] = 9000.0f;
-	settings->piece_threshold[DAMAGE_MATERIAL_WOOD] = 6000.0f;
-	settings->piece_hit_points[DAMAGE_MATERIAL_WOOD] = 12000.0f;
-	settings->bend[DAMAGE_MATERIAL_WOOD] = 3000000.0f;
-	settings->snap[DAMAGE_MATERIAL_WOOD] = 150000.0f;
-	settings->piece_threshold[DAMAGE_MATERIAL_BRICK] = 5000.0f;
-	settings->piece_hit_points[DAMAGE_MATERIAL_BRICK] = 6000.0f;
-	settings->bend[DAMAGE_MATERIAL_BRICK] = 200000.0f;
-	settings->snap[DAMAGE_MATERIAL_BRICK] = 60000.0f;
-	settings->piece_threshold[DAMAGE_MATERIAL_GLASS] = 100.0f;
-	settings->piece_hit_points[DAMAGE_MATERIAL_GLASS] = 300.0f;
-	settings->bend[DAMAGE_MATERIAL_GLASS] = 20000.0f;
-	settings->snap[DAMAGE_MATERIAL_GLASS] = 3000.0f;
+	settings->densities[WRECK_MATERIAL_WOOD] = 600.0f;
+	settings->densities[WRECK_MATERIAL_BRICK] = 1800.0f;
+	settings->densities[WRECK_MATERIAL_GLASS] = 2500.0f;
+	settings->crush[WRECK_MATERIAL_WOOD] = 300000.0f;
+	settings->crush[WRECK_MATERIAL_BRICK] = 500000.0f;
+	settings->crush[WRECK_MATERIAL_GLASS] = 9000.0f;
+	settings->piece_threshold[WRECK_MATERIAL_WOOD] = 6000.0f;
+	settings->piece_hit_points[WRECK_MATERIAL_WOOD] = 12000.0f;
+	settings->bend[WRECK_MATERIAL_WOOD] = 3000000.0f;
+	settings->snap[WRECK_MATERIAL_WOOD] = 150000.0f;
+	settings->piece_threshold[WRECK_MATERIAL_BRICK] = 5000.0f;
+	settings->piece_hit_points[WRECK_MATERIAL_BRICK] = 6000.0f;
+	settings->bend[WRECK_MATERIAL_BRICK] = 200000.0f;
+	settings->snap[WRECK_MATERIAL_BRICK] = 60000.0f;
+	settings->piece_threshold[WRECK_MATERIAL_GLASS] = 100.0f;
+	settings->piece_hit_points[WRECK_MATERIAL_GLASS] = 300.0f;
+	settings->bend[WRECK_MATERIAL_GLASS] = 20000.0f;
+	settings->snap[WRECK_MATERIAL_GLASS] = 3000.0f;
 	settings->long_ratio = 4.0f;
 	settings->cut_min_length = 0.3f;
 	settings->cut_clearance = 0.05f;
-	set_link_defaults(&settings->links[DAMAGE_LINK_NAILS], 200000.0f, 4000.0f, 2500.0f, 0.02f);
-	settings->links[DAMAGE_LINK_NAILS].pull = 1000.0f;
-	set_link_defaults(&settings->links[DAMAGE_LINK_MORTAR], 500000.0f, 3000.0f, 900.0f, 0.002f);
-	set_link_defaults(&settings->links[DAMAGE_LINK_FOUNDATION], 1000000.0f, 5000.0f, 5000.0f, 0.01f);
-	set_link_defaults(&settings->links[DAMAGE_LINK_GLAZING], 100000.0f, 500.0f, 200.0f, 0.002f);
-	set_link_defaults(&settings->links[DAMAGE_LINK_NOTCH], 200000.0f, 300.0f, 300.0f, 0.05f);
-	settings->links[DAMAGE_LINK_NOTCH].slide = 2500.0f;
-	settings->links[DAMAGE_LINK_NOTCH].grip = 0.6f;
+	set_link_defaults(&settings->links[WRECK_LINK_NAILS], 200000.0f, 4000.0f, 2500.0f, 0.02f);
+	settings->links[WRECK_LINK_NAILS].pull = 1000.0f;
+	set_link_defaults(&settings->links[WRECK_LINK_MORTAR], 500000.0f, 3000.0f, 900.0f, 0.002f);
+	set_link_defaults(&settings->links[WRECK_LINK_FOUNDATION], 1000000.0f, 5000.0f, 5000.0f, 0.01f);
+	set_link_defaults(&settings->links[WRECK_LINK_GLAZING], 100000.0f, 500.0f, 200.0f, 0.002f);
+	set_link_defaults(&settings->links[WRECK_LINK_NOTCH], 200000.0f, 300.0f, 300.0f, 0.05f);
+	settings->links[WRECK_LINK_NOTCH].slide = 2500.0f;
+	settings->links[WRECK_LINK_NOTCH].grip = 0.6f;
 	settings->link_elastic = 0.1f;
 	settings->hop_falloff = 0.5f;
 	settings->hit_speed = 1.0f;
@@ -193,7 +171,7 @@ static bool read_float(const char *value, float *result)
 	return sscanf(value, "%f", result) == 1;
 }
 
-static bool read_link_key(damage_link_settings_t *link, const char *key, const char *value)
+static bool read_link_key(wreck_link_settings_t *link, const char *key, const char *value)
 {
 	if (strcmp(key, "give") == 0)
 	{
@@ -222,7 +200,7 @@ static bool read_link_key(damage_link_settings_t *link, const char *key, const c
 	return false;
 }
 
-static bool read_material_key(damage_settings_t *settings, damage_material_t material, const char *key, const char *value)
+static bool read_material_key(wreck_settings_t *settings, wreck_material_t material, const char *key, const char *value)
 {
 	if (strcmp(key, "density") == 0)
 	{
@@ -251,9 +229,9 @@ static bool read_material_key(damage_settings_t *settings, damage_material_t mat
 	return false;
 }
 
-static bool read_settings_key(void *user, const char *section, const char *key, const char *value)
+bool wreck_settings_set(void *user, const char *section, const char *key, const char *value)
 {
-	damage_settings_t *settings = user;
+	wreck_settings_t *settings = user;
 
 	if (strcmp(section, "model") == 0)
 	{
@@ -369,48 +347,43 @@ static bool read_settings_key(void *user, const char *section, const char *key, 
 	}
 	if (strcmp(section, "wood") == 0)
 	{
-		return read_material_key(settings, DAMAGE_MATERIAL_WOOD, key, value);
+		return read_material_key(settings, WRECK_MATERIAL_WOOD, key, value);
 	}
 	if (strcmp(section, "brick") == 0)
 	{
-		return read_material_key(settings, DAMAGE_MATERIAL_BRICK, key, value);
+		return read_material_key(settings, WRECK_MATERIAL_BRICK, key, value);
 	}
 	if (strcmp(section, "glass") == 0)
 	{
-		return read_material_key(settings, DAMAGE_MATERIAL_GLASS, key, value);
+		return read_material_key(settings, WRECK_MATERIAL_GLASS, key, value);
 	}
 	if (strcmp(section, "nails") == 0)
 	{
-		return read_link_key(&settings->links[DAMAGE_LINK_NAILS], key, value);
+		return read_link_key(&settings->links[WRECK_LINK_NAILS], key, value);
 	}
 	if (strcmp(section, "mortar") == 0)
 	{
-		return read_link_key(&settings->links[DAMAGE_LINK_MORTAR], key, value);
+		return read_link_key(&settings->links[WRECK_LINK_MORTAR], key, value);
 	}
 	if (strcmp(section, "foundation") == 0)
 	{
-		return read_link_key(&settings->links[DAMAGE_LINK_FOUNDATION], key, value);
+		return read_link_key(&settings->links[WRECK_LINK_FOUNDATION], key, value);
 	}
 	if (strcmp(section, "glazing") == 0)
 	{
-		return read_link_key(&settings->links[DAMAGE_LINK_GLAZING], key, value);
+		return read_link_key(&settings->links[WRECK_LINK_GLAZING], key, value);
 	}
 	if (strcmp(section, "notch") == 0)
 	{
-		return read_link_key(&settings->links[DAMAGE_LINK_NOTCH], key, value);
+		return read_link_key(&settings->links[WRECK_LINK_NOTCH], key, value);
 	}
 	return false;
-}
-
-bool damage_settings_load(damage_settings_t *settings, const char *path)
-{
-	return damage_ini_read(path, read_settings_key, settings);
 }
 
 // ---------------------------------------------------------------------
 // Building
 
-void damage_model_create(damage_model_t *model, b3WorldId world, const damage_settings_t *settings)
+void wreck_model_create(wreck_model_t *model, b3WorldId world, const wreck_settings_t *settings)
 {
 	memset(model, 0, sizeof(*model));
 	model->world = world;
@@ -419,9 +392,9 @@ void damage_model_create(damage_model_t *model, b3WorldId world, const damage_se
 
 // A piece's half sizes along its own x, y and z (a log is as thick and
 // as wide as its radius)
-static void piece_half_sizes(const damage_piece_t *piece, float half_sizes[3])
+static void piece_half_sizes(const wreck_piece_t *piece, float half_sizes[3])
 {
-	if (piece->shape == DAMAGE_PIECE_BOX)
+	if (piece->shape == WRECK_PIECE_BOX)
 	{
 		half_sizes[0] = piece->half_extents.x;
 		half_sizes[1] = piece->half_extents.y;
@@ -437,7 +410,7 @@ static void piece_half_sizes(const damage_piece_t *piece, float half_sizes[3])
 
 // What follows from a piece's sizes: its mass, and whether (and along
 // which of its axes) it is long. Again after it is cut.
-static void measure_piece(const damage_model_t *model, damage_piece_t *piece)
+static void measure_piece(const wreck_model_t *model, wreck_piece_t *piece)
 {
 	float half_sizes[3];
 	int longest = 0;
@@ -445,7 +418,7 @@ static void measure_piece(const damage_model_t *model, damage_piece_t *piece)
 	int k;
 
 	piece_half_sizes(piece, half_sizes);
-	if (piece->shape == DAMAGE_PIECE_BOX)
+	if (piece->shape == WRECK_PIECE_BOX)
 	{
 		piece->mass = 8.0f * half_sizes[0] * half_sizes[1] * half_sizes[2] * model->settings.densities[piece->material];
 	}
@@ -477,7 +450,7 @@ static void measure_piece(const damage_model_t *model, damage_piece_t *piece)
 // a direction (in the building's frame; only its part across the piece
 // counts): how deep the piece is that way, squared, times how wide. A
 // board bears far more pushed on its edge than on its face.
-static float piece_section(const damage_piece_t *piece, b3Vec3 direction)
+static float piece_section(const wreck_piece_t *piece, b3Vec3 direction)
 {
 	float half_sizes[3];
 	float inverse_squared = 0.0f;
@@ -522,18 +495,18 @@ static float piece_section(const damage_piece_t *piece, b3Vec3 direction)
 }
 
 // A long piece's direction in the building's frame
-static b3Vec3 piece_axis(const damage_piece_t *piece)
+static b3Vec3 piece_axis(const wreck_piece_t *piece)
 {
 	b3Vec3 own = make_vector(piece->long_axis == 0 ? 1.0f : 0.0f, piece->long_axis == 1 ? 1.0f : 0.0f, piece->long_axis == 2 ? 1.0f : 0.0f);
 
 	return b3RotateVector(piece->local.q, own);
 }
 
-static int add_piece(damage_model_t *model, damage_piece_shape_t shape, b3Vec3 position, b3Quat rotation, damage_material_t material, uint32_t color)
+static int add_piece(wreck_model_t *model, wreck_piece_shape_t shape, b3Vec3 position, b3Quat rotation, wreck_material_t material, uint32_t color)
 {
-	damage_piece_t *piece;
+	wreck_piece_t *piece;
 
-	if (model->finished || model->piece_count >= DAMAGE_PIECES_MAX)
+	if (model->finished || model->piece_count >= WRECK_PIECES_MAX)
 	{
 		return -1;
 	}
@@ -550,9 +523,9 @@ static int add_piece(damage_model_t *model, damage_piece_shape_t shape, b3Vec3 p
 	return model->piece_count++;
 }
 
-int damage_model_add_box(damage_model_t *model, b3Vec3 position, b3Quat rotation, b3Vec3 half_extents, damage_material_t material, uint32_t color)
+int wreck_model_add_box(wreck_model_t *model, b3Vec3 position, b3Quat rotation, b3Vec3 half_extents, wreck_material_t material, uint32_t color)
 {
-	int piece_index = add_piece(model, DAMAGE_PIECE_BOX, position, rotation, material, color);
+	int piece_index = add_piece(model, WRECK_PIECE_BOX, position, rotation, material, color);
 
 	if (piece_index >= 0)
 	{
@@ -562,9 +535,9 @@ int damage_model_add_box(damage_model_t *model, b3Vec3 position, b3Quat rotation
 	return piece_index;
 }
 
-int damage_model_add_log(damage_model_t *model, b3Vec3 position, b3Quat rotation, float radius, float half_length, damage_material_t material, uint32_t color)
+int wreck_model_add_log(wreck_model_t *model, b3Vec3 position, b3Quat rotation, float radius, float half_length, wreck_material_t material, uint32_t color)
 {
-	int piece_index = add_piece(model, DAMAGE_PIECE_LOG, position, rotation, material, color);
+	int piece_index = add_piece(model, WRECK_PIECE_LOG, position, rotation, material, color);
 
 	if (piece_index >= 0)
 	{
@@ -576,14 +549,14 @@ int damage_model_add_log(damage_model_t *model, b3Vec3 position, b3Quat rotation
 }
 
 // Which way a link's joint faces, from piece_b towards piece_a (see
-// damage_model.h)
-static b3Vec3 link_normal(const damage_model_t *model, int piece_a, int piece_b, b3Vec3 point)
+// wreck.h)
+static b3Vec3 link_normal(const wreck_model_t *model, int piece_a, int piece_b, b3Vec3 point)
 {
 	b3Vec3 from_point = b3Sub(model->pieces[piece_a].local.p, point);
 	b3Vec3 level;
 	float length;
 
-	if (piece_b == DAMAGE_GROUND)
+	if (piece_b == WRECK_GROUND)
 	{
 		return make_vector(0.0f, 1.0f, 0.0f);
 	}
@@ -605,12 +578,12 @@ static b3Vec3 link_normal(const damage_model_t *model, int piece_a, int piece_b,
 	return b3MulSV(1.0f / length, level);
 }
 
-int damage_model_add_link(damage_model_t *model, int piece_a, int piece_b, b3Vec3 point, damage_link_type_t type)
+int wreck_model_add_link(wreck_model_t *model, int piece_a, int piece_b, b3Vec3 point, wreck_link_type_t type)
 {
-	damage_link_t *link;
+	wreck_link_t *link;
 
-	if (model->finished || model->link_count >= DAMAGE_LINKS_MAX || piece_a < 0 || piece_a >= model->piece_count
-		|| piece_b >= model->piece_count || (piece_b < 0 && piece_b != DAMAGE_GROUND) || piece_a == piece_b)
+	if (model->finished || model->link_count >= WRECK_LINKS_MAX || piece_a < 0 || piece_a >= model->piece_count
+		|| piece_b >= model->piece_count || (piece_b < 0 && piece_b != WRECK_GROUND) || piece_a == piece_b)
 	{
 		return -1;
 	}
@@ -652,9 +625,9 @@ static b3HullData *create_log_hull(float radius, float half_length)
 // touch in the building have no play at all between them, and one that
 // comes loose among others still standing would be held like a drawer
 // gone askew, whatever pushes it.
-static void add_piece_shape(const damage_model_t *model, b3BodyId body, int piece_index)
+static void add_piece_shape(const wreck_model_t *model, b3BodyId body, int piece_index)
 {
-	const damage_piece_t *piece = &model->pieces[piece_index];
+	const wreck_piece_t *piece = &model->pieces[piece_index];
 	b3ShapeDef definition = b3DefaultShapeDef();
 	float gap = model->settings.shape_gap;
 
@@ -662,7 +635,7 @@ static void add_piece_shape(const damage_model_t *model, b3BodyId body, int piec
 	definition.baseMaterial.friction = FRICTION;
 	definition.enableHitEvents = true;
 	definition.userData = (void *)(intptr_t)(piece_index + 1);
-	if (piece->shape == DAMAGE_PIECE_BOX)
+	if (piece->shape == WRECK_PIECE_BOX)
 	{
 		b3BoxHull hull = b3MakeBoxHull(piece->half_extents.x - gap, piece->half_extents.y - gap, piece->half_extents.z - gap);
 
@@ -682,9 +655,9 @@ static void add_piece_shape(const damage_model_t *model, b3BodyId body, int piec
 
 // The body of a group: every piece of it a shape, the body where the
 // building's frame is. Its user data is the group's number plus one.
-static void create_group_body(damage_model_t *model, int group_index, b3Transform frame)
+static void create_group_body(wreck_model_t *model, int group_index, b3Transform frame)
 {
-	damage_group_t *group = &model->groups[group_index];
+	wreck_group_t *group = &model->groups[group_index];
 	b3BodyDef definition = b3DefaultBodyDef();
 	int i;
 
@@ -703,11 +676,11 @@ static void create_group_body(damage_model_t *model, int group_index, b3Transfor
 }
 
 // The lowest free group (the same choice every run)
-static int allocate_group(damage_model_t *model)
+static int allocate_group(wreck_model_t *model)
 {
 	int i;
 
-	for (i = 0; i < DAMAGE_PIECES_MAX; i++)
+	for (i = 0; i < WRECK_PIECES_MAX; i++)
 	{
 		if (!model->groups[i].used)
 		{
@@ -722,9 +695,9 @@ static int allocate_group(damage_model_t *model)
 // Gives the group to every unlabeled piece a walk over whole links
 // reaches from one, and fills in the group's count, whether a whole link
 // holds it to the ground, and whether it is rubble
-static void label_island(damage_model_t *model, int first_piece, int group_index)
+static void label_island(wreck_model_t *model, int first_piece, int group_index)
 {
-	damage_group_t *group = &model->groups[group_index];
+	wreck_group_t *group = &model->groups[group_index];
 	int queue_start = 0;
 	int queue_end = 0;
 	int k;
@@ -738,14 +711,14 @@ static void label_island(damage_model_t *model, int first_piece, int group_index
 		group->piece_count++;
 		for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1]; k++)
 		{
-			const damage_link_t *link = &model->links[model->piece_links[k]];
+			const wreck_link_t *link = &model->links[model->piece_links[k]];
 			int other;
 
 			if (link->broken)
 			{
 				continue;
 			}
-			if (link->piece_b == DAMAGE_GROUND)
+			if (link->piece_b == WRECK_GROUND)
 			{
 				group->anchored = true;
 				continue;
@@ -764,16 +737,16 @@ static void label_island(damage_model_t *model, int first_piece, int group_index
 // Every piece's links listed one after another (piece_link_start and
 // piece_links): at the start, and again when a cut made a piece more
 // and moved links to it
-static void list_piece_links(damage_model_t *model)
+static void list_piece_links(wreck_model_t *model)
 {
-	int fill[DAMAGE_PIECES_MAX];
+	int fill[WRECK_PIECES_MAX];
 	int i;
 
 	memset(model->piece_link_start, 0, sizeof(model->piece_link_start));
 	for (i = 0; i < model->link_count; i++)
 	{
 		model->piece_link_start[model->links[i].piece_a + 1]++;
-		if (model->links[i].piece_b != DAMAGE_GROUND)
+		if (model->links[i].piece_b != WRECK_GROUND)
 		{
 			model->piece_link_start[model->links[i].piece_b + 1]++;
 		}
@@ -786,14 +759,14 @@ static void list_piece_links(damage_model_t *model)
 	for (i = 0; i < model->link_count; i++)
 	{
 		model->piece_links[fill[model->links[i].piece_a]++] = i;
-		if (model->links[i].piece_b != DAMAGE_GROUND)
+		if (model->links[i].piece_b != WRECK_GROUND)
 		{
 			model->piece_links[fill[model->links[i].piece_b]++] = i;
 		}
 	}
 }
 
-void damage_model_finish(damage_model_t *model)
+void wreck_model_finish(wreck_model_t *model)
 {
 	int i;
 
@@ -818,11 +791,11 @@ void damage_model_finish(damage_model_t *model)
 	}
 }
 
-void damage_model_add_projectile(damage_model_t *model, b3BodyId body, float radius)
+void wreck_model_add_projectile(wreck_model_t *model, b3BodyId body, float radius)
 {
-	damage_projectile_t *projectile;
+	wreck_projectile_t *projectile;
 
-	if (model->projectile_count >= DAMAGE_PROJECTILES_MAX)
+	if (model->projectile_count >= WRECK_PROJECTILES_MAX)
 	{
 		return;
 	}
@@ -842,9 +815,9 @@ void damage_model_add_projectile(damage_model_t *model, b3BodyId body, float rad
 // still one island on the same footing nothing changes; else its body is
 // destroyed and each island gets its own, where the old one was and
 // moving as that part of it did.
-static void rebuild_group(damage_model_t *model, int old_group_index)
+static void rebuild_group(wreck_model_t *model, int old_group_index)
 {
-	damage_group_t old_group = model->groups[old_group_index];
+	wreck_group_t old_group = model->groups[old_group_index];
 	b3Transform frame = b3Body_GetTransform(old_group.body);
 	b3Vec3 old_center = b3Body_GetWorldCenter(old_group.body);
 	b3Vec3 old_linear_velocity = b3Body_GetLinearVelocity(old_group.body);
@@ -876,7 +849,7 @@ static void rebuild_group(damage_model_t *model, int old_group_index)
 	if (part_count == 1 && model->groups[group_parts[0]].anchored == old_group.anchored && !old_group.reshaped)
 	{
 		// The same pieces on the same footing: the body stays
-		damage_group_t *group = &model->groups[group_parts[0]];
+		wreck_group_t *group = &model->groups[group_parts[0]];
 
 		group->body = old_group.body;
 		group->rubble = old_group.rubble;
@@ -889,7 +862,7 @@ static void rebuild_group(damage_model_t *model, int old_group_index)
 	b3DestroyBody(old_group.body);
 	for (i = 0; i < part_count; i++)
 	{
-		damage_group_t *group = &model->groups[group_parts[i]];
+		wreck_group_t *group = &model->groups[group_parts[i]];
 
 		create_group_body(model, group_parts[i], frame);
 		group->rebuilt = true;
@@ -904,7 +877,7 @@ static void rebuild_group(damage_model_t *model, int old_group_index)
 	}
 }
 
-static void rebuild_dirty_groups(damage_model_t *model)
+static void rebuild_dirty_groups(wreck_model_t *model)
 {
 	int i;
 
@@ -914,7 +887,7 @@ static void rebuild_dirty_groups(damage_model_t *model)
 	}
 	model->any_group_dirty = false;
 	// (A group made while this runs takes a free number: it is never dirty)
-	for (i = 0; i < DAMAGE_PIECES_MAX; i++)
+	for (i = 0; i < WRECK_PIECES_MAX; i++)
 	{
 		if (model->group_dirty[i])
 		{
@@ -930,9 +903,9 @@ static void rebuild_dirty_groups(damage_model_t *model)
 // ---------------------------------------------------------------------
 // Damage
 
-static void break_link(damage_model_t *model, int link_index, int frame_index)
+static void break_link(wreck_model_t *model, int link_index, int frame_index)
 {
-	damage_link_t *link = &model->links[link_index];
+	wreck_link_t *link = &model->links[link_index];
 
 	if (link->broken)
 	{
@@ -961,15 +934,15 @@ static void break_link(damage_model_t *model, int link_index, int frame_index)
 // lets go at a far smaller push than one that holds a log. Turning is
 // taken as a push at joint_arm. Of what it can take, the first part
 // (link_elastic) springs back and costs it nothing.
-static float link_harm(const damage_model_t *model, const damage_link_t *link, double pulled, double pressed, double slid, double turned)
+static float link_harm(const wreck_model_t *model, const wreck_link_t *link, double pulled, double pressed, double slid, double turned)
 {
-	const damage_link_settings_t *limits = &model->settings.links[link->type];
+	const wreck_link_settings_t *limits = &model->settings.links[link->type];
 	double mass = (double)model->pieces[link->piece_a].mass;
 	double grip = (double)limits->grip * (double)link->static_compression;
 	double turn_push = turned / (double)model->settings.joint_arm;
 	double used;
 
-	if (link->piece_b != DAMAGE_GROUND)
+	if (link->piece_b != WRECK_GROUND)
 	{
 		double other_mass = (double)model->pieces[link->piece_b].mass;
 
@@ -984,7 +957,7 @@ static float link_harm(const damage_model_t *model, const damage_link_t *link, d
 }
 
 // The same, from how the solver left the link's two pieces (link_strain)
-static float link_harm_from_strain(const damage_model_t *model, const damage_link_t *link, const double apart[3], const double turned[3])
+static float link_harm_from_strain(const wreck_model_t *model, const wreck_link_t *link, const double apart[3], const double turned[3])
 {
 	double turn_stiffness = (double)model->settings.joint_arm * (double)model->settings.joint_arm;
 	double along = apart[0] * (double)link->local_normal.x + apart[1] * (double)link->local_normal.y + apart[2] * (double)link->local_normal.z;
@@ -999,9 +972,9 @@ static float link_harm_from_strain(const damage_model_t *model, const damage_lin
 }
 
 // Takes that much of a link (link_harm). True when that broke it.
-static bool hurt_link(damage_model_t *model, int link_index, float harm, int frame_index)
+static bool hurt_link(wreck_model_t *model, int link_index, float harm, int frame_index)
 {
-	damage_link_t *link = &model->links[link_index];
+	wreck_link_t *link = &model->links[link_index];
 
 	if (link->broken || harm <= 0.0f)
 	{
@@ -1020,13 +993,13 @@ static bool hurt_link(damage_model_t *model, int link_index, float harm, int fra
 // hit points, and with none left it is no more (all its links break; it
 // is taken out of the world once it is a group of its own). True when
 // that happened.
-static bool hurt_piece(damage_model_t *model, int piece_index, float impulse, int frame_index)
+static bool hurt_piece(wreck_model_t *model, int piece_index, float impulse, int frame_index)
 {
-	damage_piece_t *piece = &model->pieces[piece_index];
+	wreck_piece_t *piece = &model->pieces[piece_index];
 	float threshold = model->settings.piece_threshold[piece->material];
 	int k;
 
-	if (piece->group == DAMAGE_GONE || piece->crushed || impulse <= threshold)
+	if (piece->group == WRECK_GONE || piece->crushed || impulse <= threshold)
 	{
 		return false;
 	}
@@ -1053,16 +1026,16 @@ static bool hurt_piece(damage_model_t *model, int piece_index, float impulse, in
 // enough): a plank breaks at the edge of what holds it, not over it,
 // where its loose part would be left lying on a sliver of its support.
 // True when the cut will be made.
-static bool request_cut(damage_model_t *model, int piece_index, float position)
+static bool request_cut(wreck_model_t *model, int piece_index, float position)
 {
-	const damage_piece_t *piece = &model->pieces[piece_index];
+	const wreck_piece_t *piece = &model->pieces[piece_index];
 	b3Vec3 axis;
 	float half_sizes[3];
 	float furthest;
 	int i;
 	int k;
 
-	if (piece->long_axis < 0 || model->piece_count + model->pending_cut_count >= DAMAGE_PIECES_MAX)
+	if (piece->long_axis < 0 || model->piece_count + model->pending_cut_count >= WRECK_PIECES_MAX)
 	{
 		return false;
 	}
@@ -1083,8 +1056,8 @@ static bool request_cut(damage_model_t *model, int piece_index, float position)
 	axis = piece_axis(piece);
 	for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1]; k++)
 	{
-		const damage_link_t *link = &model->links[model->piece_links[k]];
-		const damage_piece_t *other;
+		const wreck_link_t *link = &model->links[model->piece_links[k]];
+		const wreck_piece_t *other;
 		int other_index = link->piece_a == piece_index ? link->piece_b : link->piece_a;
 		float other_half_sizes[3];
 		float other_middle;
@@ -1141,10 +1114,10 @@ static bool request_cut(damage_model_t *model, int piece_index, float position)
 // Cuts a long piece in two, straight across, at a place along it: the
 // piece keeps the part before the cut, a new piece is the part after it,
 // and each link goes with the part it is on. (Nothing joins the two.)
-static void cut_piece(damage_model_t *model, int piece_index, float position)
+static void cut_piece(wreck_model_t *model, int piece_index, float position)
 {
-	damage_piece_t *piece = &model->pieces[piece_index];
-	damage_piece_t *other_part = &model->pieces[model->piece_count];
+	wreck_piece_t *piece = &model->pieces[piece_index];
+	wreck_piece_t *other_part = &model->pieces[model->piece_count];
 	b3Vec3 axis = piece_axis(piece);
 	b3Vec3 old_center = piece->local.p;
 	float half_sizes[3];
@@ -1162,7 +1135,7 @@ static void cut_piece(damage_model_t *model, int piece_index, float position)
 	*other_part = *piece;
 	piece->local.p = b3Add(old_center, b3MulSV(-half_length + first_half, axis));
 	other_part->local.p = b3Add(old_center, b3MulSV(position + second_half, axis));
-	if (piece->shape == DAMAGE_PIECE_BOX)
+	if (piece->shape == WRECK_PIECE_BOX)
 	{
 		float *first_extents = &piece->half_extents.x;
 		float *second_extents = &other_part->half_extents.x;
@@ -1183,7 +1156,7 @@ static void cut_piece(damage_model_t *model, int piece_index, float position)
 
 	for (i = 0; i < model->link_count; i++)
 	{
-		damage_link_t *link = &model->links[i];
+		wreck_link_t *link = &model->links[i];
 
 		if ((link->piece_a == piece_index || link->piece_b == piece_index) && b3Dot(b3Sub(link->local_point, old_center), axis) > position)
 		{
@@ -1206,7 +1179,7 @@ static void cut_piece(damage_model_t *model, int piece_index, float position)
 }
 
 // The cuts asked for are made, and every piece's links listed again
-static void make_pending_cuts(damage_model_t *model)
+static void make_pending_cuts(wreck_model_t *model)
 {
 	int i;
 
@@ -1216,7 +1189,7 @@ static void make_pending_cuts(damage_model_t *model)
 	}
 	for (i = 0; i < model->pending_cut_count; i++)
 	{
-		if (model->pieces[model->pending_cut_pieces[i]].group != DAMAGE_GONE && model->piece_count < DAMAGE_PIECES_MAX)
+		if (model->pieces[model->pending_cut_pieces[i]].group != WRECK_GONE && model->piece_count < WRECK_PIECES_MAX)
 		{
 			cut_piece(model, model->pending_cut_pieces[i], model->pending_cut_positions[i]);
 		}
@@ -1233,9 +1206,9 @@ static void make_pending_cuts(damage_model_t *model)
 // the part of the impulse across the piece counts. Where that bending
 // is more than the piece's material and thickness bear, it is cut at
 // the hit. True when it will be.
-static bool snap_piece(damage_model_t *model, int piece_index, b3Vec3 world_point, b3Vec3 world_direction, float impulse)
+static bool snap_piece(wreck_model_t *model, int piece_index, b3Vec3 world_point, b3Vec3 world_direction, float impulse)
 {
-	const damage_piece_t *piece = &model->pieces[piece_index];
+	const wreck_piece_t *piece = &model->pieces[piece_index];
 	b3Transform frame;
 	b3Vec3 axis;
 	b3Vec3 direction;
@@ -1249,7 +1222,7 @@ static bool snap_piece(damage_model_t *model, int piece_index, b3Vec3 world_poin
 	float bending;
 	int k;
 
-	if (piece->group == DAMAGE_GONE || piece->long_axis < 0)
+	if (piece->group == WRECK_GONE || piece->long_axis < 0)
 	{
 		return false;
 	}
@@ -1268,7 +1241,7 @@ static bool snap_piece(damage_model_t *model, int piece_index, b3Vec3 world_poin
 	// any link)
 	for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1]; k++)
 	{
-		const damage_link_t *link = &model->links[model->piece_links[k]];
+		const wreck_link_t *link = &model->links[model->piece_links[k]];
 		float distance;
 
 		if (link->broken || (link->held_piece >= 0 && link->held_piece != piece_index))
@@ -1310,14 +1283,14 @@ static bool snap_piece(damage_model_t *model, int piece_index, b3Vec3 world_poin
 // An impulse on a piece: shared evenly among its whole links; each link
 // passes what it got, times hop_falloff, to the piece at its other end,
 // which shares that among its own. True when a link broke.
-static bool damage_piece(damage_model_t *model, int piece_index, float impulse, int frame_index)
+static bool share_hit(wreck_model_t *model, int piece_index, float impulse, int frame_index)
 {
 	bool broke = false;
 	int queue_start = 0;
 	int queue_end = 0;
 	int k;
 
-	if (model->pieces[piece_index].group == DAMAGE_GONE || model->groups[model->pieces[piece_index].group].rubble)
+	if (model->pieces[piece_index].group == WRECK_GONE || model->groups[model->pieces[piece_index].group].rubble)
 	{
 		return false;
 	}
@@ -1349,7 +1322,7 @@ static bool damage_piece(damage_model_t *model, int piece_index, float impulse, 
 		for (k = first_link; k < end_link; k++)
 		{
 			int link_index = model->piece_links[k];
-			const damage_link_t *link = &model->links[link_index];
+			const wreck_link_t *link = &model->links[link_index];
 			int other;
 			float passed_on = share * model->settings.hop_falloff;
 
@@ -1365,7 +1338,7 @@ static bool damage_piece(damage_model_t *model, int piece_index, float impulse, 
 			{
 				broke = true;
 			}
-			if (link->piece_b == DAMAGE_GROUND)
+			if (link->piece_b == WRECK_GROUND)
 			{
 				continue;
 			}
@@ -1389,7 +1362,7 @@ static bool damage_piece(damage_model_t *model, int piece_index, float impulse, 
 // have come at the link, and how far they have turned apart. With the
 // spring's stiffness taken as 1 these are also the force through the
 // link and, times the square of joint_arm, its moment.
-static void link_strain(const damage_model_t *model, const damage_link_t *link, const double *unknowns, double apart[3], double turned[3])
+static void link_strain(const wreck_model_t *model, const wreck_link_t *link, const double *unknowns, double apart[3], double turned[3])
 {
 	int a = support_unknowns[link->piece_a] * 6;
 	const b3Vec3 *center_a = &model->pieces[link->piece_a].local.p;
@@ -1405,7 +1378,7 @@ static void link_strain(const damage_model_t *model, const damage_link_t *link, 
 	turned[0] = unknowns[a + 3];
 	turned[1] = unknowns[a + 4];
 	turned[2] = unknowns[a + 5];
-	if (link->piece_b != DAMAGE_GROUND)
+	if (link->piece_b != WRECK_GROUND)
 	{
 		int b = support_unknowns[link->piece_b] * 6;
 		const b3Vec3 *center_b = &model->pieces[link->piece_b].local.p;
@@ -1425,7 +1398,7 @@ static void link_strain(const damage_model_t *model, const damage_link_t *link, 
 // The force and the turning force every standing piece gets from all its
 // links when the pieces are where the unknowns say: what the solver has
 // to make equal to the pieces' weights
-static void springs_product(const damage_model_t *model, const double *unknowns, double *product, int unknown_count)
+static void springs_product(const wreck_model_t *model, const double *unknowns, double *product, int unknown_count)
 {
 	double turn_stiffness = (double)model->settings.joint_arm * (double)model->settings.joint_arm;
 	int i;
@@ -1437,7 +1410,7 @@ static void springs_product(const damage_model_t *model, const double *unknowns,
 	}
 	for (i = 0; i < model->link_count; i++)
 	{
-		const damage_link_t *link = &model->links[i];
+		const wreck_link_t *link = &model->links[i];
 		double apart[3];
 		double turned[3];
 		int side;
@@ -1460,7 +1433,7 @@ static void springs_product(const damage_model_t *model, const double *unknowns,
 			double arm_z;
 			int first;
 
-			if (piece_index == DAMAGE_GROUND)
+			if (piece_index == WRECK_GROUND)
 			{
 				continue;
 			}
@@ -1491,9 +1464,9 @@ static void springs_product(const damage_model_t *model, const double *unknowns,
 // it, turn about that place: the part of that turning across the piece
 // is the bending there. strength: its material's, against this kind of
 // load (bend or snap).
-static double piece_bending(const damage_model_t *model, int piece_index, const double *unknowns, const double own_load[3], double strength, double *worst_position_result)
+static double piece_bending(const wreck_model_t *model, int piece_index, const double *unknowns, const double own_load[3], double strength, double *worst_position_result)
 {
-	const damage_piece_t *piece = &model->pieces[piece_index];
+	const wreck_piece_t *piece = &model->pieces[piece_index];
 	double turn_stiffness = (double)model->settings.joint_arm * (double)model->settings.joint_arm;
 	double load_positions[BEND_LOADS_MAX];
 	double load_forces[BEND_LOADS_MAX][3];
@@ -1519,7 +1492,7 @@ static double piece_bending(const damage_model_t *model, int piece_index, const 
 
 	for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1] && load_count < BEND_LOADS_MAX; k++)
 	{
-		const damage_link_t *link = &model->links[model->piece_links[k]];
+		const wreck_link_t *link = &model->links[model->piece_links[k]];
 		double apart[3];
 		double turned[3];
 		// (The spring pulls piece a back the way it came apart, and
@@ -1625,7 +1598,7 @@ static double piece_bending(const damage_model_t *model, int piece_index, const 
 // whole link holds to the ground (the rest is loose, Box3D's business).
 // Each gets its place among the solver's unknowns, in support_unknowns
 // (-1: it does not stand), and walk_queue lists them. How many there are.
-static int find_standing(const damage_model_t *model)
+static int find_standing(const wreck_model_t *model)
 {
 	int queue_start = 0;
 	int queue_end = 0;
@@ -1638,9 +1611,9 @@ static int find_standing(const damage_model_t *model)
 	}
 	for (i = 0; i < model->link_count; i++)
 	{
-		const damage_link_t *link = &model->links[i];
+		const wreck_link_t *link = &model->links[i];
 
-		if (!link->broken && link->piece_b == DAMAGE_GROUND && support_unknowns[link->piece_a] < 0)
+		if (!link->broken && link->piece_b == WRECK_GROUND && support_unknowns[link->piece_a] < 0)
 		{
 			support_unknowns[link->piece_a] = queue_end;
 			walk_queue[queue_end++] = link->piece_a;
@@ -1652,10 +1625,10 @@ static int find_standing(const damage_model_t *model)
 
 		for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1]; k++)
 		{
-			const damage_link_t *link = &model->links[model->piece_links[k]];
+			const wreck_link_t *link = &model->links[model->piece_links[k]];
 			int other;
 
-			if (link->broken || link->piece_b == DAMAGE_GROUND)
+			if (link->broken || link->piece_b == WRECK_GROUND)
 			{
 				continue;
 			}
@@ -1673,7 +1646,7 @@ static int find_standing(const damage_model_t *model)
 // Where the standing pieces settle with every link a spring, under the
 // loads in solver_load, starting from solver_x and leaving the answer
 // there: conjugate gradients. How many rounds it took.
-static int solve_springs(const damage_model_t *model, int standing_count, double load_squared)
+static int solve_springs(const wreck_model_t *model, int standing_count, double load_squared)
 {
 	double turn_stiffness = (double)model->settings.joint_arm * (double)model->settings.joint_arm;
 	int unknown_count = standing_count * 6;
@@ -1689,7 +1662,7 @@ static int solve_springs(const damage_model_t *model, int standing_count, double
 	}
 	for (i = 0; i < model->link_count; i++)
 	{
-		const damage_link_t *link = &model->links[i];
+		const wreck_link_t *link = &model->links[i];
 		int side;
 
 		if (link->broken || support_unknowns[link->piece_a] < 0)
@@ -1705,7 +1678,7 @@ static int solve_springs(const damage_model_t *model, int standing_count, double
 			double arm_z;
 			int first;
 
-			if (piece_index == DAMAGE_GROUND)
+			if (piece_index == WRECK_GROUND)
 			{
 				continue;
 			}
@@ -1776,11 +1749,11 @@ static int solve_springs(const damage_model_t *model, int standing_count, double
 }
 
 // The support pass: where everything that stands settles under its own
-// weight with every link a spring (see damage_model.h), found by
+// weight with every link a spring (see wreck.h), found by
 // conjugate gradients from where it settled last time; then what every
 // link bears against what it can. Pieces pressed harder than their
 // material bears are crushed: their links break.
-static void work_out_support(damage_model_t *model, int frame_index)
+static void work_out_support(wreck_model_t *model, int frame_index)
 {
 	double turn_stiffness = (double)model->settings.joint_arm * (double)model->settings.joint_arm;
 	int queue_end = 0;
@@ -1851,8 +1824,8 @@ static void work_out_support(damage_model_t *model, int frame_index)
 	// pulled apart), across it, and turning; each against its limit
 	for (i = 0; i < model->link_count; i++)
 	{
-		damage_link_t *link = &model->links[i];
-		const damage_link_settings_t *limits = &model->settings.links[link->type];
+		wreck_link_t *link = &model->links[i];
+		const wreck_link_settings_t *limits = &model->settings.links[link->type];
 		double apart[3];
 		double turned[3];
 		double along;
@@ -1908,7 +1881,7 @@ static void work_out_support(damage_model_t *model, int frame_index)
 			model->overloaded_links[model->overloaded_count++] = i;
 		}
 		piece_compressions[link->piece_a] += compression;
-		if (link->piece_b != DAMAGE_GROUND)
+		if (link->piece_b != WRECK_GROUND)
 		{
 			piece_compressions[link->piece_b] += compression;
 		}
@@ -1918,7 +1891,7 @@ static void work_out_support(damage_model_t *model, int frame_index)
 	for (i = 0; i < queue_end; i++)
 	{
 		int piece_index = walk_queue[i];
-		damage_piece_t *piece = &model->pieces[piece_index];
+		wreck_piece_t *piece = &model->pieces[piece_index];
 		double own_weight[3] = { 0.0, -(double)piece->mass * (double)GRAVITY, 0.0 };
 		double worst_position = 0.0;
 		double worst_bent;
@@ -1958,19 +1931,19 @@ static void work_out_support(damage_model_t *model, int frame_index)
 // The crushed pieces, by now each alone in a group of its own (their
 // links broke in the support pass and the groups were made anew), are
 // taken out of the world
-static void remove_crushed(damage_model_t *model)
+static void remove_crushed(wreck_model_t *model)
 {
 	int i;
 
 	for (i = 0; i < model->piece_count; i++)
 	{
-		damage_piece_t *piece = &model->pieces[i];
+		wreck_piece_t *piece = &model->pieces[i];
 
-		if (piece->crushed && piece->group != DAMAGE_GONE && model->groups[piece->group].piece_count == 1)
+		if (piece->crushed && piece->group != WRECK_GONE && model->groups[piece->group].piece_count == 1)
 		{
 			b3DestroyBody(model->groups[piece->group].body);
 			model->groups[piece->group].used = false;
-			piece->group = DAMAGE_GONE;
+			piece->group = WRECK_GONE;
 		}
 	}
 }
@@ -1978,14 +1951,14 @@ static void remove_crushed(damage_model_t *model)
 // The overloaded links give way a little more: each loses hit points as
 // fast as it is overloaded (one at just its limit lasts
 // collapse_seconds from whole)
-static void give_way(damage_model_t *model, int frame_index, float step_seconds)
+static void give_way(wreck_model_t *model, int frame_index, float step_seconds)
 {
 	int i;
 
 	for (i = 0; i < model->overloaded_count; i++)
 	{
 		int link_index = model->overloaded_links[i];
-		damage_link_t *link = &model->links[link_index];
+		wreck_link_t *link = &model->links[link_index];
 
 		if (link->broken)
 		{
@@ -1999,14 +1972,13 @@ static void give_way(damage_model_t *model, int frame_index, float step_seconds)
 	}
 }
 
-static b3Transform piece_world_transform(const damage_model_t *model, int piece_index);
-static float exposed_area(const damage_piece_t *piece, b3Quat rotation, b3Vec3 direction);
+static float exposed_area(const wreck_piece_t *piece, b3Quat rotation, b3Vec3 direction);
 
 // The air on what is loose and moving: against each piece, at its
 // middle, by how much of it faces the way it goes and by its speed
 // squared. A thin board thrown by a blast leaves very fast and is slow
 // again a few meters on; a log or a brick hardly feels it.
-static void drag_through_air(damage_model_t *model, float step_seconds)
+static void drag_through_air(wreck_model_t *model, float step_seconds)
 {
 	int i;
 
@@ -2016,14 +1988,14 @@ static void drag_through_air(damage_model_t *model, float step_seconds)
 	}
 	for (i = 0; i < model->piece_count; i++)
 	{
-		const damage_piece_t *piece = &model->pieces[i];
-		const damage_group_t *group;
+		const wreck_piece_t *piece = &model->pieces[i];
+		const wreck_group_t *group;
 		b3Transform transform;
 		b3Vec3 velocity;
 		float speed;
 		float slowing;
 
-		if (piece->group == DAMAGE_GONE)
+		if (piece->group == WRECK_GONE)
 		{
 			continue;
 		}
@@ -2032,7 +2004,7 @@ static void drag_through_air(damage_model_t *model, float step_seconds)
 		{
 			continue;
 		}
-		transform = piece_world_transform(model, i);
+		transform = wreck_model_piece_transform(model, i);
 		velocity = b3Body_GetWorldPointVelocity(group->body, transform.p);
 		speed = b3Length(velocity);
 		if (speed < AIR_DRAG_SPEED_MIN)
@@ -2046,13 +2018,13 @@ static void drag_through_air(damage_model_t *model, float step_seconds)
 	}
 }
 
-void damage_model_before_step(damage_model_t *model)
+void wreck_model_before_step(wreck_model_t *model)
 {
 	int i;
 
-	for (i = 0; i < DAMAGE_PIECES_MAX; i++)
+	for (i = 0; i < WRECK_PIECES_MAX; i++)
 	{
-		damage_group_t *group = &model->groups[i];
+		wreck_group_t *group = &model->groups[i];
 
 		if (group->used)
 		{
@@ -2075,7 +2047,7 @@ void damage_model_before_step(damage_model_t *model)
 // before the step, instead of the bounce off a wall that was still whole
 // when the step worked the hit out: the next step it meets what came
 // loose. (A group made anew in this step is left as it was made.)
-static void keep_going(damage_model_t *model, b3BodyId body)
+static void keep_going(wreck_model_t *model, b3BodyId body)
 {
 	float kept = model->settings.breakthrough_speed_kept;
 	intptr_t tag;
@@ -2087,7 +2059,7 @@ static void keep_going(damage_model_t *model, b3BodyId body)
 	tag = (intptr_t)b3Body_GetUserData(body);
 	if (tag > 0)
 	{
-		const damage_group_t *group = &model->groups[tag - 1];
+		const wreck_group_t *group = &model->groups[tag - 1];
 
 		if (group->used && !group->anchored && !group->rebuilt)
 		{
@@ -2097,7 +2069,7 @@ static void keep_going(damage_model_t *model, b3BodyId body)
 	}
 	else if (tag < 0)
 	{
-		const damage_projectile_t *projectile = &model->projectiles[-tag - 1];
+		const wreck_projectile_t *projectile = &model->projectiles[-tag - 1];
 
 		b3Body_SetLinearVelocity(body, b3MulSV(kept, projectile->linear_velocity_before_step));
 		b3Body_SetAngularVelocity(body, projectile->angular_velocity_before_step);
@@ -2110,13 +2082,13 @@ static void keep_going(damage_model_t *model, b3BodyId body)
 // from the pieces that did the hitting: so each piece is pushed, in the
 // group's own frame, by its mass times the speed it lost, the pieces
 // that hit are held where they are, and the springs solved, as for a
-// blast (damage_model_blast). What goes through a link hurts it, and a
+// blast (wreck_model_blast). What goes through a link hurts it, and a
 // long piece bent by more than it bears from a hit is cut. A roof that
 // lands on one corner breaks where its own weight bends it, not only at
 // the corner.
-static void shock_through_group(damage_model_t *model, int group_index, int frame_index, float step_seconds)
+static void shock_through_group(wreck_model_t *model, int group_index, int frame_index, float step_seconds)
 {
-	const damage_group_t *group = &model->groups[group_index];
+	const wreck_group_t *group = &model->groups[group_index];
 	double turn_stiffness = (double)model->settings.joint_arm * (double)model->settings.joint_arm;
 	b3Quat rotation = b3Body_GetRotation(group->body);
 	b3Vec3 center = b3Body_GetWorldPoint(group->body, b3Body_GetLocalCenter(group->body));
@@ -2138,7 +2110,7 @@ static void shock_through_group(damage_model_t *model, int group_index, int fram
 	for (i = 0; i < count; i++)
 	{
 		int piece_index = walk_queue[i];
-		const damage_piece_t *piece = &model->pieces[piece_index];
+		const wreck_piece_t *piece = &model->pieces[piece_index];
 		b3Vec3 place = b3Body_GetWorldPoint(group->body, piece->local.p);
 		b3Vec3 speed_before = b3Add(group->linear_velocity_before_step, b3Cross(group->angular_velocity_before_step, b3Sub(place, center)));
 		b3Vec3 speed_lost = b3Sub(speed_before, b3Body_GetWorldPointVelocity(group->body, place));
@@ -2166,7 +2138,7 @@ static void shock_through_group(damage_model_t *model, int group_index, int fram
 
 	for (i = 0; i < model->link_count; i++)
 	{
-		const damage_link_t *link = &model->links[i];
+		const wreck_link_t *link = &model->links[i];
 		double apart[3];
 		double turned[3];
 
@@ -2180,7 +2152,7 @@ static void shock_through_group(damage_model_t *model, int group_index, int fram
 	for (i = 0; i < count; i++)
 	{
 		int piece_index = walk_queue[i];
-		const damage_piece_t *piece = &model->pieces[piece_index];
+		const wreck_piece_t *piece = &model->pieces[piece_index];
 		double own_push[3];
 		double worst_position = 0.0;
 
@@ -2199,7 +2171,7 @@ static void shock_through_group(damage_model_t *model, int group_index, int fram
 	}
 }
 
-void damage_model_after_step(damage_model_t *model, int frame_index, float step_seconds)
+void wreck_model_after_step(wreck_model_t *model, int frame_index, float step_seconds)
 {
 	b3ContactEvents events = b3World_GetContactEvents(model->world);
 	b3BodyId restored_bodies[RESTORED_BODIES_MAX];
@@ -2218,7 +2190,7 @@ void damage_model_after_step(damage_model_t *model, int frame_index, float step_
 		float impulse = 0.0f;
 		bool broke = false;
 		b3ContactData contact;
-		damage_hit_t *hit;
+		wreck_hit_t *hit;
 
 		if (!b3Shape_IsValid(event->shapeIdA) || !b3Shape_IsValid(event->shapeIdB) || !b3Contact_IsValid(event->contactId))
 		{
@@ -2248,9 +2220,9 @@ void damage_model_after_step(damage_model_t *model, int frame_index, float step_
 		for (side = 0; side < 2; side++)
 		{
 			int piece_index = side == 0 ? piece_a : piece_b;
-			const damage_group_t *group;
+			const wreck_group_t *group;
 
-			if (piece_index < 0 || model->pieces[piece_index].group == DAMAGE_GONE)
+			if (piece_index < 0 || model->pieces[piece_index].group == WRECK_GONE)
 			{
 				continue;
 			}
@@ -2269,7 +2241,7 @@ void damage_model_after_step(damage_model_t *model, int frame_index, float step_
 				shock_pieces[piece_index] = true;
 				any_shock = true;
 			}
-			else if (damage_piece(model, piece_index, impulse, frame_index))
+			else if (share_hit(model, piece_index, impulse, frame_index))
 			{
 				broke = true;
 			}
@@ -2280,7 +2252,7 @@ void damage_model_after_step(damage_model_t *model, int frame_index, float step_
 			restored_bodies[restored_count++] = b3Shape_GetBody(event->shapeIdB);
 		}
 
-		hit = &model->recent_hits[model->hit_count % DAMAGE_RECENT_HITS_MAX];
+		hit = &model->recent_hits[model->hit_count % WRECK_RECENT_HITS_MAX];
 		hit->frame_index = frame_index;
 		hit->point = event->point;
 		hit->impulse = impulse;
@@ -2294,7 +2266,7 @@ void damage_model_after_step(damage_model_t *model, int frame_index, float step_
 
 	if (any_shock)
 	{
-		for (i = 0; i < DAMAGE_PIECES_MAX; i++)
+		for (i = 0; i < WRECK_PIECES_MAX; i++)
 		{
 			if (shock_groups[i])
 			{
@@ -2329,9 +2301,9 @@ void damage_model_after_step(damage_model_t *model, int frame_index, float step_
 	drag_through_air(model, step_seconds);
 }
 
-static b3Transform piece_world_transform(const damage_model_t *model, int piece_index)
+b3Transform wreck_model_piece_transform(const wreck_model_t *model, int piece_index)
 {
-	const damage_piece_t *piece = &model->pieces[piece_index];
+	const wreck_piece_t *piece = &model->pieces[piece_index];
 	b3Transform frame = b3Body_GetTransform(model->groups[piece->group].body);
 	b3Transform result;
 
@@ -2342,9 +2314,9 @@ static b3Transform piece_world_transform(const damage_model_t *model, int piece_
 
 // How much of a piece faces a direction, square meters: what a blast
 // from there pushes on
-static float exposed_area(const damage_piece_t *piece, b3Quat rotation, b3Vec3 direction)
+static float exposed_area(const wreck_piece_t *piece, b3Quat rotation, b3Vec3 direction)
 {
-	if (piece->shape == DAMAGE_PIECE_BOX)
+	if (piece->shape == WRECK_PIECE_BOX)
 	{
 		float along_x = fabsf(b3Dot(direction, b3RotateVector(rotation, make_vector(1.0f, 0.0f, 0.0f))));
 		float along_y = fabsf(b3Dot(direction, b3RotateVector(rotation, make_vector(0.0f, 1.0f, 0.0f))));
@@ -2370,7 +2342,7 @@ static float exposed_area(const damage_piece_t *piece, b3Quat rotation, b3Vec3 d
 // than the bomb is big it grows no more. How big the bomb is comes from
 // its strength: the kilograms of explosive that give that much at 1 m
 // (blast_impulse_per_kilogram), at blast_charge_density.
-static float blast_reach(const damage_model_t *model, float strength, b3Vec3 blast_position, b3Vec3 point, b3Vec3 *direction)
+static float blast_reach(const wreck_model_t *model, float strength, b3Vec3 blast_position, b3Vec3 point, b3Vec3 *direction)
 {
 	b3Vec3 offset = b3Sub(point, blast_position);
 	float distance = b3Length(offset);
@@ -2395,10 +2367,10 @@ static float blast_reach(const damage_model_t *model, float strength, b3Vec3 bla
 // fills the place: it does not fade with distance and is not shielded.
 // turning: how that push turns the piece about its middle (a push on
 // one end of a board is borne by the nails at that end).
-static b3Vec3 blast_on_piece(const damage_model_t *model, b3Vec3 position, float strength, int piece_index, bool is_gas, b3Vec3 *turning)
+static b3Vec3 blast_on_piece(const wreck_model_t *model, b3Vec3 position, float strength, int piece_index, bool is_gas, b3Vec3 *turning)
 {
-	const damage_piece_t *piece = &model->pieces[piece_index];
-	b3Transform transform = piece_world_transform(model, piece_index);
+	const wreck_piece_t *piece = &model->pieces[piece_index];
+	b3Transform transform = wreck_model_piece_transform(model, piece_index);
 	b3Vec3 along = b3Vec3_zero;
 	b3Vec3 push = b3Vec3_zero;
 	int part_count = 1;
@@ -2426,7 +2398,7 @@ static b3Vec3 blast_on_piece(const damage_model_t *model, b3Vec3 position, float
 		{
 			b3RayResult result = b3World_CastRayClosest(model->world, position, b3Sub(place, position), b3DefaultQueryFilter());
 
-			if (result.hit && damage_model_shape_piece(result.shapeId) != piece_index)
+			if (result.hit && wreck_model_shape_piece(result.shapeId) != piece_index)
 			{
 				impulse *= 1.0f - model->settings.blast_shielding;
 			}
@@ -2439,11 +2411,11 @@ static b3Vec3 blast_on_piece(const damage_model_t *model, b3Vec3 position, float
 
 // A push on every piece (pushes[], each piece's whole push, and
 // turnings[], how it turns the piece about its middle, in the world's
-// frame), come on in slices (see damage_model_blast). Leaves in
+// frame), come on in slices (see wreck_model_blast). Leaves in
 // blast_shares[] the part of its push that was still to come when a
 // piece was no longer held to the ground (1 for what was not to begin
 // with; of no use for what still stands).
-static void push_through_links(damage_model_t *model, const b3Vec3 *pushes, const b3Vec3 *turnings, int piece_count_before, int frame_index)
+static void push_through_links(wreck_model_t *model, const b3Vec3 *pushes, const b3Vec3 *turnings, int piece_count_before, int frame_index)
 {
 	int slice_count = model->settings.blast_slices > 1 ? model->settings.blast_slices : 1;
 	int slice;
@@ -2486,7 +2458,7 @@ static void push_through_links(damage_model_t *model, const b3Vec3 *pushes, cons
 		for (i = 0; i < model->piece_count; i++)
 		{
 			support_unknowns[i] = -1;
-			if (model->pieces[i].group != DAMAGE_GONE && !model->pieces[i].crushed)
+			if (model->pieces[i].group != WRECK_GONE && !model->pieces[i].crushed)
 			{
 				support_unknowns[i] = standing_count;
 				walk_queue[standing_count++] = i;
@@ -2500,7 +2472,7 @@ static void push_through_links(damage_model_t *model, const b3Vec3 *pushes, cons
 		for (i = 0; i < standing_count; i++)
 		{
 			int piece_index = walk_queue[i];
-			const damage_piece_t *piece = &model->pieces[piece_index];
+			const wreck_piece_t *piece = &model->pieces[piece_index];
 			float half_sizes[3];
 			double held = (double)model->settings.blast_inertia * (double)piece->mass;
 			double reach_squared;
@@ -2538,7 +2510,7 @@ static void push_through_links(damage_model_t *model, const b3Vec3 *pushes, cons
 
 		for (i = 0; i < model->link_count; i++)
 		{
-			const damage_link_t *link = &model->links[i];
+			const wreck_link_t *link = &model->links[i];
 			double apart[3];
 			double turned[3];
 			float harm;
@@ -2563,7 +2535,7 @@ static void push_through_links(damage_model_t *model, const b3Vec3 *pushes, cons
 		for (i = 0; i < standing_count; i++)
 		{
 			int piece_index = walk_queue[i];
-			const damage_piece_t *piece = &model->pieces[piece_index];
+			const wreck_piece_t *piece = &model->pieces[piece_index];
 			double own_push[3];
 			double worst_position = 0.0;
 			int k;
@@ -2597,7 +2569,7 @@ static void push_through_links(damage_model_t *model, const b3Vec3 *pushes, cons
 // past, gets more (blast_gas_rush). That push is then put on what
 // stands as the wave's was. In the open there is nothing to shut the
 // gas in and this does nothing.
-static void gas_after_blast(damage_model_t *model, b3Vec3 position, float strength, int piece_count_before, int frame_index)
+static void gas_after_blast(wreck_model_t *model, b3Vec3 position, float strength, int piece_count_before, int frame_index)
 {
 	const float golden_angle = PI * (3.0f - sqrtf(5.0f));
 	float reach = GAS_RAY_METERS;
@@ -2626,7 +2598,7 @@ static void gas_after_blast(damage_model_t *model, b3Vec3 position, float streng
 		int queue_end = 0;
 		int k;
 
-		if (gas_island_sizes[i] != 0 || model->pieces[i].group == DAMAGE_GONE)
+		if (gas_island_sizes[i] != 0 || model->pieces[i].group == WRECK_GONE)
 		{
 			continue;
 		}
@@ -2638,10 +2610,10 @@ static void gas_after_blast(damage_model_t *model, b3Vec3 position, float streng
 
 			for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1]; k++)
 			{
-				const damage_link_t *link = &model->links[model->piece_links[k]];
+				const wreck_link_t *link = &model->links[model->piece_links[k]];
 				int next;
 
-				if (link->broken || link->piece_b == DAMAGE_GROUND)
+				if (link->broken || link->piece_b == WRECK_GROUND)
 				{
 					continue;
 				}
@@ -2680,7 +2652,7 @@ static void gas_after_blast(damage_model_t *model, b3Vec3 position, float streng
 			{
 				break;
 			}
-			piece_index = damage_model_shape_piece(result.shapeId);
+			piece_index = wreck_model_shape_piece(result.shapeId);
 			if (piece_index >= 0 && piece_index < piece_count_before && gas_island_sizes[piece_index] >= model->settings.rubble_pieces)
 			{
 				gas_ray_pieces[ray] = piece_index;
@@ -2786,7 +2758,7 @@ static void gas_after_blast(damage_model_t *model, b3Vec3 position, float streng
 // is pushed only by the slices still to come: what came before went
 // through its links to the ground. Links that held to the end keep the
 // harm of the whole push.
-void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, int frame_index)
+void wreck_model_blast(wreck_model_t *model, b3Vec3 position, float strength, int frame_index)
 {
 	int piece_count_before = model->piece_count;
 	int i;
@@ -2798,7 +2770,7 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 		model->pieces[i].blast_push_left = 1.0f;
 		model->pieces[i].gas_push_left = 0.0f;
 		blast_turnings[i] = b3Vec3_zero;
-		blast_impulses[i] = model->pieces[i].group == DAMAGE_GONE ? b3Vec3_zero : blast_on_piece(model, position, strength, i, false, &blast_turnings[i]);
+		blast_impulses[i] = model->pieces[i].group == WRECK_GONE ? b3Vec3_zero : blast_on_piece(model, position, strength, i, false, &blast_turnings[i]);
 		impulse = b3Length(blast_impulses[i]);
 		if (impulse > 0.0f)
 		{
@@ -2819,13 +2791,13 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 	// less what came on while the piece still stood
 	for (i = 0; i < model->piece_count; i++)
 	{
-		const damage_piece_t *piece = &model->pieces[i];
-		const damage_group_t *group;
+		const wreck_piece_t *piece = &model->pieces[i];
+		const wreck_group_t *group;
 		b3Vec3 push;
 		b3Vec3 turning;
 		b3Vec3 gas_turning;
 
-		if (piece->group == DAMAGE_GONE)
+		if (piece->group == WRECK_GONE)
 		{
 			continue;
 		}
@@ -2843,13 +2815,13 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 		}
 		if (b3Length(push) > 0.0f)
 		{
-			b3Body_ApplyLinearImpulse(group->body, push, piece_world_transform(model, i).p, true);
+			b3Body_ApplyLinearImpulse(group->body, push, wreck_model_piece_transform(model, i).p, true);
 			b3Body_ApplyAngularImpulse(group->body, turning, true);
 		}
 	}
 	for (i = 0; i < model->projectile_count; i++)
 	{
-		const damage_projectile_t *projectile = &model->projectiles[i];
+		const wreck_projectile_t *projectile = &model->projectiles[i];
 		b3Vec3 center = b3Body_GetPosition(projectile->body);
 		b3Vec3 direction;
 		float reach = blast_reach(model, strength, position, center, &direction);
@@ -2864,138 +2836,7 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 // ---------------------------------------------------------------------
 // Looking at it
 
-// A body's color when it sleeps: half way to gray
-static uint32_t asleep_color(uint32_t color)
-{
-	uint32_t red = (((color >> 16) & 0xFF) + ((ASLEEP_COLOR >> 16) & 0xFF)) / 2;
-	uint32_t green = (((color >> 8) & 0xFF) + ((ASLEEP_COLOR >> 8) & 0xFF)) / 2;
-	uint32_t blue = ((color & 0xFF) + (ASLEEP_COLOR & 0xFF)) / 2;
-
-	return (red << 16) | (green << 8) | blue;
-}
-
-void damage_model_draw_solids(const damage_model_t *model, soft_render_t *renderer, uint32_t first_object_id)
-{
-	int i;
-
-	for (i = 0; i < model->piece_count; i++)
-	{
-		const damage_piece_t *piece = &model->pieces[i];
-		const damage_group_t *group;
-		b3Transform transform;
-		uint32_t color;
-
-		if (piece->group == DAMAGE_GONE)
-		{
-			continue;
-		}
-		group = &model->groups[piece->group];
-		transform = piece_world_transform(model, i);
-		// (What stands is shown in its own color; what lies still after
-		// coming loose is grayed; what was crushed is dark for the frame
-		// or two before it goes)
-		color = (group->anchored || b3Body_IsAwake(group->body)) ? piece->color : asleep_color(piece->color);
-		if (piece->crushed)
-		{
-			color = CRUSHED_COLOR;
-		}
-
-		soft_render_set_object(renderer, first_object_id + (uint32_t)i);
-		if (piece->shape == DAMAGE_PIECE_BOX)
-		{
-			soft_render_box(renderer, vector_floats(&transform.p), rotation_floats(&transform.q), vector_floats(&piece->half_extents), color);
-		}
-		else
-		{
-			// The very prism its collision shape is
-			b3Vec3 half_axis = b3RotateVector(transform.q, make_vector(piece->half_length, 0.0f, 0.0f));
-			b3Vec3 end_a = b3Sub(transform.p, half_axis);
-			b3Vec3 end_b = b3Add(transform.p, half_axis);
-			b3Vec3 first_corner = b3RotateVector(transform.q, make_vector(0.0f, cosf(LOG_FIRST_CORNER_RADIANS), sinf(LOG_FIRST_CORNER_RADIANS)));
-
-			soft_render_prism(renderer, vector_floats(&end_a), vector_floats(&end_b), vector_floats(&first_corner), piece->radius, LOG_SIDE_COUNT, color);
-		}
-	}
-	for (i = 0; i < model->projectile_count; i++)
-	{
-		const damage_projectile_t *projectile = &model->projectiles[i];
-		b3Vec3 center = b3Body_GetPosition(projectile->body);
-
-		soft_render_set_object(renderer, first_object_id + (uint32_t)(model->piece_count + i));
-		soft_render_sphere(renderer, vector_floats(&center), projectile->radius,
-			b3Body_IsAwake(projectile->body) ? PROJECTILE_COLOR : asleep_color(PROJECTILE_COLOR));
-	}
-}
-
-void damage_model_draw_marks(const damage_model_t *model, soft_render_t *renderer, int frame_index, bool draw_debug)
-{
-	int first_hit = model->hit_count > DAMAGE_RECENT_HITS_MAX ? model->hit_count - DAMAGE_RECENT_HITS_MAX : 0;
-	int i;
-
-	if (draw_debug)
-	{
-		// The links, through the solids: most are inside the building
-		renderer->marks_on_top = true;
-		for (i = 0; i < model->link_count; i++)
-		{
-			const damage_link_t *link = &model->links[i];
-			b3Transform frame;
-			b3Vec3 point;
-
-			if (model->pieces[link->piece_a].group == DAMAGE_GONE)
-			{
-				continue;
-			}
-			frame = b3Body_GetTransform(model->groups[model->pieces[link->piece_a].group].body);
-			point = b3Add(frame.p, b3RotateVector(frame.q, link->local_point));
-
-			if (link->broken)
-			{
-				if (frame_index - link->broken_frame < BROKEN_SHOWN_FRAMES)
-				{
-					soft_render_point(renderer, vector_floats(&point), 5, LINK_BROKEN_COLOR);
-				}
-			}
-			else
-			{
-				bool hurt = link->hit_points_left < 1.0f;
-
-				if (link->overload > 1.0f)
-				{
-					soft_render_point(renderer, vector_floats(&point), 6, LINK_OVERLOADED_COLOR);
-				}
-				else
-				{
-					soft_render_point(renderer, vector_floats(&point), hurt ? 4 : 3, hurt ? LINK_HURT_COLOR : LINK_WHOLE_COLOR);
-				}
-			}
-		}
-		renderer->marks_on_top = false;
-	}
-
-	// The hits of the last frames; with debug, each one's impulse
-	for (i = first_hit; i < model->hit_count; i++)
-	{
-		const damage_hit_t *hit = &model->recent_hits[i % DAMAGE_RECENT_HITS_MAX];
-		float screen_x;
-		float screen_y;
-
-		if (hit->frame_index > frame_index || frame_index - hit->frame_index >= HIT_SHOWN_FRAMES)
-		{
-			continue;
-		}
-		soft_render_point(renderer, vector_floats(&hit->point), hit->broke_links ? 9 : 5, HIT_COLOR);
-		if (draw_debug && soft_render_project(renderer, vector_floats(&hit->point), &screen_x, &screen_y))
-		{
-			char text[32];
-
-			snprintf(text, sizeof(text), "%.0f NS", (double)hit->impulse);
-			soft_render_text(renderer, (int)screen_x + 6, (int)screen_y - 4, 1, LABEL_COLOR, text);
-		}
-	}
-}
-
-int damage_model_shape_piece(b3ShapeId shape)
+int wreck_model_shape_piece(b3ShapeId shape)
 {
 	if (!b3Shape_IsValid(shape))
 	{
@@ -3004,119 +2845,7 @@ int damage_model_shape_piece(b3ShapeId shape)
 	return (int)(intptr_t)b3Shape_GetUserData(shape) - 1;
 }
 
-void damage_model_draw_inspection(const damage_model_t *model, soft_render_t *renderer, int piece_index, int text_x, int text_y, int text_scale)
-{
-	static const char *const material_names[DAMAGE_MATERIAL_COUNT] = {"WOOD", "BRICK", "GLASS"};
-	static const char *const link_names[DAMAGE_LINK_TYPE_COUNT] = {"NAILS", "MORTAR", "FOUNDATION", "GLAZING", "NOTCH"};
-	const damage_piece_t *piece;
-	const damage_group_t *group;
-	b3Transform frame;
-	b3Vec3 center;
-	char text[160];
-	int line_height = (7 + 2) * text_scale;
-	int whole_count = 0;
-	int broken_count = 0;
-	int k;
-
-	if (piece_index < 0 || piece_index >= model->piece_count)
-	{
-		return;
-	}
-	piece = &model->pieces[piece_index];
-	if (piece->group == DAMAGE_GONE)
-	{
-		snprintf(text, sizeof(text), "PIECE %d: %s, GONE", piece_index, material_names[piece->material]);
-		soft_render_text(renderer, text_x, text_y, text_scale, LABEL_COLOR, text);
-		return;
-	}
-	group = &model->groups[piece->group];
-	frame = b3Body_GetTransform(group->body);
-	center = b3Add(frame.p, b3RotateVector(frame.q, piece->local.p));
-
-	// Its links, each as a line from its middle to the link and on to the
-	// middle of what the link holds it to (straight down for the ground)
-	renderer->marks_on_top = true;
-	renderer->line_width_pixels = 2;
-	for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1]; k++)
-	{
-		const damage_link_t *link = &model->links[model->piece_links[k]];
-		b3Vec3 point = b3Add(frame.p, b3RotateVector(frame.q, link->local_point));
-		b3Vec3 other_end;
-		uint32_t color = link->overload > 1.0f ? LINK_OVERLOADED_COLOR : (link->overload > 0.5f ? LINK_HURT_COLOR : LINK_WHOLE_COLOR);
-		int other;
-
-		if (link->broken)
-		{
-			broken_count++;
-			continue;
-		}
-		whole_count++;
-		other = link->piece_a == piece_index ? link->piece_b : link->piece_a;
-		if (other == DAMAGE_GROUND)
-		{
-			other_end = b3Sub(point, make_vector(0.0f, 0.15f, 0.0f));
-		}
-		else
-		{
-			other_end = b3Add(frame.p, b3RotateVector(frame.q, model->pieces[other].local.p));
-		}
-		soft_render_line(renderer, vector_floats(&center), vector_floats(&point), color);
-		soft_render_line(renderer, vector_floats(&point), vector_floats(&other_end), color);
-		soft_render_point(renderer, vector_floats(&point), 6, color);
-	}
-	soft_render_point(renderer, vector_floats(&center), 8, LABEL_COLOR);
-	renderer->line_width_pixels = 1;
-	renderer->marks_on_top = false;
-
-	snprintf(text, sizeof(text), "PIECE %d: %s, %.0f KG, %s (GROUP OF %d)", piece_index, material_names[piece->material], (double)piece->mass,
-		group->anchored ? "STANDS" : (group->rubble ? "RUBBLE" : "LOOSE"), group->piece_count);
-	soft_render_text(renderer, text_x, text_y, text_scale, LABEL_COLOR, text);
-	text_y += line_height;
-	snprintf(text, sizeof(text), "PRESSED %.0f N OF %.0f (%.0f%%)   LINKS: %d WHOLE, %d BROKEN", (double)piece->pressed, (double)model->settings.crush[piece->material],
-		(double)(100.0f * piece->pressed / model->settings.crush[piece->material]), whole_count, broken_count);
-	soft_render_text(renderer, text_x, text_y, text_scale, LABEL_COLOR, text);
-	text_y += line_height;
-	if (piece->long_axis >= 0)
-	{
-		snprintf(text, sizeof(text), "HIT POINTS %.0f/%.0f   LONG: BENT %.0f%% OF WHAT IT BEARS", (double)piece->hit_points_left,
-			(double)model->settings.piece_hit_points[piece->material], (double)(100.0f * piece->bent));
-	}
-	else
-	{
-		snprintf(text, sizeof(text), "HIT POINTS %.0f/%.0f", (double)piece->hit_points_left, (double)model->settings.piece_hit_points[piece->material]);
-	}
-	soft_render_text(renderer, text_x, text_y, text_scale, LABEL_COLOR, text);
-	text_y += line_height;
-
-	// (What a link bears is known only for what stands: for a loose piece
-	// the last pass left zeros)
-	for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1]; k++)
-	{
-		const damage_link_t *link = &model->links[model->piece_links[k]];
-		int other = link->piece_a == piece_index ? link->piece_b : link->piece_a;
-		char other_name[16];
-
-		if (link->broken)
-		{
-			continue;
-		}
-		if (other == DAMAGE_GROUND)
-		{
-			snprintf(other_name, sizeof(other_name), "GROUND");
-		}
-		else
-		{
-			snprintf(other_name, sizeof(other_name), "%d", other);
-		}
-		snprintf(text, sizeof(text), "%s TO %s: PRESS %.0f  PULL %.0f  SIDE %.0f N  TURN %.0f NM  %.0f%% OF LIMIT  %.0f%% LEFT",
-			link_names[link->type], other_name, (double)link->static_compression, (double)link->static_pull, (double)link->static_sideways,
-			(double)link->static_moment, (double)(100.0f * link->overload), (double)(100.0f * link->hit_points_left));
-		soft_render_text(renderer, text_x, text_y, text_scale, link->overload > 1.0f ? LINK_OVERLOADED_COLOR : LABEL_COLOR, text);
-		text_y += line_height;
-	}
-}
-
-void damage_model_describe(const damage_model_t *model, char *text, int text_size)
+void wreck_model_describe(const wreck_model_t *model, char *text, int text_size)
 {
 	int standing_count = 0;
 	int loose_count = 0;
@@ -3124,9 +2853,9 @@ void damage_model_describe(const damage_model_t *model, char *text, int text_siz
 	int hurt_count = 0;
 	int i;
 
-	for (i = 0; i < DAMAGE_PIECES_MAX; i++)
+	for (i = 0; i < WRECK_PIECES_MAX; i++)
 	{
-		const damage_group_t *group = &model->groups[i];
+		const wreck_group_t *group = &model->groups[i];
 
 		if (!group->used)
 		{
@@ -3147,7 +2876,7 @@ void damage_model_describe(const damage_model_t *model, char *text, int text_siz
 	}
 	for (i = 0; i < model->link_count; i++)
 	{
-		const damage_link_t *link = &model->links[i];
+		const wreck_link_t *link = &model->links[i];
 
 		if (!link->broken && link->hit_points_left < 1.0f)
 		{
@@ -3172,7 +2901,7 @@ static uint32_t hash_bytes(uint32_t hash, const void *data, size_t size)
 }
 
 // (FNV-1a over where every piece is and what every link has left)
-uint32_t damage_model_checksum(const damage_model_t *model)
+uint32_t wreck_model_checksum(const wreck_model_t *model)
 {
 	uint32_t hash = 2166136261u;
 	int i;
@@ -3182,7 +2911,7 @@ uint32_t damage_model_checksum(const damage_model_t *model)
 		b3Transform transform;
 		float values[7];
 
-		if (model->pieces[i].group == DAMAGE_GONE)
+		if (model->pieces[i].group == WRECK_GONE)
 		{
 			continue;
 		}

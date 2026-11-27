@@ -1,4 +1,4 @@
-// The scenes built on the damage model (damage_model.h). All stand
+// The scenes built on the wreck model (engine/wreck.h). All stand
 // still as static bodies until something breaks a link, and nothing
 // happens in them by itself: throw balls and set off blasts at them
 // (damage_events.h). Their numbers are damage.ini's, read at every start.

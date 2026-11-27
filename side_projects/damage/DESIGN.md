@@ -1,9 +1,18 @@
 # Damage: a destruction model for Potop's buildings
 
-A side project, on its own for now: nothing here is built by the
-project's Makefile and nothing of the engine is linked. What follows is
-what Radu and Claude agreed on (Nov 27 2026) before any of the model was
-written. Decisions, not code: check the sources for what exists.
+The model itself is in the engine now: `engine/wreck.c` and `wreck.h`
+(names with `wreck_`; the engine's own `damage.h` is about kinds of
+damage, another thing). It depends on Box3D and the C library only,
+draws nothing and reads no files, and the project's Makefile does not
+build it yet. This directory is its test bench: it builds that one file
+of the engine with its own Makefile and has everything else (the soft
+renderer, the drawing, the test buildings, the test world, the events,
+the viewer). One code base: the model is not copied here.
+
+What follows is what Radu and Claude agreed on (Nov 27 2026) before any
+of the model was written, and then what each step made and found.
+Decisions, not code: check the sources for what exists. Where it says
+`damage_model.c`, read `engine/wreck.c`.
 
 ## The tools
 
@@ -17,9 +26,14 @@ written. Decisions, not code: check the sources for what exists.
   cases of the support pass; a log cabin and a mortared wall), `pile` (pile_scene.c, Box3D alone, with a film of its own),
   `sandbox` (the pile's wall and crib with nothing happening by itself)
   and `test` (test_scene.c, the renderer's own test).
-- `damage_model.c`: the model itself (below), on Box3D; `damage.ini`: its
-  numbers, read by the cabin scene at every start (R in the viewer).
+- `engine/wreck.c`: the model itself (below), on Box3D. `damage.ini`:
+  its numbers, read here (damage_ini.c) and given to the model key by
+  key (wreck_settings_set) at every start of a scene (R in the viewer).
   A saved replay gives the same checksum only with the same ini.
+- `damage_draw.c`: draws a model with the soft renderer (the pieces,
+  the debug marks, the inspector), from what the model's structures
+  hold. `model_scenes.c`: the test buildings, made through the model's
+  functions, and the test world they stand in.
 - `damage_events.h`: the balls thrown and blasts set off from the viewer
   (left mouse, X; Backspace takes the last one back), each noted with its
   frame. A scene sets them off again when it comes to that frame, so

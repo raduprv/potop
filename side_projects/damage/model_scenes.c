@@ -9,7 +9,9 @@
 #include "box3d/box3d.h"
 
 #include "damage_events.h"
-#include "damage_model.h"
+#include "damage_draw.h"
+#include "damage_ini.h"
+#include "wreck.h"
 
 #define SETTINGS_PATH "damage.ini"
 #define STEP_SECONDS (1.0f / (float)DAMAGE_SCENE_FRAMES_PER_SECOND)
@@ -53,7 +55,7 @@ typedef struct
 {
 	bool is_open;
 	b3WorldId world;
-	damage_settings_t settings;
+	wreck_settings_t settings;
 	int frame_index;
 	blast_mark_t recent_blasts[RECENT_BLASTS_MAX];
 	int blast_count;                   // all there were; the last RECENT_BLASTS_MAX are kept
@@ -61,7 +63,7 @@ typedef struct
 
 static cabin_t cabin;
 // (Big: kept out of the struct that is cleared at every start)
-static damage_model_t model;
+static wreck_model_t model;
 static bool settings_missing_was_said;
 // Which scene's things build_world puts up
 static void (*build_structures)(void);
@@ -126,10 +128,10 @@ static void build_cabin(float center_x, float center_z)
 		{
 			float offset = side == 0 ? CABIN_HALF_SIZE : -CABIN_HALF_SIZE;
 
-			logs[course][side] = damage_model_add_log(&model, make_vector(center_x, y, center_z + offset), along_x, LOG_RADIUS,
-				x_runs_through ? through_half_length : butt_half_length, DAMAGE_MATERIAL_WOOD, color);
-			logs[course][2 + side] = damage_model_add_log(&model, make_vector(center_x + offset, y, center_z), along_z, LOG_RADIUS,
-				x_runs_through ? butt_half_length : through_half_length, DAMAGE_MATERIAL_WOOD, color);
+			logs[course][side] = wreck_model_add_log(&model, make_vector(center_x, y, center_z + offset), along_x, LOG_RADIUS,
+				x_runs_through ? through_half_length : butt_half_length, WRECK_MATERIAL_WOOD, color);
+			logs[course][2 + side] = wreck_model_add_log(&model, make_vector(center_x + offset, y, center_z), along_z, LOG_RADIUS,
+				x_runs_through ? butt_half_length : through_half_length, WRECK_MATERIAL_WOOD, color);
 		}
 	}
 
@@ -154,11 +156,11 @@ static void build_cabin(float center_x, float center_z)
 
 				if (course == 0)
 				{
-					damage_model_add_link(&model, logs[course][wall], DAMAGE_GROUND, point, DAMAGE_LINK_FOUNDATION);
+					wreck_model_add_link(&model, logs[course][wall], WRECK_GROUND, point, WRECK_LINK_FOUNDATION);
 				}
 				else
 				{
-					damage_model_add_link(&model, logs[course][wall], logs[course - 1][wall], point, DAMAGE_LINK_NOTCH);
+					wreck_model_add_link(&model, logs[course][wall], logs[course - 1][wall], point, WRECK_LINK_NOTCH);
 				}
 			}
 		}
@@ -179,18 +181,18 @@ static void build_cabin(float center_x, float center_z)
 
 				if (x_runs_through)
 				{
-					damage_model_add_link(&model, along_z_log, along_x_log, make_vector(center_x + corner_x, y, center_z + corner_z + inward_z), DAMAGE_LINK_NOTCH);
+					wreck_model_add_link(&model, along_z_log, along_x_log, make_vector(center_x + corner_x, y, center_z + corner_z + inward_z), WRECK_LINK_NOTCH);
 				}
 				else
 				{
-					damage_model_add_link(&model, along_x_log, along_z_log, make_vector(center_x + corner_x + inward_x, y, center_z + corner_z), DAMAGE_LINK_NOTCH);
+					wreck_model_add_link(&model, along_x_log, along_z_log, make_vector(center_x + corner_x + inward_x, y, center_z + corner_z), WRECK_LINK_NOTCH);
 				}
 				if (course > 0)
 				{
 					int through_log = x_runs_through ? along_x_log : along_z_log;
 					int through_log_under = x_runs_through ? logs[course - 1][2 + side_x] : logs[course - 1][side_z];
 
-					damage_model_add_link(&model, through_log, through_log_under, make_vector(center_x + corner_x, y_under, center_z + corner_z), DAMAGE_LINK_NOTCH);
+					wreck_model_add_link(&model, through_log, through_log_under, make_vector(center_x + corner_x, y_under, center_z + corner_z), WRECK_LINK_NOTCH);
 				}
 			}
 		}
@@ -201,14 +203,14 @@ static void build_cabin(float center_x, float center_z)
 	{
 		float x = center_x + ((float)beam - (float)(CABIN_BEAM_COUNT - 1) * 0.5f) * 0.8f;
 		float y = LOG_FLAT_TO_FLAT * (0.5f + (float)CABIN_COURSE_COUNT);
-		int beam_log = damage_model_add_log(&model, make_vector(x, y, center_z), along_z, LOG_RADIUS, CABIN_HALF_SIZE + 0.3f, DAMAGE_MATERIAL_WOOD, 0xA87848);
+		int beam_log = wreck_model_add_log(&model, make_vector(x, y, center_z), along_z, LOG_RADIUS, CABIN_HALF_SIZE + 0.3f, WRECK_MATERIAL_WOOD, 0xA87848);
 
 		for (side = 0; side < 2; side++)
 		{
 			float offset = side == 0 ? CABIN_HALF_SIZE : -CABIN_HALF_SIZE;
 
-			damage_model_add_link(&model, beam_log, logs[CABIN_COURSE_COUNT - 1][side],
-				make_vector(x, LOG_FLAT_TO_FLAT * (float)CABIN_COURSE_COUNT, center_z + offset), DAMAGE_LINK_NAILS);
+			wreck_model_add_link(&model, beam_log, logs[CABIN_COURSE_COUNT - 1][side],
+				make_vector(x, LOG_FLAT_TO_FLAT * (float)CABIN_COURSE_COUNT, center_z + offset), WRECK_LINK_NAILS);
 		}
 	}
 }
@@ -239,15 +241,15 @@ static void build_wall(float center_x, float center_z)
 			float x = center_x + ((float)brick - (float)(WALL_ROW_BRICKS - 1) * 0.5f) * 2.0f * BRICK_HALF_LENGTH + ((row & 1) ? BRICK_HALF_LENGTH : 0.0f);
 
 			brick_x[row][brick] = x;
-			bricks[row][brick] = damage_model_add_box(&model, make_vector(x, y, center_z), b3Quat_identity, half_extents, DAMAGE_MATERIAL_BRICK,
+			bricks[row][brick] = wreck_model_add_box(&model, make_vector(x, y, center_z), b3Quat_identity, half_extents, WRECK_MATERIAL_BRICK,
 				((row + brick) & 1) ? 0xA8503A : 0x96452F);
 			if (brick > 0)
 			{
-				damage_model_add_link(&model, bricks[row][brick], bricks[row][brick - 1], make_vector(x - BRICK_HALF_LENGTH, y, center_z), DAMAGE_LINK_MORTAR);
+				wreck_model_add_link(&model, bricks[row][brick], bricks[row][brick - 1], make_vector(x - BRICK_HALF_LENGTH, y, center_z), WRECK_LINK_MORTAR);
 			}
 			if (row == 0)
 			{
-				damage_model_add_link(&model, bricks[row][brick], DAMAGE_GROUND, make_vector(x, 0.0f, center_z), DAMAGE_LINK_FOUNDATION);
+				wreck_model_add_link(&model, bricks[row][brick], WRECK_GROUND, make_vector(x, 0.0f, center_z), WRECK_LINK_FOUNDATION);
 				continue;
 			}
 			for (under = 0; under < WALL_ROW_BRICKS; under++)
@@ -255,8 +257,8 @@ static void build_wall(float center_x, float center_z)
 				// (Lying on it: their middles less than a brick apart)
 				if (bricks[row - 1][under] >= 0 && fabsf(brick_x[row - 1][under] - x) < 2.0f * BRICK_HALF_LENGTH - 0.01f)
 				{
-					damage_model_add_link(&model, bricks[row][brick], bricks[row - 1][under],
-						make_vector((x + brick_x[row - 1][under]) * 0.5f, y - BRICK_HALF_HEIGHT, center_z), DAMAGE_LINK_MORTAR);
+					wreck_model_add_link(&model, bricks[row][brick], bricks[row - 1][under],
+						make_vector((x + brick_x[row - 1][under]) * 0.5f, y - BRICK_HALF_HEIGHT, center_z), WRECK_LINK_MORTAR);
 				}
 			}
 		}
@@ -286,14 +288,14 @@ static void build_wall_on_pane(float center_x, float center_z)
 	for (side = -1; side <= 1; side += 2)
 	{
 		float x = center_x + (float)side * 4.0f * BRICK_HALF_LENGTH;
-		int below = DAMAGE_GROUND;
+		int below = WRECK_GROUND;
 
 		for (row = 0; row < 3; row++)
 		{
 			float y = BRICK_HALF_HEIGHT * (1.0f + 2.0f * (float)row);
-			int pier_brick = damage_model_add_box(&model, make_vector(x, y, center_z), b3Quat_identity, brick_half_extents, DAMAGE_MATERIAL_BRICK, 0x96452F);
+			int pier_brick = wreck_model_add_box(&model, make_vector(x, y, center_z), b3Quat_identity, brick_half_extents, WRECK_MATERIAL_BRICK, 0x96452F);
 
-			damage_model_add_link(&model, pier_brick, below, make_vector(x, y - BRICK_HALF_HEIGHT, center_z), below == DAMAGE_GROUND ? DAMAGE_LINK_FOUNDATION : DAMAGE_LINK_MORTAR);
+			wreck_model_add_link(&model, pier_brick, below, make_vector(x, y - BRICK_HALF_HEIGHT, center_z), below == WRECK_GROUND ? WRECK_LINK_FOUNDATION : WRECK_LINK_MORTAR);
 			below = pier_brick;
 		}
 		pier_tops[side < 0 ? 0 : 1] = below;
@@ -314,18 +316,18 @@ static void build_wall_on_pane(float center_x, float center_z)
 			int below;
 
 			brick_x[row][brick] = x;
-			bricks[row][brick] = damage_model_add_box(&model, make_vector(x, y, center_z), b3Quat_identity, brick_half_extents, DAMAGE_MATERIAL_BRICK,
+			bricks[row][brick] = wreck_model_add_box(&model, make_vector(x, y, center_z), b3Quat_identity, brick_half_extents, WRECK_MATERIAL_BRICK,
 				((row + brick) & 1) ? 0xA8503A : 0x96452F);
 			if (brick > 0)
 			{
-				damage_model_add_link(&model, bricks[row][brick], bricks[row][brick - 1], make_vector(x - BRICK_HALF_LENGTH, y, center_z), DAMAGE_LINK_MORTAR);
+				wreck_model_add_link(&model, bricks[row][brick], bricks[row][brick - 1], make_vector(x - BRICK_HALF_LENGTH, y, center_z), WRECK_LINK_MORTAR);
 			}
 			if (row == 0)
 			{
 				// The end bricks lie on the piers
 				if (brick == 0 || brick == 4)
 				{
-					damage_model_add_link(&model, bricks[row][brick], pier_tops[brick == 0 ? 0 : 1], make_vector(x, pier_top, center_z), DAMAGE_LINK_MORTAR);
+					wreck_model_add_link(&model, bricks[row][brick], pier_tops[brick == 0 ? 0 : 1], make_vector(x, pier_top, center_z), WRECK_LINK_MORTAR);
 				}
 				continue;
 			}
@@ -333,17 +335,17 @@ static void build_wall_on_pane(float center_x, float center_z)
 			{
 				if (bricks[row - 1][below] >= 0 && fabsf(brick_x[row - 1][below] - x) < 2.0f * BRICK_HALF_LENGTH - 0.01f)
 				{
-					damage_model_add_link(&model, bricks[row][brick], bricks[row - 1][below],
-						make_vector((x + brick_x[row - 1][below]) * 0.5f, y - BRICK_HALF_HEIGHT, center_z), DAMAGE_LINK_MORTAR);
+					wreck_model_add_link(&model, bricks[row][brick], bricks[row - 1][below],
+						make_vector((x + brick_x[row - 1][below]) * 0.5f, y - BRICK_HALF_HEIGHT, center_z), WRECK_LINK_MORTAR);
 				}
 			}
 		}
 	}
 
 	// The pane: on the ground, the wall's middle brick on it
-	pane = damage_model_add_box(&model, make_vector(center_x, 0.45f, center_z), b3Quat_identity, pane_half_extents, DAMAGE_MATERIAL_GLASS, 0x9FD8E8);
-	damage_model_add_link(&model, pane, DAMAGE_GROUND, make_vector(center_x, 0.0f, center_z), DAMAGE_LINK_GLAZING);
-	damage_model_add_link(&model, bricks[0][2], pane, make_vector(center_x, pier_top, center_z), DAMAGE_LINK_GLAZING);
+	pane = wreck_model_add_box(&model, make_vector(center_x, 0.45f, center_z), b3Quat_identity, pane_half_extents, WRECK_MATERIAL_GLASS, 0x9FD8E8);
+	wreck_model_add_link(&model, pane, WRECK_GROUND, make_vector(center_x, 0.0f, center_z), WRECK_LINK_GLAZING);
+	wreck_model_add_link(&model, bricks[0][2], pane, make_vector(center_x, pier_top, center_z), WRECK_LINK_GLAZING);
 }
 
 // A wall of logs along z; three beams from its top out along x, their
@@ -361,7 +363,7 @@ static void build_roof_on_wall(float center_x, float center_z)
 	float beam_y = wall_top + LOG_FLAT_TO_FLAT * 0.5f;
 	float lintel_y = wall_top - LOG_FLAT_TO_FLAT * 0.5f;
 	float post_top = wall_top - LOG_FLAT_TO_FLAT;
-	int below = DAMAGE_GROUND;
+	int below = WRECK_GROUND;
 	int beams[3];
 	int lintel;
 	int course;
@@ -372,43 +374,43 @@ static void build_roof_on_wall(float center_x, float center_z)
 	for (course = 0; course < 7; course++)
 	{
 		float y = LOG_FLAT_TO_FLAT * (0.5f + (float)course);
-		int wall_log = damage_model_add_log(&model, make_vector(wall_x, y, center_z), along_z, LOG_RADIUS, 1.5f, DAMAGE_MATERIAL_WOOD, (course & 1) ? 0x8A5A30 : 0x9C6B3C);
+		int wall_log = wreck_model_add_log(&model, make_vector(wall_x, y, center_z), along_z, LOG_RADIUS, 1.5f, WRECK_MATERIAL_WOOD, (course & 1) ? 0x8A5A30 : 0x9C6B3C);
 
 		for (side = -1; side <= 1; side += 2)
 		{
-			damage_model_add_link(&model, wall_log, below, make_vector(wall_x, LOG_FLAT_TO_FLAT * (float)course, center_z + (float)side * 0.9f),
-				below == DAMAGE_GROUND ? DAMAGE_LINK_FOUNDATION : DAMAGE_LINK_NAILS);
+			wreck_model_add_link(&model, wall_log, below, make_vector(wall_x, LOG_FLAT_TO_FLAT * (float)course, center_z + (float)side * 0.9f),
+				below == WRECK_GROUND ? WRECK_LINK_FOUNDATION : WRECK_LINK_NAILS);
 		}
 		below = wall_log;
 	}
 
-	lintel = damage_model_add_log(&model, make_vector(lintel_x, lintel_y, center_z), along_z, LOG_RADIUS, 1.5f, DAMAGE_MATERIAL_WOOD, 0x9C6B3C);
+	lintel = wreck_model_add_log(&model, make_vector(lintel_x, lintel_y, center_z), along_z, LOG_RADIUS, 1.5f, WRECK_MATERIAL_WOOD, 0x9C6B3C);
 	for (side = -1; side <= 1; side += 2)
 	{
 		float z = center_z + (float)side * 1.2f;
-		int post = damage_model_add_log(&model, make_vector(lintel_x, post_top * 0.5f, z), upright, LOG_RADIUS, post_top * 0.5f, DAMAGE_MATERIAL_WOOD, 0x8A5A30);
+		int post = wreck_model_add_log(&model, make_vector(lintel_x, post_top * 0.5f, z), upright, LOG_RADIUS, post_top * 0.5f, WRECK_MATERIAL_WOOD, 0x8A5A30);
 
-		damage_model_add_link(&model, post, DAMAGE_GROUND, make_vector(lintel_x, 0.0f, z), DAMAGE_LINK_FOUNDATION);
-		damage_model_add_link(&model, lintel, post, make_vector(lintel_x, post_top, z), DAMAGE_LINK_NAILS);
+		wreck_model_add_link(&model, post, WRECK_GROUND, make_vector(lintel_x, 0.0f, z), WRECK_LINK_FOUNDATION);
+		wreck_model_add_link(&model, lintel, post, make_vector(lintel_x, post_top, z), WRECK_LINK_NAILS);
 	}
 
 	for (beam = 0; beam < 3; beam++)
 	{
 		float z = center_z + ((float)beam - 1.0f) * 1.0f;
 
-		beams[beam] = damage_model_add_log(&model, make_vector(center_x - 0.2f, beam_y, z), along_x, LOG_RADIUS, 1.4f, DAMAGE_MATERIAL_WOOD, 0xA87848);
-		damage_model_add_link(&model, beams[beam], below, make_vector(wall_x, wall_top, z), DAMAGE_LINK_NAILS);
-		damage_model_add_link(&model, beams[beam], lintel, make_vector(lintel_x, wall_top, z), DAMAGE_LINK_NAILS);
+		beams[beam] = wreck_model_add_log(&model, make_vector(center_x - 0.2f, beam_y, z), along_x, LOG_RADIUS, 1.4f, WRECK_MATERIAL_WOOD, 0xA87848);
+		wreck_model_add_link(&model, beams[beam], below, make_vector(wall_x, wall_top, z), WRECK_LINK_NAILS);
+		wreck_model_add_link(&model, beams[beam], lintel, make_vector(lintel_x, wall_top, z), WRECK_LINK_NAILS);
 	}
 	for (slab = 0; slab < 4; slab++)
 	{
 		float x = center_x - 1.25f + (float)slab * 0.7f;
 		float y = beam_y + LOG_FLAT_TO_FLAT * 0.5f + 0.04f;
-		int slab_box = damage_model_add_box(&model, make_vector(x, y, center_z), b3Quat_identity, slab_half_extents, DAMAGE_MATERIAL_WOOD, 0xB89868);
+		int slab_box = wreck_model_add_box(&model, make_vector(x, y, center_z), b3Quat_identity, slab_half_extents, WRECK_MATERIAL_WOOD, 0xB89868);
 
 		for (beam = 0; beam < 3; beam++)
 		{
-			damage_model_add_link(&model, slab_box, beams[beam], make_vector(x, y - 0.04f, center_z + ((float)beam - 1.0f) * 1.0f), DAMAGE_LINK_NAILS);
+			wreck_model_add_link(&model, slab_box, beams[beam], make_vector(x, y - 0.04f, center_z + ((float)beam - 1.0f) * 1.0f), WRECK_LINK_NAILS);
 		}
 	}
 }
@@ -421,18 +423,18 @@ static void build_beam_on_pillars(float center_x, float center_z)
 	b3Vec3 pillar_half_extents = make_vector(0.15f, 0.75f, 0.15f);
 	b3Vec3 beam_half_extents = make_vector(2.5f, 0.10f, 0.15f);
 	b3Vec3 crate_half_extents = make_vector(0.33f, 0.33f, 0.33f);
-	int beam = damage_model_add_box(&model, make_vector(center_x, 1.60f, center_z), b3Quat_identity, beam_half_extents, DAMAGE_MATERIAL_WOOD, 0xA87848);
-	int crate = damage_model_add_box(&model, make_vector(center_x - 2.1f, 2.03f, center_z), b3Quat_identity, crate_half_extents, DAMAGE_MATERIAL_BRICK, 0x707888);
+	int beam = wreck_model_add_box(&model, make_vector(center_x, 1.60f, center_z), b3Quat_identity, beam_half_extents, WRECK_MATERIAL_WOOD, 0xA87848);
+	int crate = wreck_model_add_box(&model, make_vector(center_x - 2.1f, 2.03f, center_z), b3Quat_identity, crate_half_extents, WRECK_MATERIAL_BRICK, 0x707888);
 	int pillar;
 
-	damage_model_add_link(&model, crate, beam, make_vector(center_x - 2.1f, 1.70f, center_z), DAMAGE_LINK_NAILS);
+	wreck_model_add_link(&model, crate, beam, make_vector(center_x - 2.1f, 1.70f, center_z), WRECK_LINK_NAILS);
 	for (pillar = -1; pillar <= 1; pillar++)
 	{
 		float x = center_x + (float)pillar * 2.0f;
-		int pillar_box = damage_model_add_box(&model, make_vector(x, 0.75f, center_z), b3Quat_identity, pillar_half_extents, DAMAGE_MATERIAL_BRICK, 0xB0A898);
+		int pillar_box = wreck_model_add_box(&model, make_vector(x, 0.75f, center_z), b3Quat_identity, pillar_half_extents, WRECK_MATERIAL_BRICK, 0xB0A898);
 
-		damage_model_add_link(&model, pillar_box, DAMAGE_GROUND, make_vector(x, 0.0f, center_z), DAMAGE_LINK_FOUNDATION);
-		damage_model_add_link(&model, beam, pillar_box, make_vector(x, 1.50f, center_z), DAMAGE_LINK_NAILS);
+		wreck_model_add_link(&model, pillar_box, WRECK_GROUND, make_vector(x, 0.0f, center_z), WRECK_LINK_FOUNDATION);
+		wreck_model_add_link(&model, beam, pillar_box, make_vector(x, 1.50f, center_z), WRECK_LINK_NAILS);
 	}
 }
 
@@ -458,11 +460,11 @@ static void build_span(float center_x, float center_z, bool is_log, float crate_
 
 	if (is_log)
 	{
-		span = damage_model_add_log(&model, make_vector(center_x, span_y, center_z), b3Quat_identity, LOG_RADIUS, 2.0f, DAMAGE_MATERIAL_WOOD, 0x9C6B3C);
+		span = wreck_model_add_log(&model, make_vector(center_x, span_y, center_z), b3Quat_identity, LOG_RADIUS, 2.0f, WRECK_MATERIAL_WOOD, 0x9C6B3C);
 	}
 	else
 	{
-		span = damage_model_add_box(&model, make_vector(center_x, span_y, center_z), b3Quat_identity, plank_half_extents, DAMAGE_MATERIAL_WOOD, 0xB89868);
+		span = wreck_model_add_box(&model, make_vector(center_x, span_y, center_z), b3Quat_identity, plank_half_extents, WRECK_MATERIAL_WOOD, 0xB89868);
 	}
 	for (pillar = -1; pillar <= 1; pillar++)
 	{
@@ -473,18 +475,18 @@ static void build_span(float center_x, float center_z, bool is_log, float crate_
 		{
 			continue;
 		}
-		pillar_box = damage_model_add_box(&model, make_vector(x, 0.75f, center_z), b3Quat_identity, pillar_half_extents, DAMAGE_MATERIAL_BRICK,
+		pillar_box = wreck_model_add_box(&model, make_vector(x, 0.75f, center_z), b3Quat_identity, pillar_half_extents, WRECK_MATERIAL_BRICK,
 			pillar == 0 ? 0x8890A0 : 0xB0A898);
-		damage_model_add_link(&model, pillar_box, DAMAGE_GROUND, make_vector(x, 0.0f, center_z), DAMAGE_LINK_FOUNDATION);
-		damage_model_add_link(&model, span, pillar_box, make_vector(x, 1.5f, center_z), DAMAGE_LINK_NAILS);
+		wreck_model_add_link(&model, pillar_box, WRECK_GROUND, make_vector(x, 0.0f, center_z), WRECK_LINK_FOUNDATION);
+		wreck_model_add_link(&model, span, pillar_box, make_vector(x, 1.5f, center_z), WRECK_LINK_NAILS);
 	}
 	if (crate_half_size > 0.0f)
 	{
 		float crate_y = span_y + span_half_height + crate_half_size;
-		int crate = damage_model_add_box(&model, make_vector(center_x, crate_y, center_z), b3Quat_identity,
-			make_vector(crate_half_size, crate_half_size, crate_half_size), DAMAGE_MATERIAL_BRICK, 0x707888);
+		int crate = wreck_model_add_box(&model, make_vector(center_x, crate_y, center_z), b3Quat_identity,
+			make_vector(crate_half_size, crate_half_size, crate_half_size), WRECK_MATERIAL_BRICK, 0x707888);
 
-		damage_model_add_link(&model, crate, span, make_vector(center_x, crate_y - crate_half_size, center_z), DAMAGE_LINK_NAILS);
+		wreck_model_add_link(&model, crate, span, make_vector(center_x, crate_y - crate_half_size, center_z), WRECK_LINK_NAILS);
 	}
 }
 
@@ -559,24 +561,24 @@ static void build_house(float center_x, float center_z)
 		float x = center_x + sign * HOUSE_HALF_X;
 		int end;
 
-		sills_x[side] = damage_model_add_box(&model, make_vector(center_x, timber, z), b3Quat_identity,
-			make_vector(HOUSE_HALF_X + timber, timber, timber), DAMAGE_MATERIAL_WOOD, frame_color);
-		plates_x[side] = damage_model_add_box(&model, make_vector(center_x, plate_y, z), b3Quat_identity,
-			make_vector(HOUSE_HALF_X + timber, timber, timber), DAMAGE_MATERIAL_WOOD, frame_color);
-		sills_z[side] = damage_model_add_box(&model, make_vector(x, timber, center_z), b3Quat_identity,
-			make_vector(timber, timber, HOUSE_HALF_Z - timber), DAMAGE_MATERIAL_WOOD, frame_color);
-		plates_z[side] = damage_model_add_box(&model, make_vector(x, plate_y, center_z), b3Quat_identity,
-			make_vector(timber, timber, HOUSE_HALF_Z - timber), DAMAGE_MATERIAL_WOOD, frame_color);
+		sills_x[side] = wreck_model_add_box(&model, make_vector(center_x, timber, z), b3Quat_identity,
+			make_vector(HOUSE_HALF_X + timber, timber, timber), WRECK_MATERIAL_WOOD, frame_color);
+		plates_x[side] = wreck_model_add_box(&model, make_vector(center_x, plate_y, z), b3Quat_identity,
+			make_vector(HOUSE_HALF_X + timber, timber, timber), WRECK_MATERIAL_WOOD, frame_color);
+		sills_z[side] = wreck_model_add_box(&model, make_vector(x, timber, center_z), b3Quat_identity,
+			make_vector(timber, timber, HOUSE_HALF_Z - timber), WRECK_MATERIAL_WOOD, frame_color);
+		plates_z[side] = wreck_model_add_box(&model, make_vector(x, plate_y, center_z), b3Quat_identity,
+			make_vector(timber, timber, HOUSE_HALF_Z - timber), WRECK_MATERIAL_WOOD, frame_color);
 		// (A sill lies on the foundation all along: held under every
 		// post and at its ends)
 		for (end = 0; end < HOUSE_POST_COUNT; end++)
 		{
-			damage_model_add_link(&model, sills_x[side], DAMAGE_GROUND,
-				make_vector(center_x - HOUSE_HALF_X + (float)end * (2.0f * HOUSE_HALF_X / (float)(HOUSE_POST_COUNT - 1)), 0.0f, z), DAMAGE_LINK_FOUNDATION);
+			wreck_model_add_link(&model, sills_x[side], WRECK_GROUND,
+				make_vector(center_x - HOUSE_HALF_X + (float)end * (2.0f * HOUSE_HALF_X / (float)(HOUSE_POST_COUNT - 1)), 0.0f, z), WRECK_LINK_FOUNDATION);
 		}
 		for (end = -1; end <= 1; end++)
 		{
-			damage_model_add_link(&model, sills_z[side], DAMAGE_GROUND, make_vector(x, 0.0f, center_z + (float)end * 1.2f), DAMAGE_LINK_FOUNDATION);
+			wreck_model_add_link(&model, sills_z[side], WRECK_GROUND, make_vector(x, 0.0f, center_z + (float)end * 1.2f), WRECK_LINK_FOUNDATION);
 		}
 	}
 	for (side = 0; side < 2; side++)
@@ -588,8 +590,8 @@ static void build_house(float center_x, float center_z)
 		{
 			float z = center_z + (wall == 0 ? 1.0f : -1.0f) * (HOUSE_HALF_Z - timber);
 
-			damage_model_add_link(&model, sills_z[side], sills_x[wall], make_vector(x, timber, z), DAMAGE_LINK_NAILS);
-			damage_model_add_link(&model, plates_z[side], plates_x[wall], make_vector(x, plate_y, z), DAMAGE_LINK_NAILS);
+			wreck_model_add_link(&model, sills_z[side], sills_x[wall], make_vector(x, timber, z), WRECK_LINK_NAILS);
+			wreck_model_add_link(&model, plates_z[side], plates_x[wall], make_vector(x, plate_y, z), WRECK_LINK_NAILS);
 		}
 	}
 
@@ -605,15 +607,15 @@ static void build_house(float center_x, float center_z)
 		{
 			float post_x = center_x - HOUSE_HALF_X + (float)post * (2.0f * HOUSE_HALF_X / (float)(HOUSE_POST_COUNT - 1));
 
-			posts[side][post] = damage_model_add_box(&model, make_vector(post_x, post_y, z), b3Quat_identity,
-				make_vector(timber, HOUSE_POST_HALF_HEIGHT, timber), DAMAGE_MATERIAL_WOOD, frame_color);
-			damage_model_add_link(&model, posts[side][post], sills_x[side], make_vector(post_x, sill_top, z), DAMAGE_LINK_NAILS);
-			damage_model_add_link(&model, plates_x[side], posts[side][post], make_vector(post_x, post_top, z), DAMAGE_LINK_NAILS);
+			posts[side][post] = wreck_model_add_box(&model, make_vector(post_x, post_y, z), b3Quat_identity,
+				make_vector(timber, HOUSE_POST_HALF_HEIGHT, timber), WRECK_MATERIAL_WOOD, frame_color);
+			wreck_model_add_link(&model, posts[side][post], sills_x[side], make_vector(post_x, sill_top, z), WRECK_LINK_NAILS);
+			wreck_model_add_link(&model, plates_x[side], posts[side][post], make_vector(post_x, post_top, z), WRECK_LINK_NAILS);
 		}
-		side_posts[side] = damage_model_add_box(&model, make_vector(x, post_y, center_z), b3Quat_identity,
-			make_vector(timber, HOUSE_POST_HALF_HEIGHT, timber), DAMAGE_MATERIAL_WOOD, frame_color);
-		damage_model_add_link(&model, side_posts[side], sills_z[side], make_vector(x, sill_top, center_z), DAMAGE_LINK_NAILS);
-		damage_model_add_link(&model, plates_z[side], side_posts[side], make_vector(x, post_top, center_z), DAMAGE_LINK_NAILS);
+		side_posts[side] = wreck_model_add_box(&model, make_vector(x, post_y, center_z), b3Quat_identity,
+			make_vector(timber, HOUSE_POST_HALF_HEIGHT, timber), WRECK_MATERIAL_WOOD, frame_color);
+		wreck_model_add_link(&model, side_posts[side], sills_z[side], make_vector(x, sill_top, center_z), WRECK_LINK_NAILS);
+		wreck_model_add_link(&model, plates_z[side], side_posts[side], make_vector(x, post_top, center_z), WRECK_LINK_NAILS);
 	}
 
 	// The boards of the walls, each nailed to every post it crosses. In
@@ -652,24 +654,24 @@ static void build_house(float center_x, float center_z)
 				float start_x = -HOUSE_HALF_X + (float)first_post - timber;
 				float end_x = -HOUSE_HALF_X + (float)last_post + timber;
 
-				board = damage_model_add_box(&model, make_vector(center_x + (start_x + end_x) * 0.5f, y, board_z), b3Quat_identity,
-					make_vector((end_x - start_x) * 0.5f, HOUSE_BOARD_WIDTH, HOUSE_BOARD_THICKNESS), DAMAGE_MATERIAL_WOOD, color);
+				board = wreck_model_add_box(&model, make_vector(center_x + (start_x + end_x) * 0.5f, y, board_z), b3Quat_identity,
+					make_vector((end_x - start_x) * 0.5f, HOUSE_BOARD_WIDTH, HOUSE_BOARD_THICKNESS), WRECK_MATERIAL_WOOD, color);
 				for (post = first_post; post <= last_post; post++)
 				{
-					damage_model_add_link(&model, board, posts[side][post], make_vector(center_x - HOUSE_HALF_X + (float)post, y, nail_z), DAMAGE_LINK_NAILS);
+					wreck_model_add_link(&model, board, posts[side][post], make_vector(center_x - HOUSE_HALF_X + (float)post, y, nail_z), WRECK_LINK_NAILS);
 				}
 				first_post = last_post + 1;
 			}
 
 			// The short wall at this side's end of x
-			board = damage_model_add_box(&model, make_vector(board_x, y, center_z), b3Quat_identity,
-				make_vector(HOUSE_BOARD_THICKNESS, HOUSE_BOARD_WIDTH, HOUSE_HALF_Z + timber), DAMAGE_MATERIAL_WOOD, color);
+			board = wreck_model_add_box(&model, make_vector(board_x, y, center_z), b3Quat_identity,
+				make_vector(HOUSE_BOARD_THICKNESS, HOUSE_BOARD_WIDTH, HOUSE_HALF_Z + timber), WRECK_MATERIAL_WOOD, color);
 			for (end = 0; end < 2; end++)
 			{
-				damage_model_add_link(&model, board, posts[end][side == 0 ? HOUSE_POST_COUNT - 1 : 0],
-					make_vector(nail_x, y, center_z + (end == 0 ? HOUSE_HALF_Z : -HOUSE_HALF_Z)), DAMAGE_LINK_NAILS);
+				wreck_model_add_link(&model, board, posts[end][side == 0 ? HOUSE_POST_COUNT - 1 : 0],
+					make_vector(nail_x, y, center_z + (end == 0 ? HOUSE_HALF_Z : -HOUSE_HALF_Z)), WRECK_LINK_NAILS);
 			}
-			damage_model_add_link(&model, board, side_posts[side], make_vector(nail_x, y, center_z), DAMAGE_LINK_NAILS);
+			wreck_model_add_link(&model, board, side_posts[side], make_vector(nail_x, y, center_z), WRECK_LINK_NAILS);
 		}
 	}
 
@@ -683,25 +685,25 @@ static void build_house(float center_x, float center_z)
 		float half_way = slope_length * 0.5f;
 		float collar_y = ridge_y - slope_sine * half_way;
 		float collar_reach = slope_cosine * half_way;
-		int tie = damage_model_add_box(&model, make_vector(x, tie_y, center_z), b3Quat_identity, make_vector(timber, timber, eave_run), DAMAGE_MATERIAL_WOOD, frame_color);
-		int collar = damage_model_add_box(&model, make_vector(collar_x, collar_y, center_z), b3Quat_identity,
-			make_vector(timber, timber, collar_reach + 2.0f * timber), DAMAGE_MATERIAL_WOOD, 0x8A5A30);
+		int tie = wreck_model_add_box(&model, make_vector(x, tie_y, center_z), b3Quat_identity, make_vector(timber, timber, eave_run), WRECK_MATERIAL_WOOD, frame_color);
+		int collar = wreck_model_add_box(&model, make_vector(collar_x, collar_y, center_z), b3Quat_identity,
+			make_vector(timber, timber, collar_reach + 2.0f * timber), WRECK_MATERIAL_WOOD, 0x8A5A30);
 
 		for (side = 0; side < 2; side++)
 		{
 			float sign = side == 0 ? 1.0f : -1.0f;
 			float middle = (rafter_start + slope_length) * 0.5f;
 
-			damage_model_add_link(&model, tie, plates_x[side], make_vector(x, post_top + 2.0f * timber, center_z + sign * HOUSE_HALF_Z), DAMAGE_LINK_NAILS);
-			rafters[side][post] = damage_model_add_box(&model,
+			wreck_model_add_link(&model, tie, plates_x[side], make_vector(x, post_top + 2.0f * timber, center_z + sign * HOUSE_HALF_Z), WRECK_LINK_NAILS);
+			rafters[side][post] = wreck_model_add_box(&model,
 				make_vector(x, ridge_y - slope_sine * middle, center_z + sign * slope_cosine * middle),
 				b3MakeQuatFromAxisAngle(make_vector(1.0f, 0.0f, 0.0f), sign * slope_angle),
-				make_vector(timber, timber, (slope_length - rafter_start) * 0.5f), DAMAGE_MATERIAL_WOOD, frame_color);
-			damage_model_add_link(&model, rafters[side][post], tie, make_vector(x, tie_top, center_z + sign * (eave_run - timber)), DAMAGE_LINK_NAILS);
-			damage_model_add_link(&model, collar, rafters[side][post],
-				make_vector((x + collar_x) * 0.5f, collar_y, center_z + sign * collar_reach), DAMAGE_LINK_NAILS);
+				make_vector(timber, timber, (slope_length - rafter_start) * 0.5f), WRECK_MATERIAL_WOOD, frame_color);
+			wreck_model_add_link(&model, rafters[side][post], tie, make_vector(x, tie_top, center_z + sign * (eave_run - timber)), WRECK_LINK_NAILS);
+			wreck_model_add_link(&model, collar, rafters[side][post],
+				make_vector((x + collar_x) * 0.5f, collar_y, center_z + sign * collar_reach), WRECK_LINK_NAILS);
 		}
-		damage_model_add_link(&model, rafters[0][post], rafters[1][post], make_vector(x, ridge_y, center_z), DAMAGE_LINK_NAILS);
+		wreck_model_add_link(&model, rafters[0][post], rafters[1][post], make_vector(x, ridge_y, center_z), WRECK_LINK_NAILS);
 	}
 
 	// The boards of the roof, across the rafters, nailed to each
@@ -715,13 +717,13 @@ static void build_house(float center_x, float center_z)
 			float along = 0.2f + (float)row * 2.0f * HOUSE_BOARD_WIDTH;
 			float on_rafter_y = ridge_y - slope_sine * along + slope_cosine * timber;
 			float on_rafter_z = center_z + sign * (slope_cosine * along + slope_sine * timber);
-			int board = damage_model_add_box(&model,
+			int board = wreck_model_add_box(&model,
 				make_vector(center_x, on_rafter_y + slope_cosine * HOUSE_BOARD_THICKNESS, on_rafter_z + sign * slope_sine * HOUSE_BOARD_THICKNESS), rotation,
-				make_vector(HOUSE_HALF_X + HOUSE_EAVE_OVERHANG, HOUSE_BOARD_THICKNESS, HOUSE_BOARD_WIDTH), DAMAGE_MATERIAL_WOOD, (row & 1) ? 0x7A4E2C : 0x8A5A30);
+				make_vector(HOUSE_HALF_X + HOUSE_EAVE_OVERHANG, HOUSE_BOARD_THICKNESS, HOUSE_BOARD_WIDTH), WRECK_MATERIAL_WOOD, (row & 1) ? 0x7A4E2C : 0x8A5A30);
 
 			for (post = 0; post < HOUSE_POST_COUNT; post++)
 			{
-				damage_model_add_link(&model, board, rafters[side][post], make_vector(center_x - HOUSE_HALF_X + (float)post, on_rafter_y, on_rafter_z), DAMAGE_LINK_NAILS);
+				wreck_model_add_link(&model, board, rafters[side][post], make_vector(center_x - HOUSE_HALF_X + (float)post, on_rafter_y, on_rafter_z), WRECK_LINK_NAILS);
 			}
 		}
 	}
@@ -751,8 +753,8 @@ static void build_world(void)
 
 	memset(&cabin, 0, sizeof(cabin));
 	// The numbers are read at every start: change the ini, start again
-	damage_settings_default(&cabin.settings);
-	if (!damage_settings_load(&cabin.settings, SETTINGS_PATH) && !settings_missing_was_said)
+	wreck_settings_default(&cabin.settings);
+	if (!damage_ini_read(SETTINGS_PATH, wreck_settings_set, &cabin.settings) && !settings_missing_was_said)
 	{
 		fprintf(stderr, "no %s here, the built in numbers are used\n", SETTINGS_PATH);
 		settings_missing_was_said = true;
@@ -767,9 +769,9 @@ static void build_world(void)
 	cabin.is_open = true;
 
 	build_ground();
-	damage_model_create(&model, cabin.world, &cabin.settings);
+	wreck_model_create(&model, cabin.world, &cabin.settings);
 	build_structures();
-	damage_model_finish(&model);
+	wreck_model_finish(&model);
 }
 
 // The balls and blasts of the person at the keys that belong to this frame
@@ -803,13 +805,13 @@ static void set_off_events(void)
 			sphere.radius = cabin.settings.ball_radius;
 			b3CreateSphereShape(body, &shape_definition, &sphere);
 			b3Body_SetLinearVelocity(body, make_vector(event->velocity[0], event->velocity[1], event->velocity[2]));
-			damage_model_add_projectile(&model, body, cabin.settings.ball_radius);
+			wreck_model_add_projectile(&model, body, cabin.settings.ball_radius);
 		}
 		else
 		{
 			blast_mark_t *mark = &cabin.recent_blasts[cabin.blast_count % RECENT_BLASTS_MAX];
 
-			damage_model_blast(&model, position, event->strength, cabin.frame_index + 1);
+			wreck_model_blast(&model, position, event->strength, cabin.frame_index + 1);
 			mark->frame_index = cabin.frame_index + 1;
 			mark->position = position;
 			cabin.blast_count++;
@@ -820,10 +822,10 @@ static void set_off_events(void)
 static void step_world(void)
 {
 	set_off_events();
-	damage_model_before_step(&model);
+	wreck_model_before_step(&model);
 	b3World_Step(cabin.world, STEP_SECONDS, SUBSTEP_COUNT);
 	cabin.frame_index++;
-	damage_model_after_step(&model, cabin.frame_index, STEP_SECONDS);
+	wreck_model_after_step(&model, cabin.frame_index, STEP_SECONDS);
 }
 
 static bool cabin_scene_open(void)
@@ -953,7 +955,7 @@ static void cabin_scene_draw(soft_render_t *renderer, const soft_render_camera_t
 	// The pieces first, their backs not drawn (they are closed), then
 	// the ground, of which only what shows between them is filled
 	renderer->cull_back_faces = true;
-	damage_model_draw_solids(&model, renderer, 2);
+	damage_draw_solids(&model, renderer, 2);
 	renderer->cull_back_faces = false;
 	soft_render_set_object(renderer, 1);
 	soft_render_ground(renderer, 0.0f, 0.0f, 0.0f, 40.0f, 1.0f, GROUND_COLOR_FIRST, GROUND_COLOR_SECOND);
@@ -961,10 +963,10 @@ static void cabin_scene_draw(soft_render_t *renderer, const soft_render_camera_t
 	{
 		soft_render_outlines(renderer);
 	}
-	damage_model_draw_marks(&model, renderer, cabin.frame_index, draw_debug);
+	damage_draw_marks(&model, renderer, cabin.frame_index, draw_debug);
 	if (inspected_piece >= 0)
 	{
-		damage_model_draw_inspection(&model, renderer, inspected_piece, 6, 74, 2);
+		damage_draw_inspection(&model, renderer, inspected_piece, 6, 74, 2);
 	}
 
 	for (i = first_blast; i < cabin.blast_count; i++)
@@ -987,12 +989,12 @@ static void cabin_scene_draw(soft_render_t *renderer, const soft_render_camera_t
 
 static void cabin_scene_describe(char *text, int text_size)
 {
-	damage_model_describe(&model, text, text_size);
+	wreck_model_describe(&model, text, text_size);
 }
 
 static uint32_t cabin_scene_checksum(void)
 {
-	return damage_model_checksum(&model);
+	return wreck_model_checksum(&model);
 }
 
 static bool cabin_scene_cast_ray(const float origin[3], const float direction[3], float distance, float hit_point[3])
@@ -1015,7 +1017,7 @@ static void cabin_scene_inspect(const float origin[3], const float direction[3],
 	b3RayResult result = b3World_CastRayClosest(cabin.world, make_vector(origin[0], origin[1], origin[2]),
 		make_vector(direction[0] * distance, direction[1] * distance, direction[2] * distance), b3DefaultQueryFilter());
 
-	inspected_piece = result.hit ? damage_model_shape_piece(result.shapeId) : -1;
+	inspected_piece = result.hit ? wreck_model_shape_piece(result.shapeId) : -1;
 }
 
 const damage_scene_t cabin_scene =

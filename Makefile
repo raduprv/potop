@@ -35,7 +35,9 @@ PROFILE_LINES ?= 120
 TARGET = potop
 EDITOR = potop_editor
 ENGINE_LIBRARY = build/libpotop.a
-ENGINE_SOURCES = $(wildcard engine/*.c)
+# (engine/wreck.c, the buildings that come apart, is not built here yet:
+# nothing of the engine uses it, side_projects/damage builds and tries it)
+ENGINE_SOURCES = $(filter-out engine/wreck.c,$(wildcard engine/*.c))
 EDITOR_SOURCES = $(wildcard editor/*.c)
 # The game (through potop.h alone)
 GAME_SOURCES = $(wildcard game/*.c)

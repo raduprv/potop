@@ -37,7 +37,8 @@
 
 #include "command_line.h"
 #include "damage_events.h"
-#include "damage_model.h"
+#include "damage_ini.h"
+#include "wreck.h"
 #include "damage_scene.h"
 #include "soft_render.h"
 #include "soft_render_png.h"
@@ -180,14 +181,14 @@ static void throw_ball(const soft_render_camera_t *camera, int frame_index, bool
 static void set_off_blast(const damage_scene_t *scene, const soft_render_camera_t *camera, int frame_index, bool big)
 {
 	damage_event_t event;
-	damage_settings_t settings;
+	wreck_settings_t settings;
 	float forward[3];
 	float hit_point[3];
 	int i;
 
 	// (Read every time: the file may have been changed)
-	damage_settings_default(&settings);
-	damage_settings_load(&settings, "damage.ini");
+	wreck_settings_default(&settings);
+	damage_ini_read("damage.ini", wreck_settings_set, &settings);
 	for (i = 0; i < 3; i++)
 	{
 		forward[i] = camera->target[i] - camera->eye[i];
