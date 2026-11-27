@@ -15,6 +15,9 @@ Files here:
   levels, recipes, the special buildings (church, mills, workshops).
 - `03_audit_ideas.md`: optimization candidates and eye candy worth adding,
   with where in the code they would go. Unverified ideas, not decisions.
+- `../../side_projects/damage/DESIGN.md`: the destruction model (links,
+  pieces, the support pass) as agreed with Radu, its steps, and the soft
+  renderer made to look at it without lavapipe.
 
 The manual in docs/manual/ (the big README.md until Nov 14 2026) is good and current for most systems (water,
 sky, clouds, objects, actors, plants, props, houses, physics, the material

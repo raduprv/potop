@@ -1,0 +1,147 @@
+# Damage: a destruction model for Potop's buildings
+
+A side project, on its own for now: nothing here is built by the
+project's Makefile and nothing of the engine is linked. What follows is
+what Radu and Claude agreed on (Nov 27 2026) before any of the model was
+written. Decisions, not code: check the sources for what exists.
+
+## The tools (steps 1 and 2, done)
+
+- `soft_render.c`: a crude software rasterizer (flat triangles, depth
+  buffer, a fixed light, boxes, cylinders, prisms, spheres, lines, points,
+  a 5 x 7 font). It exists so Claude can look at geometry and physics
+  without lavapipe, and so Radu sees the very same pixels live.
+- `damage_scene.h`: what a scene is (open, seek to a frame, draw, a line
+  about the frame, a checksum, a ray cast). The scenes: `pile`
+  (pile_scene.c, Box3D alone, with a film of its own), `sandbox` (the
+  same wall and crib with nothing happening by itself) and `test`
+  (test_scene.c, the renderer's own test).
+- `damage_events.h`: the balls thrown and blasts set off from the viewer
+  (left mouse, X; Backspace takes the last one back), each noted with its
+  frame. A scene sets them off again when it comes to that frame, so
+  going back replays them; P saves them to a .txt beside the picture and
+  `damage_shot --events` draws the very same wreck (checked: the same
+  checksum).
+- `damage_shot`: headless, a frame or a sheet of frames to a PNG;
+  `--debug` adds contacts and impulses.
+- `damage_view`: the same scenes in an SDL3 window: free camera, pause, a
+  frame at a time forward and back, slow motion. P saves the picture and
+  prints the `damage_shot` command that draws the same one, with the
+  scene's checksum; C prints the camera.
+
+Build: `make` here (SDL3 through pkg-config, as the project's Makefile;
+Box3D is compiled from third_party/box3d into build/); `make damage_shot`
+needs no SDL3.
+
+## What step 2 found (Box3D commit of Oct 7 2026, one thread)
+
+- **The same steps give the same world**: a frame's checksum is the same
+  run after run and after going back and forward again (seek steps from
+  the start). Going back is therefore free of any recording.
+- **A log's shape**: Box3D has no cylinder (spheres, capsules, convex
+  hulls, meshes). A log is a hull, a prism of 12 sides lying on a flat
+  one; the renderer draws that very prism (soft_render_prism). Stacked
+  crosswise with nothing holding them, such logs stand and fall asleep.
+- **Hulls are copied**: the world keeps its own copy of a hull given to a
+  shape (shared by hash), so the caller's can be destroyed at once.
+- **A hit** is read two ways. Hit events (shape definition
+  enableHitEvents, world hitEventThreshold in m/s) give the two shapes,
+  the point, the normal and the approach speed, but no impulse. Contact
+  data (b3Body_GetContactData) gives, a contact point, totalNormalImpulse
+  in newton seconds (the steel ball on the brick wall: about 1900).
+  A shape's userData holds its piece's number.
+- **Many shapes on one body are cheap**: 240 logs as one body cost 0.012
+  ms a step lying still, against 0.059 ms as 240 bodies; made in 6 ms.
+- **Taking a body apart in mid motion** (split_body in pile_scene.c): a
+  new body a piece, each moving as that part of the old one did (its
+  speed plus what the turning adds that far from the center), the old
+  body destroyed. The common center goes on along the same parabola to
+  the last digit. The parts of a turning body then drift apart, as they
+  should: nothing pulls them round any more. 240 pieces: 4 ms, and 1.2
+  ms for the first step after.
+- **b3World_Explode** exists: an impulse per area on what faces it,
+  within a radius and a falloff. Enough for a first explosion.
+
+## The model
+
+Not a CAD grade simulation: if it shows in the game it is in, if it only
+shows in a chart it is out.
+
+- **Box3D does all that moves** (collisions, stacking, impulses, sleep).
+  A group of pieces still linked together is one body with many shapes;
+  the links are never Box3D joints.
+- **One graph a building**: the pieces are its nodes, the links its edges,
+  made once when the building is. A broken link is marked dead; nothing is
+  rebuilt. A group is a connected island of that graph (a number a
+  piece). The graph outlives the building: logs flying 50 m away are still
+  looked up in it when they land. It is freed when no live link is left.
+- **Small groups become rubble**: under a few pieces (an ini number) a
+  group stays glued for good as a plain body, with no contact reports.
+- **A link** has a threshold (a light wind must not wear it down), hit
+  points (several events can break it) and limits by direction: pressed
+  together, pulled apart, slid sideways, and as a cantilever (weight times
+  arm). A log cabin's notched corner is a link type, not geometry: almost
+  nothing against pulling apart, a lot against sliding and pressing.
+- **A link remembers how hard it is pressed** (the static load from the
+  last support pass): a pull must beat that first. The bottom log, with
+  the house on it, does not jump at a slap; the top one does.
+- **A piece** has a crushing limit and its own hit points (glass breaks
+  itself, not the nails round it). Long pieces (told by their size, not
+  by a flag) have a bending limit worked out on the piece itself: the
+  moment summed along its axis through where it is held and loaded; over
+  the limit it is cut there in two pieces, straight as by a laser (a
+  noise cap later if it looks wrong). So the graph also gains nodes.
+  Plates (floors, doors, panes) do not bend: hit points and crushing only.
+- **The support pass** runs only after something broke, on the island
+  still anchored to the ground: each piece's weight goes down to its
+  supports by leverage (not split evenly: a beam on two pillars with a
+  free end pulls one of them up), each link and piece is checked against
+  its limits, and it repeats until nothing more breaks. An overloaded
+  link may lose hit points over a second or two instead of at once (the
+  house stands a moment, then goes).
+  Its test cases: a whole house left standing on a ground floor window;
+  a roof hanging from one wall; a beam on three pillars with an end
+  pillar gone, pushed on its free end.
+- **What lies on a building** (a fallen tree, the neighbour's rubble)
+  counts only as the hit, not as weight afterwards.
+
+Order of an event: the hit breaks what it breaks (against the old
+loads); the islands are relabeled; the support pass on the anchored one;
+again until quiet.
+
+## Where damage comes from
+
+- **Blunt force and explosions first** (the same code, two sources of
+  impulse): if these do not work there is no point in the rest. A blunt
+  hit comes from Box3D's contact impulses; an explosion is a radial
+  impulse falling off with distance. A hit spreads through the graph,
+  weaker each link away (how much weaker: an ini number).
+- **Water, later**: no continuous push on the links. The first impulse
+  over a threshold either breaks links or not; after that the water only
+  carries what came loose (the engine's water already carries logs), and
+  a house swept into something takes a blunt hit.
+- **Fire, last**: lowers the links' hit points (and the pieces' mass) as
+  they burn; gravity does the rest.
+
+## Buildings
+
+- Special buildings made physically from predefined modules (closed
+  meshes, convex collision shapes, a material that gives the limits and
+  the density). The existing generated houses are not used: they are not
+  physical (no back faces, no anchors).
+- A module is one piece or several linked ones (not decided); it is a
+  convenience of building only: the graph gets separate pieces.
+- Links are made procedurally by rules, neither from mere touching nor
+  all by hand. How exactly: not decided.
+
+## Steps
+
+1. The soft renderer and its test scene. **Done.**
+2. Box3D alone: a pile of boxes and logs falling, seen through it.
+   **Done** (what it found is above).
+3. The graph: pieces, links, islands, groups splitting.
+4. The support pass, with its three test cases.
+5. Bending and cutting of long pieces.
+6. The notched corner link and explosions.
+
+Radu tests each step himself before the next is started.

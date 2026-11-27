@@ -16,6 +16,7 @@
 !/props_plan/
 !/data/
 !/tests/
+!/side_projects/
 
 # data/: all of it but what is made at run time (cache), what make shaders
 # makes (spirv) and the actors (models under a license that does not allow
@@ -37,3 +38,10 @@
 *.d
 __pycache__/
 plant_plans/twigs/
+
+# side_projects/: the sources, not what they build or the pictures and events they save
+/side_projects/damage/build/
+/side_projects/damage/damage_shot
+/side_projects/damage/damage_view
+/side_projects/damage/*.png
+/side_projects/damage/damage_*.txt
