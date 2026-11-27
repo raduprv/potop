@@ -12,11 +12,10 @@
 // wall tips onto the pane, which then has all of it: the pane is
 // crushed, the wall hangs from the other pier for a moment and falls);
 // a roof whose beams lie on a wall at one end and on a lintel on two
-// posts at the other (knock both posts out, they stand one behind the
-// other: the beams hold the roof from one end alone, and it comes down,
-// wall and all; with one post left it stays up, see DESIGN.md for why
-// that is right and how the model gets there the wrong way); a beam on
-// three pillars with a heavy crate on one end (knock
+// posts at the other (with one post knocked out it stays up, whole: a
+// stiff roof on a wall and a post is stable; knock both out, they stand
+// one behind the other, and the beams hold the roof from one end alone:
+// it comes down, wall and all); a beam on three pillars with a heavy crate on one end (knock
 // out the pillar under the crate: the far pillar's link is pulled up,
 // then the beam tips on the middle one).
 //

@@ -102,60 +102,60 @@ does nothing to a static body), small loose groups as rubble.
 ## What step 4 made and found
 
 The support pass (work_out_support in damage_model.c), run when the
-graph changed, on what still stands:
+graph changed, on what still stands. It was written twice.
 
-- **How far from the ground** each piece is, going from piece to piece
-  over whole links: a piece a link holds to the ground is as far as its
-  middle is high; resting on another adds the height between their
-  middles; held from the side or hanging adds three times the distance.
-  What a piece touches that is nearer the ground is what holds it up.
-  (Counting links instead went wrong at once: a brick on a pier of three
-  bricks was "further" than its neighbour on a pane, and leaned on it.)
-- **A piece rests on what is under it, if anything is**; only what has
-  nothing under it is held from the side or from above.
-- **Shares by leverage** (share_load): one link takes all, and the
-  weight times its distance to the side as a cantilever; links on a line
-  balance as a seesaw (a share can be negative: that link holds the
-  piece down); links round the load balance both ways; with more links
-  than a balance settles, the most even shares that still balance. A
-  cantilevered load is passed on where it really is, so it levers what
-  is under too (a roof held from one wall pulls the wall over).
-- **Limits a link type**: compression, pull (also for holding from the
-  side), cantilever; **a material**: crush. A crushed piece lets go of
-  everything and is gone from the world (left as a solid box it went on
-  propping the wall up).
+**The first one went piece by piece** and is gone: each piece sent its
+weight down the links towards the ground, shared by leverage rules (one
+link: a cantilever; links on a line: a seesaw; links round the load:
+balanced both ways), with a made up "distance to the ground" deciding
+which links those were. It was right for walls, stacks and beams on
+pillars, where the weight has one way down, and wrong for frames: a
+roof on a wall and ONE post (its other post knocked out) it took for a
+lintel balancing on one post, broke that link, then the wall's. Nothing
+fell, because Box3D found the loose pieces stable where they lay, as
+they are; but nothing was nailed any more. Box3D had it right because
+it balances everything at once, which the pass did not.
+
+**The one there now solves the building at once**: the pieces stay
+rigid; every link is a short stiff spring against its two pieces moving
+apart or turning apart where it is; gravity pulls on every piece; where
+it all settles (six unknowns a piece, conjugate gradients, started from
+where it settled last time) gives the force and the moment through
+every link. The weight finds all the ways down there are, each as far
+as it is stiff. No rules about who rests on whom are left.
+
+- **A link's limits**: compression and pull along its direction (worked
+  out from where it is when it is added: up when it is under one piece
+  and over the other, else level), pull also for what it bears
+  sideways, until sliding has limits of its own; cantilever for its
+  moment. **A material's**: crush, against half of all that presses on
+  a piece. A crushed piece lets go of everything and is gone from the
+  world (left as a solid box it went on propping the wall up).
+- **joint_arm** (damage.ini) is the one new number: how stiff a link is
+  against turning, as a length. It decides how much goes through joints
+  as cantilevers and how much round by other ways.
 - **Giving way takes time**: an overloaded link loses hit points as fast
   as it is overloaded (collapse_seconds at just its limit), so what hits
   have hurt goes sooner and a building stands a moment first. A link
   breaking makes the pass due again at the next step: a collapse goes
   on frame by frame.
-- The three cases (the `support` scene, support_show.txt), each with one
-  support knocked out. The wall on a pane: with a pier gone the wall
-  balances on the pane, which then has all 13 kN (not the share one
-  would guess), is crushed, and the wall falls. The roof, both posts
-  gone: the beams hold it from the wall alone and it comes down, wall
-  and all. The beam on three pillars: the
-  far pillar's link is pulled up and goes, then the beam tips on the
-  middle one. The cabin and its wall carry themselves with no link over
-  a fifth of its limit.
-- **The pass looks at one piece at a time, so it is too gloomy about
-  pieces that only hold together.** The roof with ONE post gone stays
-  up, and rightly: a stiff roof on a wall and a post is stable. But the
-  pass sees the lintel alone on one post as a cantilever, breaks that
-  link, then sees the beams holding everything from the wall and breaks
-  the wall's links too. The roof is then one loose body and the wall a
-  stack of loose logs, which Box3D finds stable where they lie: nothing
-  falls, but nothing is nailed any more (B shows the links red), and a
-  light hit later scatters it. So the pass only ever unglues, and Box3D
-  has the last word on what falls. The opposite fix (letting a piece's
-  other links take its leverage) would bring back houses hanging in
-  the air; the right one is statics of the whole building at once,
-  which is what this is not.
-- Costs 0.06 ms a step through the three collapses. The distances are
-  found the plain way (the square of the pieces): fine for hundreds,
-  to be made a heap for thousands.
+- **The cases** (the `support` scene; support_show.txt). The wall on a
+  pane: untouched the pane has about half of the wall (it is the
+  stiffest way down); with a pier gone the wall balances on it, it has
+  all 13 kN, is crushed, and the wall falls. The roof: with one post
+  gone it stands and every link is whole; with both gone the beams
+  hold it from the wall alone, 17 links are overloaded, and it comes
+  down, wall and all. The beam on three pillars with the pillar under
+  the crate gone: the far pillar's link is pulled up (1.3 times its
+  limit) and goes, then the middle one's (4 times) and the beam tips.
+  The cabin and its wall carry themselves with no link over a quarter
+  of its limit.
+- **Cost**: the cabin from nothing 0.34 ms (41 rounds); through its
+  replay 0.06 ms a step, the slowest step 0.8 ms. It grows with pieces
+  times rounds.
 - Open, as before: only hits hurt links, slow pushes do not; and what
-  lies on a building weighs nothing in the pass.
+  lies on a building weighs nothing in the pass (only linked pieces
+  are in it).
 
 ## The model
 

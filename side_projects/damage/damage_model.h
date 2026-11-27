@@ -20,11 +20,15 @@
 // the piece at its other end, which shares it again.
 //
 // What holds what up is worked out whenever the graph changed (the
-// support pass): every piece that stands sends its weight, and what
-// rests on it, down the links that lead towards the ground, shared by
-// leverage; each link is checked against what it bears pressed, pulled
-// and as a cantilever, each piece against what crushes it (a crushed
-// piece lets go of everything and is gone). An overloaded
+// support pass), for a whole building at once: the pieces stay rigid,
+// every link is a short stiff spring against the two pieces moving or
+// turning apart where it is, gravity pulls on every piece, and where it
+// all settles gives what each link bears. So the weight finds all the
+// ways down there are, each as far as it is stiff, and pieces that hold
+// one another (a frame) are seen to. Each link is checked against what
+// it bears pressed, pulled, sideways and as a cantilever, each piece
+// against what crushes it (a crushed piece lets go of everything and is
+// gone). An overloaded
 // link does not snap at once: it loses hit points while it is overloaded
 // (so what a hit has hurt gives way sooner), and the building stands a
 // moment before it goes.
@@ -101,6 +105,10 @@ typedef struct
 	float blast_radius;                // meters at full strength
 	float blast_falloff;               // meters beyond that over which it fades to nothing
 	float collapse_seconds;            // how long a link loaded to just its limit lasts (twice the load: half as long)
+	// How stiff a link is against the pieces turning apart, as a length
+	// (meters): it resists turning as two springs this far apart would.
+	// Longer: links are more like clamps and carry more as cantilevers.
+	float joint_arm;
 	float shape_gap;                   // meters a collision shape is smaller than its piece, all round
 	float ball_radius;                 // the ball the viewer throws: meters
 	float ball_density;                // kilograms a cubic meter
@@ -126,6 +134,7 @@ typedef struct
 	int piece_b;                       // DAMAGE_GROUND: holds piece_a to the ground
 	damage_link_type_t type;
 	b3Vec3 local_point;                // where it is, in the building's frame
+	b3Vec3 local_normal;               // across the joint, from piece_b towards piece_a (up for the ground)
 	float hit_points_left;
 	bool broken;
 	int broken_frame;
@@ -187,10 +196,14 @@ typedef struct
 	bool any_group_dirty;
 
 	// The support pass is due (the graph changed); the links it found
-	// overloaded
+	// overloaded; and where it found every piece to settle (how far it
+	// moved, how far it turned: six numbers a piece), which the next
+	// pass starts from
 	bool support_dirty;
 	int overloaded_links[DAMAGE_LINKS_MAX];
 	int overloaded_count;
+	double support_solution[DAMAGE_PIECES_MAX * 6];
+	int support_iterations;            // the last pass took this many
 
 	damage_hit_t recent_hits[DAMAGE_RECENT_HITS_MAX];
 	int hit_count;                     // all there were; the last DAMAGE_RECENT_HITS_MAX are kept
@@ -210,6 +223,13 @@ void damage_model_create(damage_model_t *model, b3WorldId world, const damage_se
 // Building: pieces where they stand, then links between them, then
 // damage_model_finish, which finds the islands and makes their bodies.
 // The adders return the piece's or link's number, -1 when full.
+//
+// A link's direction across its joint is worked out from where it is:
+// up when it is under piece_a's middle and over piece_b's (piece_a lies
+// on piece_b), down the other way round, else level and away from the
+// link towards piece_a's middle. So for a joint at the side, piece_a is
+// the piece that meets it squarely (the log that stops against the
+// other's side, not the one running past).
 int damage_model_add_box(damage_model_t *model, b3Vec3 position, b3Quat rotation, b3Vec3 half_extents, damage_material_t material, uint32_t color);
 int damage_model_add_log(damage_model_t *model, b3Vec3 position, b3Quat rotation, float radius, float half_length, damage_material_t material, uint32_t color);
 int damage_model_add_link(damage_model_t *model, int piece_a, int piece_b, b3Vec3 point, damage_link_type_t type);
