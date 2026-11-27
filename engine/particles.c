@@ -8,7 +8,7 @@
 #include "terrain_renderer.h"
 #include "scene_uniforms.h"
 
-#define TEXTURE_SIZE 64
+#define TEXTURE_SIZE 128
 #define FLAME_FRAMES 8
 #define SMOKE_FRAMES 4
 #define GROUP_SIZE 64
@@ -150,16 +150,21 @@ static float texture_value(int layer, float u, float v)
 	}
 	if (layer >= LAYER_FLAME && layer < LAYER_FLAME + FLAME_FRAMES)
 	{
-		// A tongue: wide at the bottom (v = -1), pointed at the top, its
-		// edge licked by noise that rises from frame to frame
+		// A soft lick of flame, not a drawn tongue: a round glow, fuller
+		// low, thinning upwards to a blunt top, its edge eaten by a noise
+		// that rises from frame to frame; brightest in its middle, fading
+		// to nothing at its rim (no outline: many of them overlapping make
+		// the fire's shape, the bright heart where they pile up)
 		float frame = (float)(layer - LAYER_FLAME) / (float)FLAME_FRAMES;
 		float height = v * 0.5f + 0.5f;
-		float width = 0.75f * (1.0f - height) * (0.6f + 0.4f * SDL_sqrtf(SDL_max(1.0f - height, 0.0f)));
-		float noise = fractal_noise(u * 0.25f + 0.5f, height * 0.5f - frame * 0.5f, 101);
-		float edge = width * (0.6f + 0.8f * noise);
-		float inside = smooth_step(edge, 0.0f, SDL_fabsf(u));
+		float width = 0.62f * (1.0f - 0.55f * height * height);
+		float noise = fractal_noise(u * 0.35f + 0.5f, height * 0.6f - frame * 0.6f, 101);
+		float across = SDL_fabsf(u) / SDL_max(width, 0.05f);
+		float up = SDL_fabsf(v + 0.15f) / 0.85f;
+		float distance = SDL_sqrtf(across * across + up * up) + 0.55f * (noise - 0.5f);
+		float glow = smooth_step(1.0f, 0.15f, distance);
 
-		return SDL_sqrtf(inside) * smooth_step(0.0f, 0.25f, height) * smooth_step(1.0f, 0.5f, height + 0.3f * (noise - 0.5f));
+		return glow * glow;
 	}
 	return 0.0f;
 }
