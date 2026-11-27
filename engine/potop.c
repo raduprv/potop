@@ -18,6 +18,7 @@ _Static_assert((int)POTOP_PICK_TOO_HEAVY == (int)HARVEST_TOO_HEAVY, "pick result
 _Static_assert((int)POTOP_HIT_PLAYER == (int)PROJECTILE_HIT_PLAYER, "hit kinds");
 _Static_assert((int)POTOP_PART_LIMB == (int)ACTOR_ZONE_LIMB, "body parts");
 _Static_assert((int)POTOP_DAMAGE_MAGIC == (int)DAMAGE_MAGIC, "damage types");
+_Static_assert((int)POTOP_DAMAGE_BLUNT == (int)DAMAGE_BLUNT, "damage types");
 _Static_assert((int)POTOP_NOISE_OTHER == (int)NOISE_OTHER, "noise kinds");
 _Static_assert((int)POTOP_AREA_TRIGGER_ACTORS == (int)AREA_TRIGGER_ACTORS, "area triggers");
 _Static_assert((int)POTOP_AREA_EXIT == (int)AREA_EVENT_EXIT, "area events");

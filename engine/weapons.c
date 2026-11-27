@@ -225,6 +225,11 @@ static bool ammo_key(weapon_ammo_t *ammo, const char *key, const char *value)
 	{
 		return damage_type_from_name(value, &ammo->damage_type);
 	}
+	if (SDL_strcmp(key, "throws") == 0)
+	{
+		SDL_strlcpy(ammo->throws, value, sizeof(ammo->throws));
+		return true;
+	}
 	for (size_t i = 0; i < sizeof(floats) / sizeof(floats[0]); i++)
 	{
 		if (SDL_strcmp(key, floats[i].key) == 0)

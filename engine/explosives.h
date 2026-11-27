@@ -40,7 +40,9 @@ struct session_s;
 typedef enum
 {
 	EXPLOSIVE_FUSE_TIMER = 0,      // goes off fuse_seconds after it is thrown
-	EXPLOSIVE_FUSE_PROXIMITY       // armed after arm_seconds; goes off when an actor (or the player) comes within trigger_meters
+	EXPLOSIVE_FUSE_PROXIMITY,      // armed after arm_seconds; goes off when an actor (or the player) comes within trigger_meters
+	EXPLOSIVE_FUSE_IMPACT,         // armed after arm_seconds; goes off when it strikes something (its speed changing by impact_speed at once)
+	EXPLOSIVE_FUSE_NONE            // never goes off (a ball shot: blunt, its damage on whom it strikes); gone after life_seconds
 } explosive_fuse_t;
 
 typedef struct
@@ -79,6 +81,13 @@ typedef struct
 	bool pressure;
 	float trigger_height_meters;
 	bool spares_owner;
+	// Shot from a weapon (ammo.ini's throws): what its speed must change by
+	// at once for it to have struck something (an impact fuse; a ball's
+	// blow), how long it stays on the map (0: for good), the effect that
+	// trails it in the air (particles.ini)
+	float impact_speed;
+	float life_seconds;
+	char trail_effect[EXPLOSIVES_NAME_LENGTH];
 } explosive_type_t;
 
 typedef struct
@@ -92,6 +101,9 @@ typedef struct
 	float velocity[3];             // the throw
 	int owner;                     // who threw it (-1: the player)
 	bool placed;                   // put down (a mine), not thrown
+	float last_velocity[3];        // its body's at the last update (the impact fuse, a ball's blow)
+	bool has_last_velocity;
+	uint32_t trail;                // its trail's emitter (0: none)
 } grenade_t;
 
 // A fire a blast left

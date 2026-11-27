@@ -348,4 +348,7 @@ void physics_push_body(physics_t *physics, int body, const float impulse[3], con
 // alike); for a thing whose model is another's made small (a grenade)
 void physics_set_body_mass(physics_t *physics, int body, float mass_kilograms);
 
+// A body's velocity now (meters a second; zeros if it is none)
+void physics_body_velocity(const physics_t *physics, int body, float velocity_out[3]);
+
 #endif

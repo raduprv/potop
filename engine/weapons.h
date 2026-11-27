@@ -78,6 +78,10 @@ typedef struct
 	float push;                                // what it gives a body it hits, of its momentum
 	float life_seconds;                        // gone after (if it hit nothing)
 	damage_type_t damage_type;                 // what its hits say (ballistic; damage.h)
+	// Not a bullet: a thing of explosives.ini thrown out of the barrel (a
+	// launcher's grenade, a ball), at its throw speed, the physics flying
+	// it (empty: a bullet, the rest above)
+	char throws[WEAPONS_NAME_LENGTH];
 } weapon_ammo_t;
 
 // What the game can change of a weapon (its skills, better parts):

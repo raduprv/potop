@@ -15,10 +15,11 @@ typedef enum
 	DAMAGE_COLD,
 	DAMAGE_POISON,
 	DAMAGE_MAGIC,
+	DAMAGE_BLUNT,                  // a heavy thing striking (a ball shot)
 	DAMAGE_TYPE_COUNT
 } damage_type_t;
 
-// "ballistic", "explosive", "fire", "cold", "poison", "magic" (the inis'
+// "ballistic", "explosive", "fire", "cold", "poison", "magic", "blunt" (the inis'
 // names); false if it is none of them
 bool damage_type_from_name(const char *name, damage_type_t *type_out);
 const char *damage_type_name(damage_type_t type);

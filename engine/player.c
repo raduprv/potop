@@ -269,6 +269,20 @@ void player_update_weapons(player_t *player, session_t *session, world_t *world,
 		{
 			const weapon_ammo_t *ammo = &session->weapons.ammo[shots[i].ammo];
 
+			// A launcher's grenade, a ball: a thing of explosives.ini thrown
+			// out of the barrel (from a little ahead of the eye, clear of
+			// the one shooting), the physics flying it
+			if (ammo->throws[0] != '\0')
+			{
+				float from[3];
+
+				for (int k = 0; k < 3; k++)
+				{
+					from[k] = shots[i].origin[k] + shots[i].direction[k] * 0.9f;
+				}
+				explosives_throw(&session->explosives, world, explosives_find(&session->explosives, ammo->throws), from, shots[i].direction, -1);
+				continue;
+			}
 			projectile_t *shot = projectiles_fire(&session->projectiles, &world->particles, shots[i].origin, shots[i].direction, shots[i].speed,
 				ammo->mass_grams * 0.001f, ammo->drag, ammo->push, ammo->damage * shots[i].damage_scale, ammo->life_seconds, -1,
 				shots[i].tracer ? type->tracer_effect : NULL, muzzle);

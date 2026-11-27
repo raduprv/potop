@@ -3789,6 +3789,23 @@ bool physics_cast_segment(physics_t *physics, const float from[3], const float t
 	return true;
 }
 
+void physics_body_velocity(const physics_t *physics, int body, float velocity_out[3])
+{
+	b3Vec3 velocity;
+
+	velocity_out[0] = 0.0f;
+	velocity_out[1] = 0.0f;
+	velocity_out[2] = 0.0f;
+	if (body < 0 || body >= physics->body_capacity || !physics->bodies[body].used)
+	{
+		return;
+	}
+	velocity = b3Body_GetLinearVelocity(physics->bodies[body].id);
+	velocity_out[0] = velocity.x;
+	velocity_out[1] = velocity.y;
+	velocity_out[2] = velocity.z;
+}
+
 void physics_set_body_mass(physics_t *physics, int body, float mass_kilograms)
 {
 	physics_body_t *target;

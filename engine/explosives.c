@@ -63,6 +63,7 @@ static explosive_type_t default_type(void)
 	type.burn_damage_per_second = 10.0f;
 	SDL_strlcpy(type.burn_effect, "campfire", sizeof(type.burn_effect));
 	type.trigger_height_meters = 0.5f;
+	type.impact_speed = 4.0f;
 	return type;
 }
 
@@ -75,8 +76,40 @@ static bool type_key(explosive_type_t *type, const char *key, const char *value)
 {
 	if (SDL_strcmp(key, "fuse") == 0)
 	{
-		type->fuse = SDL_strcmp(value, "proximity") == 0 ? EXPLOSIVE_FUSE_PROXIMITY : EXPLOSIVE_FUSE_TIMER;
-		return SDL_strcmp(value, "proximity") == 0 || SDL_strcmp(value, "timer") == 0;
+		if (SDL_strcmp(value, "proximity") == 0)
+		{
+			type->fuse = EXPLOSIVE_FUSE_PROXIMITY;
+		}
+		else if (SDL_strcmp(value, "impact") == 0)
+		{
+			type->fuse = EXPLOSIVE_FUSE_IMPACT;
+		}
+		else if (SDL_strcmp(value, "none") == 0)
+		{
+			type->fuse = EXPLOSIVE_FUSE_NONE;
+		}
+		else if (SDL_strcmp(value, "timer") == 0)
+		{
+			type->fuse = EXPLOSIVE_FUSE_TIMER;
+		}
+		else
+		{
+			return false;
+		}
+		return true;
+	}
+	if (SDL_strcmp(key, "impact_speed") == 0)
+	{
+		return ini_value_to_float(value, &type->impact_speed);
+	}
+	if (SDL_strcmp(key, "life_seconds") == 0)
+	{
+		return ini_value_to_float(value, &type->life_seconds);
+	}
+	if (SDL_strcmp(key, "trail_effect") == 0)
+	{
+		SDL_strlcpy(type->trail_effect, value, sizeof(type->trail_effect));
+		return true;
 	}
 	if (SDL_strcmp(key, "fuse_seconds") == 0)
 	{
@@ -549,6 +582,62 @@ bool explosives_throw(explosives_t *explosives, world_t *world, int type_index, 
 	return true;
 }
 
+static void stop_trail(grenade_t *grenade, world_t *world)
+{
+	if (grenade->trail != 0)
+	{
+		particles_stop(&world->particles, grenade->trail);
+		grenade->trail = 0;
+	}
+}
+
+// A ball shot struck something at speed (meters a second its speed
+// changed by): the actor nearest to it, if one is within its reach, takes
+// a blow (its damage as that change goes against its throw speed, of its
+// damage type: blunt) through the hits
+static void strike_actor(explosives_t *explosives, session_t *session, world_t *world, const explosive_type_t *type, const grenade_t *grenade,
+	const float position[3], float change)
+{
+	float reach = type->size_meters * 0.5f + 0.6f;
+	int nearest = -1;
+	float nearest_distance = reach * reach;
+	projectile_hit_t hit;
+
+	(void)explosives;
+	for (int a = 0; a < world->actors.count; a++)
+	{
+		const actor_t *actor = &world->actors.actors[a];
+		float dx = actor->x - position[0];
+		float dz = actor->z - position[2];
+		// (along its height: from its feet to two meters up)
+		float dy = position[1] < actor->y ? actor->y - position[1] : SDL_max(position[1] - actor->y - 2.0f, 0.0f);
+		float distance = dx * dx + dy * dy + dz * dz;
+
+		if (distance < nearest_distance && !actors_is_dead(&world->actors, actor->id))
+		{
+			nearest_distance = distance;
+			nearest = a;
+		}
+	}
+	if (nearest < 0)
+	{
+		return;
+	}
+	SDL_zero(hit);
+	hit.kind = PROJECTILE_HIT_ACTOR;
+	SDL_memcpy(hit.point, position, sizeof(hit.point));
+	SDL_memcpy(hit.velocity, grenade->last_velocity, sizeof(hit.velocity));
+	hit.instance = -1;
+	hit.actor_id = world->actors.actors[nearest].id;
+	hit.zone = ACTOR_ZONE_BODY;
+	hit.bone = -1;
+	hit.damage = type->damage * SDL_min(change / SDL_max(type->throw_meters_per_second, 1.0f), 1.5f);
+	hit.damage_type = type->damage_type;
+	hit.ammo = -1;
+	hit.owner = grenade->owner;
+	projectiles_add_hit(&session->projectiles, &hit);
+}
+
 static void remove_object(world_t *world, int index)
 {
 	// (blown away: gone where it stood, no sort of the list for it)
@@ -648,6 +737,7 @@ void explosives_update(explosives_t *explosives, session_t *session, world_t *wo
 		{
 			// (taken away: a map loaded, cleared, or it flew off the map)
 			SDL_Log("Explosives: a %s grenade is no longer on the map, forgotten", explosives->types[grenade->type].name);
+			stop_trail(grenade, world);
 			grenade->used = false;
 			continue;
 		}
@@ -681,13 +771,84 @@ void explosives_update(explosives_t *explosives, session_t *session, world_t *wo
 		position[0] = instance->x;
 		position[1] = objects_instance_base_y(instance);
 		position[2] = instance->z;
-		goes_off = type->fuse == EXPLOSIVE_FUSE_TIMER ? grenade->age_seconds >= type->fuse_seconds
-			: grenade->age_seconds >= type->arm_seconds && anyone_near(explosives, world, type, grenade->owner, position, type->trigger_meters);
+		// Its trail in the air, following it (from the time it is thrown)
+		if (type->trail_effect[0] != '\0' && grenade->thrown && !grenade->placed)
+		{
+			if (grenade->trail == 0)
+			{
+				int effect = particles_find_effect(&world->particles, type->trail_effect);
+
+				grenade->trail = effect >= 0 ? particles_play(&world->particles, effect, position[0], position[1], position[2]) : 0;
+			}
+			else
+			{
+				particles_emitter_t *trail = particles_find_emitter(&world->particles, grenade->trail);
+
+				if (trail != NULL)
+				{
+					SDL_memcpy(trail->position, position, sizeof(trail->position));
+				}
+			}
+		}
+		switch (type->fuse)
+		{
+		case EXPLOSIVE_FUSE_TIMER:
+			goes_off = grenade->age_seconds >= type->fuse_seconds;
+			break;
+		case EXPLOSIVE_FUSE_PROXIMITY:
+			goes_off = grenade->age_seconds >= type->arm_seconds && anyone_near(explosives, world, type, grenade->owner, position, type->trigger_meters);
+			break;
+		default:
+			goes_off = false;
+			break;
+		}
+		// Struck something: its speed changed at once by more than falling
+		// does (an impact fuse goes off; a ball strikes whom it hit)
+		if ((type->fuse == EXPLOSIVE_FUSE_IMPACT || type->fuse == EXPLOSIVE_FUSE_NONE) && grenade->thrown && instance->body >= 0
+			&& instance->body < world->physics.body_capacity)
+		{
+			float velocity[3];
+			float change = 0.0f;
+
+			physics_body_velocity(&world->physics, instance->body, velocity);
+			if (grenade->has_last_velocity)
+			{
+				float expected[3] = { grenade->last_velocity[0], grenade->last_velocity[1] - 9.81f * seconds, grenade->last_velocity[2] };
+
+				for (int k = 0; k < 3; k++)
+				{
+					change += (velocity[k] - expected[k]) * (velocity[k] - expected[k]);
+				}
+				change = SDL_sqrtf(change);
+			}
+			if (change > type->impact_speed && grenade->age_seconds >= type->arm_seconds)
+			{
+				if (type->fuse == EXPLOSIVE_FUSE_IMPACT)
+				{
+					goes_off = true;
+				}
+				else if (type->damage > 0.0f)
+				{
+					strike_actor(explosives, session, world, type, grenade, position, change);
+				}
+			}
+			SDL_memcpy(grenade->last_velocity, velocity, sizeof(velocity));
+			grenade->has_last_velocity = true;
+		}
+		// A ball: off the map after its time
+		if (type->fuse == EXPLOSIVE_FUSE_NONE && type->life_seconds > 0.0f && grenade->age_seconds >= type->life_seconds)
+		{
+			stop_trail(grenade, world);
+			grenade->used = false;
+			remove_object(world, index);
+			continue;
+		}
 		if (goes_off)
 		{
 			int owner = grenade->owner;
 			int kind = grenade->type;
 
+			stop_trail(grenade, world);
 			grenade->used = false;
 			remove_object(world, index);
 			explosives_explode(explosives, session, world, kind, position, owner);
@@ -713,7 +874,13 @@ bool explosives_set_off(explosives_t *explosives, session_t *session, world_t *w
 		{
 			continue;
 		}
+		// (a ball shot has nothing in it to go off)
+		if (explosives->types[grenade->type].fuse == EXPLOSIVE_FUSE_NONE)
+		{
+			return false;
+		}
 		index = objects_find_id(&world->objects, object_id);
+		stop_trail(grenade, world);
 		grenade->used = false;
 		if (index < 0)
 		{
@@ -813,6 +980,7 @@ int explosives_take_back(explosives_t *explosives, world_t *world, uint32_t obje
 		return -1;
 	}
 	type = grenade->type;
+	stop_trail(grenade, world);
 	grenade->used = false;
 	if (index >= 0)
 	{

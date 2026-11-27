@@ -4,7 +4,7 @@
 
 #include <SDL3/SDL.h>
 
-static const char *const DAMAGE_NAMES[DAMAGE_TYPE_COUNT] = { "ballistic", "explosive", "fire", "cold", "poison", "magic" };
+static const char *const DAMAGE_NAMES[DAMAGE_TYPE_COUNT] = { "ballistic", "explosive", "fire", "cold", "poison", "magic", "blunt" };
 
 bool damage_type_from_name(const char *name, damage_type_t *type_out)
 {

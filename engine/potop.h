@@ -779,7 +779,8 @@ typedef enum
 	POTOP_DAMAGE_FIRE,
 	POTOP_DAMAGE_COLD,
 	POTOP_DAMAGE_POISON,
-	POTOP_DAMAGE_MAGIC
+	POTOP_DAMAGE_MAGIC,
+	POTOP_DAMAGE_BLUNT
 } potop_damage_type_t;
 
 // Where a projectile hit (the game decides what it does)
