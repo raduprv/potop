@@ -132,12 +132,25 @@ graph changed, on what still stands:
 - The three cases (the `support` scene, support_show.txt), each with one
   support knocked out. The wall on a pane: with a pier gone the wall
   balances on the pane, which then has all 13 kN (not the share one
-  would guess), is crushed, and the wall falls. The roof: the lintel
-  cannot stand on one post; then the beams hold the roof from the wall
-  alone and it comes down, wall and all. The beam on three pillars: the
+  would guess), is crushed, and the wall falls. The roof, both posts
+  gone: the beams hold it from the wall alone and it comes down, wall
+  and all. The beam on three pillars: the
   far pillar's link is pulled up and goes, then the beam tips on the
   middle one. The cabin and its wall carry themselves with no link over
   a fifth of its limit.
+- **The pass looks at one piece at a time, so it is too gloomy about
+  pieces that only hold together.** The roof with ONE post gone stays
+  up, and rightly: a stiff roof on a wall and a post is stable. But the
+  pass sees the lintel alone on one post as a cantilever, breaks that
+  link, then sees the beams holding everything from the wall and breaks
+  the wall's links too. The roof is then one loose body and the wall a
+  stack of loose logs, which Box3D finds stable where they lie: nothing
+  falls, but nothing is nailed any more (B shows the links red), and a
+  light hit later scatters it. So the pass only ever unglues, and Box3D
+  has the last word on what falls. The opposite fix (letting a piece's
+  other links take its leverage) would bring back houses hanging in
+  the air; the right one is statics of the whole building at once,
+  which is what this is not.
 - Costs 0.06 ms a step through the three collapses. The distances are
   found the plain way (the square of the pieces): fine for hundreds,
   to be made a heap for thousands.
