@@ -438,6 +438,41 @@ presses on everything until it finds a way out.
   all the walls go where half of them stood before, and the roof comes
   down a wreck; outside the house's front wall nothing changes.
 
+## Made ready for the engine's world (asked for by Opus, who links it in)
+
+The engine's Box3D world holds its own bodies too (terrain, objects,
+trees, the player, grenades and balls), and many buildings, each a
+model of its own, worked on one after another on one thread.
+
+- User data: the engine puts `slot + 1` on its bodies and nothing on its
+  shapes. The model used to put a group's number on its bodies and to
+  write on the projectiles' bodies; in the engine's world it would have
+  taken the engine's bodies for groups and set their speed. Now a
+  model's bodies carry the model itself, its shapes a piece's number
+  plus one, and it writes on no body that is not its own (projectiles
+  are known by their ids). A shape with user data is a piece's: nothing
+  else in the world may put any on its shapes. `wreck_shape_model`,
+  `wreck_body_model`, and `wreck_model_shape_piece` now takes the model.
+- Hits: the model reads no events. Whoever steps the world gives each
+  hit to the model whose piece it is (`wreck_model_take_hit`), then
+  calls `wreck_model_after_step`, which can be left out while
+  `wreck_model_is_busy` is false. `before_step` is for every step.
+  What lasts between those calls is in the model now.
+- The file's static arrays hold nothing from one call to the next
+  (gone through one by one).
+- New: `wreck_model_destroy`, `wreck_model_remove_projectile`,
+  `wreck_blast_strength` and `wreck_model_blast_kilograms`.
+- A blast's rays in a world that is not the model's alone: what can
+  move and is no model's (a barrel, an animal, a ball) is looked
+  through; what cannot move (the ground, a tree) hides what is behind
+  it and is neither a wall nor a way out for the gas; a piece of
+  another model is a wall. In the test bench the only change is that a
+  ball lying in the way no longer shields anything (house_show.txt
+  comes out a little different after its blast; the other demos are
+  the same to the bit).
+- Not done, for later: a collision filter for the pieces' shapes, and
+  putting far buildings to sleep (bodies gone, graph kept).
+
 ## The model
 
 Not a CAD grade simulation: if it shows in the game it is in, if it only

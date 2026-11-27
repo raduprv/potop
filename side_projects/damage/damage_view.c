@@ -202,7 +202,7 @@ static void set_off_blast(const damage_scene_t *scene, const soft_render_camera_
 	event.kind = DAMAGE_EVENT_BLAST;
 	// (What goes with the event is the wave's strength at 1 m, newton
 	// seconds a square meter)
-	event.strength = settings.blast_impulse_per_kilogram * powf(big ? settings.blast_big_kilograms : settings.blast_kilograms, 2.0f / 3.0f);
+	event.strength = wreck_blast_strength(&settings, big ? settings.blast_big_kilograms : settings.blast_kilograms);
 	for (i = 0; i < 3; i++)
 	{
 		event.position[i] = hit_point[i] - forward[i] * BLAST_BACK_METERS;

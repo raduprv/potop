@@ -47,9 +47,8 @@
 //     through the group's links.
 // Loose moving pieces are slowed by the air.
 //
-// One model at a time and one thread: the solver's scratch arrays are
-// the file's own. Shapes and bodies carry the model's numbers in their
-// user data (a piece's index plus one, a group's plus one).
+// One thread: the solver's scratch arrays are the file's own (they hold
+// nothing from one call to the next; all that lasts is in the model).
 //
 // What lies on a building (a fallen log, a heap of rubble) counts only
 // as the hit it gave, not as weight after.
@@ -66,6 +65,7 @@
 #define WRECK_PIECES_MAX 1024
 #define WRECK_LINKS_MAX 4096
 #define WRECK_PROJECTILES_MAX 256
+#define WRECK_RESTORED_BODIES_MAX 256
 #define WRECK_RECENT_HITS_MAX 32
 // A link's other end when it holds a piece to the ground
 #define WRECK_GROUND -1
@@ -284,6 +284,16 @@ typedef struct
 	int pending_cut_count;
 	int cut_count;
 
+	// Between the hits of a step (wreck_model_take_hit) and the work after
+	// it (wreck_model_after_step): the bodies whose hit broke links, which
+	// are to go on at the speed they had; and the loose groups that hit
+	// something, with the pieces of theirs that did the hitting
+	b3BodyId restored_bodies[WRECK_RESTORED_BODIES_MAX];
+	int restored_count;
+	bool shock_groups[WRECK_PIECES_MAX];
+	bool shock_pieces[WRECK_PIECES_MAX];
+	bool any_shock;
+
 	wreck_hit_t recent_hits[WRECK_RECENT_HITS_MAX];
 	int hit_count;                     // all there were; the last WRECK_RECENT_HITS_MAX are kept
 	float largest_hit_impulse;
@@ -298,9 +308,28 @@ void wreck_settings_default(wreck_settings_t *settings);
 // it can be handed to one as it is; the model reads no files itself.
 bool wreck_settings_set(void *user, const char *section, const char *key, const char *value);
 
+// Many models can be in one world, the engine's own bodies beside them;
+// they are worked on one after another, on one thread.
+//
+// Whose a body or a shape is. The model puts itself in the user data of
+// its bodies and a piece's number plus one in that of its shapes, and
+// writes on no body that is not its own. A shape with user data is taken
+// to be a piece's, so NOTHING ELSE IN THE WORLD MAY PUT USER DATA ON ITS
+// SHAPES (on its bodies it may). The model a shape or a body belongs to,
+// NULL if it is none of a model's:
+wreck_model_t *wreck_shape_model(b3ShapeId shape);
+wreck_model_t *wreck_body_model(b3BodyId body);
+// The piece of THIS model a shape is (a ray cast's hit, say), -1 for any
+// other shape
+int wreck_model_shape_piece(const wreck_model_t *model, b3ShapeId shape);
+
 // An empty model in a world. The world's hit event threshold should be
-// the settings' hit_speed.
+// the settings' hit_speed. The model must stay where it is in memory
+// from here to wreck_model_destroy: its bodies point at it.
 void wreck_model_create(wreck_model_t *model, b3WorldId world, const wreck_settings_t *settings);
+// Takes all of the model's bodies out of the world (not the projectiles:
+// they are not its own) and leaves it empty
+void wreck_model_destroy(wreck_model_t *model);
 
 // Building: pieces where they stand, then links between them, then
 // wreck_model_finish, which finds the islands and makes their bodies.
@@ -317,24 +346,48 @@ int wreck_model_add_log(wreck_model_t *model, b3Vec3 position, b3Quat rotation, 
 int wreck_model_add_link(wreck_model_t *model, int piece_a, int piece_b, b3Vec3 point, wreck_link_type_t type);
 void wreck_model_finish(wreck_model_t *model);
 
-// A body thrown at the building (a ball): the model minds its speed, so
-// that it goes on through what it breaks instead of bouncing off it
+// A body of the world's thrown at the building (a ball): the model minds
+// its speed, so that it goes on through what it breaks instead of
+// bouncing off it, and a blast pushes it. Nothing is written on the
+// body; it is known by its id. Take it out before the body is destroyed.
 void wreck_model_add_projectile(wreck_model_t *model, b3BodyId body, float radius);
+void wreck_model_remove_projectile(wreck_model_t *model, b3BodyId body);
 
-// Round a step of the world: before it, and after it (the hits of the
-// step, the links they break, the groups made anew, the support pass if
-// the graph changed, the overloaded links giving way a little more)
+// Round a step of the world, for each model:
+//   wreck_model_before_step     before it, always (it only notes speeds)
+//   (the world is stepped)
+//   wreck_model_take_hit        for every hit event of the step in which
+//                               one of the two shapes is a piece of this
+//                               model (wreck_shape_model says whose a
+//                               shape is; a hit between pieces of two
+//                               models goes to both)
+//   wreck_model_after_step      the links the hits broke, the shock of
+//                               falls, the groups made anew, the support
+//                               pass if the graph changed, overloaded
+//                               links giving way a little more, the air.
+//                               Can be left out while wreck_model_is_busy
+//                               says there is nothing to do.
+// The model reads no events from the world itself.
 void wreck_model_before_step(wreck_model_t *model);
+void wreck_model_take_hit(wreck_model_t *model, const b3ContactHitEvent *event, int frame_index);
 void wreck_model_after_step(wreck_model_t *model, int frame_index, float step_seconds);
+// True when wreck_model_after_step has work: hits were taken, links are
+// overloaded, cuts or the support pass are waiting, groups are to be made
+// anew, or something loose is awake
+bool wreck_model_is_busy(const wreck_model_t *model);
 
-// A blast: damage to the links of every piece it reaches, then a push
-// on what is loose. The strength is newton seconds on a square meter
-// facing it.
+// A blast: its wave on every piece, through the links, then the gas if
+// it is shut in, then a push on what is loose (the comment at the top).
+// The strength is what the wave gives at 1 m, newton seconds on a square
+// meter facing it; wreck_blast_strength makes it from kilograms of
+// explosive by the settings. Rays are cast in the world for what is in
+// the way: other bodies that can move are looked through, what cannot
+// move (the ground, a tree) hides what is behind it and neither shuts
+// the gas in nor lets it out, a piece of another model is a wall.
+// For a blast near several models, call it for each.
+float wreck_blast_strength(const wreck_settings_t *settings, float kilograms);
 void wreck_model_blast(wreck_model_t *model, b3Vec3 position, float strength, int frame_index);
-
-// The piece a shape belongs to (a ray cast's hit, say), -1 for a shape
-// that is no piece
-int wreck_model_shape_piece(b3ShapeId shape);
+void wreck_model_blast_kilograms(wreck_model_t *model, b3Vec3 position, float kilograms, int frame_index);
 
 // Where a piece is now, in the world (its body's place and its own place
 // in that body)

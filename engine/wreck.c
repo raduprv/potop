@@ -32,6 +32,11 @@
 #define GAS_RAY_METERS 30.0f
 #define GAS_RAY_OUT -1
 #define GAS_RAY_GROUND -2
+#define GAS_RAY_WALL -3
+// A ray looks through this many things that can move at most, and goes
+// on this far past where it met one (meters)
+#define RAY_PASSES 8
+#define RAY_STEP_METERS 0.05f
 // A ray goes on through this many loose pieces at most
 #define GAS_RAY_PASSES 6
 // Rays within this of one another (the cosine of the angle between
@@ -45,7 +50,6 @@
 // many places evenly along it; and a piece's links looked at, at most
 #define BEND_SAMPLES 16
 #define BEND_LOADS_MAX 48
-#define RESTORED_BODIES_MAX 256
 
 
 // Scratch for walking the graph (one walk at a time: nothing here is
@@ -78,17 +82,29 @@ static b3Vec3 blast_turnings[WRECK_PIECES_MAX];
 static float gas_factors[WRECK_PIECES_MAX];
 static int gas_island_sizes[WRECK_PIECES_MAX];
 // The rays that look for a blast's way out: which way each goes, and the
-// standing piece it ends on (GAS_RAY_OUT: it got out; GAS_RAY_GROUND)
+// piece it ends on (GAS_RAY_OUT: it got out; GAS_RAY_GROUND; GAS_RAY_WALL:
+// on another model's piece)
 static b3Vec3 gas_ray_directions[GAS_RAYS];
 static int gas_ray_pieces[GAS_RAYS];
-// The loose groups that hit something in the step being worked on, and
-// the pieces of theirs that did the hitting
-static bool shock_groups[WRECK_PIECES_MAX];
-static bool shock_pieces[WRECK_PIECES_MAX];
 // How stiffly each unknown is held where it is by nothing but its
 // piece's own mass: nothing when weights are solved for (they have all
 // the time in the world), something when a blast is
 static double solver_inertia[WRECK_PIECES_MAX * 6];
+
+// The first projectile of the model that is this body, -1 if none is
+static int find_projectile(const wreck_model_t *model, b3BodyId body)
+{
+	int i;
+
+	for (i = 0; i < model->projectile_count; i++)
+	{
+		if (B3_ID_EQUALS(model->projectiles[i].body, body))
+		{
+			return i;
+		}
+	}
+	return -1;
+}
 
 static b3Vec3 make_vector(float x, float y, float z)
 {
@@ -390,6 +406,20 @@ void wreck_model_create(wreck_model_t *model, b3WorldId world, const wreck_setti
 	model->settings = *settings;
 }
 
+void wreck_model_destroy(wreck_model_t *model)
+{
+	int i;
+
+	for (i = 0; i < WRECK_PIECES_MAX; i++)
+	{
+		if (model->groups[i].used && b3Body_IsValid(model->groups[i].body))
+		{
+			b3DestroyBody(model->groups[i].body);
+		}
+	}
+	memset(model, 0, sizeof(*model));
+}
+
 // A piece's half sizes along its own x, y and z (a log is as thick and
 // as wide as its radius)
 static void piece_half_sizes(const wreck_piece_t *piece, float half_sizes[3])
@@ -664,7 +694,9 @@ static void create_group_body(wreck_model_t *model, int group_index, b3Transform
 	definition.type = group->anchored ? b3_staticBody : b3_dynamicBody;
 	definition.position = frame.p;
 	definition.rotation = frame.q;
-	definition.userData = (void *)(intptr_t)(group_index + 1);
+	// (The model itself: wreck_body_model. Which group a body is comes
+	// from its shapes' pieces.)
+	definition.userData = model;
 	group->body = b3CreateBody(model->world, &definition);
 	for (i = 0; i < model->piece_count; i++)
 	{
@@ -803,9 +835,18 @@ void wreck_model_add_projectile(wreck_model_t *model, b3BodyId body, float radiu
 	memset(projectile, 0, sizeof(*projectile));
 	projectile->body = body;
 	projectile->radius = radius;
-	// (Negative: not a group)
-	b3Body_SetUserData(body, (void *)(intptr_t)(-(model->projectile_count + 1)));
 	model->projectile_count++;
+}
+
+void wreck_model_remove_projectile(wreck_model_t *model, b3BodyId body)
+{
+	int index = find_projectile(model, body);
+
+	if (index >= 0)
+	{
+		model->projectiles[index] = model->projectiles[model->projectile_count - 1];
+		model->projectile_count--;
+	}
 }
 
 // ---------------------------------------------------------------------
@@ -2050,29 +2091,35 @@ void wreck_model_before_step(wreck_model_t *model)
 static void keep_going(wreck_model_t *model, b3BodyId body)
 {
 	float kept = model->settings.breakthrough_speed_kept;
-	intptr_t tag;
 
 	if (!b3Body_IsValid(body))
 	{
 		return;
 	}
-	tag = (intptr_t)b3Body_GetUserData(body);
-	if (tag > 0)
+	if (wreck_body_model(body) == model)
 	{
-		const wreck_group_t *group = &model->groups[tag - 1];
+		b3ShapeId shape;
+		const wreck_group_t *group;
 
+		b3Body_GetShapes(body, &shape, 1);
+		group = &model->groups[model->pieces[wreck_model_shape_piece(model, shape)].group];
 		if (group->used && !group->anchored && !group->rebuilt)
 		{
 			b3Body_SetLinearVelocity(body, b3MulSV(kept, group->linear_velocity_before_step));
 			b3Body_SetAngularVelocity(body, group->angular_velocity_before_step);
 		}
 	}
-	else if (tag < 0)
+	else
 	{
-		const wreck_projectile_t *projectile = &model->projectiles[-tag - 1];
+		// (Only the bodies it was told are projectiles: anything else of
+		// the world's is left alone)
+		int index = find_projectile(model, body);
 
-		b3Body_SetLinearVelocity(body, b3MulSV(kept, projectile->linear_velocity_before_step));
-		b3Body_SetAngularVelocity(body, projectile->angular_velocity_before_step);
+		if (index >= 0)
+		{
+			b3Body_SetLinearVelocity(body, b3MulSV(kept, model->projectiles[index].linear_velocity_before_step));
+			b3Body_SetAngularVelocity(body, model->projectiles[index].angular_velocity_before_step);
+		}
 	}
 }
 
@@ -2123,7 +2170,7 @@ static void shock_through_group(wreck_model_t *model, int group_index, int frame
 			solver_load[i * 6 + k] = 0.0;
 			solver_x[i * 6 + k] = 0.0;
 			// (A piece that hit is held as by one link at its middle)
-			solver_inertia[i * 6 + k] = !shock_pieces[piece_index] ? 0.0 : (k < 3 ? 1.0 : turn_stiffness);
+			solver_inertia[i * 6 + k] = !model->shock_pieces[piece_index] ? 0.0 : (k < 3 ? 1.0 : turn_stiffness);
 		}
 		solver_load[i * 6 + 0] = (double)push.x;
 		solver_load[i * 6 + 1] = (double)push.y;
@@ -2171,120 +2218,118 @@ static void shock_through_group(wreck_model_t *model, int group_index, int frame
 	}
 }
 
-void wreck_model_after_step(wreck_model_t *model, int frame_index, float step_seconds)
+void wreck_model_take_hit(wreck_model_t *model, const b3ContactHitEvent *event, int frame_index)
 {
-	b3ContactEvents events = b3World_GetContactEvents(model->world);
-	b3BodyId restored_bodies[RESTORED_BODIES_MAX];
-	int restored_count = 0;
-	bool any_shock = false;
-	int i;
+	int piece_a;
+	int piece_b;
+	float impulse = 0.0f;
+	bool broke = false;
+	b3ContactData contact;
+	wreck_hit_t *hit;
 	int side;
 	int manifold_index;
 	int point_index;
 
-	for (i = 0; i < events.hitCount; i++)
+	if (!b3Shape_IsValid(event->shapeIdA) || !b3Shape_IsValid(event->shapeIdB) || !b3Contact_IsValid(event->contactId))
 	{
-		const b3ContactHitEvent *event = &events.hitEvents[i];
-		int piece_a;
-		int piece_b;
-		float impulse = 0.0f;
-		bool broke = false;
-		b3ContactData contact;
-		wreck_hit_t *hit;
+		return;
+	}
+	// (A shape that is no piece of this model: the ground, a ball, a
+	// piece of another building)
+	piece_a = wreck_model_shape_piece(model, event->shapeIdA);
+	piece_b = wreck_model_shape_piece(model, event->shapeIdB);
+	if (piece_a < 0 && piece_b < 0)
+	{
+		return;
+	}
+	contact = b3Contact_GetData(event->contactId);
+	for (manifold_index = 0; manifold_index < contact.manifoldCount; manifold_index++)
+	{
+		const b3Manifold *manifold = &contact.manifolds[manifold_index];
 
-		if (!b3Shape_IsValid(event->shapeIdA) || !b3Shape_IsValid(event->shapeIdB) || !b3Contact_IsValid(event->contactId))
+		for (point_index = 0; point_index < manifold->pointCount; point_index++)
 		{
-			continue;
-		}
-		// (A shape that is no piece, the ground or a ball, has no number)
-		piece_a = (int)(intptr_t)b3Shape_GetUserData(event->shapeIdA) - 1;
-		piece_b = (int)(intptr_t)b3Shape_GetUserData(event->shapeIdB) - 1;
-		if (piece_a < 0 && piece_b < 0)
-		{
-			continue;
-		}
-		contact = b3Contact_GetData(event->contactId);
-		for (manifold_index = 0; manifold_index < contact.manifoldCount; manifold_index++)
-		{
-			const b3Manifold *manifold = &contact.manifolds[manifold_index];
-
-			for (point_index = 0; point_index < manifold->pointCount; point_index++)
-			{
-				impulse += manifold->points[point_index].totalNormalImpulse;
-			}
-		}
-
-		// Each piece hit: the hit on the piece itself, on its length if it
-		// is long, and on its links (for a piece of a loose group of
-		// several, not here: the shock goes through the whole group, below)
-		for (side = 0; side < 2; side++)
-		{
-			int piece_index = side == 0 ? piece_a : piece_b;
-			const wreck_group_t *group;
-
-			if (piece_index < 0 || model->pieces[piece_index].group == WRECK_GONE)
-			{
-				continue;
-			}
-			if (hurt_piece(model, piece_index, impulse, frame_index))
-			{
-				broke = true;
-			}
-			if (snap_piece(model, piece_index, event->point, event->normal, impulse))
-			{
-				broke = true;
-			}
-			group = &model->groups[model->pieces[piece_index].group];
-			if (!group->anchored && !group->rubble && !group->rebuilt && group->piece_count > 1)
-			{
-				shock_groups[model->pieces[piece_index].group] = true;
-				shock_pieces[piece_index] = true;
-				any_shock = true;
-			}
-			else if (share_hit(model, piece_index, impulse, frame_index))
-			{
-				broke = true;
-			}
-		}
-		if (broke && restored_count + 2 <= RESTORED_BODIES_MAX)
-		{
-			restored_bodies[restored_count++] = b3Shape_GetBody(event->shapeIdA);
-			restored_bodies[restored_count++] = b3Shape_GetBody(event->shapeIdB);
-		}
-
-		hit = &model->recent_hits[model->hit_count % WRECK_RECENT_HITS_MAX];
-		hit->frame_index = frame_index;
-		hit->point = event->point;
-		hit->impulse = impulse;
-		hit->broke_links = broke;
-		model->hit_count++;
-		if (impulse > model->largest_hit_impulse)
-		{
-			model->largest_hit_impulse = impulse;
+			impulse += manifold->points[point_index].totalNormalImpulse;
 		}
 	}
 
-	if (any_shock)
+	// Each piece hit: the hit on the piece itself, on its length if it
+	// is long, and on its links (for a piece of a loose group of
+	// several, not here: the shock goes through the whole group, below)
+	for (side = 0; side < 2; side++)
+	{
+		int piece_index = side == 0 ? piece_a : piece_b;
+		const wreck_group_t *group;
+
+		if (piece_index < 0 || model->pieces[piece_index].group == WRECK_GONE)
+		{
+			continue;
+		}
+		if (hurt_piece(model, piece_index, impulse, frame_index))
+		{
+			broke = true;
+		}
+		if (snap_piece(model, piece_index, event->point, event->normal, impulse))
+		{
+			broke = true;
+		}
+		group = &model->groups[model->pieces[piece_index].group];
+		if (!group->anchored && !group->rubble && !group->rebuilt && group->piece_count > 1)
+		{
+			model->shock_groups[model->pieces[piece_index].group] = true;
+			model->shock_pieces[piece_index] = true;
+			model->any_shock = true;
+		}
+		else if (share_hit(model, piece_index, impulse, frame_index))
+		{
+			broke = true;
+		}
+	}
+	if (broke && model->restored_count + 2 <= WRECK_RESTORED_BODIES_MAX)
+	{
+		model->restored_bodies[model->restored_count++] = b3Shape_GetBody(event->shapeIdA);
+		model->restored_bodies[model->restored_count++] = b3Shape_GetBody(event->shapeIdB);
+	}
+
+	hit = &model->recent_hits[model->hit_count % WRECK_RECENT_HITS_MAX];
+	hit->frame_index = frame_index;
+	hit->point = event->point;
+	hit->impulse = impulse;
+	hit->broke_links = broke;
+	model->hit_count++;
+	if (impulse > model->largest_hit_impulse)
+	{
+		model->largest_hit_impulse = impulse;
+	}
+}
+
+void wreck_model_after_step(wreck_model_t *model, int frame_index, float step_seconds)
+{
+	int i;
+
+	if (model->any_shock)
 	{
 		for (i = 0; i < WRECK_PIECES_MAX; i++)
 		{
-			if (shock_groups[i])
+			if (model->shock_groups[i])
 			{
 				shock_through_group(model, i, frame_index, step_seconds);
-				shock_groups[i] = false;
+				model->shock_groups[i] = false;
 			}
 		}
-		memset(shock_pieces, 0, sizeof(shock_pieces));
+		memset(model->shock_pieces, 0, sizeof(model->shock_pieces));
+		model->any_shock = false;
 	}
 
 	// (Only now: the events point at shapes the rebuilding destroys, and a
 	// cut changes whose links are whose)
 	make_pending_cuts(model);
 	rebuild_dirty_groups(model);
-	for (i = 0; i < restored_count; i++)
+	for (i = 0; i < model->restored_count; i++)
 	{
-		keep_going(model, restored_bodies[i]);
+		keep_going(model, model->restored_bodies[i]);
 	}
+	model->restored_count = 0;
 
 	// What still stands: who bears what, if the graph changed; then what
 	// is overloaded gives way a little more. A link that breaks here
@@ -2299,6 +2344,27 @@ void wreck_model_after_step(wreck_model_t *model, int frame_index, float step_se
 	rebuild_dirty_groups(model);
 	remove_crushed(model);
 	drag_through_air(model, step_seconds);
+}
+
+bool wreck_model_is_busy(const wreck_model_t *model)
+{
+	int i;
+
+	if (model->restored_count > 0 || model->any_shock || model->support_dirty || model->any_group_dirty
+		|| model->overloaded_count > 0 || model->pending_cut_count > 0)
+	{
+		return true;
+	}
+	for (i = 0; i < WRECK_PIECES_MAX; i++)
+	{
+		const wreck_group_t *group = &model->groups[i];
+
+		if (group->used && !group->anchored && b3Body_IsAwake(group->body))
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 b3Transform wreck_model_piece_transform(const wreck_model_t *model, int piece_index)
@@ -2357,6 +2423,47 @@ static float blast_reach(const wreck_model_t *model, float strength, b3Vec3 blas
 	return powf(distance, -model->settings.blast_falloff_power);
 }
 
+// A ray through the world that takes no notice of what can move and is
+// no model's: a barrel, an animal, a ball (they neither hide anything
+// from a blast nor shut its gas in). True when it met something else:
+// a piece of some model, or something that cannot move. shape: what it
+// met; point (may be NULL): where.
+static bool cast_ray_past_movables(const wreck_model_t *model, b3Vec3 origin, b3Vec3 translation, b3ShapeId *shape, b3Vec3 *point)
+{
+	float length = b3Length(translation);
+	b3Vec3 direction;
+	b3Vec3 start = origin;
+	float left = length;
+	int pass;
+
+	if (length < 1e-6f)
+	{
+		return false;
+	}
+	direction = b3MulSV(1.0f / length, translation);
+	for (pass = 0; pass < RAY_PASSES && left > 0.01f; pass++)
+	{
+		b3RayResult result = b3World_CastRayClosest(model->world, start, b3MulSV(left, direction), b3DefaultQueryFilter());
+
+		if (!result.hit)
+		{
+			return false;
+		}
+		if (wreck_shape_model(result.shapeId) != NULL || b3Body_GetType(b3Shape_GetBody(result.shapeId)) == b3_staticBody)
+		{
+			*shape = result.shapeId;
+			if (point != NULL)
+			{
+				*point = result.point;
+			}
+			return true;
+		}
+		left -= b3Length(b3Sub(result.point, start)) + RAY_STEP_METERS;
+		start = b3Add(result.point, b3MulSV(RAY_STEP_METERS, direction));
+	}
+	return false;
+}
+
 // What a blast gives a piece, newton seconds and which way. A long piece
 // is taken in parts along its length, each pushed from where the blast
 // is by how far it is, how much of it faces the blast, and whether
@@ -2396,9 +2503,11 @@ static b3Vec3 blast_on_piece(const wreck_model_t *model, b3Vec3 position, float 
 
 		if (impulse > 0.0f && !is_gas && model->settings.blast_shielding > 0.0f)
 		{
-			b3RayResult result = b3World_CastRayClosest(model->world, position, b3Sub(place, position), b3DefaultQueryFilter());
+			b3ShapeId shape;
 
-			if (result.hit && wreck_model_shape_piece(result.shapeId) != piece_index)
+			// (In the way: another piece of this model or of another, or
+			// something of the world's that cannot move)
+			if (cast_ray_past_movables(model, position, b3Sub(place, position), &shape, NULL) && wreck_model_shape_piece(model, shape) != piece_index)
 			{
 				impulse *= 1.0f - model->settings.blast_shielding;
 			}
@@ -2645,29 +2754,33 @@ static void gas_after_blast(wreck_model_t *model, b3Vec3 position, float strengt
 		gas_ray_pieces[ray] = GAS_RAY_OUT;
 		for (pass = 0; pass < GAS_RAY_PASSES && left > 0.01f; pass++)
 		{
-			b3RayResult result = b3World_CastRayClosest(model->world, start, b3MulSV(left, direction), b3DefaultQueryFilter());
+			b3ShapeId shape;
+			b3Vec3 point;
 			int piece_index;
 
-			if (!result.hit)
+			if (!cast_ray_past_movables(model, start, b3MulSV(left, direction), &shape, &point))
 			{
 				break;
 			}
-			piece_index = wreck_model_shape_piece(result.shapeId);
+			piece_index = wreck_model_shape_piece(model, shape);
 			if (piece_index >= 0 && piece_index < piece_count_before && gas_island_sizes[piece_index] >= model->settings.rubble_pieces)
 			{
 				gas_ray_pieces[ray] = piece_index;
 				break;
 			}
-			if (piece_index < 0 && result.point.y < 0.02f)
+			if (piece_index < 0)
 			{
-				gas_ray_pieces[ray] = GAS_RAY_GROUND;
+				// (A piece of another building is a wall; what cannot
+				// move and is no model's, the ground or a tree, is
+				// neither a wall nor a way out)
+				gas_ray_pieces[ray] = wreck_shape_model(shape) != NULL ? GAS_RAY_WALL : GAS_RAY_GROUND;
 				break;
 			}
-			// (A bit the wave broke off, or a ball: on through it)
-			left -= b3Length(b3Sub(result.point, start)) + 0.05f;
-			start = b3Add(result.point, b3MulSV(0.05f, direction));
+			// (A bit of this building the wave broke off: on through it)
+			left -= b3Length(b3Sub(point, start)) + RAY_STEP_METERS;
+			start = b3Add(point, b3MulSV(RAY_STEP_METERS, direction));
 		}
-		if (gas_ray_pieces[ray] >= 0)
+		if (gas_ray_pieces[ray] >= 0 || gas_ray_pieces[ray] == GAS_RAY_WALL)
 		{
 			shut_in++;
 		}
@@ -2833,12 +2946,44 @@ void wreck_model_blast(wreck_model_t *model, b3Vec3 position, float strength, in
 	}
 }
 
+float wreck_blast_strength(const wreck_settings_t *settings, float kilograms)
+{
+	return settings->blast_impulse_per_kilogram * powf(kilograms, 2.0f / 3.0f);
+}
+
+void wreck_model_blast_kilograms(wreck_model_t *model, b3Vec3 position, float kilograms, int frame_index)
+{
+	wreck_model_blast(model, position, wreck_blast_strength(&model->settings, kilograms), frame_index);
+}
+
 // ---------------------------------------------------------------------
 // Looking at it
 
-int wreck_model_shape_piece(b3ShapeId shape)
+wreck_model_t *wreck_shape_model(b3ShapeId shape)
 {
-	if (!b3Shape_IsValid(shape))
+	// (Only a piece's shape carries user data: the engine puts none on
+	// its own shapes, and that is how the two are told apart)
+	if (!b3Shape_IsValid(shape) || b3Shape_GetUserData(shape) == NULL)
+	{
+		return NULL;
+	}
+	return (wreck_model_t *)b3Body_GetUserData(b3Shape_GetBody(shape));
+}
+
+wreck_model_t *wreck_body_model(b3BodyId body)
+{
+	b3ShapeId shape;
+
+	if (!b3Body_IsValid(body) || b3Body_GetShapes(body, &shape, 1) < 1)
+	{
+		return NULL;
+	}
+	return wreck_shape_model(shape);
+}
+
+int wreck_model_shape_piece(const wreck_model_t *model, b3ShapeId shape)
+{
+	if (wreck_shape_model(shape) != model)
 	{
 		return -1;
 	}

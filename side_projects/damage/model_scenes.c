@@ -821,10 +821,25 @@ static void set_off_events(void)
 
 static void step_world(void)
 {
+	b3ContactEvents events;
+	int i;
+
 	set_off_events();
 	wreck_model_before_step(&model);
 	b3World_Step(cabin.world, STEP_SECONDS, SUBSTEP_COUNT);
 	cabin.frame_index++;
+	// The step's hits, each to the model whose piece it is (there is but
+	// one here; the engine does the same for many)
+	events = b3World_GetContactEvents(cabin.world);
+	for (i = 0; i < events.hitCount; i++)
+	{
+		const b3ContactHitEvent *event = &events.hitEvents[i];
+
+		if (wreck_shape_model(event->shapeIdA) == &model || wreck_shape_model(event->shapeIdB) == &model)
+		{
+			wreck_model_take_hit(&model, event, cabin.frame_index);
+		}
+	}
 	wreck_model_after_step(&model, cabin.frame_index, STEP_SECONDS);
 }
 
@@ -1017,7 +1032,7 @@ static void cabin_scene_inspect(const float origin[3], const float direction[3],
 	b3RayResult result = b3World_CastRayClosest(cabin.world, make_vector(origin[0], origin[1], origin[2]),
 		make_vector(direction[0] * distance, direction[1] * distance, direction[2] * distance), b3DefaultQueryFilter());
 
-	inspected_piece = result.hit ? wreck_model_shape_piece(result.shapeId) : -1;
+	inspected_piece = result.hit ? wreck_model_shape_piece(&model, result.shapeId) : -1;
 }
 
 const damage_scene_t cabin_scene =
