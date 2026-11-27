@@ -44,6 +44,8 @@
 #define TIME_SCALE_SLOWEST 0.0625f
 #define TIME_SCALE_FASTEST 4.0f
 #define HUD_COLOR 0xFFFFFF
+// The window is not drawn more often than this, whatever vsync does
+#define WINDOW_FRAMES_PER_SECOND 60
 // What the keys throw and set off
 #define BALL_START_METERS 0.6f
 #define BALL_METERS_PER_SECOND 16.0f
@@ -545,6 +547,19 @@ int main(int argument_count, char **arguments)
 		SDL_RenderClear(window_renderer);
 		SDL_RenderTexture(window_renderer, texture, NULL, NULL);
 		SDL_RenderPresent(window_renderer);
+
+		// Where vsync does not hold the loop back (it does not everywhere)
+		// it would spin as fast as it can, a whole core for nothing: the
+		// rest of the frame's time is slept away
+		{
+			Uint64 frame_nanoseconds = 1000000000u / WINDOW_FRAMES_PER_SECOND;
+			Uint64 spent_nanoseconds = SDL_GetTicksNS() - now_ticks;
+
+			if (spent_nanoseconds < frame_nanoseconds)
+			{
+				SDL_DelayNS(frame_nanoseconds - spent_nanoseconds);
+			}
+		}
 	}
 
 	SDL_DestroyTexture(texture);
