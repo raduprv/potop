@@ -22,6 +22,14 @@
 // The support pass: it stops when what is left unbalanced is this small a
 // part of the weight, or after this many rounds
 #define SUPPORT_TOLERANCE 1e-5
+#define GAS_RAYS 192
+#define GAS_RAY_OUT -1
+#define GAS_RAY_GROUND -2
+// A ray goes on through this many loose pieces at most
+#define GAS_RAY_PASSES 6
+// Rays within this of one another (the cosine of the angle between
+// them: about 25 degrees) are neighbors
+#define GAS_NEIGHBOR_COSINE 0.9f
 // The air is not reckoned with for what moves slower than this (meters
 // a second)
 #define AIR_DRAG_SPEED_MIN 2.0f
@@ -67,6 +75,13 @@ static double solver_diagonal[DAMAGE_PIECES_MAX * 6];
 static float piece_compressions[DAMAGE_PIECES_MAX];
 static b3Vec3 blast_impulses[DAMAGE_PIECES_MAX];
 static bool blast_was_standing[DAMAGE_PIECES_MAX];
+static float blast_shares[DAMAGE_PIECES_MAX];
+static b3Vec3 gas_impulses[DAMAGE_PIECES_MAX];
+static float gas_factors[DAMAGE_PIECES_MAX];
+// The rays that look for a blast's way out: which way each goes, and the
+// standing piece it ends on (GAS_RAY_OUT: it got out; GAS_RAY_GROUND)
+static b3Vec3 gas_ray_directions[GAS_RAYS];
+static int gas_ray_pieces[GAS_RAYS];
 // The loose groups that hit something in the step being worked on, and
 // the pieces of theirs that did the hitting
 static bool shock_groups[DAMAGE_PIECES_MAX];
@@ -149,6 +164,9 @@ void damage_settings_default(damage_settings_t *settings)
 	settings->blast_shielding = 0.8f;
 	settings->blast_inertia = 0.005f;
 	settings->blast_slices = 8;
+	settings->blast_gas = 1.0f;
+	settings->blast_gas_venting = 3.0f;
+	settings->blast_gas_rush = 1.0f;
 	settings->air_drag = 0.7f;
 	settings->collapse_seconds = 1.5f;
 	settings->joint_arm = 0.15f;
@@ -259,6 +277,18 @@ static bool read_settings_key(void *user, const char *section, const char *key, 
 		if (strcmp(key, "air_drag") == 0)
 		{
 			return read_float(value, &settings->air_drag);
+		}
+		if (strcmp(key, "blast_gas") == 0)
+		{
+			return read_float(value, &settings->blast_gas);
+		}
+		if (strcmp(key, "blast_gas_venting") == 0)
+		{
+			return read_float(value, &settings->blast_gas_venting);
+		}
+		if (strcmp(key, "blast_gas_rush") == 0)
+		{
+			return read_float(value, &settings->blast_gas_rush);
 		}
 		if (strcmp(key, "blast_slices") == 0)
 		{
@@ -2327,60 +2357,23 @@ static float blast_on_piece(const damage_model_t *model, b3Vec3 position, float 
 	return impulse;
 }
 
-// A blast. Every piece gets its push (blast_on_piece), which costs the
-// piece itself hit points. What is loose already is hurt piece by piece,
-// as by a hit, and gets all of its push.
-//
-// For what stands, the push comes on in slices (blast_slices). In each,
-// what has come on so far is put on the pieces still standing, all at
-// once, as their weights are in the support pass, and the springs
-// solved: what goes through a link is what strains it (two neighbors
-// pushed alike do not strain the link between them; the links that hold
-// the pushed part to the rest, and to the ground, bear it all; but each
-// piece's own mass takes up some on the way: blast_inertia). A link
-// that by then has borne more than it can breaks; the next slice is
-// solved without it, so others may follow. A long piece bent by more
-// than it bears from a hit is cut. A piece that comes loose in a slice
-// is pushed only by the slices still to come: what came before went
-// through its links to the ground. Links that held to the end keep the
-// harm of the whole push.
-void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, int frame_index)
+// A push on what stands, come on in slices (see damage_model_blast):
+// pushes[] is each piece's whole push. Leaves in blast_shares[] the part
+// of its push that was still to come when a piece came loose (1 for
+// what did not stand to begin with; of no use for what still stands).
+static void push_through_standing(damage_model_t *model, const b3Vec3 *pushes, int piece_count_before, int frame_index)
 {
 	double turn_stiffness = (double)model->settings.joint_arm * (double)model->settings.joint_arm;
-	int piece_count_before = model->piece_count;
 	int slice_count = model->settings.blast_slices > 1 ? model->settings.blast_slices : 1;
 	int slice;
 	int i;
 
-	for (i = 0; i < piece_count_before; i++)
-	{
-		b3Vec3 direction = b3Vec3_zero;
-		float impulse = model->pieces[i].group == DAMAGE_GONE ? 0.0f : blast_on_piece(model, position, strength, i, &direction);
-
-		model->pieces[i].blast_push_left = 1.0f;
-		blast_impulses[i] = b3MulSV(impulse, direction);
-		if (impulse > 0.0f)
-		{
-			hurt_piece(model, i, impulse, frame_index);
-		}
-	}
-
-	// What does not stand to begin with
 	find_standing(model);
 	for (i = 0; i < piece_count_before; i++)
 	{
-		float impulse = b3Length(blast_impulses[i]);
-
 		blast_was_standing[i] = support_unknowns[i] >= 0;
-		if (!blast_was_standing[i] && impulse > 0.0f && model->pieces[i].group != DAMAGE_GONE)
-		{
-			b3Transform transform = piece_world_transform(model, i);
-
-			snap_piece(model, i, transform.p, b3MulSV(1.0f / impulse, blast_impulses[i]), impulse);
-			damage_piece(model, i, impulse, frame_index);
-		}
+		blast_shares[i] = 1.0f;
 	}
-
 	for (slice = 1; slice <= slice_count + 1; slice++)
 	{
 		// (One more round after the last slice, only to see what the last
@@ -2394,7 +2387,7 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 			if (blast_was_standing[i] && support_unknowns[i] < 0)
 			{
 				blast_was_standing[i] = false;
-				model->pieces[i].blast_push_left = 1.0f - (float)(slice - 1) / (float)slice_count;
+				blast_shares[i] = 1.0f - (float)(slice - 1) / (float)slice_count;
 			}
 		}
 		if (slice > slice_count)
@@ -2427,9 +2420,9 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 			// building's frame is the world's)
 			if (piece_index < piece_count_before)
 			{
-				solver_load[i * 6 + 0] = come_on * (double)blast_impulses[piece_index].x;
-				solver_load[i * 6 + 1] = come_on * (double)blast_impulses[piece_index].y;
-				solver_load[i * 6 + 2] = come_on * (double)blast_impulses[piece_index].z;
+				solver_load[i * 6 + 0] = come_on * (double)pushes[piece_index].x;
+				solver_load[i * 6 + 1] = come_on * (double)pushes[piece_index].y;
+				solver_load[i * 6 + 2] = come_on * (double)pushes[piece_index].z;
 				load_squared += solver_load[i * 6 + 0] * solver_load[i * 6 + 0] + solver_load[i * 6 + 1] * solver_load[i * 6 + 1] + solver_load[i * 6 + 2] * solver_load[i * 6 + 2];
 			}
 		}
@@ -2488,6 +2481,209 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 			}
 		}
 	}
+}
+
+// After the blast's wave, what came out of the bomb is still there: gas
+// that presses on everything round it until it finds a way out. Rays
+// from the blast, evenly all round, look for the ways out: one that
+// ends on a standing piece is shut in, one that meets nothing (or only
+// pieces the wave broke loose, which it goes through) got out; the
+// ground is neither. From the part of them that is shut in comes how
+// hard the gas presses on all it reaches (blast_gas times the blast's
+// strength when all are, falling off fast as ways out open:
+// blast_gas_venting); a piece next to a way out, where the gas rushes
+// past, gets more (blast_gas_rush). That push is then put on what
+// stands as the wave's was. In the open there is nothing to shut the
+// gas in and this does nothing.
+static void gas_after_blast(damage_model_t *model, b3Vec3 position, float strength, int piece_count_before, int frame_index)
+{
+	const float golden_angle = PI * (3.0f - sqrtf(5.0f));
+	float reach = model->settings.blast_radius + model->settings.blast_falloff;
+	int shut_in = 0;
+	int out = 0;
+	float shut_part;
+	float pressing;
+	bool any = false;
+	int ray;
+	int other;
+	int i;
+
+	if (model->settings.blast_gas <= 0.0f)
+	{
+		return;
+	}
+	find_standing(model);
+	for (ray = 0; ray < GAS_RAYS; ray++)
+	{
+		// (Evenly over a ball: up it in equal steps, round it by the
+		// golden angle)
+		float height = 1.0f - 2.0f * ((float)ray + 0.5f) / (float)GAS_RAYS;
+		float ring = sqrtf(1.0f - height * height);
+		b3Vec3 direction = make_vector(ring * cosf(golden_angle * (float)ray), height, ring * sinf(golden_angle * (float)ray));
+		b3Vec3 start = position;
+		float left = reach;
+		int pass;
+
+		gas_ray_directions[ray] = direction;
+		gas_ray_pieces[ray] = GAS_RAY_OUT;
+		for (pass = 0; pass < GAS_RAY_PASSES && left > 0.01f; pass++)
+		{
+			b3RayResult result = b3World_CastRayClosest(model->world, start, b3MulSV(left, direction), b3DefaultQueryFilter());
+			int piece_index;
+
+			if (!result.hit)
+			{
+				break;
+			}
+			piece_index = damage_model_shape_piece(result.shapeId);
+			if (piece_index >= 0 && piece_index < piece_count_before && support_unknowns[piece_index] >= 0)
+			{
+				gas_ray_pieces[ray] = piece_index;
+				break;
+			}
+			if (piece_index < 0 && result.point.y < 0.02f)
+			{
+				gas_ray_pieces[ray] = GAS_RAY_GROUND;
+				break;
+			}
+			// (Something loose, or a ball: on through it)
+			left -= b3Length(b3Sub(result.point, start)) + 0.05f;
+			start = b3Add(result.point, b3MulSV(0.05f, direction));
+		}
+		if (gas_ray_pieces[ray] >= 0)
+		{
+			shut_in++;
+		}
+		else if (gas_ray_pieces[ray] == GAS_RAY_OUT)
+		{
+			out++;
+		}
+	}
+	if (shut_in == 0)
+	{
+		return;
+	}
+	shut_part = (float)shut_in / (float)(shut_in + out);
+	pressing = model->settings.blast_gas * powf(shut_part, model->settings.blast_gas_venting);
+
+	// Each piece a ray ends on: more if rays near that one got out
+	for (i = 0; i < piece_count_before; i++)
+	{
+		gas_factors[i] = 0.0f;
+		gas_impulses[i] = b3Vec3_zero;
+	}
+	for (ray = 0; ray < GAS_RAYS; ray++)
+	{
+		int near_count = 0;
+		int near_out = 0;
+		float factor;
+
+		if (gas_ray_pieces[ray] < 0)
+		{
+			continue;
+		}
+		for (other = 0; other < GAS_RAYS; other++)
+		{
+			if (other != ray && gas_ray_pieces[other] != GAS_RAY_GROUND && b3Dot(gas_ray_directions[ray], gas_ray_directions[other]) > GAS_NEIGHBOR_COSINE)
+			{
+				near_count++;
+				if (gas_ray_pieces[other] == GAS_RAY_OUT)
+				{
+					near_out++;
+				}
+			}
+		}
+		factor = pressing * (1.0f + (near_count > 0 ? model->settings.blast_gas_rush * (float)near_out / (float)near_count : 0.0f));
+		if (factor > gas_factors[gas_ray_pieces[ray]])
+		{
+			gas_factors[gas_ray_pieces[ray]] = factor;
+		}
+	}
+	for (i = 0; i < piece_count_before; i++)
+	{
+		if (gas_factors[i] > 0.0f)
+		{
+			b3Transform transform = piece_world_transform(model, i);
+			b3Vec3 direction;
+
+			blast_reach(model, position, transform.p, &direction);
+			gas_impulses[i] = b3MulSV(strength * gas_factors[i] * exposed_area(&model->pieces[i], transform.q, direction), direction);
+			any = true;
+		}
+	}
+	if (!any)
+	{
+		return;
+	}
+	push_through_standing(model, gas_impulses, piece_count_before, frame_index);
+	for (i = 0; i < piece_count_before; i++)
+	{
+		// (What stood through the wave and comes loose now is thrown by
+		// what was left of the gas)
+		if (gas_factors[i] > 0.0f && support_unknowns[i] < 0)
+		{
+			model->pieces[i].gas_push_left = gas_factors[i] * blast_shares[i];
+		}
+	}
+}
+
+// A blast. Every piece gets its push (blast_on_piece), which costs the
+// piece itself hit points. What is loose already is hurt piece by piece,
+// as by a hit, and gets all of its push.
+//
+// For what stands, the push comes on in slices (blast_slices). In each,
+// what has come on so far is put on the pieces still standing, all at
+// once, as their weights are in the support pass, and the springs
+// solved: what goes through a link is what strains it (two neighbors
+// pushed alike do not strain the link between them; the links that hold
+// the pushed part to the rest, and to the ground, bear it all; but each
+// piece's own mass takes up some on the way: blast_inertia). A link
+// that by then has borne more than it can breaks; the next slice is
+// solved without it, so others may follow. A long piece bent by more
+// than it bears from a hit is cut. A piece that comes loose in a slice
+// is pushed only by the slices still to come: what came before went
+// through its links to the ground. Links that held to the end keep the
+// harm of the whole push.
+void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, int frame_index)
+{
+	int piece_count_before = model->piece_count;
+	int i;
+
+	for (i = 0; i < piece_count_before; i++)
+	{
+		b3Vec3 direction = b3Vec3_zero;
+		float impulse = model->pieces[i].group == DAMAGE_GONE ? 0.0f : blast_on_piece(model, position, strength, i, &direction);
+
+		model->pieces[i].blast_push_left = 1.0f;
+		model->pieces[i].gas_push_left = 0.0f;
+		blast_impulses[i] = b3MulSV(impulse, direction);
+		if (impulse > 0.0f)
+		{
+			hurt_piece(model, i, impulse, frame_index);
+		}
+	}
+
+	// What does not stand to begin with
+	find_standing(model);
+	for (i = 0; i < piece_count_before; i++)
+	{
+		float impulse = b3Length(blast_impulses[i]);
+
+		if (support_unknowns[i] < 0 && impulse > 0.0f && model->pieces[i].group != DAMAGE_GONE)
+		{
+			b3Transform transform = piece_world_transform(model, i);
+
+			snap_piece(model, i, transform.p, b3MulSV(1.0f / impulse, blast_impulses[i]), impulse);
+			damage_piece(model, i, impulse, frame_index);
+		}
+	}
+
+	push_through_standing(model, blast_impulses, piece_count_before, frame_index);
+	for (i = 0; i < piece_count_before; i++)
+	{
+		model->pieces[i].blast_push_left = blast_shares[i];
+	}
+	gas_after_blast(model, position, strength, piece_count_before, frame_index);
 	make_pending_cuts(model);
 	rebuild_dirty_groups(model);
 
@@ -2510,6 +2706,15 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 			continue;
 		}
 		impulse = blast_on_piece(model, position, strength, i, &direction) * piece->blast_push_left;
+		if (piece->gas_push_left > 0.0f)
+		{
+			// (The gas pushes from the blast outwards too, with no fading
+			// by distance: it fills the place)
+			b3Transform transform = piece_world_transform(model, i);
+
+			blast_reach(model, position, transform.p, &direction);
+			impulse += strength * piece->gas_push_left * exposed_area(piece, transform.q, direction);
+		}
 		if (impulse > 0.0f)
 		{
 			b3Body_ApplyLinearImpulse(group->body, b3MulSV(impulse, direction), piece_world_transform(model, i).p, true);

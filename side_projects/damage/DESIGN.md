@@ -304,6 +304,39 @@ Known and left so:
   blown off, is in pieces before it comes down (the flying boards hit
   it too). No scene drops a whole roof from high up yet.
 
+## A blast is two things: the wave, then the gas
+
+(Worked out with Radu.) What comes out of a bomb pushes the air, which
+goes off as a wave: a short blow that reaches far and does not care
+about holes. That is the blast as it was. What came out of the bomb is
+then still there, as gas: in the open it is gone at once, shut in it
+presses on everything until it finds a way out.
+
+- Both are worked out in the call that sets the blast off, as if they
+  took no time: the wave crosses a house in less than a step. The gas
+  takes longer in truth (some steps), and pieces would move meanwhile;
+  left for later.
+- The wave first, as before. Then rays from the blast (192, evenly all
+  round) look for the ways out on what the wave left: a ray that ends
+  on a standing piece is shut in; one that meets nothing got out, and
+  it goes through pieces the wave broke loose; the ground counts as
+  neither.
+- The gas presses by the shut-in part of the rays to a power
+  (`blast_gas_venting`), times `blast_gas` times the blast's strength:
+  less everywhere as ways out open, nothing in the open. It presses on
+  the pieces the rays end on, outwards from the blast, with no fading
+  by distance.
+- A piece whose rays have neighbors that got out is beside a way out,
+  where the gas rushes past: it gets more (`blast_gas_rush`).
+- That push goes through what stands in slices, as the wave's did; a
+  piece that comes loose in it is thrown by what was left of it.
+- Not done: the ways out are counted once, after the wave, not again
+  as the gas itself opens the place; no echoes of the wave; no flow.
+- Seen (3000): in the cabin and at the brick wall nothing changes (the
+  wave has opened the cabin, the wall is in the open); inside the house
+  all the walls go where half of them stood before, and the roof comes
+  down a wreck; outside the house's front wall nothing changes.
+
 ## The model
 
 Not a CAD grade simulation: if it shows in the game it is in, if it only
