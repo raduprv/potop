@@ -157,6 +157,43 @@ as it is stiff. No rules about who rests on whom are left.
   lies on a building weighs nothing in the pass (only linked pieces
   are in it).
 
+## What step 5 made and found
+
+- A piece has hit points of its own (per material, in the ini, with a
+  threshold below which a hit does nothing); out of them it is removed.
+- A piece is long when its longest side is `long_ratio` times the next.
+  Only long pieces bend; their long axis is found once.
+- Standing still: after the support pass, the bending moment along the
+  piece is worked out from the forces of its links and its own weight,
+  and set against what its section bears (`bend` of the material times
+  thickness squared times width). Over that, the piece is cut straight
+  across where the moment is largest. The inspector shows it as a
+  percentage ("bent").
+- Hit: the impulse of a hit bends the piece between the nearest links on
+  either side that hold it up (a link by which something lies on it or
+  hangs from it does not count); over the material's `snap`, it is cut
+  at the hit. A hit past the last such link is a plank struck on its
+  free end.
+- A cut makes two pieces out of one (no stub shorter than
+  `cut_min_length`), each link goes to the half it is on, and the group
+  is remade. The cut is flat, as by a laser, as agreed.
+- The bend scene: a plank under a heavy crate with a prop in the middle
+  (take the prop out and the plank breaks under the crate by itself), a
+  plank with a light crate (a ball breaks it), a log (a ball knocks it
+  off whole, a fast one breaks it).
+- The brick pillars are long pieces too, so a ball snaps them. Seems
+  right; `long_ratio` and brick's `snap` decide.
+
+Known and left so:
+
+- A piece is rigid in the support pass, so on three or more supports in
+  a row it leans on all alike wherever its load is. The propped plank is
+  reckoned 86% bent untouched, more than a real one would be, and a prop
+  right under a load takes a third of it, not most.
+- The two halves of a cut piece no longer hold each other in any way: a
+  snapped prop still stands (Box3D stacks it), but the support pass no
+  longer counts it as holding anything, so what leaned on it may break.
+
 ## The model
 
 Not a CAD grade simulation: if it shows in the game it is in, if it only
@@ -237,7 +274,7 @@ again until quiet.
 3. The graph: pieces, links, islands, groups splitting, with the
    simplest damage (a ball, a blast). **Done** (what it found is above).
 4. The support pass, with its three test cases. **Done** (above).
-5. Bending and cutting of long pieces.
+5. Bending and cutting of long pieces, piece hit points. **Done** (above).
 6. The notched corner link and explosions.
 
 Radu tests each step himself before the next is started.

@@ -33,8 +33,16 @@
 // (so what a hit has hurt gives way sooner), and the building stands a
 // moment before it goes.
 //
-// Not here yet (steps 5 and 6 of DESIGN.md): pieces that bend and break,
-// notched corners and sliding. What lies on a building (a fallen log, a
+// A piece itself takes hits (hit points of its material: a pane breaks,
+// not only the putty round it) and, if it is long, bends: the forces
+// its links put on it and its own weight give a bending moment along
+// it, and where that is more than its material and thickness bear it
+// is cut in two, straight across. A hit on a long piece bends it too,
+// between the links nearest on either side. So the graph also gains
+// pieces.
+//
+// Not here yet (step 6 of DESIGN.md): notched corners and sliding;
+// plates, which bend two ways. What lies on a building (a fallen log, a
 // heap of rubble) counts only as the hit it gave, not as weight after.
 
 #ifndef DAMAGE_MODEL_H
@@ -97,6 +105,16 @@ typedef struct
 {
 	float densities[DAMAGE_MATERIAL_COUNT];                  // kilograms a cubic meter
 	float crush[DAMAGE_MATERIAL_COUNT];                      // newtons a piece bears before it is crushed
+	// A piece against hits, as a link is: what it shrugs off and what it
+	// takes over that, in all, before it is no more (newton seconds)
+	float piece_threshold[DAMAGE_MATERIAL_COUNT];
+	float piece_hit_points[DAMAGE_MATERIAL_COUNT];
+	// A long piece against bending: times its thickness squared times
+	// its width (meters) this is the bending moment it bears standing
+	// still (bend, giving newton meters) and from a hit (snap, giving
+	// newton second meters)
+	float bend[DAMAGE_MATERIAL_COUNT];
+	float snap[DAMAGE_MATERIAL_COUNT];
 	damage_link_settings_t links[DAMAGE_LINK_TYPE_COUNT];
 	float hop_falloff;                 // what a link passes on to the piece at its other end, of what it got
 	float hit_speed;                   // meters a second: slower contacts are not hits
@@ -104,6 +122,8 @@ typedef struct
 	float breakthrough_speed_kept;     // of its speed before the hit, what a thing keeps when its hit broke links
 	float blast_radius;                // meters at full strength
 	float blast_falloff;               // meters beyond that over which it fades to nothing
+	float long_ratio;                  // a piece this many times longer than it is thick or wide is long: it can bend
+	float cut_min_length;              // meters: no piece is cut into one shorter than this
 	float collapse_seconds;            // how long a link loaded to just its limit lasts (twice the load: half as long)
 	// How stiff a link is against the pieces turning apart, as a length
 	// (meters): it resists turning as two springs this far apart would.
@@ -125,8 +145,11 @@ typedef struct
 	int group;
 	uint32_t color;
 	float mass;                        // kilograms
-	bool crushed;                      // bore more than its material does: its links broke and it is gone
+	bool crushed;                      // crushed by what lay on it or broken by hits: its links broke and it is gone
 	float pressed;                     // newtons through it, from the last support pass (against its material's crush)
+	float hit_points_left;
+	int long_axis;                     // which of its own axes (0 x, 1 y, 2 z) it is long along; -1: it is not long
+	float bent;                        // how many times what it bears it is bent, from the last support pass
 } damage_piece_t;
 
 typedef struct
@@ -148,6 +171,9 @@ typedef struct
 	float static_pull;
 	float static_sideways;
 	float static_moment;
+	// Which of its two pieces it holds up (pushes or pulls upwards), from
+	// the last support pass; -1 when neither stood then
+	int held_piece;
 } damage_link_t;
 
 typedef struct
@@ -157,6 +183,7 @@ typedef struct
 	bool anchored;                     // a whole link holds it to the ground: its body is static
 	bool rubble;
 	bool rebuilt;                      // made in the step being worked on
+	bool reshaped;                     // a piece of it was cut: its body must be made anew even if it is still one island
 	int piece_count;
 	b3Vec3 linear_velocity_before_step;
 	b3Vec3 angular_velocity_before_step;
@@ -210,6 +237,13 @@ typedef struct
 	int overloaded_count;
 	double support_solution[DAMAGE_PIECES_MAX * 6];
 	int support_iterations;            // the last pass took this many
+
+	// The cuts waiting to be made at the end of the step's work (a piece
+	// is not cut while the graph is being walked), and all that were made
+	int pending_cut_pieces[DAMAGE_PIECES_MAX];
+	float pending_cut_positions[DAMAGE_PIECES_MAX];
+	int pending_cut_count;
+	int cut_count;
 
 	damage_hit_t recent_hits[DAMAGE_RECENT_HITS_MAX];
 	int hit_count;                     // all there were; the last DAMAGE_RECENT_HITS_MAX are kept

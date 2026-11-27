@@ -432,6 +432,69 @@ static void build_beam_on_pillars(float center_x, float center_z)
 	}
 }
 
+// ---------------------------------------------------------------------
+// The bend scene's three cases
+
+// A plank or a log on two brick pillars 3.6 m apart, with a crate on its
+// middle (none when crate_half_size is 0) and, if asked for, a third
+// pillar propping the middle.
+//
+// (A piece is rigid when the support pass works out who bears what, so
+// a plank on three pillars in a row leans on all three alike wherever
+// the load on it is: the prop takes a third of the crate, not most of
+// it, and the plank is reckoned more bent over it than a real one is.)
+static void build_span(float center_x, float center_z, bool is_log, float crate_half_size, bool with_prop)
+{
+	b3Vec3 pillar_half_extents = make_vector(0.15f, 0.75f, 0.15f);
+	b3Vec3 plank_half_extents = make_vector(2.0f, 0.08f, 0.15f);
+	float span_half_height = is_log ? LOG_FLAT_TO_FLAT * 0.5f : plank_half_extents.y;
+	float span_y = 1.5f + span_half_height;
+	int span;
+	int pillar;
+
+	if (is_log)
+	{
+		span = damage_model_add_log(&model, make_vector(center_x, span_y, center_z), b3Quat_identity, LOG_RADIUS, 2.0f, DAMAGE_MATERIAL_WOOD, 0x9C6B3C);
+	}
+	else
+	{
+		span = damage_model_add_box(&model, make_vector(center_x, span_y, center_z), b3Quat_identity, plank_half_extents, DAMAGE_MATERIAL_WOOD, 0xB89868);
+	}
+	for (pillar = -1; pillar <= 1; pillar++)
+	{
+		float x = center_x + (float)pillar * 1.8f;
+		int pillar_box;
+
+		if (pillar == 0 && !with_prop)
+		{
+			continue;
+		}
+		pillar_box = damage_model_add_box(&model, make_vector(x, 0.75f, center_z), b3Quat_identity, pillar_half_extents, DAMAGE_MATERIAL_BRICK,
+			pillar == 0 ? 0x8890A0 : 0xB0A898);
+		damage_model_add_link(&model, pillar_box, DAMAGE_GROUND, make_vector(x, 0.0f, center_z), DAMAGE_LINK_FOUNDATION);
+		damage_model_add_link(&model, span, pillar_box, make_vector(x, 1.5f, center_z), DAMAGE_LINK_NAILS);
+	}
+	if (crate_half_size > 0.0f)
+	{
+		float crate_y = span_y + span_half_height + crate_half_size;
+		int crate = damage_model_add_box(&model, make_vector(center_x, crate_y, center_z), b3Quat_identity,
+			make_vector(crate_half_size, crate_half_size, crate_half_size), DAMAGE_MATERIAL_BRICK, 0x707888);
+
+		damage_model_add_link(&model, crate, span, make_vector(center_x, crate_y - crate_half_size, center_z), DAMAGE_LINK_NAILS);
+	}
+}
+
+static void build_bend_structures(void)
+{
+	// A plank with a crate too heavy for it, held up by a prop under its
+	// middle: knock the prop out and the plank breaks under the crate
+	build_span(-5.0f, 0.0f, false, 0.28f, true);
+	// The same plank with a crate it bears: break it with a ball
+	build_span(0.0f, 0.0f, false, 0.20f, false);
+	// A log: a ball knocks it off its pillars whole, a fast one breaks it
+	build_span(5.0f, 0.0f, true, 0.0f, false);
+}
+
 static void build_cabin_structures(void)
 {
 	build_cabin(-3.0f, 0.0f);
@@ -535,6 +598,29 @@ static bool cabin_scene_open(void)
 	build_structures = build_cabin_structures;
 	build_world();
 	return true;
+}
+
+static bool bend_scene_open(void)
+{
+	if (build_structures != build_bend_structures)
+	{
+		inspected_piece = -1;
+	}
+	build_structures = build_bend_structures;
+	build_world();
+	return true;
+}
+
+static void bend_scene_default_camera(soft_render_camera_t *camera)
+{
+	camera->eye[0] = 0.0f;
+	camera->eye[1] = 2.8f;
+	camera->eye[2] = 8.5f;
+	camera->target[0] = 0.0f;
+	camera->target[1] = 1.2f;
+	camera->target[2] = 0.0f;
+	camera->vertical_field_of_view_degrees = 60.0f;
+	camera->near_distance = 0.05f;
 }
 
 static bool support_scene_open(void)
@@ -675,6 +761,21 @@ const damage_scene_t cabin_scene =
 	.open = cabin_scene_open,
 	.close = cabin_scene_close,
 	.default_camera = cabin_scene_default_camera,
+	.seek = cabin_scene_seek,
+	.draw = cabin_scene_draw,
+	.describe = cabin_scene_describe,
+	.checksum = cabin_scene_checksum,
+	.cast_ray = cabin_scene_cast_ray,
+	.inspect = cabin_scene_inspect,
+};
+
+const damage_scene_t bend_scene =
+{
+	.name = "bend",
+	.about = "long pieces that bend and break: a plank under a crate, a plank and a log to throw balls at",
+	.open = bend_scene_open,
+	.close = cabin_scene_close,
+	.default_camera = bend_scene_default_camera,
 	.seek = cabin_scene_seek,
 	.draw = cabin_scene_draw,
 	.describe = cabin_scene_describe,

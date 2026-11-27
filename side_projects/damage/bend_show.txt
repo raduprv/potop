@@ -1,0 +1,11 @@
+# damage events, scene bend. See them with
+#   ./damage_view --events bend_show.txt
+#   ./damage_shot --out sheet.png --events bend_show.txt --sheet 20,12,16
+#
+# Frame 20: a fast ball takes out the prop under the heavy crate (the
+# plank then breaks under the crate by itself), and a ball in the middle
+# of the plank with the light crate breaks it.
+# Frame 150: a fast ball breaks the log (a slower one only knocks it off).
+ball 20 -5 0.9 8 0 0.4 -32
+ball 20 0 1.45 8 0 2.45 -16
+ball 150 5 1.6 8 0 1.2 -32

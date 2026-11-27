@@ -23,6 +23,10 @@
 // part of the weight, or after this many rounds
 #define SUPPORT_TOLERANCE 1e-5
 #define SUPPORT_ROUNDS_MAX 4000
+// A long piece's bending is looked at where its links are and at this
+// many places evenly along it; and a piece's links looked at, at most
+#define BEND_SAMPLES 16
+#define BEND_LOADS_MAX 48
 #define RESTORED_BODIES_MAX 256
 
 #define BROKEN_SHOWN_FRAMES 90
@@ -99,6 +103,20 @@ void damage_settings_default(damage_settings_t *settings)
 	settings->crush[DAMAGE_MATERIAL_WOOD] = 300000.0f;
 	settings->crush[DAMAGE_MATERIAL_BRICK] = 500000.0f;
 	settings->crush[DAMAGE_MATERIAL_GLASS] = 9000.0f;
+	settings->piece_threshold[DAMAGE_MATERIAL_WOOD] = 6000.0f;
+	settings->piece_hit_points[DAMAGE_MATERIAL_WOOD] = 12000.0f;
+	settings->bend[DAMAGE_MATERIAL_WOOD] = 300000.0f;
+	settings->snap[DAMAGE_MATERIAL_WOOD] = 150000.0f;
+	settings->piece_threshold[DAMAGE_MATERIAL_BRICK] = 5000.0f;
+	settings->piece_hit_points[DAMAGE_MATERIAL_BRICK] = 6000.0f;
+	settings->bend[DAMAGE_MATERIAL_BRICK] = 200000.0f;
+	settings->snap[DAMAGE_MATERIAL_BRICK] = 60000.0f;
+	settings->piece_threshold[DAMAGE_MATERIAL_GLASS] = 100.0f;
+	settings->piece_hit_points[DAMAGE_MATERIAL_GLASS] = 300.0f;
+	settings->bend[DAMAGE_MATERIAL_GLASS] = 20000.0f;
+	settings->snap[DAMAGE_MATERIAL_GLASS] = 3000.0f;
+	settings->long_ratio = 4.0f;
+	settings->cut_min_length = 0.3f;
 	set_link_defaults(&settings->links[DAMAGE_LINK_NAILS], 150.0f, 600.0f, 200000.0f, 4000.0f, 2500.0f);
 	set_link_defaults(&settings->links[DAMAGE_LINK_MORTAR], 60.0f, 200.0f, 500000.0f, 3000.0f, 900.0f);
 	set_link_defaults(&settings->links[DAMAGE_LINK_FOUNDATION], 300.0f, 1500.0f, 1000000.0f, 5000.0f, 5000.0f);
@@ -156,6 +174,22 @@ static bool read_material_key(damage_settings_t *settings, damage_material_t mat
 	{
 		return read_float(value, &settings->crush[material]);
 	}
+	if (strcmp(key, "threshold") == 0)
+	{
+		return read_float(value, &settings->piece_threshold[material]);
+	}
+	if (strcmp(key, "hit_points") == 0)
+	{
+		return read_float(value, &settings->piece_hit_points[material]);
+	}
+	if (strcmp(key, "bend") == 0)
+	{
+		return read_float(value, &settings->bend[material]);
+	}
+	if (strcmp(key, "snap") == 0)
+	{
+		return read_float(value, &settings->snap[material]);
+	}
 	return false;
 }
 
@@ -200,6 +234,14 @@ static bool read_settings_key(void *user, const char *section, const char *key, 
 		if (strcmp(key, "joint_arm") == 0)
 		{
 			return read_float(value, &settings->joint_arm);
+		}
+		if (strcmp(key, "long_ratio") == 0)
+		{
+			return read_float(value, &settings->long_ratio);
+		}
+		if (strcmp(key, "cut_min_length") == 0)
+		{
+			return read_float(value, &settings->cut_min_length);
 		}
 		return false;
 	}
@@ -261,6 +303,98 @@ void damage_model_create(damage_model_t *model, b3WorldId world, const damage_se
 	model->settings = *settings;
 }
 
+// A piece's half sizes along its own x, y and z (a log is as thick and
+// as wide as its radius)
+static void piece_half_sizes(const damage_piece_t *piece, float half_sizes[3])
+{
+	if (piece->shape == DAMAGE_PIECE_BOX)
+	{
+		half_sizes[0] = piece->half_extents.x;
+		half_sizes[1] = piece->half_extents.y;
+		half_sizes[2] = piece->half_extents.z;
+	}
+	else
+	{
+		half_sizes[0] = piece->half_length;
+		half_sizes[1] = piece->radius;
+		half_sizes[2] = piece->radius;
+	}
+}
+
+// What follows from a piece's sizes: its mass, and whether (and along
+// which of its axes) it is long. Again after it is cut.
+static void measure_piece(const damage_model_t *model, damage_piece_t *piece)
+{
+	float half_sizes[3];
+	int longest = 0;
+	float widest_across = 0.0f;
+	int k;
+
+	piece_half_sizes(piece, half_sizes);
+	if (piece->shape == DAMAGE_PIECE_BOX)
+	{
+		piece->mass = 8.0f * half_sizes[0] * half_sizes[1] * half_sizes[2] * model->settings.densities[piece->material];
+	}
+	else
+	{
+		// (The prism's cross section: 12 triangles of two sides a radius,
+		// 30 degrees between them, 3 radius squared in all)
+		piece->mass = 3.0f * piece->radius * piece->radius * 2.0f * piece->half_length * model->settings.densities[piece->material];
+	}
+	for (k = 1; k < 3; k++)
+	{
+		if (half_sizes[k] > half_sizes[longest])
+		{
+			longest = k;
+		}
+	}
+	for (k = 0; k < 3; k++)
+	{
+		if (k != longest && half_sizes[k] > widest_across)
+		{
+			widest_across = half_sizes[k];
+		}
+	}
+	piece->long_axis = half_sizes[longest] >= model->settings.long_ratio * widest_across ? longest : -1;
+}
+
+// The bending moment a long piece bears, for each newton meter (or
+// newton second meter) of its material's strength: its thickness squared
+// times its width, across its length
+static float piece_section(const damage_piece_t *piece)
+{
+	float half_sizes[3];
+	float thickness = 1e30f;
+	float width = 0.0f;
+	int k;
+
+	piece_half_sizes(piece, half_sizes);
+	for (k = 0; k < 3; k++)
+	{
+		if (k == piece->long_axis)
+		{
+			continue;
+		}
+		if (2.0f * half_sizes[k] < thickness)
+		{
+			thickness = 2.0f * half_sizes[k];
+		}
+		if (2.0f * half_sizes[k] > width)
+		{
+			width = 2.0f * half_sizes[k];
+		}
+	}
+	return thickness * thickness * width;
+}
+
+// A long piece's direction in the building's frame
+static b3Vec3 piece_axis(const damage_piece_t *piece)
+{
+	b3Vec3 own = make_vector(piece->long_axis == 0 ? 1.0f : 0.0f, piece->long_axis == 1 ? 1.0f : 0.0f, piece->long_axis == 2 ? 1.0f : 0.0f);
+
+	return b3RotateVector(piece->local.q, own);
+}
+
 static int add_piece(damage_model_t *model, damage_piece_shape_t shape, b3Vec3 position, b3Quat rotation, damage_material_t material, uint32_t color)
 {
 	damage_piece_t *piece;
@@ -277,6 +411,8 @@ static int add_piece(damage_model_t *model, damage_piece_shape_t shape, b3Vec3 p
 	piece->local.q = rotation;
 	piece->group = GROUP_UNLABELED;
 	piece->color = color;
+	piece->hit_points_left = model->settings.piece_hit_points[material];
+	piece->long_axis = -1;
 	return model->piece_count++;
 }
 
@@ -287,7 +423,7 @@ int damage_model_add_box(damage_model_t *model, b3Vec3 position, b3Quat rotation
 	if (piece_index >= 0)
 	{
 		model->pieces[piece_index].half_extents = half_extents;
-		model->pieces[piece_index].mass = 8.0f * half_extents.x * half_extents.y * half_extents.z * model->settings.densities[material];
+		measure_piece(model, &model->pieces[piece_index]);
 	}
 	return piece_index;
 }
@@ -298,11 +434,9 @@ int damage_model_add_log(damage_model_t *model, b3Vec3 position, b3Quat rotation
 
 	if (piece_index >= 0)
 	{
-		// (The prism's cross section: 12 triangles of two sides a radius,
-		// 30 degrees between them, 3 radius squared in all)
 		model->pieces[piece_index].radius = radius;
 		model->pieces[piece_index].half_length = half_length;
-		model->pieces[piece_index].mass = 3.0f * radius * radius * 2.0f * half_length * model->settings.densities[material];
+		measure_piece(model, &model->pieces[piece_index]);
 	}
 	return piece_index;
 }
@@ -353,6 +487,7 @@ int damage_model_add_link(damage_model_t *model, int piece_a, int piece_b, b3Vec
 	link->type = type;
 	link->local_point = point;
 	link->local_normal = link_normal(model, piece_a, piece_b, point);
+	link->held_piece = -1;
 	link->hit_points_left = model->settings.links[type].hit_points;
 	return model->link_count++;
 }
@@ -492,19 +627,14 @@ static void label_island(damage_model_t *model, int first_piece, int group_index
 	group->rubble = !group->anchored && group->piece_count < model->settings.rubble_pieces;
 }
 
-void damage_model_finish(damage_model_t *model)
+// Every piece's links listed one after another (piece_link_start and
+// piece_links): at the start, and again when a cut made a piece more
+// and moved links to it
+static void list_piece_links(damage_model_t *model)
 {
 	int fill[DAMAGE_PIECES_MAX];
 	int i;
 
-	if (model->finished)
-	{
-		return;
-	}
-	model->finished = true;
-	model->support_dirty = true;
-
-	// Every piece's links, one after another
 	memset(model->piece_link_start, 0, sizeof(model->piece_link_start));
 	for (i = 0; i < model->link_count; i++)
 	{
@@ -527,6 +657,20 @@ void damage_model_finish(damage_model_t *model)
 			model->piece_links[fill[model->links[i].piece_b]++] = i;
 		}
 	}
+}
+
+void damage_model_finish(damage_model_t *model)
+{
+	int i;
+
+	if (model->finished)
+	{
+		return;
+	}
+	model->finished = true;
+	model->support_dirty = true;
+
+	list_piece_links(model);
 
 	for (i = 0; i < model->piece_count; i++)
 	{
@@ -595,7 +739,7 @@ static void rebuild_group(damage_model_t *model, int old_group_index)
 		}
 	}
 
-	if (part_count == 1 && model->groups[group_parts[0]].anchored == old_group.anchored)
+	if (part_count == 1 && model->groups[group_parts[0]].anchored == old_group.anchored && !old_group.reshaped)
 	{
 		// The same pieces on the same footing: the body stays
 		damage_group_t *group = &model->groups[group_parts[0]];
@@ -686,6 +830,238 @@ static bool hurt_link(damage_model_t *model, int link_index, float share, int fr
 	}
 	break_link(model, link_index, frame_index);
 	return true;
+}
+
+// A hit on the piece itself: over its material's threshold it costs it
+// hit points, and with none left it is no more (all its links break; it
+// is taken out of the world once it is a group of its own). True when
+// that happened.
+static bool hurt_piece(damage_model_t *model, int piece_index, float impulse, int frame_index)
+{
+	damage_piece_t *piece = &model->pieces[piece_index];
+	float threshold = model->settings.piece_threshold[piece->material];
+	int k;
+
+	if (piece->group == DAMAGE_GONE || piece->crushed || impulse <= threshold)
+	{
+		return false;
+	}
+	piece->hit_points_left -= impulse - threshold;
+	if (piece->hit_points_left > 0.0f)
+	{
+		return false;
+	}
+	piece->hit_points_left = 0.0f;
+	piece->crushed = true;
+	for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1]; k++)
+	{
+		break_link(model, model->piece_links[k], frame_index);
+	}
+	return true;
+}
+
+// Asks for a long piece to be cut at a place along it (meters from its
+// middle), when the graph is no longer being walked. The place is moved
+// in from the ends so no part is shorter than cut_min_length; a piece
+// too short for two such parts is left whole, and so is one already
+// waiting to be cut. True when the cut will be made.
+static bool request_cut(damage_model_t *model, int piece_index, float position)
+{
+	const damage_piece_t *piece = &model->pieces[piece_index];
+	float half_sizes[3];
+	float furthest;
+	int i;
+
+	if (piece->long_axis < 0 || model->piece_count + model->pending_cut_count >= DAMAGE_PIECES_MAX)
+	{
+		return false;
+	}
+	piece_half_sizes(piece, half_sizes);
+	furthest = half_sizes[piece->long_axis] - model->settings.cut_min_length;
+	if (furthest < 0.0f)
+	{
+		return false;
+	}
+	for (i = 0; i < model->pending_cut_count; i++)
+	{
+		if (model->pending_cut_pieces[i] == piece_index)
+		{
+			return false;
+		}
+	}
+	model->pending_cut_pieces[model->pending_cut_count] = piece_index;
+	model->pending_cut_positions[model->pending_cut_count] = position > furthest ? furthest : (position < -furthest ? -furthest : position);
+	model->pending_cut_count++;
+	return true;
+}
+
+// Cuts a long piece in two, straight across, at a place along it: the
+// piece keeps the part before the cut, a new piece is the part after it,
+// and each link goes with the part it is on. (Nothing joins the two.)
+static void cut_piece(damage_model_t *model, int piece_index, float position)
+{
+	damage_piece_t *piece = &model->pieces[piece_index];
+	damage_piece_t *other_part = &model->pieces[model->piece_count];
+	b3Vec3 axis = piece_axis(piece);
+	b3Vec3 old_center = piece->local.p;
+	float half_sizes[3];
+	float half_length;
+	float first_half;
+	float second_half;
+	int axis_index = piece->long_axis;
+	int i;
+
+	piece_half_sizes(piece, half_sizes);
+	half_length = half_sizes[axis_index];
+	first_half = (position + half_length) * 0.5f;
+	second_half = (half_length - position) * 0.5f;
+
+	*other_part = *piece;
+	piece->local.p = b3Add(old_center, b3MulSV(-half_length + first_half, axis));
+	other_part->local.p = b3Add(old_center, b3MulSV(position + second_half, axis));
+	if (piece->shape == DAMAGE_PIECE_BOX)
+	{
+		float *first_extents = &piece->half_extents.x;
+		float *second_extents = &other_part->half_extents.x;
+
+		first_extents[axis_index] = first_half;
+		second_extents[axis_index] = second_half;
+	}
+	else
+	{
+		piece->half_length = first_half;
+		other_part->half_length = second_half;
+	}
+	measure_piece(model, piece);
+	measure_piece(model, other_part);
+	piece->bent = 0.0f;
+	other_part->bent = 0.0f;
+	memcpy(&model->support_solution[model->piece_count * 6], &model->support_solution[piece_index * 6], 6 * sizeof(double));
+
+	for (i = 0; i < model->link_count; i++)
+	{
+		damage_link_t *link = &model->links[i];
+
+		if ((link->piece_a == piece_index || link->piece_b == piece_index) && b3Dot(b3Sub(link->local_point, old_center), axis) > position)
+		{
+			if (link->piece_a == piece_index)
+			{
+				link->piece_a = model->piece_count;
+			}
+			else
+			{
+				link->piece_b = model->piece_count;
+			}
+		}
+	}
+	model->piece_count++;
+	model->cut_count++;
+	model->groups[piece->group].reshaped = true;
+	model->group_dirty[piece->group] = true;
+	model->any_group_dirty = true;
+	model->support_dirty = true;
+}
+
+// The cuts asked for are made, and every piece's links listed again
+static void make_pending_cuts(damage_model_t *model)
+{
+	int i;
+
+	if (model->pending_cut_count == 0)
+	{
+		return;
+	}
+	for (i = 0; i < model->pending_cut_count; i++)
+	{
+		if (model->pieces[model->pending_cut_pieces[i]].group != DAMAGE_GONE && model->piece_count < DAMAGE_PIECES_MAX)
+		{
+			cut_piece(model, model->pending_cut_pieces[i], model->pending_cut_positions[i]);
+		}
+	}
+	model->pending_cut_count = 0;
+	list_piece_links(model);
+}
+
+// A hit on a long piece bends it between the links nearest the hit on
+// either side that hold it, as a plank across two trestles struck
+// between them (a hit past the last such link: as a plank struck on its
+// free end; a piece no link holds: half as much, its own weight is all
+// that resists). Only
+// the part of the impulse across the piece counts. Where that bending
+// is more than the piece's material and thickness bear, it is cut at
+// the hit. True when it will be.
+static bool snap_piece(damage_model_t *model, int piece_index, b3Vec3 world_point, b3Vec3 world_direction, float impulse)
+{
+	const damage_piece_t *piece = &model->pieces[piece_index];
+	b3Transform frame;
+	b3Vec3 axis;
+	b3Vec3 direction;
+	float half_sizes[3];
+	float half_length;
+	float position;
+	float along;
+	float across_impulse;
+	float before = -1.0f;
+	float after = -1.0f;
+	float bending;
+	int k;
+
+	if (piece->group == DAMAGE_GONE || piece->long_axis < 0)
+	{
+		return false;
+	}
+	frame = b3Body_GetTransform(model->groups[piece->group].body);
+	axis = piece_axis(piece);
+	direction = b3InvRotateVector(frame.q, world_direction);
+	position = b3Dot(b3Sub(b3InvRotateVector(frame.q, b3Sub(world_point, frame.p)), piece->local.p), axis);
+	along = b3Dot(direction, axis);
+	across_impulse = impulse * sqrtf(1.0f - (along * along < 1.0f ? along * along : 1.0f));
+	piece_half_sizes(piece, half_sizes);
+	half_length = half_sizes[piece->long_axis];
+
+	// How far the nearest whole link that holds the piece is on each side
+	// of the hit (not a link by which something lies on it or hangs from
+	// it: that does not stop it bending; for a piece that does not stand,
+	// any link)
+	for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1]; k++)
+	{
+		const damage_link_t *link = &model->links[model->piece_links[k]];
+		float distance;
+
+		if (link->broken || (link->held_piece >= 0 && link->held_piece != piece_index))
+		{
+			continue;
+		}
+		distance = b3Dot(b3Sub(link->local_point, piece->local.p), axis) - position;
+		if (distance < 0.0f && (before < 0.0f || -distance < before))
+		{
+			before = -distance;
+		}
+		if (distance >= 0.0f && (after < 0.0f || distance < after))
+		{
+			after = distance;
+		}
+	}
+	if (before >= 0.0f && after >= 0.0f)
+	{
+		bending = before + after > 1e-4f ? across_impulse * before * after / (before + after) : 0.0f;
+	}
+	else if (before >= 0.0f || after >= 0.0f)
+	{
+		bending = across_impulse * (before >= 0.0f ? before : after);
+	}
+	else
+	{
+		float to_start = position + half_length;
+		float to_end = half_length - position;
+
+		bending = to_start > 0.0f && to_end > 0.0f ? 0.5f * across_impulse * to_start * to_end / (to_start + to_end) : 0.0f;
+	}
+	if (bending <= model->settings.snap[piece->material] * piece_section(piece))
+	{
+		return false;
+	}
+	return request_cut(model, piece_index, position);
 }
 
 // An impulse on a piece: shared evenly among its whole links; each link
@@ -893,6 +1269,7 @@ static void work_out_support(damage_model_t *model, int frame_index)
 		model->links[i].static_pull = 0.0f;
 		model->links[i].static_sideways = 0.0f;
 		model->links[i].static_moment = 0.0f;
+		model->links[i].held_piece = -1;
 	}
 	for (i = 0; i < model->piece_count; i++)
 	{
@@ -1112,6 +1489,9 @@ static void work_out_support(damage_model_t *model, int frame_index)
 		link->static_pull = pull;
 		link->static_sideways = sideways;
 		link->static_moment = moment;
+		// (The spring pulls piece a back the way it came apart: downwards
+		// apart means it holds a up, else b)
+		link->held_piece = apart[1] < 0.0 ? link->piece_a : link->piece_b;
 		if (overload > 1.0f)
 		{
 			model->overloaded_links[model->overloaded_count++] = i;
@@ -1120,6 +1500,135 @@ static void work_out_support(damage_model_t *model, int frame_index)
 		if (link->piece_b != DAMAGE_GROUND)
 		{
 			piece_compressions[link->piece_b] += compression;
+		}
+	}
+
+	// The long pieces: what bends each one. Its links' forces on it and its
+	// own weight, taken up to a place along it, turn about that place:
+	// the part of that turning across the piece is the bending there.
+	// Where it is most, and more than the piece bears, it is cut.
+	for (i = 0; i < queue_end; i++)
+	{
+		int piece_index = walk_queue[i];
+		damage_piece_t *piece = &model->pieces[piece_index];
+		double load_positions[BEND_LOADS_MAX];
+		double load_forces[BEND_LOADS_MAX][3];
+		double load_moments[BEND_LOADS_MAX][3];
+		double axis[3];
+		float half_sizes[3];
+		double half_length;
+		double weight;
+		double limit;
+		double worst_bending = 0.0;
+		double worst_position = 0.0;
+		int load_count = 0;
+		int sample;
+
+		piece->bent = 0.0f;
+		if (piece->long_axis < 0)
+		{
+			continue;
+		}
+		{
+			b3Vec3 direction = piece_axis(piece);
+
+			axis[0] = (double)direction.x;
+			axis[1] = (double)direction.y;
+			axis[2] = (double)direction.z;
+		}
+		piece_half_sizes(piece, half_sizes);
+		half_length = (double)half_sizes[piece->long_axis];
+		weight = (double)piece->mass * (double)GRAVITY;
+		limit = (double)model->settings.bend[piece->material] * (double)piece_section(piece);
+
+		for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1] && load_count < BEND_LOADS_MAX; k++)
+		{
+			const damage_link_t *link = &model->links[model->piece_links[k]];
+			double apart[3];
+			double turned[3];
+			// (The spring pulls piece a back the way it came apart, and
+			// piece b the other way)
+			double sign = link->piece_a == piece_index ? -1.0 : 1.0;
+			double arm[3];
+
+			if (link->broken)
+			{
+				continue;
+			}
+			link_strain(model, link, solver_x, apart, turned);
+			arm[0] = (double)link->local_point.x - (double)piece->local.p.x;
+			arm[1] = (double)link->local_point.y - (double)piece->local.p.y;
+			arm[2] = (double)link->local_point.z - (double)piece->local.p.z;
+			load_positions[load_count] = arm[0] * axis[0] + arm[1] * axis[1] + arm[2] * axis[2];
+			// The force, and its turning about the piece's MIDDLE (moved to
+			// the place looked at below) with the link's own turning
+			load_forces[load_count][0] = sign * apart[0];
+			load_forces[load_count][1] = sign * apart[1];
+			load_forces[load_count][2] = sign * apart[2];
+			load_moments[load_count][0] = arm[1] * load_forces[load_count][2] - arm[2] * load_forces[load_count][1] + sign * turn_stiffness * turned[0];
+			load_moments[load_count][1] = arm[2] * load_forces[load_count][0] - arm[0] * load_forces[load_count][2] + sign * turn_stiffness * turned[1];
+			load_moments[load_count][2] = arm[0] * load_forces[load_count][1] - arm[1] * load_forces[load_count][0] + sign * turn_stiffness * turned[2];
+			load_count++;
+		}
+
+		for (sample = 0; sample < BEND_SAMPLES + load_count; sample++)
+		{
+			// Evenly along it, then just before each link
+			double position = sample < BEND_SAMPLES ? -half_length + 2.0 * half_length * ((double)sample + 0.5) / (double)BEND_SAMPLES : load_positions[sample - BEND_SAMPLES];
+			double force[3] = {0.0, 0.0, 0.0};
+			double moment[3] = {0.0, 0.0, 0.0};
+			double part_weight;
+			double part_middle;
+			double turning[3];
+			double along;
+			double bending;
+			int load;
+
+			if (position <= -half_length || position >= half_length)
+			{
+				continue;
+			}
+			// All that acts on the part before this place: the links there...
+			for (load = 0; load < load_count; load++)
+			{
+				if (load_positions[load] < position)
+				{
+					force[0] += load_forces[load][0];
+					force[1] += load_forces[load][1];
+					force[2] += load_forces[load][2];
+					moment[0] += load_moments[load][0];
+					moment[1] += load_moments[load][1];
+					moment[2] += load_moments[load][2];
+				}
+			}
+			// ...and that part's own weight, at its own middle
+			part_weight = weight * (position + half_length) / (2.0 * half_length);
+			part_middle = (position - half_length) * 0.5;
+			force[1] -= part_weight;
+			moment[0] += part_middle * axis[2] * part_weight;
+			moment[2] -= part_middle * axis[0] * part_weight;
+			// Its turning about the place itself: about the middle, less
+			// the place's arm crossed with the force
+			turning[0] = moment[0] - position * (axis[1] * force[2] - axis[2] * force[1]);
+			turning[1] = moment[1] - position * (axis[2] * force[0] - axis[0] * force[2]);
+			turning[2] = moment[2] - position * (axis[0] * force[1] - axis[1] * force[0]);
+			// (Turning about the piece's own length twists it, it does not
+			// bend it)
+			along = turning[0] * axis[0] + turning[1] * axis[1] + turning[2] * axis[2];
+			turning[0] -= along * axis[0];
+			turning[1] -= along * axis[1];
+			turning[2] -= along * axis[2];
+			bending = sqrt(turning[0] * turning[0] + turning[1] * turning[1] + turning[2] * turning[2]);
+			if (bending > worst_bending)
+			{
+				worst_bending = bending;
+				worst_position = position;
+			}
+		}
+		piece->bent = (float)(worst_bending / limit);
+		if (worst_bending > limit)
+		{
+			request_cut(model, piece_index, (float)worst_position);
 		}
 	}
 
@@ -1285,13 +1794,37 @@ void damage_model_after_step(damage_model_t *model, int frame_index, float step_
 			}
 		}
 
-		if (piece_a >= 0 && damage_piece(model, piece_a, impulse, frame_index))
+		// Each piece hit: the hit on the piece itself, on its length if it
+		// is long, and on its links
+		if (piece_a >= 0)
 		{
-			broke = true;
+			if (hurt_piece(model, piece_a, impulse, frame_index))
+			{
+				broke = true;
+			}
+			if (snap_piece(model, piece_a, event->point, event->normal, impulse))
+			{
+				broke = true;
+			}
+			if (damage_piece(model, piece_a, impulse, frame_index))
+			{
+				broke = true;
+			}
 		}
-		if (piece_b >= 0 && damage_piece(model, piece_b, impulse, frame_index))
+		if (piece_b >= 0)
 		{
-			broke = true;
+			if (hurt_piece(model, piece_b, impulse, frame_index))
+			{
+				broke = true;
+			}
+			if (snap_piece(model, piece_b, event->point, event->normal, impulse))
+			{
+				broke = true;
+			}
+			if (damage_piece(model, piece_b, impulse, frame_index))
+			{
+				broke = true;
+			}
 		}
 		if (broke && restored_count + 2 <= RESTORED_BODIES_MAX)
 		{
@@ -1311,7 +1844,9 @@ void damage_model_after_step(damage_model_t *model, int frame_index, float step_
 		}
 	}
 
-	// (Only now: the events point at shapes the rebuilding destroys)
+	// (Only now: the events point at shapes the rebuilding destroys, and a
+	// cut changes whose links are whose)
+	make_pending_cuts(model);
 	rebuild_dirty_groups(model);
 	for (i = 0; i < restored_count; i++)
 	{
@@ -1327,6 +1862,7 @@ void damage_model_after_step(damage_model_t *model, int frame_index, float step_
 		work_out_support(model, frame_index);
 	}
 	give_way(model, frame_index, step_seconds);
+	make_pending_cuts(model);
 	rebuild_dirty_groups(model);
 	remove_crushed(model);
 }
@@ -1411,6 +1947,7 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 		blast_impulses[i] = b3MulSV(impulse, direction);
 		if (impulse > 0.0f)
 		{
+			hurt_piece(model, i, impulse, frame_index);
 			damage_piece(model, i, impulse, frame_index);
 		}
 	}
@@ -1658,6 +2195,17 @@ void damage_model_draw_inspection(const damage_model_t *model, soft_render_t *re
 		(double)(100.0f * piece->pressed / model->settings.crush[piece->material]), whole_count, broken_count);
 	soft_render_text(renderer, text_x, text_y, text_scale, LABEL_COLOR, text);
 	text_y += line_height;
+	if (piece->long_axis >= 0)
+	{
+		snprintf(text, sizeof(text), "HIT POINTS %.0f/%.0f   LONG: BENT %.0f%% OF WHAT IT BEARS", (double)piece->hit_points_left,
+			(double)model->settings.piece_hit_points[piece->material], (double)(100.0f * piece->bent));
+	}
+	else
+	{
+		snprintf(text, sizeof(text), "HIT POINTS %.0f/%.0f", (double)piece->hit_points_left, (double)model->settings.piece_hit_points[piece->material]);
+	}
+	soft_render_text(renderer, text_x, text_y, text_scale, LABEL_COLOR, text);
+	text_y += line_height;
 
 	// (What a link bears is known only for what stands: for a loose piece
 	// the last pass left zeros)
@@ -1725,8 +2273,8 @@ void damage_model_describe(const damage_model_t *model, char *text, int text_siz
 			hurt_count++;
 		}
 	}
-	snprintf(text, (size_t)text_size, "%d PIECES: %d GROUPS STANDING, %d LOOSE, %d RUBBLE  %d LINKS: %d BROKEN, %d HURT, %d OVERLOADED  %d HITS, LARGEST %.0f NS",
-		model->piece_count, standing_count, loose_count, rubble_count, model->link_count, model->broken_link_count, hurt_count,
+	snprintf(text, (size_t)text_size, "%d PIECES (%d CUTS): %d GROUPS STANDING, %d LOOSE, %d RUBBLE  %d LINKS: %d BROKEN, %d HURT, %d OVERLOADED  %d HITS, LARGEST %.0f NS",
+		model->piece_count, model->cut_count, standing_count, loose_count, rubble_count, model->link_count, model->broken_link_count, hurt_count,
 		model->overloaded_count, model->hit_count, (double)model->largest_hit_impulse);
 }
 
