@@ -127,8 +127,14 @@ typedef struct
 	float hit_speed;                   // meters a second: slower contacts are not hits
 	int rubble_pieces;                 // a loose group of fewer pieces than this is rubble
 	float breakthrough_speed_kept;     // of its speed before the hit, what a thing keeps when its hit broke links
-	float blast_radius;                // meters at full strength
-	float blast_falloff;               // meters beyond that over which it fades to nothing
+	// A blast's wave: what a kilogram of explosive gives a square meter
+	// that faces it at 1 m (newton seconds; by the kilograms to the
+	// power 2/3), the power of the distance it falls off by, and how
+	// dense the explosive is (kilograms a cubic meter: how big the bomb
+	// is, nearer than which the wave grows no more)
+	float blast_impulse_per_kilogram;
+	float blast_falloff_power;
+	float blast_charge_density;
 	float blast_inertia;               // for each kilogram of a piece, how many links' worth of a blast's push its own mass takes up
 	float air_drag;                    // newtons the air pushes back with for each square meter that faces the way a piece goes, at 1 m/s (and by the speed squared)
 	int blast_slices;                  // a blast's push comes on what stands in this many parts, links breaking between them
@@ -139,7 +145,6 @@ typedef struct
 	float blast_gas;
 	float blast_gas_venting;
 	float blast_gas_rush;
-	float blast_harm;                  // how many times harder on links and pieces a blast's newton second is than a hit's
 	float blast_shielding;             // of its push, what a piece loses when another is between its middle and the blast (0: nothing shields)
 	float long_ratio;                  // a piece this many times longer than it is thick or wide is long: it can bend
 	float cut_min_length;              // meters: no piece is cut into one shorter than this
@@ -152,10 +157,9 @@ typedef struct
 	float shape_gap;                   // meters a collision shape is smaller than its piece, all round
 	float ball_radius;                 // the ball the viewer throws: meters
 	float ball_density;                // kilograms a cubic meter
-	// The blasts the viewer sets off: newton seconds a square meter of
-	// what faces them
-	float blast_strength;
-	float blast_big_strength;
+	// The blasts the viewer sets off: kilograms of explosive
+	float blast_kilograms;
+	float blast_big_kilograms;
 } damage_settings_t;
 
 typedef struct

@@ -26,6 +26,8 @@
 // blast's push on it is worked out
 #define BLAST_PARTS 5
 #define GAS_RAYS 192
+// A ray that meets nothing this far out has got out (meters)
+#define GAS_RAY_METERS 30.0f
 #define GAS_RAY_OUT -1
 #define GAS_RAY_GROUND -2
 // A ray goes on through this many loose pieces at most
@@ -166,11 +168,11 @@ void damage_settings_default(damage_settings_t *settings)
 	settings->hit_speed = 1.0f;
 	settings->rubble_pieces = 3;
 	settings->breakthrough_speed_kept = 0.85f;
-	settings->blast_radius = 1.5f;
-	settings->blast_falloff = 3.0f;
+	settings->blast_impulse_per_kilogram = 350.0f;
+	settings->blast_falloff_power = 1.0f;
+	settings->blast_charge_density = 1600.0f;
 	settings->blast_shielding = 0.8f;
 	settings->blast_inertia = 0.005f;
-	settings->blast_harm = 5.0f;
 	settings->blast_slices = 8;
 	settings->blast_gas = 0.5f;
 	settings->blast_gas_venting = 3.0f;
@@ -181,8 +183,8 @@ void damage_settings_default(damage_settings_t *settings)
 	settings->shape_gap = 0.003f;
 	settings->ball_radius = 0.2f;
 	settings->ball_density = 7800.0f;
-	settings->blast_strength = 300.0f;
-	settings->blast_big_strength = 600.0f;
+	settings->blast_kilograms = 3.0f;
+	settings->blast_big_kilograms = 9.0f;
 }
 
 static bool read_float(const char *value, float *result)
@@ -278,9 +280,9 @@ static bool read_settings_key(void *user, const char *section, const char *key, 
 		{
 			return read_float(value, &settings->breakthrough_speed_kept);
 		}
-		if (strcmp(key, "blast_radius") == 0)
+		if (strcmp(key, "blast_impulse_per_kilogram") == 0)
 		{
-			return read_float(value, &settings->blast_radius);
+			return read_float(value, &settings->blast_impulse_per_kilogram);
 		}
 		if (strcmp(key, "air_drag") == 0)
 		{
@@ -302,9 +304,9 @@ static bool read_settings_key(void *user, const char *section, const char *key, 
 		{
 			return sscanf(value, "%d", &settings->blast_slices) == 1;
 		}
-		if (strcmp(key, "blast_harm") == 0)
+		if (strcmp(key, "blast_charge_density") == 0)
 		{
-			return read_float(value, &settings->blast_harm);
+			return read_float(value, &settings->blast_charge_density);
 		}
 		if (strcmp(key, "blast_inertia") == 0)
 		{
@@ -314,9 +316,9 @@ static bool read_settings_key(void *user, const char *section, const char *key, 
 		{
 			return read_float(value, &settings->blast_shielding);
 		}
-		if (strcmp(key, "blast_falloff") == 0)
+		if (strcmp(key, "blast_falloff_power") == 0)
 		{
-			return read_float(value, &settings->blast_falloff);
+			return read_float(value, &settings->blast_falloff_power);
 		}
 		if (strcmp(key, "shape_gap") == 0)
 		{
@@ -358,13 +360,13 @@ static bool read_settings_key(void *user, const char *section, const char *key, 
 	}
 	if (strcmp(section, "blast") == 0)
 	{
-		if (strcmp(key, "strength") == 0)
+		if (strcmp(key, "kilograms") == 0)
 		{
-			return read_float(value, &settings->blast_strength);
+			return read_float(value, &settings->blast_kilograms);
 		}
-		if (strcmp(key, "big_strength") == 0)
+		if (strcmp(key, "big_kilograms") == 0)
 		{
-			return read_float(value, &settings->blast_big_strength);
+			return read_float(value, &settings->blast_big_kilograms);
 		}
 		return false;
 	}
@@ -2349,24 +2351,26 @@ static float exposed_area(const damage_piece_t *piece, b3Quat rotation, b3Vec3 d
 	}
 }
 
-// How strong a blast still is at a distance (1 within its radius, down
-// to 0 over its falloff), and which way it pushes there
-static float blast_reach(const damage_model_t *model, b3Vec3 blast_position, b3Vec3 point, b3Vec3 *direction)
+// How much of what a blast's wave gives at 1 m (its strength, newton
+// seconds a square meter) it gives at a point, and which way it pushes
+// there. It falls off with the distance to the power blast_falloff_power
+// (1: as measured blasts do, see DESIGN.md), with no end to it; nearer
+// than the bomb is big it grows no more. How big the bomb is comes from
+// its strength: the kilograms of explosive that give that much at 1 m
+// (blast_impulse_per_kilogram), at blast_charge_density.
+static float blast_reach(const damage_model_t *model, float strength, b3Vec3 blast_position, b3Vec3 point, b3Vec3 *direction)
 {
 	b3Vec3 offset = b3Sub(point, blast_position);
 	float distance = b3Length(offset);
-	float beyond = distance - model->settings.blast_radius;
+	float charge_kilograms = powf(strength / model->settings.blast_impulse_per_kilogram, 1.5f);
+	float charge_radius = cbrtf(3.0f * charge_kilograms / (4.0f * PI * model->settings.blast_charge_density));
 
 	*direction = distance > 1e-4f ? b3MulSV(1.0f / distance, offset) : make_vector(0.0f, 1.0f, 0.0f);
-	if (beyond <= 0.0f)
+	if (distance < charge_radius)
 	{
-		return 1.0f;
+		distance = charge_radius;
 	}
-	if (beyond >= model->settings.blast_falloff)
-	{
-		return 0.0f;
-	}
-	return 1.0f - beyond / model->settings.blast_falloff;
+	return powf(distance, -model->settings.blast_falloff_power);
 }
 
 // What a blast gives a piece, newton seconds and which way. A long piece
@@ -2403,7 +2407,7 @@ static b3Vec3 blast_on_piece(const damage_model_t *model, b3Vec3 position, float
 	{
 		b3Vec3 place = b3Add(transform.p, b3MulSV((2.0f * (float)part + 1.0f) / (float)part_count - 1.0f, along));
 		b3Vec3 direction;
-		float reach = blast_reach(model, position, place, &direction);
+		float reach = blast_reach(model, strength, position, place, &direction);
 		float impulse = strength * (is_gas ? 1.0f : reach) * exposed_area(piece, transform.q, direction) / (float)part_count;
 
 		if (impulse > 0.0f && !is_gas && model->settings.blast_shielding > 0.0f)
@@ -2535,7 +2539,7 @@ static void push_through_links(damage_model_t *model, const b3Vec3 *pushes, cons
 			// (Its turning counts as the push that would turn it so at
 			// joint_arm)
 			link_strain(model, link, solver_x, apart, turned);
-			through = (double)model->settings.blast_harm * link_through(model, link, apart, turned);
+			through = link_through(model, link, apart, turned);
 			if (slice == slice_count)
 			{
 				hurt_link(model, i, (float)through, frame_index);
@@ -2562,7 +2566,7 @@ static void push_through_links(damage_model_t *model, const b3Vec3 *pushes, cons
 			{
 				own_push[k] = solver_load[i * 6 + k] - solver_inertia[i * 6 + k] * solver_x[i * 6 + k];
 			}
-			if (piece_bending(model, piece_index, solver_x, own_push, (double)model->settings.snap[piece->material] / (double)model->settings.blast_harm, &worst_position) > 1.0)
+			if (piece_bending(model, piece_index, solver_x, own_push, (double)model->settings.snap[piece->material], &worst_position) > 1.0)
 			{
 				request_cut(model, piece_index, (float)worst_position);
 			}
@@ -2585,7 +2589,7 @@ static void push_through_links(damage_model_t *model, const b3Vec3 *pushes, cons
 static void gas_after_blast(damage_model_t *model, b3Vec3 position, float strength, int piece_count_before, int frame_index)
 {
 	const float golden_angle = PI * (3.0f - sqrtf(5.0f));
-	float reach = model->settings.blast_radius + model->settings.blast_falloff;
+	float reach = GAS_RAY_METERS;
 	int shut_in = 0;
 	int out = 0;
 	float shut_part;
@@ -2787,7 +2791,7 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 		impulse = b3Length(blast_impulses[i]);
 		if (impulse > 0.0f)
 		{
-			hurt_piece(model, i, impulse * model->settings.blast_harm, frame_index);
+			hurt_piece(model, i, impulse, frame_index);
 		}
 	}
 
@@ -2837,7 +2841,7 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 		const damage_projectile_t *projectile = &model->projectiles[i];
 		b3Vec3 center = b3Body_GetPosition(projectile->body);
 		b3Vec3 direction;
-		float reach = blast_reach(model, position, center, &direction);
+		float reach = blast_reach(model, strength, position, center, &direction);
 
 		if (reach > 0.0f)
 		{

@@ -380,6 +380,27 @@ presses on everything until it finds a way out.
   whose strength against sudden pushes goes by the mass of what they
   hold; not done.
 - At 300 and 600 the brick wall, in the open, is not touched at all.
+- The wave's falloff (Radu: the plateau to 1.5 m and the straight line
+  down to nothing at 4.5 m were made up, and put nearly the whole wave
+  on a roof 3 m away). Looked up: the impulse of a blast wave falls
+  off about as 1 over the distance (Sadovsky's formula for TNT: 340 to
+  360 Pa s for a kilogram at a meter, by the kilograms to the power
+  2/3, over the distance; a fit to pentolite data for walls facing the
+  charge has the distance to the power 1.2). Peak pressure falls much
+  faster near the charge (about the cube), but the wave also gets
+  longer. So: a bomb is so many kilograms, its strength (what goes
+  with the event) is 350 times the kilograms to the power 2/3, it falls
+  off by the distance to `blast_falloff_power` (1), there is no
+  farthest distance, and nearer than the bomb is big (from its
+  kilograms and `blast_charge_density`) it grows no more. `blast_harm`
+  is gone again.
+- What that shows: a real kilogram of TNT on the floor of the house
+  breaks 5 to 8 links and moves nothing; 3 kg break 20 to 40 and lift
+  the house at 5 m/s; 9 kg lift it at 15 m/s. It is not the falloff
+  that throws houses: the links are too strong for what they hold
+  (750 Ns to break one nailed link, when 290 Ns is all a kilogram of
+  TNT puts on a 4 m board a meter away). The viewer's bombs are 3 and
+  9 kg until that is put right.
 - The physics ground is 1 km to a side now (40 m are drawn): what was
   thrown past its edge fell for ever.
 - `blast_gas` is 0.5: at 1 a blast of 3000 on the floor left nothing of
