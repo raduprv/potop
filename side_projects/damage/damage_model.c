@@ -78,6 +78,7 @@ static bool blast_was_standing[DAMAGE_PIECES_MAX];
 static float blast_shares[DAMAGE_PIECES_MAX];
 static b3Vec3 gas_impulses[DAMAGE_PIECES_MAX];
 static float gas_factors[DAMAGE_PIECES_MAX];
+static int gas_island_sizes[DAMAGE_PIECES_MAX];
 // The rays that look for a blast's way out: which way each goes, and the
 // standing piece it ends on (GAS_RAY_OUT: it got out; GAS_RAY_GROUND)
 static b3Vec3 gas_ray_directions[GAS_RAYS];
@@ -164,7 +165,7 @@ void damage_settings_default(damage_settings_t *settings)
 	settings->blast_shielding = 0.8f;
 	settings->blast_inertia = 0.005f;
 	settings->blast_slices = 8;
-	settings->blast_gas = 1.0f;
+	settings->blast_gas = 0.5f;
 	settings->blast_gas_venting = 3.0f;
 	settings->blast_gas_rush = 1.0f;
 	settings->air_drag = 0.7f;
@@ -2357,11 +2358,12 @@ static float blast_on_piece(const damage_model_t *model, b3Vec3 position, float 
 	return impulse;
 }
 
-// A push on what stands, come on in slices (see damage_model_blast):
-// pushes[] is each piece's whole push. Leaves in blast_shares[] the part
-// of its push that was still to come when a piece came loose (1 for
-// what did not stand to begin with; of no use for what still stands).
-static void push_through_standing(damage_model_t *model, const b3Vec3 *pushes, int piece_count_before, int frame_index)
+// A push on every piece (pushes[], each piece's whole push, in the
+// world's frame), come on in slices (see damage_model_blast). Leaves in
+// blast_shares[] the part of its push that was still to come when a
+// piece was no longer held to the ground (1 for what was not to begin
+// with; of no use for what still stands).
+static void push_through_links(damage_model_t *model, const b3Vec3 *pushes, int piece_count_before, int frame_index)
 {
 	double turn_stiffness = (double)model->settings.joint_arm * (double)model->settings.joint_arm;
 	int slice_count = model->settings.blast_slices > 1 ? model->settings.blast_slices : 1;
@@ -2379,9 +2381,12 @@ static void push_through_standing(damage_model_t *model, const b3Vec3 *pushes, i
 		// (One more round after the last slice, only to see what the last
 		// slice's breaks let go of)
 		double come_on = (double)(slice < slice_count ? slice : slice_count) / (double)slice_count;
-		int standing_count = find_standing(model);
+		int standing_count;
 		double load_squared = 0.0;
 
+		// What is no longer held to the ground since the slice before: it
+		// will be thrown by the slices still to come
+		find_standing(model);
 		for (i = 0; i < piece_count_before; i++)
 		{
 			if (blast_was_standing[i] && support_unknowns[i] < 0)
@@ -2393,6 +2398,20 @@ static void push_through_standing(damage_model_t *model, const b3Vec3 *pushes, i
 		if (slice > slice_count)
 		{
 			break;
+		}
+
+		// Everything is solved, loose or not: a loose house is strained by
+		// a blast inside it as a standing one is. (standing_count: all
+		// the pieces there are, from here on.)
+		standing_count = 0;
+		for (i = 0; i < model->piece_count; i++)
+		{
+			support_unknowns[i] = -1;
+			if (model->pieces[i].group != DAMAGE_GONE && !model->pieces[i].crushed)
+			{
+				support_unknowns[i] = standing_count;
+				walk_queue[standing_count++] = i;
+			}
 		}
 
 		// (A blast is over before much can move: each piece's own mass
@@ -2416,13 +2435,15 @@ static void push_through_standing(damage_model_t *model, const b3Vec3 *pushes, i
 				solver_x[i * 6 + k] = 0.0;
 				solver_inertia[i * 6 + k] = k < 3 ? held : held * reach_squared;
 			}
-			// (What stands is in bodies that have not moved: the
-			// building's frame is the world's)
+			// (The push turned into the frame of the piece's body, which
+			// for what stands is the world's)
 			if (piece_index < piece_count_before)
 			{
-				solver_load[i * 6 + 0] = come_on * (double)pushes[piece_index].x;
-				solver_load[i * 6 + 1] = come_on * (double)pushes[piece_index].y;
-				solver_load[i * 6 + 2] = come_on * (double)pushes[piece_index].z;
+				b3Vec3 push = b3InvRotateVector(b3Body_GetRotation(model->groups[piece->group].body), pushes[piece_index]);
+
+				solver_load[i * 6 + 0] = come_on * (double)push.x;
+				solver_load[i * 6 + 1] = come_on * (double)push.y;
+				solver_load[i * 6 + 2] = come_on * (double)push.z;
 				load_squared += solver_load[i * 6 + 0] * solver_load[i * 6 + 0] + solver_load[i * 6 + 1] * solver_load[i * 6 + 1] + solver_load[i * 6 + 2] * solver_load[i * 6 + 2];
 			}
 		}
@@ -2512,7 +2533,50 @@ static void gas_after_blast(damage_model_t *model, b3Vec3 position, float streng
 	{
 		return;
 	}
-	find_standing(model);
+	// How many pieces each piece is still linked with, itself counted:
+	// what the wave left in bits too small to be rubble shuts nothing in
+	for (i = 0; i < model->piece_count; i++)
+	{
+		gas_island_sizes[i] = 0;
+	}
+	for (i = 0; i < model->piece_count; i++)
+	{
+		int queue_start = 0;
+		int queue_end = 0;
+		int k;
+
+		if (gas_island_sizes[i] != 0 || model->pieces[i].group == DAMAGE_GONE)
+		{
+			continue;
+		}
+		gas_island_sizes[i] = -1;
+		walk_queue[queue_end++] = i;
+		while (queue_start < queue_end)
+		{
+			int piece_index = walk_queue[queue_start++];
+
+			for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1]; k++)
+			{
+				const damage_link_t *link = &model->links[model->piece_links[k]];
+				int next;
+
+				if (link->broken || link->piece_b == DAMAGE_GROUND)
+				{
+					continue;
+				}
+				next = link->piece_a == piece_index ? link->piece_b : link->piece_a;
+				if (gas_island_sizes[next] == 0)
+				{
+					gas_island_sizes[next] = -1;
+					walk_queue[queue_end++] = next;
+				}
+			}
+		}
+		for (k = 0; k < queue_end; k++)
+		{
+			gas_island_sizes[walk_queue[k]] = queue_end;
+		}
+	}
 	for (ray = 0; ray < GAS_RAYS; ray++)
 	{
 		// (Evenly over a ball: up it in equal steps, round it by the
@@ -2536,7 +2600,7 @@ static void gas_after_blast(damage_model_t *model, b3Vec3 position, float streng
 				break;
 			}
 			piece_index = damage_model_shape_piece(result.shapeId);
-			if (piece_index >= 0 && piece_index < piece_count_before && support_unknowns[piece_index] >= 0)
+			if (piece_index >= 0 && piece_index < piece_count_before && gas_island_sizes[piece_index] >= model->settings.rubble_pieces)
 			{
 				gas_ray_pieces[ray] = piece_index;
 				break;
@@ -2546,7 +2610,7 @@ static void gas_after_blast(damage_model_t *model, b3Vec3 position, float streng
 				gas_ray_pieces[ray] = GAS_RAY_GROUND;
 				break;
 			}
-			// (Something loose, or a ball: on through it)
+			// (A bit the wave broke off, or a ball: on through it)
 			left -= b3Length(b3Sub(result.point, start)) + 0.05f;
 			start = b3Add(result.point, b3MulSV(0.05f, direction));
 		}
@@ -2615,12 +2679,12 @@ static void gas_after_blast(damage_model_t *model, b3Vec3 position, float streng
 	{
 		return;
 	}
-	push_through_standing(model, gas_impulses, piece_count_before, frame_index);
+	push_through_links(model, gas_impulses, piece_count_before, frame_index);
 	for (i = 0; i < piece_count_before; i++)
 	{
-		// (What stood through the wave and comes loose now is thrown by
-		// what was left of the gas)
-		if (gas_factors[i] > 0.0f && support_unknowns[i] < 0)
+		// (What the gas pressed on and is not held to the ground by the
+		// end is thrown by what of it came on after it let go)
+		if (gas_factors[i] > 0.0f && !blast_was_standing[i])
 		{
 			model->pieces[i].gas_push_left = gas_factors[i] * blast_shares[i];
 		}
@@ -2663,22 +2727,7 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 		}
 	}
 
-	// What does not stand to begin with
-	find_standing(model);
-	for (i = 0; i < piece_count_before; i++)
-	{
-		float impulse = b3Length(blast_impulses[i]);
-
-		if (support_unknowns[i] < 0 && impulse > 0.0f && model->pieces[i].group != DAMAGE_GONE)
-		{
-			b3Transform transform = piece_world_transform(model, i);
-
-			snap_piece(model, i, transform.p, b3MulSV(1.0f / impulse, blast_impulses[i]), impulse);
-			damage_piece(model, i, impulse, frame_index);
-		}
-	}
-
-	push_through_standing(model, blast_impulses, piece_count_before, frame_index);
+	push_through_links(model, blast_impulses, piece_count_before, frame_index);
 	for (i = 0; i < piece_count_before; i++)
 	{
 		model->pieces[i].blast_push_left = blast_shares[i];

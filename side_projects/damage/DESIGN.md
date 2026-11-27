@@ -270,8 +270,9 @@ Known and left so:
   with 3000 Ns a square meter: 200 m/s). That much is as it would be;
   what was missing is the air. `air_drag`: each loose moving piece is
   pushed back at its middle by how much of it faces the way it goes,
-  times its speed squared (0.7: real air). The board is down to some
-  tens of meters a second within a few meters, and falls broadside at
+  times its speed squared (0.7: real air). A board broadside on loses
+  nine tenths of its speed in about 50 m (not "a few meters", as was
+  first written here), less when it tumbles; it falls broadside at
   about 14 m/s; logs and bricks hardly feel it.
 - `blast_slices` (Radu's idea): all at once, a piece either held and
   lost all of its push, or let go and left with all of it, so one blast
@@ -330,6 +331,22 @@ presses on everything until it finds a way out.
   where the gas rushes past: it gets more (`blast_gas_rush`).
 - That push goes through what stands in slices, as the wave's did; a
   piece that comes loose in it is thrown by what was left of it.
+- Found by Radu: a blast on the floor in the middle of the house only
+  cracked it, the next one threw it into the sky, and one a little off
+  the middle threw it at once. The wave was solved only through what
+  was held to the ground, and the gas pressed only on that: in the
+  middle the wave tore the house off its sills in its last slice (so
+  it got none of the push), the gas then found nothing "standing" and
+  did nothing, and the second blast found a loose house and hit it
+  piece by piece with all it had. Now the push is solved through every
+  linked piece, held to the ground or not (the pieces' own mass,
+  `blast_inertia`, is what a loose body leans on), and the gas is shut
+  in by any piece still part of a body of `rubble_pieces` or more. The
+  old piece-by-piece rule is gone from blasts.
+- The physics ground is 1 km to a side now (40 m are drawn): what was
+  thrown past its edge fell for ever.
+- `blast_gas` is 0.5: at 1 a blast of 3000 on the floor left nothing of
+  the house but its sills.
 - Not done: the ways out are counted once, after the wave, not again
   as the gas itself opens the place; no echoes of the wave; no flow.
 - Seen (3000): in the cabin and at the brick wall nothing changes (the

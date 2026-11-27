@@ -85,7 +85,9 @@ static void build_ground(void)
 {
 	b3BodyDef body_definition = b3DefaultBodyDef();
 	b3ShapeDef shape_definition = b3DefaultShapeDef();
-	b3BoxHull hull = b3MakeBoxHull(40.0f, 0.5f, 40.0f);
+	// (Far wider than the ground that is drawn: what a blast throws
+	// must come down on something, not fall for ever past the edge)
+	b3BoxHull hull = b3MakeBoxHull(1000.0f, 0.5f, 1000.0f);
 	b3BodyId body;
 
 	body_definition.type = b3_staticBody;

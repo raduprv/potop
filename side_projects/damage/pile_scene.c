@@ -270,7 +270,9 @@ static void build_ground(void)
 {
 	b3BodyId body = create_body(b3_staticBody, make_vector(0.0f, -0.5f, 0.0f), b3Quat_identity);
 	b3ShapeDef definition = shape_definition(0.0f, -1);
-	b3BoxHull hull = b3MakeBoxHull(40.0f, 0.5f, 40.0f);
+	// (Far wider than the ground that is drawn: what a blast throws
+	// must come down on something, not fall for ever past the edge)
+	b3BoxHull hull = b3MakeBoxHull(1000.0f, 0.5f, 1000.0f);
 
 	b3CreateHullShape(body, &definition, &hull.base);
 }
