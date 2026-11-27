@@ -870,14 +870,19 @@ bool potop_frame_begin(potop_t *potop, potop_input_t *input_out, float *seconds_
 	{
 		input_out->escape = true;
 	}
-	if (input->select_tool >= 0 && potop->session.dialog.open)
 	{
-		// Talking: 1..9 answer
-		dialog_choose(&potop->session.dialog, input->select_tool);
-	}
-	else
-	{
-		input_out->select = input->select_tool;
+		// 1..4 are the sandbox's tools, 5..8 its soils: to the game, 1..8
+		int number = input->select_tool >= 0 ? input->select_tool : (input->select_soil >= 0 ? 4 + input->select_soil : -1);
+
+		if (number >= 0 && potop->session.dialog.open)
+		{
+			// Talking: the numbers answer
+			dialog_choose(&potop->session.dialog, number);
+		}
+		else
+		{
+			input_out->select = number;
+		}
 	}
 	if (!input->keyboard_captured)
 	{

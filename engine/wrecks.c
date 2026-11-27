@@ -831,7 +831,7 @@ void wrecks_update_objects(wrecks_t *wrecks, objects_t *objects, const terrain_t
 					instance->z = building->pose_to[p][2];
 					SDL_memcpy(instance->rotation, &building->pose_to[p][3], sizeof(float) * 4);
 					objects_touch(objects, index);
-					objects_note_moved(objects, index);
+					objects->moving_shadows = true;
 				}
 				continue;
 			}
@@ -907,7 +907,9 @@ void wrecks_interpolate(wrecks_t *wrecks, objects_t *objects, float blend)
 				instance->rotation[k] /= length;
 			}
 			objects_touch(objects, index);
-			objects_note_moved(objects, index);
+			// (the near map's moving layer drawn again, once, as for the
+			// physics' own bodies: not a patch round each piece)
+			objects->moving_shadows = true;
 		}
 	}
 }

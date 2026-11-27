@@ -1454,6 +1454,15 @@ static void mark_shadows_dirty(objects_t *objects, int type)
 {
 	object_shadow_t shadow = objects->types.types[type].shadow;
 
+	// (a procedural type's objects are free, always: only in the near map's
+	// moving layer, not the whole of both maps drawn again for a piece of
+	// a breakable building cut or gone)
+	if (objects->types.types[type].procedural)
+	{
+		objects->moving_shadows = true;
+		return;
+	}
+
 	if (shadow == OBJECT_SHADOW_ALL)
 	{
 		objects->far_shadow_dirty = true;
