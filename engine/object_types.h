@@ -20,7 +20,11 @@
 
 #define OBJECT_TYPE_NAME_LENGTH 48
 #define OBJECT_TYPE_PATH_LENGTH 128
-#define OBJECT_TYPES_MAX 512
+#define OBJECT_TYPES_MAX 1024
+// Types kept at the end for models made while the game runs (objects.h,
+// objects_procedural_type: a breakable building's pieces), named
+// procedural_NNN, with no model till one is made for them
+#define OBJECT_PROCEDURAL_TYPES 256
 #define OBJECT_CATEGORY_NAME_LENGTH 32
 #define OBJECT_CATEGORIES_MAX 32
 #define OBJECT_MODULES_MAX 32
@@ -231,6 +235,9 @@ typedef struct
 	// sketch maps' shelves, the rock's pockets) this much more likely than
 	// on average, whatever its patch and valley say (0: as anywhere else)
 	float spawn_shelves;
+	// One of the OBJECT_PROCEDURAL_TYPES (its model made while the game
+	// runs): not in the editor's browser, not populated
+	bool procedural;
 } object_type_t;
 
 typedef struct

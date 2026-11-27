@@ -1288,7 +1288,9 @@ static bool read_sky_and_objects(map_file_reader_t *reader, terrain_t *terrain, 
 					SDL_memcpy(&record, (const uint8_t *)records + i * record_size, record_size);
 					type = record.type >= 0 && record.type < saved_type_count ? type_map[record.type] : -1;
 					// (a module's part: its module puts it back)
-					if (type >= 0 && objects->types.types[type].module_type >= 0)
+					// (and a breakable building's piece: the building is not saved
+					// with the map, its pieces' objects are left out)
+					if (type >= 0 && (objects->types.types[type].module_type >= 0 || objects->types.types[type].procedural))
 					{
 						type = -1;
 					}

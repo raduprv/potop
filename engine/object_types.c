@@ -874,5 +874,35 @@ bool object_types_load(object_types_t *types)
 		type->harvest_times = SDL_max(type->harvest_times, 1);
 		type->harvest_count_maximum = SDL_max(type->harvest_count_maximum, type->harvest_count_minimum);
 	}
+	// The types for models made while the game runs, at the end: no model
+	// yet (objects_procedural_type gives them one), no physics of their own
+	// (what made them moves them), no picture far off, never populated
+	{
+		int category = category_index(types, "procedural");
+
+		for (int i = 0; i < OBJECT_PROCEDURAL_TYPES && types->type_count < OBJECT_TYPES_MAX; i++)
+		{
+			object_type_t *type = &types->types[types->type_count++];
+
+			*type = types->defaults;
+			SDL_snprintf(type->name, sizeof(type->name), "procedural_%03d", i);
+			type->model_path[0] = '\0';
+			type->category = category;
+			type->procedural = true;
+			type->random_yaw = false;
+			type->impostor = false;
+			type->physics = OBJECT_PHYSICS_NONE;
+			type->blocks_water = false;
+			type->grass_clear_meters = OBJECT_GRASS_CLEAR_NONE;
+			type->spawn_per_hectare = 0.0f;
+			type->brush_per_hectare = 0.0f;
+			type->footprint_meters = 0.0f;
+			type->draw_distance_meters = 300.0f;
+			type->debris_count = 0;
+			type->debris_type_count = 0;
+			type->harvest_change_type = -1;
+			type->near_category = -1;
+		}
+	}
 	return true;
 }

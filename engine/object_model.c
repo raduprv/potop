@@ -804,6 +804,11 @@ static SDL_GPUTexture *cached_texture_named(object_texture_cache_t *cache, const
 	return texture;
 }
 
+SDL_GPUTexture *object_texture_cache_get(object_texture_cache_t *cache, const char *relative_path, bool data)
+{
+	return cached_texture_named(cache, relative_path, false, data);
+}
+
 static SDL_GPUTexture *cached_texture(object_texture_cache_t *cache, const char *relative_path)
 {
 	return cached_texture_named(cache, relative_path, true, false);
@@ -1952,6 +1957,49 @@ bool object_model_load(object_model_t *model, const char *relative_path, object_
 	SDL_strlcpy(model->file_path, relative_path, sizeof(model->file_path));
 	model->file_time = data_file_time(relative_path);
 	model->own_textures = false;
+	return true;
+}
+
+bool object_model_make(object_model_t *model, const char *name, const float *vertices, const float *tangents, uint32_t vertex_count,
+	const uint16_t *indices, uint32_t index_count, const object_material_t *material)
+{
+	uint32_t vertex_bytes = (uint32_t)OBJECT_MODEL_VERTEX_BYTES * vertex_count;
+	uint32_t index_bytes = (uint32_t)sizeof(uint16_t) * index_count;
+
+	SDL_zerop(model);
+	if (vertex_count == 0 || index_count == 0)
+	{
+		return false;
+	}
+	SDL_strlcpy(model->name, name, sizeof(model->name));
+	model->still = true;
+	model->vertex_total = vertex_count;
+	model->index_total = index_count;
+	// (16 bit: never in the shadows' shared buffers, which are made once)
+	model->index_size = SDL_GPU_INDEXELEMENTSIZE_16BIT;
+	model->vertex_buffer = gpu_create_buffer(SDL_GPU_BUFFERUSAGE_VERTEX, vertex_bytes);
+	model->index_buffer = gpu_create_buffer(SDL_GPU_BUFFERUSAGE_INDEX, index_bytes);
+	if (model->vertex_buffer == NULL || model->index_buffer == NULL || !upload_tangents(model, tangents, vertex_count))
+	{
+		object_model_destroy(model);
+		return false;
+	}
+	gpu_upload_buffer(model->vertex_buffer, 0, vertices, vertex_bytes);
+	gpu_upload_buffer(model->index_buffer, 0, indices, index_bytes);
+	model->material_count = 1;
+	model->materials[0] = *material;
+	model->materials[0].index_offset = 0;
+	model->materials[0].index_count = (int)index_count;
+	model->bounds_minimum = vec3_make(vertices[0], vertices[1], vertices[2]);
+	model->bounds_maximum = model->bounds_minimum;
+	for (uint32_t v = 0; v < vertex_count; v++)
+	{
+		const float *at = &vertices[v * 8];
+
+		model->bounds_minimum = vec3_make(SDL_min(model->bounds_minimum.x, at[0]), SDL_min(model->bounds_minimum.y, at[1]), SDL_min(model->bounds_minimum.z, at[2]));
+		model->bounds_maximum = vec3_make(SDL_max(model->bounds_maximum.x, at[0]), SDL_max(model->bounds_maximum.y, at[1]), SDL_max(model->bounds_maximum.z, at[2]));
+		model->horizontal_radius = SDL_max(model->horizontal_radius, SDL_sqrtf(at[0] * at[0] + at[2] * at[2]));
+	}
 	return true;
 }
 

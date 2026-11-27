@@ -35,9 +35,7 @@ PROFILE_LINES ?= 120
 TARGET = potop
 EDITOR = potop_editor
 ENGINE_LIBRARY = build/libpotop.a
-# (engine/wreck.c, the buildings that come apart, is not built here yet:
-# nothing of the engine uses it, side_projects/damage builds and tries it)
-ENGINE_SOURCES = $(filter-out engine/wreck.c,$(wildcard engine/*.c))
+ENGINE_SOURCES = $(wildcard engine/*.c)
 EDITOR_SOURCES = $(wildcard editor/*.c)
 # The game (through potop.h alone)
 GAME_SOURCES = $(wildcard game/*.c)
@@ -168,7 +166,7 @@ build/miniz_implementation.o: CFLAGS += -w
 
 # Desktop tools: not part of the game, never shipped with it
 TOOLS = tools/potop_convert tools/potop_plant tools/plant_editor tools/potop_prop tools/prop_editor tools/house_editor tools/cloud_bake tools/potop_texture \
-	tools/potop_house tools/house_view tools/potop_module tools/potop_twig
+	tools/potop_house tools/house_view tools/potop_module tools/potop_twig tools/wreck_export
 
 tools: $(TOOLS)
 
@@ -202,6 +200,15 @@ tools/potop_module: tools/potop_module.c engine/module_file.c engine/module_file
 # The ground's textures made from nothing (tools/potop_texture.c)
 tools/potop_texture: tools/potop_texture.c build/stb_implementation.o
 	$(CC) $(filter-out -MMD -MP,$(CFLAGS)) -O2 -fopenmp -Wno-format-truncation -Itools -o $@ tools/potop_texture.c build/stb_implementation.o -lm
+
+# The test bench's buildings written out as .wreck files (tools/wreck_export.c):
+# side_projects/damage's scenes built as the bench builds them
+WRECK_BENCH = side_projects/damage
+WRECK_BENCH_SOURCES = $(WRECK_BENCH)/model_scenes.c $(WRECK_BENCH)/damage_scene.c $(WRECK_BENCH)/pile_scene.c $(WRECK_BENCH)/test_scene.c \
+	$(WRECK_BENCH)/damage_draw.c $(WRECK_BENCH)/soft_render.c $(WRECK_BENCH)/damage_events.c $(WRECK_BENCH)/damage_ini.c
+tools/wreck_export: tools/wreck_export.c $(WRECK_BENCH_SOURCES) engine/wreck.c engine/wreck.h $(BOX3D_SOURCES:third_party/box3d/src/%.c=build/box3d/%.o)
+	$(CC) $(filter-out -fopenmp -MMD -MP $(SDL_CFLAGS),$(CFLAGS)) -I$(WRECK_BENCH) -Wl,--wrap=wreck_model_finish -o $@ tools/wreck_export.c \
+		$(WRECK_BENCH_SOURCES) engine/wreck.c $(BOX3D_SOURCES:third_party/box3d/src/%.c=build/box3d/%.o) -lm -lpthread
 
 # Conifers' twig pictures drawn from nothing (tools/potop_twig.c)
 tools/potop_twig: tools/potop_twig.c build/stb_implementation.o

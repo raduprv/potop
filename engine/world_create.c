@@ -153,6 +153,8 @@ bool world_create(world_t *world)
 	{
 		return false;
 	}
+	wrecks_initialize(&world->wrecks);
+	world->physics.wrecks = &world->wrecks;
 	layouts_load(&world->layouts, &world->objects.types);
 	world->navigation_overlay_seconds = -1e9;
 	return true;

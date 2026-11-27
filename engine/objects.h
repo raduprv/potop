@@ -169,8 +169,9 @@ typedef struct
 {
 	object_types_t types;
 	object_texture_cache_t textures;
-	object_model_t *models;        // one per distinct model file
+	object_model_t *models;        // one per distinct model file (and the procedural ones after them)
 	int model_count;
+	int model_capacity;
 	// Far away, the models worth it are drawn as pictures of themselves
 	// (see impostors.h): one per model (none: no albedo), made outside the
 	// frames (objects_update_impostors) when impostors_pending
@@ -607,6 +608,14 @@ void objects_destroy(objects_t *objects);
 // they were until the game starts again. True if anything changed. Cheap
 // enough for about once a second (a look at each file's time)
 bool objects_reload_changed(objects_t *objects);
+
+// A model made while the game runs (object_model_make) on one of the
+// procedural types (object_types.h): the type whose model is named key,
+// made now from the vertices if there is none yet (vertices NULL: only
+// looked for). Placed as any type is (objects_add), drawn as any object.
+// -1 if none is free or the GPU refused.
+int objects_procedural_type(objects_t *objects, const char *key, const float *vertices, const float *tangents, uint32_t vertex_count,
+	const uint16_t *indices, uint32_t index_count, const object_material_t *material);
 
 // A map of another size: the grid is made anew for it and every object
 // removed. Returns false if memory ran out.

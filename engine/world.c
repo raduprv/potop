@@ -587,6 +587,7 @@ void world_step(world_t *world, float step_seconds)
 	if (!world->physics_off)
 	{
 		physics_step(&world->physics, &world->objects, &world->terrain, &world->water, &world->settings->physics, step_seconds);
+		wrecks_update_objects(&world->wrecks, &world->objects, &world->terrain);
 	}
 	frame_profile_end(FRAME_PHYSICS, erosion_end);
 	world->water_seconds_sum += (double)(erosion_start - water_start) * milliseconds_per_tick * 0.001;

@@ -98,6 +98,10 @@ static bool type_key(explosive_type_t *type, const char *key, const char *value)
 		}
 		return true;
 	}
+	if (SDL_strcmp(key, "kilograms") == 0)
+	{
+		return ini_value_to_float(value, &type->kilograms);
+	}
 	if (SDL_strcmp(key, "impact_speed") == 0)
 	{
 		return ini_value_to_float(value, &type->impact_speed);
@@ -306,6 +310,12 @@ void explosives_explode(explosives_t *explosives, session_t *session, world_t *w
 	center[0] = position[0];
 	center[1] = SDL_max(position[1], ground) + ABOVE_GROUND_METERS;
 	center[2] = position[2];
+	// The breakable buildings near: its wave and its gas on their pieces
+	{
+		float at[3] = { position[0], SDL_max(position[1], ground + 0.1f), position[2] };
+
+		wrecks_blast(&world->wrecks, at, type->kilograms);
+	}
 	// The flash, the fire and the smoke
 	if (light_source_gives_light(&type->light))
 	{
@@ -589,6 +599,12 @@ static void stop_trail(grenade_t *grenade, world_t *world)
 		particles_stop(&world->particles, grenade->trail);
 		grenade->trail = 0;
 	}
+	// (and no longer a thing thrown at the breakable buildings)
+	if (grenade->wreck_projectile)
+	{
+		wrecks_remove_projectile(&world->wrecks, grenade->wreck_body);
+		grenade->wreck_projectile = false;
+	}
 }
 
 // A ball shot struck something at speed (meters a second its speed
@@ -811,6 +827,14 @@ void explosives_update(explosives_t *explosives, session_t *session, world_t *wo
 			float change = 0.0f;
 
 			physics_body_velocity(&world->physics, instance->body, velocity);
+			// (a thing thrown at the breakable buildings: it goes on through
+			// what it breaks)
+			if (!grenade->wreck_projectile && world->physics.bodies[instance->body].used)
+			{
+				grenade->wreck_body = world->physics.bodies[instance->body].id;
+				grenade->wreck_projectile = true;
+				wrecks_add_projectile(&world->wrecks, grenade->wreck_body, type->size_meters * 0.5f);
+			}
 			if (grenade->has_last_velocity)
 			{
 				float expected[3] = { grenade->last_velocity[0], grenade->last_velocity[1] - 9.81f * seconds, grenade->last_velocity[2] };

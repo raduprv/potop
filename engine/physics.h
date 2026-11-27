@@ -148,10 +148,15 @@ typedef struct
 	bool exists;
 } physics_tile_t;
 
+struct wrecks_s;
+
 typedef struct physics_s
 {
 	bool created;
 	b3WorldId world;
+	// The breakable buildings in the world (wrecks.h; NULL: none): told
+	// round each step of it, their bodies none of the physics' own
+	struct wrecks_s *wrecks;
 	// What stopped or pushed the walker in its last move (the debug window)
 	int walker_planes_kept;        // planes that pushed it
 	int walker_planes_skipped;     // planes let be (level, or leaning at head height)

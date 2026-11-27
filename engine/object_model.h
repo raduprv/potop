@@ -209,6 +209,20 @@ bool object_model_load(object_model_t *model, const char *relative_path, object_
 // Frees the model's buffers; the textures belong to the cache
 void object_model_destroy(object_model_t *model);
 
+// A model made while the game runs (a breakable building's piece: objects.h,
+// objects_procedural_type), from its vertices (OBJECT_MODEL_VERTEX_BYTES
+// each: position, normal, uv), their tangents (4 floats each: along the
+// texture's U, w the bitangent's sign) and 16 bit indices, drawn with one
+// material (its textures the cache's). No collision shape (what made it
+// moves it). False if the GPU refused.
+bool object_model_make(object_model_t *model, const char *name, const float *vertices, const float *tangents, uint32_t vertex_count,
+	const uint16_t *indices, uint32_t index_count, const object_material_t *material);
+
+// The texture at the path (relative to data/), from the cache, loaded on
+// its first use; data: values, not colors (a normal map, an orm map). NULL
+// if it cannot be loaded.
+SDL_GPUTexture *object_texture_cache_get(object_texture_cache_t *cache, const char *relative_path, bool data);
+
 // Reloading what changed on disk (objects_reload_changed): true if the
 // model's file was written since it was loaded (and a moment ago, so it is
 // not half written)

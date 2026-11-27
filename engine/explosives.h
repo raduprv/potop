@@ -88,6 +88,9 @@ typedef struct
 	float impact_speed;
 	float life_seconds;
 	char trail_effect[EXPLOSIVES_NAME_LENGTH];
+	// Kilograms of explosive, for the breakable buildings (wrecks.h: a
+	// blast's wave on their pieces; 0: none)
+	float kilograms;
 } explosive_type_t;
 
 typedef struct
@@ -104,6 +107,10 @@ typedef struct
 	float last_velocity[3];        // its body's at the last update (the impact fuse, a ball's blow)
 	bool has_last_velocity;
 	uint32_t trail;                // its trail's emitter (0: none)
+	// Told to the breakable buildings as a thing thrown at them (wrecks.h),
+	// by its body
+	bool wreck_projectile;
+	b3BodyId wreck_body;
 } grenade_t;
 
 // A fire a blast left

@@ -206,10 +206,19 @@ static void load_models(objects_t *objects)
 	{
 		return;
 	}
+	objects->model_capacity = (int)capacity;
 	for (int t = 0; t < types->type_count; t++)
 	{
 		object_type_t *type = &types->types[t];
 
+		// (a procedural type's model is made while the game runs)
+		if (type->procedural)
+		{
+			type->model = -1;
+			type->damaged_model = -1;
+			type->destroyed_model = -1;
+			continue;
+		}
 		type->model = model_for_path(objects, type->model_path, &failed);
 		type->damaged_model = type->damaged_model_path[0] != '\0' ? model_for_path(objects, type->damaged_model_path, &failed) : -1;
 		type->destroyed_model = type->destroyed_model_path[0] != '\0' ? model_for_path(objects, type->destroyed_model_path, &failed) : -1;
@@ -1026,6 +1035,58 @@ void objects_update_thumbnails(objects_t *objects)
 		made++;
 	}
 	SDL_free(picture);
+}
+
+int objects_procedural_type(objects_t *objects, const char *key, const float *vertices, const float *tangents, uint32_t vertex_count,
+	const uint16_t *indices, uint32_t index_count, const object_material_t *material)
+{
+	object_types_t *types = &objects->types;
+	int free_type = -1;
+
+	for (int t = types->type_count - 1; t >= 0 && types->types[t].procedural; t--)
+	{
+		const object_type_t *type = &types->types[t];
+
+		if (type->model < 0)
+		{
+			free_type = t;
+		}
+		else if (type->model < objects->model_count && SDL_strcmp(objects->models[type->model].name, key) == 0)
+		{
+			return t;
+		}
+	}
+	if (vertices == NULL)
+	{
+		return -1;
+	}
+	if (free_type < 0)
+	{
+		SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "Objects: all %d procedural types are taken, '%s' is not made", OBJECT_PROCEDURAL_TYPES, key);
+		return -1;
+	}
+	if (objects->model_count >= objects->model_capacity)
+	{
+		int capacity = objects->model_capacity + 64;
+		object_model_t *grown = SDL_realloc(objects->models, sizeof(object_model_t) * (size_t)capacity);
+
+		if (grown == NULL)
+		{
+			return -1;
+		}
+		SDL_memset(grown + objects->model_capacity, 0, sizeof(object_model_t) * 64);
+		objects->models = grown;
+		objects->model_capacity = capacity;
+	}
+	if (!object_model_make(&objects->models[objects->model_count], key, vertices, tangents, vertex_count, indices, index_count, material))
+	{
+		return -1;
+	}
+	types->types[free_type].model = objects->model_count++;
+	// (the draw tables made again with it, before the next draw)
+	release_tables(objects);
+	objects->grid_dirty = true;
+	return free_type;
 }
 
 bool objects_reload_changed(objects_t *objects)
@@ -1974,6 +2035,7 @@ bool objects_add_lifted(objects_t *objects, const terrain_t *terrain, int type, 
 	instance->module_turns = 0.0;
 	instance->module_id = 0;
 	instance->module_part = 0;
+	instance->burn_slot = 0;
 	{
 		const object_type_t *type_of = &objects->types.types[type];
 		const object_model_t *model = &objects->models[type_of->model];

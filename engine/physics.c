@@ -1,6 +1,7 @@
 // Physics: objects as Box3D bodies, pushed by the water. See physics.h.
 
 #include "physics.h"
+#include "wrecks.h"
 #include "profile.h"
 
 #include "math3d.h"
@@ -87,6 +88,11 @@ void physics_destroy(physics_t *physics)
 {
 	if (physics->created)
 	{
+		// (the breakable buildings' bodies first, while the world is there)
+		if (physics->wrecks != NULL)
+		{
+			wrecks_clear(physics->wrecks, NULL);
+		}
 		b3DestroyWorld(physics->world);
 	}
 	free_tiles(physics);
@@ -146,7 +152,12 @@ void physics_reset(physics_t *physics, objects_t *objects, terrain_t *terrain)
 	{
 		return;
 	}
-	// The world goes with every body and tile in it
+	// The world goes with every body and tile in it (the breakable
+	// buildings first, while it is there)
+	if (physics->wrecks != NULL)
+	{
+		wrecks_clear(physics->wrecks, objects);
+	}
 	b3DestroyWorld(physics->world);
 	free_tiles(physics);
 	create_world(physics);
@@ -2558,6 +2569,11 @@ static void recover_flattened(physics_t *physics, objects_t *objects, const wate
 
 static int slot_of_body(b3BodyId id)
 {
+	// (a breakable building's body carries its model, not a slot: wreck.h)
+	if (wreck_body_model(id) != NULL)
+	{
+		return -1;
+	}
 	return (int)(intptr_t)b3Body_GetUserData(id) - 1;
 }
 
@@ -3533,12 +3549,23 @@ void physics_step(physics_t *physics, objects_t *objects, terrain_t *terrain, wa
 	{
 		uint64_t world_start = SDL_GetPerformanceCounter();
 
+		if (physics->wrecks != NULL)
+		{
+			wrecks_before_step(physics->wrecks);
+		}
 		b3World_Step(physics->world, step_seconds, SDL_clamp(settings->substeps, 1, 16));
 		physics->world_step_milliseconds = 1000.0 * (double)(SDL_GetPerformanceCounter() - world_start) / (double)SDL_GetPerformanceFrequency();
 		frame_profile_end(FRAME_PHYSICS_WORLD, world_start);
 	}
 	section_start = SDL_GetPerformanceCounter();
 	handle_hits(physics, objects, terrain, settings, remove, &any_removed);
+	// The breakable buildings: the step's hits on their pieces, then what
+	// that broke (wrecks.h)
+	if (physics->wrecks != NULL)
+	{
+		wrecks_take_hits(physics->wrecks, physics->world);
+		wrecks_after_step(physics->wrecks, step_seconds);
+	}
 	frame_profile_end(FRAME_PHYSICS_HITS, section_start);
 	section_start = SDL_GetPerformanceCounter();
 
@@ -3550,7 +3577,8 @@ void physics_step(physics_t *physics, objects_t *objects, terrain_t *terrain, wa
 		for (int e = 0; e < events.moveCount; e++)
 		{
 			const b3BodyMoveEvent *move = &events.moveEvents[e];
-			int slot = (int)(intptr_t)move->userData - 1;
+			// (a breakable building's: not the physics' own, wrecks.h follows it)
+			int slot = wreck_body_model(move->bodyId) != NULL ? -1 : (int)(intptr_t)move->userData - 1;
 			physics_body_t *body;
 			object_instance_t *instance;
 

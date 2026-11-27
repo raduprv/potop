@@ -2414,7 +2414,7 @@ static void world_window(ui_t *ui, const ui_view_t *view)
 
 static bool browser_shows(const ui_t *ui, const object_type_t *type)
 {
-	if (type->model < 0 || type->module_type >= 0)
+	if (type->model < 0 || type->module_type >= 0 || type->procedural)
 	{
 		return false;
 	}

@@ -956,6 +956,33 @@ void console_run_command(console_t *console, potop_t *potop, const char *line, c
 			}
 		}
 	}
+	else if (SDL_strcmp(command, "wreck") == 0)
+	{
+		vec3_t origin;
+		vec3_t direction;
+		vec3_t ground_hit;
+
+		if (!has_first)
+		{
+			SDL_Log("wreck <name> | clear  (data/wrecks/NAME.wreck, where the middle of the screen looks at the ground)");
+			return;
+		}
+		if (SDL_strcmp(first, "clear") == 0)
+		{
+			wrecks_clear(&potop->world.wrecks, &potop->world.objects);
+			SDL_Log("Wrecks: all taken away");
+			return;
+		}
+		camera_pixel_ray(&potop->camera, 0.5f, 0.5f, 1, 1, &origin, &direction);
+		if (!terrain_raycast(&potop->world.terrain, origin, direction, 300.0f, &ground_hit))
+		{
+			SDL_Log("Wrecks: look at the ground where it should stand (300 m at most)");
+			return;
+		}
+		// (its front, +Z, towards the one placing it)
+		wrecks_place(&potop->world.wrecks, potop->world.physics.world, &potop->world.objects, &potop->world.terrain, first, ground_hit.x,
+			ground_hit.z, SDL_atan2f(origin.x - ground_hit.x, origin.z - ground_hit.z));
+	}
 	else if (SDL_strcmp(command, "burn") == 0)
 	{
 		vec3_t origin;
