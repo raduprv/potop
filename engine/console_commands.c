@@ -956,6 +956,77 @@ void console_run_command(console_t *console, potop_t *potop, const char *line, c
 			}
 		}
 	}
+	else if (SDL_strcmp(command, "effect") == 0)
+	{
+		char name[PARTICLES_EFFECT_NAME_LENGTH];
+		float x;
+		float y;
+		float z;
+		int effect;
+
+		if (has_first && SDL_strcmp(first, "stop") == 0)
+		{
+			particles_stop_all(&potop->world.particles);
+			SDL_Log("Effects: all stopped");
+			return;
+		}
+		if (!has_first)
+		{
+			SDL_Log("effect <name> [<x> <y> <z>] | stop  (a particles.ini effect where the middle of the screen looks, or at a point: meters, y its height)");
+			return;
+		}
+		if (SDL_sscanf(after_first, "%f %f %f", &x, &y, &z) != 3)
+		{
+			// (where the middle of the screen looks: the ground or what
+			// stands there, whichever is nearer)
+			vec3_t origin;
+			vec3_t direction;
+			vec3_t ground_hit;
+			float from[3];
+			float to[3];
+			physics_cast_t cast;
+			bool on_ground;
+			bool on_body;
+			float ground_distance;
+
+			camera_pixel_ray(&potop->camera, 0.5f, 0.5f, 1, 1, &origin, &direction);
+			from[0] = origin.x;
+			from[1] = origin.y;
+			from[2] = origin.z;
+			to[0] = origin.x + direction.x * 500.0f;
+			to[1] = origin.y + direction.y * 500.0f;
+			to[2] = origin.z + direction.z * 500.0f;
+			on_ground = terrain_raycast(&potop->world.terrain, origin, direction, 500.0f, &ground_hit);
+			on_body = physics_cast_segment(&potop->world.physics, from, to, &cast);
+			ground_distance = on_ground ? vec3_length(vec3_subtract(ground_hit, origin)) : 1e30f;
+			if (on_body && ground_distance > cast.fraction * 500.0f)
+			{
+				x = cast.point[0];
+				y = cast.point[1];
+				z = cast.point[2];
+			}
+			else if (on_ground)
+			{
+				x = ground_hit.x;
+				y = ground_hit.y;
+				z = ground_hit.z;
+			}
+			else
+			{
+				SDL_Log("Effects: nothing there (look at the ground or at something standing, or give a point)");
+				return;
+			}
+		}
+		SDL_strlcpy(name, first, sizeof(name));
+		effect = particles_find_effect(&potop->world.particles, name);
+		if (effect < 0)
+		{
+			SDL_Log("Effects: particles.ini has no [%s]", name);
+			return;
+		}
+		SDL_Log("Effects: [%s] at (%.2f, %.2f, %.2f): emitter %u", name, (double)x, (double)y, (double)z,
+			particles_play(&potop->world.particles, effect, x, y, z));
+	}
 	else if (SDL_strcmp(command, "torch") == 0)
 	{
 		player_t *player = &potop->session.player;

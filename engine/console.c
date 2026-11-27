@@ -43,6 +43,7 @@ const console_command_t console_commands[] =
 	{ "rainbow", "[on|off] [strength]", "a rainbow: on (shown when the sun is low, opposite it) or off" },
 	{ "moon", "[age]", "the moon's age in days (0 new, 14.75 full of 29.5), or sets it" },
 	{ "decal", "<kind> [size] | clear", "a decal (data/decals.ini) where the middle of the screen looks; clear: all gone" },
+	{ "effect", "<name> [<x> <y> <z>] | stop", "plays a particles.ini effect where the middle of the screen looks, or at a point (meters; y its height); stop: all of them" },
 	{ "torch", "[on|off]", "a torch in the player's hand (on foot; it lights as much as the night lets it)" },
 	{ "lights", "[on|off|auto]", "the lamps (lanterns, candles, placed lights): all lit, all out, or lit at dusk and out at dawn" },
 	{ "paint", "<coverage|heaviness|kind|flocks> <0..1> [km]", "paints the whole sky (as the Sky window; 0.5 is normal, flocks: 0 none); with km, a brush that far around you, adding (or taking away, below 0) that much" },
