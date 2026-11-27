@@ -366,6 +366,12 @@ typedef struct
 	// building go in one call (DRAW_POOLED_CAMERA)
 	SDL_GPUBuffer *pool_tangent_buffer;
 	SDL_GPUBuffer *pool_weathering_buffer;
+	// The shared buffers kept when only procedural models came (they are
+	// never in them): each model's first index and vertex there as they
+	// were made, for the tables made again without copying them anew
+	bool pool_kept;
+	uint32_t *pool_kept_bases;
+	int pool_kept_model_count;
 	int building_batch_count;
 	// Levels of detail (object_format.h): the models that have them drawn
 	// coarser the smaller they are on screen (objects.lod_*); lod_factor:

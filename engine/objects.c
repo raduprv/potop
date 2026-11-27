@@ -690,12 +690,24 @@ bool objects_resize_map(objects_t *objects, const terrain_t *terrain)
 
 // The tables built from the models (upload_tables): let go, to be built
 // again before the next draw
+static void release_tables_keeping(objects_t *objects, bool keep_pool);
+
 static void release_tables(objects_t *objects)
+{
+	release_tables_keeping(objects, false);
+}
+
+// The draw tables let go (made again before the next draw); keep_pool:
+// the shadows' shared buffers kept as they are (only procedural models,
+// which are never in them, came since)
+static void release_tables_keeping(objects_t *objects, bool keep_pool)
 {
 	SDL_GPUBuffer **buffers[] = { &objects->type_buffer, &objects->model_buffer, &objects->draw_buffer, &objects->pool_vertex_buffer,
 		&objects->pool_index_buffer, &objects->pool_tangent_buffer, &objects->pool_weathering_buffer };
+	size_t kept = keep_pool && objects->pool_vertex_buffer != NULL && objects->pool_kept_bases != NULL ? 4 : 0;
 
-	for (size_t i = 0; i < SDL_arraysize(buffers); i++)
+	objects->pool_kept = kept > 0;
+	for (size_t i = 0; i < SDL_arraysize(buffers) - kept; i++)
 	{
 		if (*buffers[i] != NULL)
 		{
@@ -1083,8 +1095,9 @@ int objects_procedural_type(objects_t *objects, const char *key, const float *ve
 		return -1;
 	}
 	types->types[free_type].model = objects->model_count++;
-	// (the draw tables made again with it, before the next draw)
-	release_tables(objects);
+	// (the draw tables made again with it, before the next draw; the
+	// shadows' shared buffers kept: it is not in them)
+	release_tables_keeping(objects, true);
 	objects->grid_dirty = true;
 	return free_type;
 }
@@ -1256,6 +1269,8 @@ void objects_destroy(objects_t *objects)
 	SDL_free(objects->grid_maximum_y);
 	SDL_free(objects->grid_draw_distance);
 	SDL_free(objects->type_rank);
+	SDL_free(objects->pool_kept_bases);
+	objects->pool_kept_bases = NULL;
 	SDL_free(objects->follow_cell_bits);
 	SDL_free(objects->floating);
 	SDL_free(objects->draw_models);
@@ -3472,7 +3487,31 @@ static bool upload_tables(objects_t *objects)
 		&& objects->draw_drop_levels != NULL;
 	// (the shadows' shared buffers: each model's first index and vertex there)
 	uint32_t *pool_bases = SDL_calloc((size_t)model_count * 2, sizeof(uint32_t));
-	bool pooled = ok && pool_bases != NULL && build_pool(objects, pool_bases);
+	bool pooled = false;
+
+	// (kept as they were if only procedural models came: theirs at 0, they
+	// are not in them; else made anew and their bases kept for next time)
+	if (ok && pool_bases != NULL && objects->pool_kept && objects->pool_vertex_buffer != NULL && objects->pool_kept_bases != NULL)
+	{
+		SDL_memcpy(pool_bases, objects->pool_kept_bases, sizeof(uint32_t) * 2 * (size_t)SDL_min(objects->pool_kept_model_count, model_count));
+		pooled = true;
+	}
+	else if (ok && pool_bases != NULL)
+	{
+		pooled = build_pool(objects, pool_bases);
+		if (pooled)
+		{
+			uint32_t *kept = SDL_realloc(objects->pool_kept_bases, sizeof(uint32_t) * 2 * (size_t)model_count);
+
+			if (kept != NULL)
+			{
+				SDL_memcpy(kept, pool_bases, sizeof(uint32_t) * 2 * (size_t)model_count);
+				objects->pool_kept_bases = kept;
+				objects->pool_kept_model_count = model_count;
+			}
+		}
+	}
+	objects->pool_kept = false;
 
 	if (!pooled && ok)
 	{

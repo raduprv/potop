@@ -683,6 +683,22 @@ void wrecks_after_step(wrecks_t *wrecks, float step_seconds)
 	wrecks->frame_index++;
 }
 
+// A place that is a number (a piece thrown by a solve gone wrong would
+// put an object nowhere: the objects' grid does not take that)
+static bool finite_pose(const b3Transform *transform)
+{
+	const float numbers[7] = { transform->p.x, transform->p.y, transform->p.z, transform->q.v.x, transform->q.v.y, transform->q.v.z, transform->q.s };
+
+	for (int k = 0; k < 7; k++)
+	{
+		if (SDL_isnan(numbers[k]) || SDL_isinf(numbers[k]))
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
 void wrecks_update_objects(wrecks_t *wrecks, objects_t *objects, const terrain_t *terrain)
 {
 	float map_meters = (float)terrain->size * terrain->cell_size_meters;
@@ -718,6 +734,7 @@ void wrecks_update_objects(wrecks_t *wrecks, objects_t *objects, const terrain_t
 				}
 				building->piece_objects[p] = 0;
 				building->piece_gone[p] = true;
+				building->piece_moving[p] = false;
 				continue;
 			}
 			transform = wreck_model_piece_transform(model, p);
@@ -747,7 +764,7 @@ void wrecks_update_objects(wrecks_t *wrecks, objects_t *objects, const terrain_t
 			{
 				int type = piece_type(wrecks, objects, piece);
 
-				if (type < 0 || transform.p.x < 0.0f || transform.p.z < 0.0f || transform.p.x >= map_meters || transform.p.z >= map_meters
+				if (type < 0 || !finite_pose(&transform) || transform.p.x < 0.0f || transform.p.z < 0.0f || transform.p.x >= map_meters || transform.p.z >= map_meters
 					|| !objects_add(objects, terrain, type, transform.p.x, transform.p.z, 0.0f, 1.0f, -1))
 				{
 					building->piece_gone[p] = true;
@@ -756,7 +773,27 @@ void wrecks_update_objects(wrecks_t *wrecks, objects_t *objects, const terrain_t
 				index = objects->instance_count - 1;
 				building->piece_objects[p] = objects->instances[index].id;
 				objects_set_free(objects, index, true);
-				moving = true;
+				// (where it stands, at once)
+				objects->instances[index].x = transform.p.x;
+				objects->instances[index].y = transform.p.y;
+				objects->instances[index].z = transform.p.z;
+				objects->instances[index].rotation[0] = transform.q.v.x;
+				objects->instances[index].rotation[1] = transform.q.v.y;
+				objects->instances[index].rotation[2] = transform.q.v.z;
+				objects->instances[index].rotation[3] = transform.q.s;
+				objects_touch(objects, index);
+				building->piece_moving[p] = false;
+				{
+					float pose[7] = { transform.p.x, transform.p.y, transform.p.z, transform.q.v.x, transform.q.v.y, transform.q.v.z, transform.q.s };
+
+					SDL_memcpy(building->pose_to[p], pose, sizeof(pose));
+				}
+				moving = false;
+				{
+					const wreck_group_t *group = &model->groups[piece->group];
+
+					moving = !group->anchored && b3Body_IsValid(group->body) && b3Body_IsAwake(group->body);
+				}
 			}
 			else
 			{
@@ -765,26 +802,93 @@ void wrecks_update_objects(wrecks_t *wrecks, objects_t *objects, const terrain_t
 				// (only what the physics moves: a standing building stays put)
 				moving = moving_forced || (!group->anchored && b3Body_IsValid(group->body) && b3Body_IsAwake(group->body));
 			}
+			instance = &objects->instances[index];
 			if (!moving)
+			{
+				// (come to rest: drawn where it lies, no longer between steps)
+				if (building->piece_moving[p])
+				{
+					building->piece_moving[p] = false;
+					instance->x = building->pose_to[p][0];
+					instance->y = building->pose_to[p][1];
+					instance->z = building->pose_to[p][2];
+					SDL_memcpy(instance->rotation, &building->pose_to[p][3], sizeof(float) * 4);
+					objects_touch(objects, index);
+					objects_note_moved(objects, index);
+				}
+				continue;
+			}
+			// Off the map, or thrown to nowhere: gone
+			if (finite_pose(&transform) && transform.p.x >= 0.0f && transform.p.z >= 0.0f && transform.p.x < map_meters && transform.p.z < map_meters
+				&& transform.p.y > -1000.0f && transform.p.y < 10000.0f)
+			{
+				float pose[7] = { transform.p.x, transform.p.y, transform.p.z, transform.q.v.x, transform.q.v.y, transform.q.v.z, transform.q.s };
+
+				// (from where it is drawn now if it was still, to where it is)
+				if (!building->piece_moving[p])
+				{
+					building->pose_from[p][0] = instance->x;
+					building->pose_from[p][1] = instance->y;
+					building->pose_from[p][2] = instance->z;
+					SDL_memcpy(&building->pose_from[p][3], instance->rotation, sizeof(float) * 4);
+				}
+				else
+				{
+					SDL_memcpy(building->pose_from[p], building->pose_to[p], sizeof(pose));
+				}
+				SDL_memcpy(building->pose_to[p], pose, sizeof(pose));
+				building->piece_moving[p] = true;
+				continue;
+			}
+			objects_kill(objects, index);
+			building->piece_objects[p] = 0;
+			building->piece_gone[p] = true;
+			building->piece_moving[p] = false;
+		}
+	}
+}
+
+void wrecks_interpolate(wrecks_t *wrecks, objects_t *objects, float blend)
+{
+	blend = SDL_clamp(blend, 0.0f, 1.0f);
+	for (int b = 0; b < WRECKS_MAX; b++)
+	{
+		wrecks_building_t *building = &wrecks->buildings[b];
+
+		if (!building->used)
+		{
+			continue;
+		}
+		for (int p = 0; p < building->model->piece_count; p++)
+		{
+			const float *from = building->pose_from[p];
+			const float *to = building->pose_to[p];
+			object_instance_t *instance;
+			float sign;
+			float length = 0.0f;
+			int index;
+
+			if (!building->piece_moving[p] || building->piece_objects[p] == 0
+				|| (index = objects_find_id(objects, building->piece_objects[p])) < 0)
 			{
 				continue;
 			}
 			instance = &objects->instances[index];
-			// Off the map: gone
-			if (transform.p.x < 0.0f || transform.p.z < 0.0f || transform.p.x >= map_meters || transform.p.z >= map_meters)
+			instance->x = from[0] + (to[0] - from[0]) * blend;
+			instance->y = from[1] + (to[1] - from[1]) * blend;
+			instance->z = from[2] + (to[2] - from[2]) * blend;
+			// (the shorter way round, normalized)
+			sign = from[3] * to[3] + from[4] * to[4] + from[5] * to[5] + from[6] * to[6] < 0.0f ? -1.0f : 1.0f;
+			for (int k = 0; k < 4; k++)
 			{
-				objects_kill(objects, index);
-				building->piece_objects[p] = 0;
-				building->piece_gone[p] = true;
-				continue;
+				instance->rotation[k] = from[3 + k] + (sign * to[3 + k] - from[3 + k]) * blend;
+				length += instance->rotation[k] * instance->rotation[k];
 			}
-			instance->x = transform.p.x;
-			instance->y = transform.p.y;
-			instance->z = transform.p.z;
-			instance->rotation[0] = transform.q.v.x;
-			instance->rotation[1] = transform.q.v.y;
-			instance->rotation[2] = transform.q.v.z;
-			instance->rotation[3] = transform.q.s;
+			length = SDL_max(SDL_sqrtf(length), 1e-6f);
+			for (int k = 0; k < 4; k++)
+			{
+				instance->rotation[k] /= length;
+			}
 			objects_touch(objects, index);
 			objects_note_moved(objects, index);
 		}

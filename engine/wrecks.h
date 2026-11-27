@@ -44,6 +44,11 @@ typedef struct
 	uint32_t piece_objects[WRECK_PIECES_MAX];   // each piece's object's id (0: none yet, or gone)
 	bool piece_gone[WRECK_PIECES_MAX];          // its object taken away for good
 	float piece_sizes[WRECK_PIECES_MAX][3];     // its size when its object was made (a cut piece is shorter: its object made anew)
+	// The moving pieces drawn between the last two steps (the physics goes
+	// at a fixed rate): where each was and is (x, y, z, then a quaternion)
+	float pose_from[WRECK_PIECES_MAX][7];
+	float pose_to[WRECK_PIECES_MAX][7];
+	bool piece_moving[WRECK_PIECES_MAX];
 } wrecks_building_t;
 
 typedef struct
@@ -81,8 +86,13 @@ void wrecks_before_step(wrecks_t *wrecks);
 void wrecks_take_hits(wrecks_t *wrecks, b3WorldId world);
 void wrecks_after_step(wrecks_t *wrecks, float step_seconds);
 
-// Once a frame, after the physics: the pieces' objects where they are
+// After each step of the physics: the pieces' objects made, retyped and
+// taken away, and where the moving ones are going
 void wrecks_update_objects(wrecks_t *wrecks, objects_t *objects, const terrain_t *terrain);
+
+// Once a frame: the moving pieces drawn between the last two steps
+// (blend: how far from the one before to the last, 0..1)
+void wrecks_interpolate(wrecks_t *wrecks, objects_t *objects, float blend);
 
 // A blast of so many kilograms of explosive (world meters): on every
 // building

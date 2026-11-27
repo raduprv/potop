@@ -233,6 +233,7 @@ void world_end_frame(world_t *world, const camera_t *camera, float seconds, bool
 	if (!world->physics_off)
 	{
 		physics_interpolate(&world->physics, &world->objects, blend);
+		wrecks_interpolate(&world->wrecks, &world->objects, blend);
 	}
 	world->water_renderer.step_blend = world->water_frozen || held ? 1.0f : blend;
 	// New or changed models' impostors (baked or from the cache; between
