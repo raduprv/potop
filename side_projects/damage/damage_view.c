@@ -6,7 +6,9 @@
 //               [--camera ex,ey,ez,tx,ty,tz] [--events FILE.txt]
 //
 //   W A S D          move (Q down, E up, Shift faster)
-//   right mouse      hold and move the mouse to look round
+//   mouse            look round, as in a first person game (up and down
+//                    the other way round, the old school way; I turns that)
+//   Tab              let the mouse go, take it back (a click takes it back too)
 //   left mouse       throw a steel ball where the cross points (Shift: twice as fast)
 //   X                a blast where the cross points (Shift: a big one)
 //   Backspace        take the last ball or blast back
@@ -257,7 +259,7 @@ static void draw_hud(const damage_scene_t *scene, soft_render_t *renderer, int f
 	{
 		soft_render_text(renderer, 6, renderer->height - 9 * 18 - 6, 2, HUD_COLOR,
 			"W A S D MOVE, Q E DOWN UP, SHIFT FASTER\n"
-			"RIGHT MOUSE: LOOK ROUND\n"
+			"MOUSE: LOOK ROUND (I: UP AND DOWN THE OTHER WAY)   TAB: LET THE MOUSE GO\n"
 			"LEFT MOUSE: THROW A BALL   X: A BLAST (SHIFT: STRONGER)\n"
 			"BACKSPACE: TAKE THE LAST ONE BACK   DELETE: ALL\n"
 			"SPACE: PAUSE   RIGHT LEFT: A FRAME ON, BACK (SHIFT: TEN)\n"
@@ -283,7 +285,8 @@ int main(int argument_count, char **arguments)
 	bool draw_outlines = true;
 	bool draw_debug = false;
 	bool show_keys = true;
-	bool looking = false;
+	bool looking = true;
+	bool invert_look = true;
 	bool running = true;
 	soft_render_camera_t camera;
 	soft_render_camera_t given_camera;
@@ -367,6 +370,8 @@ int main(int argument_count, char **arguments)
 		return 1;
 	}
 	SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+	// The mouse looks round from the start (Tab lets it go)
+	SDL_SetWindowRelativeMouseMode(window, looking);
 
 	last_ticks = SDL_GetTicksNS();
 	while (running)
@@ -393,25 +398,27 @@ int main(int argument_count, char **arguments)
 			{
 				running = false;
 			}
-			else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_RIGHT)
-			{
-				looking = true;
-				SDL_SetWindowRelativeMouseMode(window, true);
-			}
 			else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT)
 			{
-				view_camera_to_render_camera(&view_camera, &camera);
-				throw_ball(&camera, frame_index, (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
-			}
-			else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_RIGHT)
-			{
-				looking = false;
-				SDL_SetWindowRelativeMouseMode(window, false);
+				if (!looking)
+				{
+					// The mouse was let go: the click only takes it back
+					looking = true;
+					SDL_SetWindowRelativeMouseMode(window, true);
+				}
+				else
+				{
+					view_camera_to_render_camera(&view_camera, &camera);
+					throw_ball(&camera, frame_index, (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
+				}
 			}
 			else if (event.type == SDL_EVENT_MOUSE_MOTION && looking)
 			{
+				// (Inverted: pulling the mouse back looks up, as a stick does)
+				float pitch_direction = invert_look ? 1.0f : -1.0f;
+
 				view_camera.yaw_radians += event.motion.xrel * LOOK_RADIANS_PER_PIXEL;
-				view_camera.pitch_radians -= event.motion.yrel * LOOK_RADIANS_PER_PIXEL;
+				view_camera.pitch_radians += pitch_direction * event.motion.yrel * LOOK_RADIANS_PER_PIXEL;
 				if (view_camera.pitch_radians > PITCH_LIMIT_RADIANS)
 				{
 					view_camera.pitch_radians = PITCH_LIMIT_RADIANS;
@@ -462,6 +469,13 @@ int main(int argument_count, char **arguments)
 						break;
 					case SDLK_B:
 						draw_debug = !draw_debug;
+						break;
+					case SDLK_TAB:
+						looking = !looking;
+						SDL_SetWindowRelativeMouseMode(window, looking);
+						break;
+					case SDLK_I:
+						invert_look = !invert_look;
 						break;
 					case SDLK_X:
 						view_camera_to_render_camera(&view_camera, &camera);
