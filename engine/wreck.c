@@ -896,7 +896,7 @@ static void rebuild_group(wreck_model_t *model, int old_group_index)
 		group->rubble = old_group.rubble;
 		group->linear_velocity_before_step = old_group.linear_velocity_before_step;
 		group->angular_velocity_before_step = old_group.angular_velocity_before_step;
-		b3Body_SetUserData(group->body, (void *)(intptr_t)(group_parts[0] + 1));
+		// (its user data stays the model's pointer: wreck_body_model)
 		return;
 	}
 
