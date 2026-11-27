@@ -159,6 +159,19 @@ VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json POTOP_SCRIPT=shot.txt \
 (lavapipe: about 5 minutes for two shots at 960 x 540; run it in the
 background.)
 
+## Fire: effect and burn (Nov 27)
+
+Console (and POTOP_SCRIPT): `effect <name> [x y z]` plays a particles.ini
+effect where the screen's middle looks (or at a point), `effect stop`;
+`burn` lights the object the screen's middle looks at (engine/burning.h,
+data/burning.ini), `burn clear`. A quick look at a burning log on the fast
+root (about 90 s): `POTOP_ARGS="--houses log2 --hour 20.5" run_fast.sh
+script.txt 640x360 render.local_lights=true render.bloom=true
+render.day_cycle=true render.auto_exposure=true render.render_scale=1.0`
+with `camera 96.6 10.8 104.9 95.8 10.25 106.2`, `burn`, waits and
+screenshots in the script; the fast root's data/burning.ini is a faster
+copy (spread 0.25, char 6, burn 40, ash 12).
+
 ## Fast runs: /home/claude/potop_fast (35f night)
 
 My own run root, rebuilt in a fresh container with

@@ -3769,8 +3769,8 @@ static void pack_slot(const objects_t *objects, int slot, uint32_t *out)
 		out[1 + 4] = (uint32_t)(uint16_t)rotation[0] | ((uint32_t)(uint16_t)rotation[1] << 16);
 		out[1 + 5] = (uint32_t)(uint16_t)rotation[2] | ((uint32_t)(uint16_t)rotation[3] << 16);
 		out[1 + 6] = (model < 0 ? MODEL_NONE : (uint32_t)model) | ((uint32_t)instance->type << 16);
-		// (flags: none now)
-		out[1 + 7] = 0u;
+		// (its fire's slot + 1, 0: not burning: burning.h)
+		out[1 + 7] = instance->burn_slot;
 		out[1 + 8] = instance->emissive_off[0];
 		out[1 + 9] = instance->emissive_off[1];
 		out[1 + RECORD_WORDS] = (free ? CELL_NONE : (uint32_t)grid_cell_of(objects, instance->x, instance->z))
@@ -4977,6 +4977,7 @@ typedef struct
 	float show[4];                    // (the prop editor's)
 	float relief[4];                  // a building's thatch (prop_body.glsl): x 1 its relief marched into, y how deep (m)
 	float look[8];                    // the buildings' look (prop_body.glsl, objects_t.look)
+	float burns[OBJECTS_BURN_SLOTS * OBJECTS_BURN_FLOATS];  // the fires (object.frag; burning.h)
 } material_uniforms_t;
 
 // prop.frag's block for a prop's material
@@ -5275,6 +5276,7 @@ static int draw_models(const objects_t *objects, SDL_GPURenderPass *pass, bool a
 	SDL_zero(material_uniforms);
 	SDL_memcpy(material_uniforms.highlight_parameters, objects->highlight_uniform, sizeof(material_uniforms.highlight_parameters));
 	SDL_memcpy(material_uniforms.look, objects->look, sizeof(material_uniforms.look));
+	SDL_memcpy(material_uniforms.burns, objects->burn_uniforms, sizeof(material_uniforms.burns));
 	material_uniforms.alpha_tested = alpha_pass ? 1 : 0;
 	// The physically based shading for the materials with maps of their
 	// own; pushed again only where that changes from one draw to the next

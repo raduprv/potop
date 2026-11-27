@@ -96,6 +96,7 @@ bool world_create(world_t *world)
 	aurora_set(&world->aurora, false, 1.0f);
 	fireflies_initialize(&world->fireflies);
 	object_effects_initialize(&world->object_effects);
+	burning_initialize(&world->burning, &world->particles);
 	ground_footprints_initialize(&world->ground_footprints);
 	if (!shadow_map_create(&world->shadow, world->settings->render.shadow_map_size))
 	{

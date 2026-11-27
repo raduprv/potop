@@ -449,8 +449,10 @@ void main()
 	// and 4 times how much (of 255) of what its next level of detail leaves
 	// out is gone (objects_cull.comp)
 	// (DRY_FADE added: no water anywhere near it, ground_water.glsl)
-	float dry = floor(fade / DRY_FADE);
-	float packed_fade = fade - DRY_FADE * dry;
+	// (a fire's slot on top: a prop's fire is not drawn yet, taken off)
+	float unburnt_fade = fade - BURN_FADE * floor(fade / BURN_FADE);
+	float dry = floor(unburnt_fade / DRY_FADE);
+	float packed_fade = unburnt_fade - DRY_FADE * dry;
 	float level_steps = floor(packed_fade / 4.0);
 	float own_fade = packed_fade - 4.0 * level_steps;
 	bool highlighted = own_fade > 1.5;

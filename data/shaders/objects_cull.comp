@@ -63,6 +63,9 @@ layout(local_size_x = 256) in;
 // anywhere near (ground_water.glsl; the cell's bit in cell_words, from
 // water.x on: objects.c's find_cells)
 #define DRY_FADE 4096.0
+// BURN_FADE times its fire's slot + 1 added on top (burning.h; object.frag,
+// ground_water.glsl): not to an impostor (it has no fire drawn)
+#define BURN_FADE 8192.0
 
 #define RECORD_WORDS 10u
 #define INSTANCE_FLOATS 15u
@@ -724,7 +727,8 @@ void main()
 			uint cell = cell_word & CELL_NONE;
 			bool dry = water.y != 0 && cell != CELL_NONE && (cell_word & FLAG_STRAY) == 0u && model < LOD_LEVELS * uint(model_count)
 				&& (cell_words[uint(water.x) + (cell >> 5)] & (1u << (cell & 31u))) != 0u;
-			instances[base + 8u] = fade + (int(slot) == highlight_slot ? 2.0 : 0.0) + 4.0 * level_gone + (dry ? DRY_FADE : 0.0);
+			instances[base + 8u] = fade + (int(slot) == highlight_slot ? 2.0 : 0.0) + 4.0 * level_gone + (dry ? DRY_FADE : 0.0)
+				+ (as_impostor ? 0.0 : BURN_FADE * float(records[record + 7u] & 0xFFu));
 			instances[base + 9u] = uintBitsToFloat(records[record + 8u]);
 			instances[base + 10u] = uintBitsToFloat(records[record + 9u]);
 			// (its model's look, a building's: prop_body.glsl)

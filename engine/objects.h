@@ -39,6 +39,10 @@
 // Side of the grid cells objects are sorted into
 #define OBJECTS_GRID_CELL_METERS 32.0f
 #define OBJECTS_GRID_BLOCK_CELLS 8
+// Fires burning at once (burning.h): each object on fire has a slot, its
+// front and placement handed to object.frag (OBJECT_BURN_SLOTS there)
+#define OBJECTS_BURN_SLOTS 8
+#define OBJECTS_BURN_FLOATS 16        // a slot's: 4 vec4 (burning.c fills them, object.frag reads them)
 #define OBJECTS_ADDED_BEFORE_SORT 4096 // added since the last sort (objects_sort): more, sorted again
 #define OBJECTS_STRAYS_BEFORE_SORT 65536 // come loose or turned since: more, sorted again
 #define OBJECTS_WINDOWS_PER_FRAME 100000 // the windows' pass (objects_light_windows): objects looked at a frame
@@ -156,6 +160,9 @@ typedef struct
 	// A module's part (OBJECT_STATE_PART): its module's id and which part
 	uint32_t module_id;
 	uint8_t module_part;
+	// On fire (burning.h): its fire's slot + 1 (0: not burning), the
+	// shader told through its GPU record
+	uint8_t burn_slot;
 } object_instance_t;
 
 typedef struct
@@ -556,6 +563,9 @@ typedef struct
 	int module_index_capacity;
 	uint32_t module_generation;
 	bool module_list_valid;
+	// The fires burning (burning.h fills them each frame): per slot, the
+	// object's placement and its fire's front, for object.frag
+	float burn_uniforms[OBJECTS_BURN_SLOTS * OBJECTS_BURN_FLOATS];
 } objects_t;
 
 // What a ray from the eye goes through: the object, how far along the ray

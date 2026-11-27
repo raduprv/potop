@@ -214,6 +214,7 @@ void world_end_frame(world_t *world, const camera_t *camera, float seconds, bool
 		world->settings->render.day_cycle ? lights_darkness(world->daylight.sun_elevation_degrees) : 0.0f, seconds);
 	object_effects_update(&world->object_effects, &world->particles, &world->objects, &world->water, eye, world->settings->objects.effects_meters,
 		seconds);
+	burning_update(&world->burning, &world->objects, &world->particles, seconds);
 	particles_update(&world->particles, seconds, world->renderer.height_texture, water_gpu_depth_texture(&world->water), world->terrain.size,
 		world->terrain.cell_size_meters);
 	frame_profile_end(FRAME_PARTICLES, particles_start);

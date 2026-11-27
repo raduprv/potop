@@ -48,7 +48,17 @@ layout(std140, set = UNIFORM_SET, binding = 1) uniform material_block
 	int lighting_normals;                 // 1: the normals light the face, the same from either side (plant cards)
 	int material_padding;
 	vec4 deciduous;                       // a climber dropping its leaves (OBJECT_MATERIAL_DECIDUOUS): x how red, y how many gone, z 1 if it is one; w 1: a building's detail (its pixels marked for the temporal anti-aliasing)
+	vec4 material_show;                   // (prop.frag's: unused here)
+	vec4 material_relief;
+	vec4 material_look[2];
+	// The fires (burning.h), OBJECT_BURN_SLOTS of 4 each: the object's
+	// origin and 1 / its size; its turn undone (quaternion); where it was
+	// lit (model space, turned so that its longest side lies along X: the
+	// grain) and how far the front has gone (model meters);
+	// the front's speed, char, burn and ash seconds
+	vec4 burns[32];
 };
+#define OBJECT_BURN_SLOTS 8
 #define CLOUDS_EXPLICIT_LOD
 #include "clouds.glsl"
 #define GROUND_BINDING 8
@@ -143,6 +153,82 @@ vec2 environment_brdf(float normal_view, float roughness)
 	return vec2(-1.04, 1.04) * a004 + r.zw;
 }
 
+// --- On fire (burning.h) ---------------------------------------------------
+
+float burn_hash(vec3 cell)
+{
+	return fract(sin(dot(cell, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+}
+
+float burn_noise(vec3 at)
+{
+	vec3 cell = floor(at);
+	vec3 inside = at - cell;
+	vec3 blend = inside * inside * (3.0 - 2.0 * inside);
+
+	return mix(mix(mix(burn_hash(cell), burn_hash(cell + vec3(1.0, 0.0, 0.0)), blend.x),
+		mix(burn_hash(cell + vec3(0.0, 1.0, 0.0)), burn_hash(cell + vec3(1.0, 1.0, 0.0)), blend.x), blend.y),
+		mix(mix(burn_hash(cell + vec3(0.0, 0.0, 1.0)), burn_hash(cell + vec3(1.0, 0.0, 1.0)), blend.x),
+		mix(burn_hash(cell + vec3(0.0, 1.0, 1.0)), burn_hash(cell + vec3(1.0, 1.0, 1.0)), blend.x), blend.y), blend.z);
+}
+
+// The char's cracks: how far from the nearest crack between its cells
+// (an alligator's hide; second nearest seed's distance less the nearest's)
+float burn_cracks(vec3 at)
+{
+	vec3 cell = floor(at);
+	float nearest = 8.0;
+	float second = 8.0;
+
+	for (int k = -1; k <= 1; k++)
+	{
+		for (int j = -1; j <= 1; j++)
+		{
+			for (int i = -1; i <= 1; i++)
+			{
+				vec3 other = cell + vec3(float(i), float(j), float(k));
+				vec3 seed = other + vec3(burn_hash(other), burn_hash(other + 17.0), burn_hash(other + 31.0)) * 0.8 + 0.1;
+				float distance = length(seed - at);
+
+				if (distance < nearest)
+				{
+					second = nearest;
+					nearest = distance;
+				}
+				else if (distance < second)
+				{
+					second = distance;
+				}
+			}
+		}
+	}
+	return second - nearest;
+}
+
+vec3 burn_rotate(vec4 rotation, vec3 vector)
+{
+	vec3 twice_cross = 2.0 * cross(rotation.xyz, vector);
+
+	return vector + rotation.w * twice_cross + cross(rotation.xyz, twice_cross);
+}
+
+// What a fire did to this point (slot: its fire's): seconds since the
+// front reached it (below 0: not yet) and where it is in the model
+float burn_since(int slot, out vec3 model_position)
+{
+	vec4 placement = burns[slot * 4];
+	vec4 undo = burns[slot * 4 + 1];
+	vec4 front = burns[slot * 4 + 2];
+	vec4 timing = burns[slot * 4 + 3];
+
+	model_position = burn_rotate(undo, world_position - placement.xyz) * placement.w;
+	// (a ragged front, not a sphere)
+	float reached = length(model_position - front.xyz) + (burn_noise(model_position * 5.0) - 0.5) * 0.3
+		+ (burn_noise(model_position * 17.0) - 0.5) * 0.08;
+
+	return (front.w - reached) / max(timing.x, 1e-4);
+}
+
 // Threshold of the pixel in a 4x4 Bayer matrix, in (0, 1)
 float dither_threshold()
 {
@@ -172,8 +258,11 @@ void main()
 	// and 4 times how much (of 255) of what its next level of detail leaves
 	// out is gone (objects_cull.comp)
 	// (DRY_FADE added: no water anywhere near it, ground_water.glsl)
-	float dry = floor(fade / DRY_FADE);
-	float packed_fade = fade - DRY_FADE * dry;
+	// (and BURN_FADE times its fire's slot + 1: burning.h)
+	float burn_number = floor(fade / BURN_FADE);
+	float unburnt_fade = fade - BURN_FADE * burn_number;
+	float dry = floor(unburnt_fade / DRY_FADE);
+	float packed_fade = unburnt_fade - DRY_FADE * dry;
 	float level_steps = floor(packed_fade / 4.0);
 	float own_fade = packed_fade - 4.0 * level_steps;
 	bool highlighted = own_fade > 1.5;
@@ -182,6 +271,27 @@ void main()
 	if (drawn_fade < 1.0 && drawn_fade < dither_threshold())
 	{
 		discard;
+	}
+	// On fire: how long ago the front reached this point; crumbled away
+	// once its ash time is past (in a noise, bit by bit)
+	int burn_slot = int(burn_number) - 1;
+	float burn_seconds_since = -1e6;
+	vec3 burn_model = vec3(0.0);
+	vec4 burn_timing = vec4(1.0);
+
+	if (burn_slot >= 0 && burn_slot < OBJECT_BURN_SLOTS)
+	{
+		burn_timing = burns[burn_slot * 4 + 3];
+		burn_seconds_since = burn_since(burn_slot, burn_model);
+		if (burn_seconds_since > burn_timing.z)
+		{
+			float gone = (burn_seconds_since - burn_timing.z) / max(burn_timing.w, 1e-3);
+
+			if (burn_noise(burn_model * 9.0) * 0.7 + burn_noise(burn_model * 31.0) * 0.3 < gone)
+			{
+				discard;
+			}
+		}
 	}
 	// Nearing the next level of detail, what it leaves out (the finest
 	// branches) thins out in a dither, so it does not pop away
@@ -234,6 +344,47 @@ void main()
 	}
 
 	vec3 albedo = pow(color.rgb, vec3(2.2));
+	// On fire (burning.h): scorched a little ahead of the front, then
+	// charred black, cracked into scales, embers glowing in the cracks while
+	// it burns, gray ash after; dull all over
+	float burn_char = 0.0;
+	vec3 burn_glow = vec3(0.0);
+
+	if (burn_seconds_since > -8.0)
+	{
+		float char_seconds = max(burn_timing.y, 1e-3);
+		float burn_seconds = max(burn_timing.z, 1e-3);
+		float scorch = smoothstep(-8.0, 0.0, burn_seconds_since);
+		// (long along the grain: the model turned so that it runs along X)
+		float crack = burn_cracks(burn_model * vec3(7.0, 16.0, 16.0));
+		// (the crack's width in the pixel's footprint: thin cracks far off
+		// blur into a dim glow instead of glittering)
+		float crack_blur = fwidth(crack);
+		// (0 on a crack, 1 well inside a scale)
+		float scale_inside = smoothstep(0.02, 0.16, crack);
+		float ash = smoothstep(burn_seconds * 0.8, burn_seconds * 1.02, burn_seconds_since);
+		// (the scales a little lighter where they bulge, gray when they
+		// are ash)
+		vec3 char_color = mix(vec3(0.008, 0.007, 0.006), vec3(0.022, 0.020, 0.019), scale_inside);
+		vec3 ash_color = mix(vec3(0.05, 0.048, 0.046), vec3(0.30, 0.29, 0.28) * (0.8 + 0.4 * burn_noise(burn_model * 23.0)), scale_inside);
+
+		burn_char = smoothstep(0.0, char_seconds, burn_seconds_since + char_seconds * 0.15 * (1.0 - scale_inside));
+		albedo *= 1.0 - 0.45 * scorch * (1.0 - burn_char);
+		albedo = mix(albedo, char_color, burn_char);
+		albedo = mix(albedo, ash_color, ash);
+		// Embers: in the cracks, flickering, from the time it is charred
+		// enough until it is burnt out; a dim glow over the whole of it
+		// while its flames are up
+		{
+			float burning_now = smoothstep(0.0, char_seconds * 0.5, burn_seconds_since) * (1.0 - smoothstep(burn_seconds * 0.6, burn_seconds, burn_seconds_since));
+			float flicker = 0.55 + 0.45 * burn_noise(burn_model * 4.0 + vec3(0.0, highlight_parameters.w * 0.7, highlight_parameters.w * 0.3));
+			float crack_width = max(0.035, crack_blur * 1.5);
+			float in_crack = (1.0 - smoothstep(0.0, crack_width, crack)) * (0.035 / crack_width);
+			float hot = in_crack * 2.5 + (1.0 - scale_inside) * 0.12 + 0.025;
+
+			burn_glow = vec3(1.0, 0.30, 0.05) * hot * burning_now * flicker * (1.0 - ash * 0.8);
+		}
+	}
 	// Wet in the rain (rain.h): darker, the more the surface faces up, and
 	// shinier (below)
 	float wet = weather.y * (0.35 + 0.65 * clamp(normal.y, 0.0, 1.0));
@@ -277,9 +428,9 @@ void main()
 		vec3 view = normalize(eye_position - world_position);
 		vec3 tangent = world_tangent.xyz - normal * dot(normal, world_tangent.xyz);
 		vec4 orm = texture(orm_texture, texture_uv);
-		float reflecting = orm.a;
+		float reflecting = orm.a * (1.0 - 0.8 * burn_char);
 		float occlusion = orm.r;
-		float roughness = clamp(mix(orm.g, 0.6, snow), 0.045, 1.0);
+		float roughness = clamp(mix(mix(orm.g, 0.95, burn_char), 0.6, snow), 0.045, 1.0);
 		float metal = orm.b * (1.0 - snow);
 		vec3 reflectance = mix(vec3(0.04), albedo, metal);
 
@@ -340,6 +491,8 @@ void main()
 
 		lit += sun_color * shadowed * shine * wet * 0.25;
 	}
+	// (a fire's embers: its own light)
+	lit += burn_glow;
 	float view_distance = length(world_position - eye_position);
 	lit += water_light(water, world_position, sun_color * shadowed);
 	float fog_amount = haze_amount(world_position);

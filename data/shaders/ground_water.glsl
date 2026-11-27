@@ -21,6 +21,9 @@ layout(set = TEXTURE_SET, binding = GROUND_BINDING + 4) uniform sampler2D sky_bo
 // pixels skip water_at's reads (the same for all of them: no cost to the
 // branch)
 const float DRY_FADE = 4096.0;
+// And BURN_FADE times its fire's slot + 1 on top of that (burning.h,
+// object.frag): taken off first
+const float BURN_FADE = 8192.0;
 
 // What a surface takes (apply_water_wet): a solid thing (a rock, a house:
 // all of it), bark (less), foliage (cut out cards: nothing)

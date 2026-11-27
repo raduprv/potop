@@ -16,6 +16,7 @@
 
 #include "actors.h"
 #include "aurora.h"
+#include "burning.h"
 #include "clouds.h"
 #include "cloud_paint.h"
 #include "ambient_occlusion.h"
@@ -120,6 +121,7 @@ typedef struct
 	terrain_sketch_t *generation_sketch;
 	fireflies_t fireflies;
 	object_effects_t object_effects; // the fires and smoke the buildings carry (object_effects.h)
+	burning_t burning;             // the objects on fire (burning.h)
 	ground_footprints_t ground_footprints; // the ground under the buildings: no grass, no terrain drawn (ground_footprints.h)
 	aurora_t aurora;               // the northern lights (aurora.h): the game's (and the World window's) say
 	rain_t rain;                   // the rain as it is seen, and the rainbow (rain.h)

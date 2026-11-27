@@ -956,6 +956,36 @@ void console_run_command(console_t *console, potop_t *potop, const char *line, c
 			}
 		}
 	}
+	else if (SDL_strcmp(command, "burn") == 0)
+	{
+		vec3_t origin;
+		vec3_t direction;
+		object_ray_hit_t hit;
+
+		if (has_first && SDL_strcmp(first, "clear") == 0)
+		{
+			burning_clear(&potop->world.burning, &potop->world.objects, &potop->world.particles);
+			SDL_Log("Burning: every fire out");
+			return;
+		}
+		camera_pixel_ray(&potop->camera, 0.5f, 0.5f, 1, 1, &origin, &direction);
+		if (objects_raycast(&potop->world.objects, origin, direction, 60.0f, OBJECTS_RAY_ALL, &hit, 1) < 1)
+		{
+			SDL_Log("Burning: no object there (look at one, 60 m at most)");
+			return;
+		}
+		{
+			float point[3] = { hit.point.x, hit.point.y, hit.point.z };
+			const object_instance_t *instance = &potop->world.objects.instances[hit.instance];
+
+			SDL_Log("Burning: '%s' (object %u) at (%.2f, %.2f, %.2f)", potop->world.objects.types.types[instance->type].name, (unsigned)instance->id,
+				(double)point[0], (double)point[1], (double)point[2]);
+			if (!burning_ignite(&potop->world.burning, &potop->world.objects, &potop->world.particles, hit.instance, point))
+			{
+				SDL_Log("Burning: it is burning already, or there are as many fires as there can be");
+			}
+		}
+	}
 	else if (SDL_strcmp(command, "effect") == 0)
 	{
 		char name[PARTICLES_EFFECT_NAME_LENGTH];
