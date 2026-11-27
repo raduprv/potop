@@ -1,0 +1,12 @@
+# damage events, scene support: the three cases, a support knocked out
+# at a time. See them with
+#   ./damage_view --events support_show.txt
+#   ./damage_shot --out sheet.png --events support_show.txt --sheet 20,20,16
+#
+# Frame 20: the wall's left pier, one of the roof's posts, the pillar
+# under the crate. Frame 170: the wall's other pier, the roof's other post.
+ball 20 -7.2 0.6 8 0 0.4 -32
+ball 20 1 1.0 9.2 0 0.4 -32
+ball 20 4.5 1.0 8 0 0.4 -32
+ball 170 -4.8 0.6 8 0 0.4 -32
+ball 170 9 1.0 -1.2 -32 0.4 0

@@ -16,6 +16,17 @@
 #define FRICTION 0.6f
 // A piece's group while the islands are being found
 #define GROUP_UNLABELED -2
+#define GRAVITY 9.81f
+// The support pass: a piece's supports looked at, at most; and how far
+// off a line they may be and still count as being on it (meters)
+#define SUPPORTS_MAX 16
+#define COLLINEAR_METERS 0.05f
+// A link under or over a piece's middle by less than this is at its side
+#define LEVEL_METERS 0.01f
+// How much longer the way to the ground counts through a piece that
+// holds another from the side or from above than through one it rests on
+#define HANGING_COST 3.0f
+#define NOT_STANDING 1e30f
 #define RESTORED_BODIES_MAX 256
 
 #define BROKEN_SHOWN_FRAMES 90
@@ -25,6 +36,8 @@
 #define LINK_WHOLE_COLOR 0x30E040
 #define LINK_HURT_COLOR 0xFFE040
 #define LINK_BROKEN_COLOR 0xFF3020
+#define LINK_OVERLOADED_COLOR 0xFF8000
+#define CRUSHED_COLOR 0x303030
 #define HIT_COLOR 0xFF2020
 #define LABEL_COLOR 0xFFFFFF
 
@@ -37,6 +50,12 @@ static int walk_link_stamps[DAMAGE_LINKS_MAX];
 static int walk_stamp;
 static int group_members[DAMAGE_PIECES_MAX];
 static int group_parts[DAMAGE_PIECES_MAX];
+static float support_heights[DAMAGE_PIECES_MAX];
+static bool support_settled[DAMAGE_PIECES_MAX];
+static float load_forces[DAMAGE_PIECES_MAX];
+static float load_moments_x[DAMAGE_PIECES_MAX];
+static float load_moments_z[DAMAGE_PIECES_MAX];
+static int crushed_pieces[DAMAGE_PIECES_MAX];
 static b3Vec3 blast_impulses[DAMAGE_PIECES_MAX];
 static b3Vec3 blast_points[DAMAGE_PIECES_MAX];
 
@@ -60,23 +79,35 @@ static const float *rotation_floats(const b3Quat *rotation)
 // ---------------------------------------------------------------------
 // Settings
 
+static void set_link_defaults(damage_link_settings_t *link, float threshold, float hit_points, float compression, float pull, float cantilever)
+{
+	link->threshold = threshold;
+	link->hit_points = hit_points;
+	link->compression = compression;
+	link->pull = pull;
+	link->cantilever = cantilever;
+}
+
 void damage_settings_default(damage_settings_t *settings)
 {
 	memset(settings, 0, sizeof(*settings));
 	settings->densities[DAMAGE_MATERIAL_WOOD] = 600.0f;
 	settings->densities[DAMAGE_MATERIAL_BRICK] = 1800.0f;
-	settings->links[DAMAGE_LINK_NAILS].threshold = 150.0f;
-	settings->links[DAMAGE_LINK_NAILS].hit_points = 600.0f;
-	settings->links[DAMAGE_LINK_MORTAR].threshold = 60.0f;
-	settings->links[DAMAGE_LINK_MORTAR].hit_points = 200.0f;
-	settings->links[DAMAGE_LINK_FOUNDATION].threshold = 300.0f;
-	settings->links[DAMAGE_LINK_FOUNDATION].hit_points = 1500.0f;
+	settings->densities[DAMAGE_MATERIAL_GLASS] = 2500.0f;
+	settings->crush[DAMAGE_MATERIAL_WOOD] = 300000.0f;
+	settings->crush[DAMAGE_MATERIAL_BRICK] = 500000.0f;
+	settings->crush[DAMAGE_MATERIAL_GLASS] = 9000.0f;
+	set_link_defaults(&settings->links[DAMAGE_LINK_NAILS], 150.0f, 600.0f, 200000.0f, 4000.0f, 2500.0f);
+	set_link_defaults(&settings->links[DAMAGE_LINK_MORTAR], 60.0f, 200.0f, 500000.0f, 3000.0f, 900.0f);
+	set_link_defaults(&settings->links[DAMAGE_LINK_FOUNDATION], 300.0f, 1500.0f, 1000000.0f, 5000.0f, 5000.0f);
+	set_link_defaults(&settings->links[DAMAGE_LINK_GLAZING], 30.0f, 60.0f, 100000.0f, 500.0f, 200.0f);
 	settings->hop_falloff = 0.5f;
 	settings->hit_speed = 1.0f;
 	settings->rubble_pieces = 3;
 	settings->breakthrough_speed_kept = 0.85f;
 	settings->blast_radius = 1.5f;
 	settings->blast_falloff = 3.0f;
+	settings->collapse_seconds = 1.5f;
 	settings->shape_gap = 0.003f;
 	settings->ball_radius = 0.2f;
 	settings->ball_density = 7800.0f;
@@ -96,6 +127,31 @@ static bool read_link_key(damage_link_settings_t *link, const char *key, const c
 	if (strcmp(key, "hit_points") == 0)
 	{
 		return read_float(value, &link->hit_points);
+	}
+	if (strcmp(key, "compression") == 0)
+	{
+		return read_float(value, &link->compression);
+	}
+	if (strcmp(key, "pull") == 0)
+	{
+		return read_float(value, &link->pull);
+	}
+	if (strcmp(key, "cantilever") == 0)
+	{
+		return read_float(value, &link->cantilever);
+	}
+	return false;
+}
+
+static bool read_material_key(damage_settings_t *settings, damage_material_t material, const char *key, const char *value)
+{
+	if (strcmp(key, "density") == 0)
+	{
+		return read_float(value, &settings->densities[material]);
+	}
+	if (strcmp(key, "crush") == 0)
+	{
+		return read_float(value, &settings->crush[material]);
 	}
 	return false;
 }
@@ -134,6 +190,10 @@ static bool read_settings_key(void *user, const char *section, const char *key, 
 		{
 			return read_float(value, &settings->shape_gap);
 		}
+		if (strcmp(key, "collapse_seconds") == 0)
+		{
+			return read_float(value, &settings->collapse_seconds);
+		}
 		return false;
 	}
 	if (strcmp(section, "ball") == 0)
@@ -148,13 +208,17 @@ static bool read_settings_key(void *user, const char *section, const char *key, 
 		}
 		return false;
 	}
-	if (strcmp(section, "wood") == 0 && strcmp(key, "density") == 0)
+	if (strcmp(section, "wood") == 0)
 	{
-		return read_float(value, &settings->densities[DAMAGE_MATERIAL_WOOD]);
+		return read_material_key(settings, DAMAGE_MATERIAL_WOOD, key, value);
 	}
-	if (strcmp(section, "brick") == 0 && strcmp(key, "density") == 0)
+	if (strcmp(section, "brick") == 0)
 	{
-		return read_float(value, &settings->densities[DAMAGE_MATERIAL_BRICK]);
+		return read_material_key(settings, DAMAGE_MATERIAL_BRICK, key, value);
+	}
+	if (strcmp(section, "glass") == 0)
+	{
+		return read_material_key(settings, DAMAGE_MATERIAL_GLASS, key, value);
 	}
 	if (strcmp(section, "nails") == 0)
 	{
@@ -167,6 +231,10 @@ static bool read_settings_key(void *user, const char *section, const char *key, 
 	if (strcmp(section, "foundation") == 0)
 	{
 		return read_link_key(&settings->links[DAMAGE_LINK_FOUNDATION], key, value);
+	}
+	if (strcmp(section, "glazing") == 0)
+	{
+		return read_link_key(&settings->links[DAMAGE_LINK_GLAZING], key, value);
 	}
 	return false;
 }
@@ -212,6 +280,7 @@ int damage_model_add_box(damage_model_t *model, b3Vec3 position, b3Quat rotation
 	if (piece_index >= 0)
 	{
 		model->pieces[piece_index].half_extents = half_extents;
+		model->pieces[piece_index].mass = 8.0f * half_extents.x * half_extents.y * half_extents.z * model->settings.densities[material];
 	}
 	return piece_index;
 }
@@ -222,8 +291,11 @@ int damage_model_add_log(damage_model_t *model, b3Vec3 position, b3Quat rotation
 
 	if (piece_index >= 0)
 	{
+		// (The prism's cross section: 12 triangles of two sides a radius,
+		// 30 degrees between them, 3 radius squared in all)
 		model->pieces[piece_index].radius = radius;
 		model->pieces[piece_index].half_length = half_length;
+		model->pieces[piece_index].mass = 3.0f * radius * radius * 2.0f * half_length * model->settings.densities[material];
 	}
 	return piece_index;
 }
@@ -392,6 +464,7 @@ void damage_model_finish(damage_model_t *model)
 		return;
 	}
 	model->finished = true;
+	model->support_dirty = true;
 
 	// Every piece's links, one after another
 	memset(model->piece_link_start, 0, sizeof(model->piece_link_start));
@@ -541,6 +614,23 @@ static void rebuild_dirty_groups(damage_model_t *model)
 // ---------------------------------------------------------------------
 // Damage
 
+static void break_link(damage_model_t *model, int link_index, int frame_index)
+{
+	damage_link_t *link = &model->links[link_index];
+
+	if (link->broken)
+	{
+		return;
+	}
+	link->hit_points_left = 0.0f;
+	link->broken = true;
+	link->broken_frame = frame_index;
+	model->broken_link_count++;
+	model->group_dirty[model->pieces[link->piece_a].group] = true;
+	model->any_group_dirty = true;
+	model->support_dirty = true;
+}
+
 // A share of an impulse on a link. True when that broke it.
 static bool hurt_link(damage_model_t *model, int link_index, float share, int frame_index)
 {
@@ -556,12 +646,7 @@ static bool hurt_link(damage_model_t *model, int link_index, float share, int fr
 	{
 		return false;
 	}
-	link->hit_points_left = 0.0f;
-	link->broken = true;
-	link->broken_frame = frame_index;
-	model->broken_link_count++;
-	model->group_dirty[model->pieces[link->piece_a].group] = true;
-	model->any_group_dirty = true;
+	break_link(model, link_index, frame_index);
 	return true;
 }
 
@@ -576,7 +661,7 @@ static bool damage_piece(damage_model_t *model, int piece_index, float impulse, 
 	int queue_end = 0;
 	int k;
 
-	if (model->groups[model->pieces[piece_index].group].rubble)
+	if (model->pieces[piece_index].group == DAMAGE_GONE || model->groups[model->pieces[piece_index].group].rubble)
 	{
 		return false;
 	}
@@ -645,6 +730,470 @@ static bool damage_piece(damage_model_t *model, int piece_index, float impulse, 
 	return broke;
 }
 
+// ---------------------------------------------------------------------
+// What holds what up
+
+// One of the links a piece's weight goes down through
+typedef struct
+{
+	int link_index;
+	int other;                         // the piece it leads to, or DAMAGE_GROUND
+	float x;
+	float y;
+	float z;
+	float force;                       // newtons it carries of the piece's load (negative: it holds the piece down)
+	float moment;                      // newton meters it bears as a cantilever
+	float pass_x;                      // where that force is taken to act on what is under: the link's place, or out
+	float pass_z;                      // where the load really is when nothing else balances it
+} support_t;
+
+// Shares a load (a weight at a place, seen from above) among the links
+// that hold a piece up, by leverage.
+//
+// One link: all of it, and the weight times how far to the side it is as
+// a cantilever. Links on a line (a log on the wall under it): shares
+// that balance along the line, as a seesaw's do (a load beyond the last
+// link makes a share negative: that link holds the piece down); what the
+// load is off the line by is a cantilever on them all. Links round the
+// load (a slab on four posts): shares that balance both ways. With more
+// links than a balance settles, the most even shares that still balance.
+static void share_load(float weight, float center_x, float center_z, support_t *supports, int support_count)
+{
+	int first = 0;
+	int last = 0;
+	float longest = 0.0f;
+	float along_x;
+	float along_z;
+	float widest = 0.0f;
+	float sum_t = 0.0f;
+	float sum_tt = 0.0f;
+	float center_t;
+	float off_x;
+	float off_z;
+	float determinant;
+	int i;
+	int pass;
+
+	if (support_count == 1)
+	{
+		float arm_x = center_x - supports[0].x;
+		float arm_z = center_z - supports[0].z;
+
+		supports[0].force = weight;
+		supports[0].moment = fabsf(weight) * sqrtf(arm_x * arm_x + arm_z * arm_z);
+		supports[0].pass_x = center_x;
+		supports[0].pass_z = center_z;
+		return;
+	}
+
+	// The two links farthest apart give the line (found from any one, then
+	// from the one that found)
+	for (pass = 0; pass < 2; pass++)
+	{
+		first = last;
+		longest = 0.0f;
+		for (i = 0; i < support_count; i++)
+		{
+			float delta_x = supports[i].x - supports[first].x;
+			float delta_z = supports[i].z - supports[first].z;
+			float distance = sqrtf(delta_x * delta_x + delta_z * delta_z);
+
+			if (distance > longest)
+			{
+				longest = distance;
+				last = i;
+			}
+		}
+	}
+	if (longest < 1e-3f)
+	{
+		// All at one place: as one link, shared evenly
+		float arm_x = center_x - supports[0].x;
+		float arm_z = center_z - supports[0].z;
+
+		for (i = 0; i < support_count; i++)
+		{
+			supports[i].force = weight / (float)support_count;
+			supports[i].moment = fabsf(weight) * sqrtf(arm_x * arm_x + arm_z * arm_z) / (float)support_count;
+			supports[i].pass_x = center_x;
+			supports[i].pass_z = center_z;
+		}
+		return;
+	}
+	along_x = (supports[last].x - supports[first].x) / longest;
+	along_z = (supports[last].z - supports[first].z) / longest;
+	for (i = 0; i < support_count; i++)
+	{
+		float delta_x = supports[i].x - supports[first].x;
+		float delta_z = supports[i].z - supports[first].z;
+		float across = fabsf(delta_x * -along_z + delta_z * along_x);
+
+		if (across > widest)
+		{
+			widest = across;
+		}
+	}
+
+	if (widest > COLLINEAR_METERS)
+	{
+		// Round the load: force = a + b x + c z (from the load's place)
+		// with the three numbers that make the shares add up to the
+		// weight and balance about both axes
+		float sum_x = 0.0f;
+		float sum_z = 0.0f;
+		float sum_xx = 0.0f;
+		float sum_zz = 0.0f;
+		float sum_xz = 0.0f;
+		float count = (float)support_count;
+
+		for (i = 0; i < support_count; i++)
+		{
+			float x = supports[i].x - center_x;
+			float z = supports[i].z - center_z;
+
+			sum_x += x;
+			sum_z += z;
+			sum_xx += x * x;
+			sum_zz += z * z;
+			sum_xz += x * z;
+		}
+		determinant = count * (sum_xx * sum_zz - sum_xz * sum_xz) - sum_x * (sum_x * sum_zz - sum_xz * sum_z) + sum_z * (sum_x * sum_xz - sum_xx * sum_z);
+		if (fabsf(determinant) > 1e-6f)
+		{
+			float a = weight * (sum_xx * sum_zz - sum_xz * sum_xz) / determinant;
+			float b = -weight * (sum_x * sum_zz - sum_xz * sum_z) / determinant;
+			float c = weight * (sum_x * sum_xz - sum_xx * sum_z) / determinant;
+
+			for (i = 0; i < support_count; i++)
+			{
+				supports[i].force = a + b * (supports[i].x - center_x) + c * (supports[i].z - center_z);
+				supports[i].moment = 0.0f;
+				supports[i].pass_x = supports[i].x;
+				supports[i].pass_z = supports[i].z;
+			}
+			return;
+		}
+	}
+
+	// On a line: force = a + b t, t along the line from the first link
+	for (i = 0; i < support_count; i++)
+	{
+		float t = (supports[i].x - supports[first].x) * along_x + (supports[i].z - supports[first].z) * along_z;
+
+		sum_t += t;
+		sum_tt += t * t;
+	}
+	center_t = (center_x - supports[first].x) * along_x + (center_z - supports[first].z) * along_z;
+	off_x = center_x - (supports[first].x + along_x * center_t);
+	off_z = center_z - (supports[first].z + along_z * center_t);
+	determinant = (float)support_count * sum_tt - sum_t * sum_t;
+	for (i = 0; i < support_count; i++)
+	{
+		float t = (supports[i].x - supports[first].x) * along_x + (supports[i].z - supports[first].z) * along_z;
+		float a = weight * (sum_tt - sum_t * center_t) / determinant;
+		float b = weight * ((float)support_count * center_t - sum_t) / determinant;
+
+		supports[i].force = a + b * t;
+		supports[i].moment = fabsf(weight) * sqrtf(off_x * off_x + off_z * off_z) / (float)support_count;
+		supports[i].pass_x = supports[i].x + off_x;
+		supports[i].pass_z = supports[i].z + off_z;
+	}
+}
+
+// The support pass: for all that still stands, what every link bears
+// and whether that is more than it can (see damage_model.h). Pieces
+// bearing more than their material does are crushed: their links break.
+static void work_out_support(damage_model_t *model, int frame_index)
+{
+	support_t supports[SUPPORTS_MAX];
+	int queue_end = 0;
+	int crushed_count = 0;
+	int i;
+	int k;
+
+	model->support_dirty = false;
+	model->overloaded_count = 0;
+	for (i = 0; i < model->link_count; i++)
+	{
+		model->links[i].overload = 0.0f;
+		model->links[i].static_compression = 0.0f;
+	}
+
+	// How far from the ground every piece is, going from piece to piece
+	// over whole links: a piece a link holds to the ground is as far as
+	// its middle is high; resting on another adds the height between
+	// their middles; being held from the side or hanging adds three times
+	// the distance. The shortest such way is a piece's, and whatever it
+	// touches with a shorter one is what holds it up. (So a brick on a
+	// pier of three bricks and a brick on a pane are as far, though the
+	// links between differ; and a lamp hangs from the beam, not the beam
+	// from the lamp.) What is not reached does not stand: it is loose,
+	// and Box3D's business.
+	//
+	// (Found the plain way, the nearest unsettled piece each time: the
+	// square of the pieces, done only when the graph changed.)
+	for (i = 0; i < model->piece_count; i++)
+	{
+		support_heights[i] = NOT_STANDING;
+		support_settled[i] = false;
+	}
+	for (i = 0; i < model->link_count; i++)
+	{
+		const damage_link_t *link = &model->links[i];
+
+		if (!link->broken && link->piece_b == DAMAGE_GROUND)
+		{
+			float height = model->pieces[link->piece_a].local.p.y;
+
+			support_heights[link->piece_a] = height > 0.0f ? height : 0.0f;
+		}
+	}
+	for (;;)
+	{
+		int nearest = -1;
+
+		for (i = 0; i < model->piece_count; i++)
+		{
+			if (!support_settled[i] && support_heights[i] < NOT_STANDING && (nearest < 0 || support_heights[i] < support_heights[nearest]))
+			{
+				nearest = i;
+			}
+		}
+		if (nearest < 0)
+		{
+			break;
+		}
+		support_settled[nearest] = true;
+		walk_queue[queue_end++] = nearest;
+		for (k = model->piece_link_start[nearest]; k < model->piece_link_start[nearest + 1]; k++)
+		{
+			const damage_link_t *link = &model->links[model->piece_links[k]];
+			const b3Vec3 *from = &model->pieces[nearest].local.p;
+			const b3Vec3 *to;
+			int other;
+			float rise;
+			float cost;
+
+			if (link->broken || link->piece_b == DAMAGE_GROUND)
+			{
+				continue;
+			}
+			other = link->piece_a == nearest ? link->piece_b : link->piece_a;
+			if (support_settled[other])
+			{
+				continue;
+			}
+			to = &model->pieces[other].local.p;
+			rise = to->y - from->y;
+			if (rise > LEVEL_METERS)
+			{
+				cost = rise;
+			}
+			else
+			{
+				cost = HANGING_COST * b3Length(b3Sub(*to, *from));
+			}
+			if (cost < LEVEL_METERS)
+			{
+				cost = LEVEL_METERS;
+			}
+			if (support_heights[nearest] + cost < support_heights[other])
+			{
+				support_heights[other] = support_heights[nearest] + cost;
+			}
+		}
+	}
+
+	// Every piece starts with its own weight at its own middle
+	for (i = 0; i < queue_end; i++)
+	{
+		const damage_piece_t *piece = &model->pieces[walk_queue[i]];
+		float weight = piece->mass * GRAVITY;
+
+		load_forces[walk_queue[i]] = weight;
+		load_moments_x[walk_queue[i]] = weight * piece->local.p.x;
+		load_moments_z[walk_queue[i]] = weight * piece->local.p.z;
+	}
+
+	// From the pieces farthest from the ground back to it: each one's load
+	// goes to the links to what is nearer the ground, and on to what is
+	// at their other ends (which comes later in this order)
+	for (i = queue_end - 1; i >= 0; i--)
+	{
+		int piece_index = walk_queue[i];
+		const damage_piece_t *piece = &model->pieces[piece_index];
+		float weight = load_forces[piece_index];
+		float center_x;
+		float center_z;
+		int support_count = 0;
+		int under_count = 0;
+
+		if (weight <= 0.0f)
+		{
+			continue;
+		}
+		center_x = load_moments_x[piece_index] / weight;
+		center_z = load_moments_z[piece_index] / weight;
+		if (weight > model->settings.crush[piece->material])
+		{
+			crushed_pieces[crushed_count++] = piece_index;
+		}
+
+		// What holds it: the links to the ground and to pieces nearer the
+		// ground. If any of them is under it, it rests on those alone
+		// (a brick lies on the bricks under it, it does not also hang
+		// from its neighbours); only what has nothing under it is held
+		// from the side or from above.
+		for (k = model->piece_link_start[piece_index]; k < model->piece_link_start[piece_index + 1] && support_count < SUPPORTS_MAX; k++)
+		{
+			int link_index = model->piece_links[k];
+			const damage_link_t *link = &model->links[link_index];
+			int other;
+
+			if (link->broken)
+			{
+				continue;
+			}
+			other = link->piece_b == DAMAGE_GROUND ? DAMAGE_GROUND : (link->piece_a == piece_index ? link->piece_b : link->piece_a);
+			if (other != DAMAGE_GROUND && support_heights[other] >= support_heights[piece_index])
+			{
+				continue;
+			}
+			supports[support_count].link_index = link_index;
+			supports[support_count].other = other;
+			supports[support_count].x = link->local_point.x;
+			supports[support_count].y = link->local_point.y;
+			supports[support_count].z = link->local_point.z;
+			if (link->local_point.y < piece->local.p.y - LEVEL_METERS)
+			{
+				under_count++;
+			}
+			support_count++;
+		}
+		if (under_count > 0 && under_count < support_count)
+		{
+			int kept = 0;
+
+			for (k = 0; k < support_count; k++)
+			{
+				if (supports[k].y < piece->local.p.y - LEVEL_METERS)
+				{
+					supports[kept++] = supports[k];
+				}
+			}
+			support_count = kept;
+		}
+		if (support_count == 0)
+		{
+			continue;
+		}
+		share_load(weight, center_x, center_z, supports, support_count);
+
+		for (k = 0; k < support_count; k++)
+		{
+			damage_link_t *link = &model->links[supports[k].link_index];
+			const damage_link_settings_t *limits = &model->settings.links[link->type];
+			float force = supports[k].force;
+			float compression = 0.0f;
+			float pull = 0.0f;
+			float overload;
+
+			// Pressed together when it carries from under, or holds down
+			// from above; pulled apart the other way round, and when it
+			// holds from the side
+			if (supports[k].y < piece->local.p.y - LEVEL_METERS)
+			{
+				compression = force > 0.0f ? force : 0.0f;
+				pull = force < 0.0f ? -force : 0.0f;
+			}
+			else if (supports[k].y > piece->local.p.y + LEVEL_METERS)
+			{
+				pull = force > 0.0f ? force : 0.0f;
+				compression = force < 0.0f ? -force : 0.0f;
+			}
+			else
+			{
+				pull = fabsf(force);
+			}
+			overload = compression / limits->compression;
+			if (pull / limits->pull > overload)
+			{
+				overload = pull / limits->pull;
+			}
+			if (supports[k].moment / limits->cantilever > overload)
+			{
+				overload = supports[k].moment / limits->cantilever;
+			}
+			link->overload = overload;
+			link->static_compression = compression;
+			if (overload > 1.0f)
+			{
+				model->overloaded_links[model->overloaded_count++] = supports[k].link_index;
+			}
+
+			if (supports[k].other != DAMAGE_GROUND)
+			{
+				load_forces[supports[k].other] += force;
+				load_moments_x[supports[k].other] += force * supports[k].pass_x;
+				load_moments_z[supports[k].other] += force * supports[k].pass_z;
+			}
+		}
+	}
+
+	for (i = 0; i < crushed_count; i++)
+	{
+		model->pieces[crushed_pieces[i]].crushed = true;
+		for (k = model->piece_link_start[crushed_pieces[i]]; k < model->piece_link_start[crushed_pieces[i] + 1]; k++)
+		{
+			break_link(model, model->piece_links[k], frame_index);
+		}
+	}
+}
+
+// The crushed pieces, by now each alone in a group of its own (their
+// links broke in the support pass and the groups were made anew), are
+// taken out of the world
+static void remove_crushed(damage_model_t *model)
+{
+	int i;
+
+	for (i = 0; i < model->piece_count; i++)
+	{
+		damage_piece_t *piece = &model->pieces[i];
+
+		if (piece->crushed && piece->group != DAMAGE_GONE && model->groups[piece->group].piece_count == 1)
+		{
+			b3DestroyBody(model->groups[piece->group].body);
+			model->groups[piece->group].used = false;
+			piece->group = DAMAGE_GONE;
+		}
+	}
+}
+
+// The overloaded links give way a little more: each loses hit points as
+// fast as it is overloaded (one at just its limit lasts
+// collapse_seconds from whole)
+static void give_way(damage_model_t *model, int frame_index, float step_seconds)
+{
+	int i;
+
+	for (i = 0; i < model->overloaded_count; i++)
+	{
+		int link_index = model->overloaded_links[i];
+		damage_link_t *link = &model->links[link_index];
+
+		if (link->broken)
+		{
+			continue;
+		}
+		link->hit_points_left -= model->settings.links[link->type].hit_points * link->overload * step_seconds / model->settings.collapse_seconds;
+		if (link->hit_points_left <= 0.0f)
+		{
+			break_link(model, link_index, frame_index);
+		}
+	}
+}
+
 void damage_model_before_step(damage_model_t *model)
 {
 	int i;
@@ -703,7 +1252,7 @@ static void keep_going(damage_model_t *model, b3BodyId body)
 	}
 }
 
-void damage_model_after_step(damage_model_t *model, int frame_index)
+void damage_model_after_step(damage_model_t *model, int frame_index, float step_seconds)
 {
 	b3ContactEvents events = b3World_GetContactEvents(model->world);
 	b3BodyId restored_bodies[RESTORED_BODIES_MAX];
@@ -776,6 +1325,18 @@ void damage_model_after_step(damage_model_t *model, int frame_index)
 	{
 		keep_going(model, restored_bodies[i]);
 	}
+
+	// What still stands: who bears what, if the graph changed; then what
+	// is overloaded gives way a little more. A link that breaks here
+	// makes the pass due again, at the next step: a collapse goes on
+	// frame by frame.
+	if (model->support_dirty)
+	{
+		work_out_support(model, frame_index);
+	}
+	give_way(model, frame_index, step_seconds);
+	rebuild_dirty_groups(model);
+	remove_crushed(model);
 }
 
 static b3Transform piece_world_transform(const damage_model_t *model, int piece_index)
@@ -840,10 +1401,19 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 	// links; then, once the groups are made anew, the push on what is loose
 	for (i = 0; i < model->piece_count; i++)
 	{
-		b3Transform transform = piece_world_transform(model, i);
+		b3Transform transform;
 		b3Vec3 direction;
-		float reach = blast_reach(model, position, transform.p, &direction);
-		float impulse = strength * reach * exposed_area(&model->pieces[i], transform.q, direction);
+		float reach;
+		float impulse;
+
+		blast_impulses[i] = b3Vec3_zero;
+		if (model->pieces[i].group == DAMAGE_GONE)
+		{
+			continue;
+		}
+		transform = piece_world_transform(model, i);
+		reach = blast_reach(model, position, transform.p, &direction);
+		impulse = strength * reach * exposed_area(&model->pieces[i], transform.q, direction);
 
 		blast_points[i] = transform.p;
 		blast_impulses[i] = b3MulSV(impulse, direction);
@@ -855,9 +1425,14 @@ void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, 
 	rebuild_dirty_groups(model);
 	for (i = 0; i < model->piece_count; i++)
 	{
-		const damage_group_t *group = &model->groups[model->pieces[i].group];
+		const damage_group_t *group;
 
-		if (!group->anchored && b3Length(blast_impulses[i]) > 0.0f)
+		if (model->pieces[i].group == DAMAGE_GONE || b3Length(blast_impulses[i]) <= 0.0f)
+		{
+			continue;
+		}
+		group = &model->groups[model->pieces[i].group];
+		if (!group->anchored)
 		{
 			b3Body_ApplyLinearImpulse(group->body, blast_impulses[i], blast_points[i], true);
 		}
@@ -896,11 +1471,24 @@ void damage_model_draw_solids(const damage_model_t *model, soft_render_t *render
 	for (i = 0; i < model->piece_count; i++)
 	{
 		const damage_piece_t *piece = &model->pieces[i];
-		const damage_group_t *group = &model->groups[piece->group];
-		b3Transform transform = piece_world_transform(model, i);
+		const damage_group_t *group;
+		b3Transform transform;
+		uint32_t color;
+
+		if (piece->group == DAMAGE_GONE)
+		{
+			continue;
+		}
+		group = &model->groups[piece->group];
+		transform = piece_world_transform(model, i);
 		// (What stands is shown in its own color; what lies still after
-		// coming loose is grayed)
-		uint32_t color = (group->anchored || b3Body_IsAwake(group->body)) ? piece->color : asleep_color(piece->color);
+		// coming loose is grayed; what was crushed is dark for the frame
+		// or two before it goes)
+		color = (group->anchored || b3Body_IsAwake(group->body)) ? piece->color : asleep_color(piece->color);
+		if (piece->crushed)
+		{
+			color = CRUSHED_COLOR;
+		}
 
 		soft_render_set_object(renderer, first_object_id + (uint32_t)i);
 		if (piece->shape == DAMAGE_PIECE_BOX)
@@ -941,8 +1529,15 @@ void damage_model_draw_marks(const damage_model_t *model, soft_render_t *rendere
 		for (i = 0; i < model->link_count; i++)
 		{
 			const damage_link_t *link = &model->links[i];
-			b3Transform frame = b3Body_GetTransform(model->groups[model->pieces[link->piece_a].group].body);
-			b3Vec3 point = b3Add(frame.p, b3RotateVector(frame.q, link->local_point));
+			b3Transform frame;
+			b3Vec3 point;
+
+			if (model->pieces[link->piece_a].group == DAMAGE_GONE)
+			{
+				continue;
+			}
+			frame = b3Body_GetTransform(model->groups[model->pieces[link->piece_a].group].body);
+			point = b3Add(frame.p, b3RotateVector(frame.q, link->local_point));
 
 			if (link->broken)
 			{
@@ -955,7 +1550,14 @@ void damage_model_draw_marks(const damage_model_t *model, soft_render_t *rendere
 			{
 				bool hurt = link->hit_points_left < model->settings.links[link->type].hit_points;
 
-				soft_render_point(renderer, vector_floats(&point), hurt ? 4 : 3, hurt ? LINK_HURT_COLOR : LINK_WHOLE_COLOR);
+				if (link->overload > 1.0f)
+				{
+					soft_render_point(renderer, vector_floats(&point), 6, LINK_OVERLOADED_COLOR);
+				}
+				else
+				{
+					soft_render_point(renderer, vector_floats(&point), hurt ? 4 : 3, hurt ? LINK_HURT_COLOR : LINK_WHOLE_COLOR);
+				}
 			}
 		}
 		renderer->marks_on_top = false;
@@ -1021,9 +1623,9 @@ void damage_model_describe(const damage_model_t *model, char *text, int text_siz
 			hurt_count++;
 		}
 	}
-	snprintf(text, (size_t)text_size, "%d PIECES: %d GROUPS STANDING, %d LOOSE, %d RUBBLE  %d LINKS: %d BROKEN, %d HURT  %d HITS, LARGEST %.0f NS",
+	snprintf(text, (size_t)text_size, "%d PIECES: %d GROUPS STANDING, %d LOOSE, %d RUBBLE  %d LINKS: %d BROKEN, %d HURT, %d OVERLOADED  %d HITS, LARGEST %.0f NS",
 		model->piece_count, standing_count, loose_count, rubble_count, model->link_count, model->broken_link_count, hurt_count,
-		model->hit_count, (double)model->largest_hit_impulse);
+		model->overloaded_count, model->hit_count, (double)model->largest_hit_impulse);
 }
 
 static uint32_t hash_bytes(uint32_t hash, const void *data, size_t size)
@@ -1046,13 +1648,21 @@ uint32_t damage_model_checksum(const damage_model_t *model)
 
 	for (i = 0; i < model->piece_count; i++)
 	{
-		b3Transform transform = b3Body_GetTransform(model->groups[model->pieces[i].group].body);
-		float values[7] =
-		{
-			transform.p.x, transform.p.y, transform.p.z,
-			transform.q.v.x, transform.q.v.y, transform.q.v.z, transform.q.s
-		};
+		b3Transform transform;
+		float values[7];
 
+		if (model->pieces[i].group == DAMAGE_GONE)
+		{
+			continue;
+		}
+		transform = b3Body_GetTransform(model->groups[model->pieces[i].group].body);
+		values[0] = transform.p.x;
+		values[1] = transform.p.y;
+		values[2] = transform.p.z;
+		values[3] = transform.q.v.x;
+		values[4] = transform.q.v.y;
+		values[5] = transform.q.v.z;
+		values[6] = transform.q.s;
 		hash = hash_bytes(hash, values, sizeof(values));
 	}
 	for (i = 0; i < model->link_count; i++)

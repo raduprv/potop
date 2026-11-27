@@ -20,7 +20,7 @@ SDL_LIBS := $(shell $(PKG_CONFIG) --libs sdl3 2>/dev/null)
 SDL_LIBRARY_DIRECTORY := $(shell $(PKG_CONFIG) --variable=libdir sdl3 2>/dev/null)
 
 COMMON_SOURCES = soft_render.c soft_render_png.c command_line.c damage_events.c damage_ini.c damage_model.c \
-	damage_scene.c cabin_scene.c pile_scene.c test_scene.c
+	damage_scene.c model_scenes.c pile_scene.c test_scene.c
 COMMON_OBJECTS = $(COMMON_SOURCES:%.c=build/%.o)
 HEADERS = $(wildcard *.h)
 BOX3D_SOURCES = $(wildcard $(THIRD_PARTY)/box3d/src/*.c)

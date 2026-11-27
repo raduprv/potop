@@ -1,6 +1,6 @@
-// The cabin: see cabin_scene.h
+// The scenes built on the damage model: see model_scenes.h
 
-#include "cabin_scene.h"
+#include "model_scenes.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -63,6 +63,8 @@ static cabin_t cabin;
 // (Big: kept out of the struct that is cleared at every start)
 static damage_model_t model;
 static bool settings_missing_was_said;
+// Which scene's things build_world puts up
+static void (*build_structures)(void);
 
 static b3Vec3 make_vector(float x, float y, float z)
 {
@@ -254,6 +256,192 @@ static void build_wall(float center_x, float center_z)
 	}
 }
 
+// ---------------------------------------------------------------------
+// The support scene's three cases
+
+// A wall of three rows on two piers of three bricks, and a pane of
+// glass standing under its middle brick. The piers carry most of it;
+// with one pier gone the wall balances on the pane, which has it all.
+static void build_wall_on_pane(float center_x, float center_z)
+{
+	b3Vec3 brick_half_extents = make_vector(BRICK_HALF_LENGTH, BRICK_HALF_HEIGHT, BRICK_HALF_WIDTH);
+	b3Vec3 pane_half_extents = make_vector(0.30f, 0.45f, 0.03f);
+	float pier_top = 6.0f * BRICK_HALF_HEIGHT;
+	int bricks[3][5];
+	float brick_x[3][5];
+	int pier_tops[2];
+	int side;
+	int row;
+	int brick;
+	int pane;
+
+	// The piers, under the wall's end bricks
+	for (side = -1; side <= 1; side += 2)
+	{
+		float x = center_x + (float)side * 4.0f * BRICK_HALF_LENGTH;
+		int below = DAMAGE_GROUND;
+
+		for (row = 0; row < 3; row++)
+		{
+			float y = BRICK_HALF_HEIGHT * (1.0f + 2.0f * (float)row);
+			int pier_brick = damage_model_add_box(&model, make_vector(x, y, center_z), b3Quat_identity, brick_half_extents, DAMAGE_MATERIAL_BRICK, 0x96452F);
+
+			damage_model_add_link(&model, pier_brick, below, make_vector(x, y - BRICK_HALF_HEIGHT, center_z), below == DAMAGE_GROUND ? DAMAGE_LINK_FOUNDATION : DAMAGE_LINK_MORTAR);
+			below = pier_brick;
+		}
+		pier_tops[side < 0 ? 0 : 1] = below;
+	}
+
+	for (row = 0; row < 3; row++)
+	{
+		int brick_count = (row & 1) ? 4 : 5;
+		float y = pier_top + BRICK_HALF_HEIGHT * (1.0f + 2.0f * (float)row);
+
+		for (brick = 0; brick < 5; brick++)
+		{
+			bricks[row][brick] = -1;
+		}
+		for (brick = 0; brick < brick_count; brick++)
+		{
+			float x = center_x + ((float)brick - 2.0f) * 2.0f * BRICK_HALF_LENGTH + ((row & 1) ? BRICK_HALF_LENGTH : 0.0f);
+			int below;
+
+			brick_x[row][brick] = x;
+			bricks[row][brick] = damage_model_add_box(&model, make_vector(x, y, center_z), b3Quat_identity, brick_half_extents, DAMAGE_MATERIAL_BRICK,
+				((row + brick) & 1) ? 0xA8503A : 0x96452F);
+			if (brick > 0)
+			{
+				damage_model_add_link(&model, bricks[row][brick], bricks[row][brick - 1], make_vector(x - BRICK_HALF_LENGTH, y, center_z), DAMAGE_LINK_MORTAR);
+			}
+			if (row == 0)
+			{
+				// The end bricks lie on the piers
+				if (brick == 0 || brick == 4)
+				{
+					damage_model_add_link(&model, bricks[row][brick], pier_tops[brick == 0 ? 0 : 1], make_vector(x, pier_top, center_z), DAMAGE_LINK_MORTAR);
+				}
+				continue;
+			}
+			for (below = 0; below < 5; below++)
+			{
+				if (bricks[row - 1][below] >= 0 && fabsf(brick_x[row - 1][below] - x) < 2.0f * BRICK_HALF_LENGTH - 0.01f)
+				{
+					damage_model_add_link(&model, bricks[row][brick], bricks[row - 1][below],
+						make_vector((x + brick_x[row - 1][below]) * 0.5f, y - BRICK_HALF_HEIGHT, center_z), DAMAGE_LINK_MORTAR);
+				}
+			}
+		}
+	}
+
+	// The pane: on the ground, the wall's middle brick on it
+	pane = damage_model_add_box(&model, make_vector(center_x, 0.45f, center_z), b3Quat_identity, pane_half_extents, DAMAGE_MATERIAL_GLASS, 0x9FD8E8);
+	damage_model_add_link(&model, pane, DAMAGE_GROUND, make_vector(center_x, 0.0f, center_z), DAMAGE_LINK_GLAZING);
+	damage_model_add_link(&model, bricks[0][2], pane, make_vector(center_x, pier_top, center_z), DAMAGE_LINK_GLAZING);
+}
+
+// A wall of logs along z; three beams from its top out along x, their
+// far ends on a lintel log that stands on two posts; slabs across the
+// beams for weight.
+static void build_roof_on_wall(float center_x, float center_z)
+{
+	b3Quat along_x = b3Quat_identity;
+	b3Quat along_z = b3MakeQuatFromAxisAngle(make_vector(0.0f, 1.0f, 0.0f), PI * 0.5f);
+	b3Quat upright = b3MakeQuatFromAxisAngle(make_vector(0.0f, 0.0f, 1.0f), PI * 0.5f);
+	b3Vec3 slab_half_extents = make_vector(0.30f, 0.04f, 1.5f);
+	float wall_x = center_x - 1.5f;
+	float lintel_x = center_x + 1.0f;
+	float wall_top = LOG_FLAT_TO_FLAT * 7.0f;
+	float beam_y = wall_top + LOG_FLAT_TO_FLAT * 0.5f;
+	float lintel_y = wall_top - LOG_FLAT_TO_FLAT * 0.5f;
+	float post_top = wall_top - LOG_FLAT_TO_FLAT;
+	int below = DAMAGE_GROUND;
+	int beams[3];
+	int lintel;
+	int course;
+	int side;
+	int beam;
+	int slab;
+
+	for (course = 0; course < 7; course++)
+	{
+		float y = LOG_FLAT_TO_FLAT * (0.5f + (float)course);
+		int wall_log = damage_model_add_log(&model, make_vector(wall_x, y, center_z), along_z, LOG_RADIUS, 1.5f, DAMAGE_MATERIAL_WOOD, (course & 1) ? 0x8A5A30 : 0x9C6B3C);
+
+		for (side = -1; side <= 1; side += 2)
+		{
+			damage_model_add_link(&model, wall_log, below, make_vector(wall_x, LOG_FLAT_TO_FLAT * (float)course, center_z + (float)side * 0.9f),
+				below == DAMAGE_GROUND ? DAMAGE_LINK_FOUNDATION : DAMAGE_LINK_NAILS);
+		}
+		below = wall_log;
+	}
+
+	lintel = damage_model_add_log(&model, make_vector(lintel_x, lintel_y, center_z), along_z, LOG_RADIUS, 1.5f, DAMAGE_MATERIAL_WOOD, 0x9C6B3C);
+	for (side = -1; side <= 1; side += 2)
+	{
+		float z = center_z + (float)side * 1.2f;
+		int post = damage_model_add_log(&model, make_vector(lintel_x, post_top * 0.5f, z), upright, LOG_RADIUS, post_top * 0.5f, DAMAGE_MATERIAL_WOOD, 0x8A5A30);
+
+		damage_model_add_link(&model, post, DAMAGE_GROUND, make_vector(lintel_x, 0.0f, z), DAMAGE_LINK_FOUNDATION);
+		damage_model_add_link(&model, lintel, post, make_vector(lintel_x, post_top, z), DAMAGE_LINK_NAILS);
+	}
+
+	for (beam = 0; beam < 3; beam++)
+	{
+		float z = center_z + ((float)beam - 1.0f) * 1.0f;
+
+		beams[beam] = damage_model_add_log(&model, make_vector(center_x - 0.2f, beam_y, z), along_x, LOG_RADIUS, 1.4f, DAMAGE_MATERIAL_WOOD, 0xA87848);
+		damage_model_add_link(&model, beams[beam], below, make_vector(wall_x, wall_top, z), DAMAGE_LINK_NAILS);
+		damage_model_add_link(&model, beams[beam], lintel, make_vector(lintel_x, wall_top, z), DAMAGE_LINK_NAILS);
+	}
+	for (slab = 0; slab < 4; slab++)
+	{
+		float x = center_x - 1.25f + (float)slab * 0.7f;
+		float y = beam_y + LOG_FLAT_TO_FLAT * 0.5f + 0.04f;
+		int slab_box = damage_model_add_box(&model, make_vector(x, y, center_z), b3Quat_identity, slab_half_extents, DAMAGE_MATERIAL_WOOD, 0xB89868);
+
+		for (beam = 0; beam < 3; beam++)
+		{
+			damage_model_add_link(&model, slab_box, beams[beam], make_vector(x, y - 0.04f, center_z + ((float)beam - 1.0f) * 1.0f), DAMAGE_LINK_NAILS);
+		}
+	}
+}
+
+// A beam on three pillars two meters apart, a heavy crate on its end over
+// the first. Without that pillar the crate tips the beam on the middle
+// one: the last pillar's link is pulled up.
+static void build_beam_on_pillars(float center_x, float center_z)
+{
+	b3Vec3 pillar_half_extents = make_vector(0.15f, 0.75f, 0.15f);
+	b3Vec3 beam_half_extents = make_vector(2.5f, 0.10f, 0.15f);
+	b3Vec3 crate_half_extents = make_vector(0.33f, 0.33f, 0.33f);
+	int beam = damage_model_add_box(&model, make_vector(center_x, 1.60f, center_z), b3Quat_identity, beam_half_extents, DAMAGE_MATERIAL_WOOD, 0xA87848);
+	int crate = damage_model_add_box(&model, make_vector(center_x - 2.1f, 2.03f, center_z), b3Quat_identity, crate_half_extents, DAMAGE_MATERIAL_BRICK, 0x707888);
+	int pillar;
+
+	damage_model_add_link(&model, crate, beam, make_vector(center_x - 2.1f, 1.70f, center_z), DAMAGE_LINK_NAILS);
+	for (pillar = -1; pillar <= 1; pillar++)
+	{
+		float x = center_x + (float)pillar * 2.0f;
+		int pillar_box = damage_model_add_box(&model, make_vector(x, 0.75f, center_z), b3Quat_identity, pillar_half_extents, DAMAGE_MATERIAL_BRICK, 0xB0A898);
+
+		damage_model_add_link(&model, pillar_box, DAMAGE_GROUND, make_vector(x, 0.0f, center_z), DAMAGE_LINK_FOUNDATION);
+		damage_model_add_link(&model, beam, pillar_box, make_vector(x, 1.50f, center_z), DAMAGE_LINK_NAILS);
+	}
+}
+
+static void build_cabin_structures(void)
+{
+	build_cabin(-3.0f, 0.0f);
+	build_wall(3.0f, 1.0f);
+}
+
+static void build_support_structures(void)
+{
+	build_wall_on_pane(-6.0f, 0.0f);
+	build_roof_on_wall(0.0f, 0.0f);
+	build_beam_on_pillars(6.5f, 0.0f);
+}
+
 static void build_world(void)
 {
 	b3WorldDef definition = b3DefaultWorldDef();
@@ -263,7 +451,7 @@ static void build_world(void)
 	damage_settings_default(&cabin.settings);
 	if (!damage_settings_load(&cabin.settings, SETTINGS_PATH) && !settings_missing_was_said)
 	{
-		fprintf(stderr, "cabin: no %s here, the built in numbers are used\n", SETTINGS_PATH);
+		fprintf(stderr, "no %s here, the built in numbers are used\n", SETTINGS_PATH);
 		settings_missing_was_said = true;
 	}
 
@@ -277,8 +465,7 @@ static void build_world(void)
 
 	build_ground();
 	damage_model_create(&model, cabin.world, &cabin.settings);
-	build_cabin(-3.0f, 0.0f);
-	build_wall(3.0f, 1.0f);
+	build_structures();
 	damage_model_finish(&model);
 }
 
@@ -333,13 +520,33 @@ static void step_world(void)
 	damage_model_before_step(&model);
 	b3World_Step(cabin.world, STEP_SECONDS, SUBSTEP_COUNT);
 	cabin.frame_index++;
-	damage_model_after_step(&model, cabin.frame_index);
+	damage_model_after_step(&model, cabin.frame_index, STEP_SECONDS);
 }
 
 static bool cabin_scene_open(void)
 {
+	build_structures = build_cabin_structures;
 	build_world();
 	return true;
+}
+
+static bool support_scene_open(void)
+{
+	build_structures = build_support_structures;
+	build_world();
+	return true;
+}
+
+static void support_scene_default_camera(soft_render_camera_t *camera)
+{
+	camera->eye[0] = 0.5f;
+	camera->eye[1] = 2.6f;
+	camera->eye[2] = 9.5f;
+	camera->target[0] = 0.5f;
+	camera->target[1] = 1.0f;
+	camera->target[2] = 0.0f;
+	camera->vertical_field_of_view_degrees = 60.0f;
+	camera->near_distance = 0.05f;
 }
 
 static void cabin_scene_close(void)
@@ -445,6 +652,20 @@ const damage_scene_t cabin_scene =
 	.open = cabin_scene_open,
 	.close = cabin_scene_close,
 	.default_camera = cabin_scene_default_camera,
+	.seek = cabin_scene_seek,
+	.draw = cabin_scene_draw,
+	.describe = cabin_scene_describe,
+	.checksum = cabin_scene_checksum,
+	.cast_ray = cabin_scene_cast_ray,
+};
+
+const damage_scene_t support_scene =
+{
+	.name = "support",
+	.about = "what holds what up: a wall on a pane, a roof on one wall, a beam on three pillars",
+	.open = support_scene_open,
+	.close = cabin_scene_close,
+	.default_camera = support_scene_default_camera,
 	.seek = cabin_scene_seek,
 	.draw = cabin_scene_draw,
 	.describe = cabin_scene_describe,

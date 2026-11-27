@@ -19,9 +19,19 @@
 // the impulse among its links; each link passes what it got, weakened, to
 // the piece at its other end, which shares it again.
 //
-// Not here yet (steps 4 to 6 of DESIGN.md): what holds what up (a house
-// hanging from one log stays there), limits by direction, pieces that
-// bend and break, notched corners.
+// What holds what up is worked out whenever the graph changed (the
+// support pass): every piece that stands sends its weight, and what
+// rests on it, down the links that lead towards the ground, shared by
+// leverage; each link is checked against what it bears pressed, pulled
+// and as a cantilever, each piece against what crushes it (a crushed
+// piece lets go of everything and is gone). An overloaded
+// link does not snap at once: it loses hit points while it is overloaded
+// (so what a hit has hurt gives way sooner), and the building stands a
+// moment before it goes.
+//
+// Not here yet (steps 5 and 6 of DESIGN.md): pieces that bend and break,
+// notched corners and sliding. What lies on a building (a fallen log, a
+// heap of rubble) counts only as the hit it gave, not as weight after.
 
 #ifndef DAMAGE_MODEL_H
 #define DAMAGE_MODEL_H
@@ -39,11 +49,15 @@
 #define DAMAGE_RECENT_HITS_MAX 32
 // A link's other end when it holds a piece to the ground
 #define DAMAGE_GROUND -1
+// The group of a piece that is no more (crushed): it has no body and is
+// not drawn
+#define DAMAGE_GONE -1
 
 typedef enum
 {
 	DAMAGE_MATERIAL_WOOD,
 	DAMAGE_MATERIAL_BRICK,
+	DAMAGE_MATERIAL_GLASS,
 	DAMAGE_MATERIAL_COUNT
 } damage_material_t;
 
@@ -52,6 +66,7 @@ typedef enum
 	DAMAGE_LINK_NAILS,                 // wood to wood
 	DAMAGE_LINK_MORTAR,                // brick to brick
 	DAMAGE_LINK_FOUNDATION,            // anything to the ground
+	DAMAGE_LINK_GLAZING,               // a pane to what frames it
 	DAMAGE_LINK_TYPE_COUNT
 } damage_link_type_t;
 
@@ -65,12 +80,19 @@ typedef struct
 {
 	float threshold;                   // newton seconds: a share of an impulse under this does nothing
 	float hit_points;                  // newton seconds over the threshold it takes, in all, before it breaks
+	// What it bears standing still, in newtons (a kilogram weighs about
+	// ten) and, as a cantilever, newton meters (a weight times how far to
+	// the side it is held)
+	float compression;                 // pressed together
+	float pull;                        // pulled apart, or held from the side
+	float cantilever;
 } damage_link_settings_t;
 
 // The numbers of damage.ini (damage_settings_load)
 typedef struct
 {
 	float densities[DAMAGE_MATERIAL_COUNT];                  // kilograms a cubic meter
+	float crush[DAMAGE_MATERIAL_COUNT];                      // newtons a piece bears before it is crushed
 	damage_link_settings_t links[DAMAGE_LINK_TYPE_COUNT];
 	float hop_falloff;                 // what a link passes on to the piece at its other end, of what it got
 	float hit_speed;                   // meters a second: slower contacts are not hits
@@ -78,6 +100,7 @@ typedef struct
 	float breakthrough_speed_kept;     // of its speed before the hit, what a thing keeps when its hit broke links
 	float blast_radius;                // meters at full strength
 	float blast_falloff;               // meters beyond that over which it fades to nothing
+	float collapse_seconds;            // how long a link loaded to just its limit lasts (twice the load: half as long)
 	float shape_gap;                   // meters a collision shape is smaller than its piece, all round
 	float ball_radius;                 // the ball the viewer throws: meters
 	float ball_density;                // kilograms a cubic meter
@@ -93,6 +116,8 @@ typedef struct
 	b3Transform local;                 // its place in the building's frame, which is its place in any body
 	int group;
 	uint32_t color;
+	float mass;                        // kilograms
+	bool crushed;                      // bore more than its material does: its links broke and it is gone
 } damage_piece_t;
 
 typedef struct
@@ -104,6 +129,10 @@ typedef struct
 	float hit_points_left;
 	bool broken;
 	int broken_frame;
+	// From the last support pass: how many times its limit it bears (over
+	// 1: giving way), and how hard it is pressed, in newtons
+	float overload;
+	float static_compression;
 } damage_link_t;
 
 typedef struct
@@ -157,6 +186,12 @@ typedef struct
 	bool group_dirty[DAMAGE_PIECES_MAX];
 	bool any_group_dirty;
 
+	// The support pass is due (the graph changed); the links it found
+	// overloaded
+	bool support_dirty;
+	int overloaded_links[DAMAGE_LINKS_MAX];
+	int overloaded_count;
+
 	damage_hit_t recent_hits[DAMAGE_RECENT_HITS_MAX];
 	int hit_count;                     // all there were; the last DAMAGE_RECENT_HITS_MAX are kept
 	float largest_hit_impulse;
@@ -185,9 +220,10 @@ void damage_model_finish(damage_model_t *model);
 void damage_model_add_projectile(damage_model_t *model, b3BodyId body, float radius);
 
 // Round a step of the world: before it, and after it (the hits of the
-// step, the links they break, the groups made anew)
+// step, the links they break, the groups made anew, the support pass if
+// the graph changed, the overloaded links giving way a little more)
 void damage_model_before_step(damage_model_t *model);
-void damage_model_after_step(damage_model_t *model, int frame_index);
+void damage_model_after_step(damage_model_t *model, int frame_index, float step_seconds);
 
 // A blast: damage to the links of every piece it reaches, then a push
 // on what is loose. The strength is newton seconds on a square meter
@@ -195,8 +231,9 @@ void damage_model_after_step(damage_model_t *model, int frame_index);
 void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, int frame_index);
 
 // The pieces (each its own object, numbered from first_object_id) and the
-// projectiles; with draw_debug the links (green whole, yellow hurt, red
-// just broken) and the hits with their impulses, shown through the solids
+// projectiles; with draw_debug the links (green whole, yellow hurt,
+// orange overloaded and giving way, red just broken) and the hits with
+// their impulses, shown through the solids
 void damage_model_draw_solids(const damage_model_t *model, soft_render_t *renderer, uint32_t first_object_id);
 void damage_model_draw_marks(const damage_model_t *model, soft_render_t *renderer, int frame_index, bool draw_debug);
 

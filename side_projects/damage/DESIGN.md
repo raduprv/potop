@@ -13,8 +13,8 @@ written. Decisions, not code: check the sources for what exists.
   without lavapipe, and so Radu sees the very same pixels live.
 - `damage_scene.h`: what a scene is (open, seek to a frame, draw, a line
   about the frame, a checksum, a ray cast). The scenes: `pile`
-  `cabin` (cabin_scene.c, the damage model: a log cabin and a mortared
-  wall), `pile` (pile_scene.c, Box3D alone, with a film of its own),
+  `support` and `cabin` (model_scenes.c, the damage model: the three
+  cases of the support pass; a log cabin and a mortared wall), `pile` (pile_scene.c, Box3D alone, with a film of its own),
   `sandbox` (the pile's wall and crib with nothing happening by itself)
   and `test` (test_scene.c, the renderer's own test).
 - `damage_model.c`: the model itself (below), on Box3D; `damage.ini`: its
@@ -93,11 +93,56 @@ does nothing to a static body), small loose groups as rubble.
   neighbours and nothing gave. To be decided: whether a contact's impulse
   alone, over the threshold, should count (the weight of a heap on a
   beam would then break it, which was left out on purpose).
-- **Nothing holds anything up yet**, as planned: knock the bricks out
-  from under a wall and the rest hangs there. Step 4.
+- **Nothing held anything up yet** in step 3, as planned: knock the
+  bricks out from under a wall and the rest hung there.
 - The cabin and wall (79 pieces, 242 links): 0.03 ms a step through a
   scene of balls and a blast; the same checksum straight, after going
   back, and replayed from an events file.
+
+## What step 4 made and found
+
+The support pass (work_out_support in damage_model.c), run when the
+graph changed, on what still stands:
+
+- **How far from the ground** each piece is, going from piece to piece
+  over whole links: a piece a link holds to the ground is as far as its
+  middle is high; resting on another adds the height between their
+  middles; held from the side or hanging adds three times the distance.
+  What a piece touches that is nearer the ground is what holds it up.
+  (Counting links instead went wrong at once: a brick on a pier of three
+  bricks was "further" than its neighbour on a pane, and leaned on it.)
+- **A piece rests on what is under it, if anything is**; only what has
+  nothing under it is held from the side or from above.
+- **Shares by leverage** (share_load): one link takes all, and the
+  weight times its distance to the side as a cantilever; links on a line
+  balance as a seesaw (a share can be negative: that link holds the
+  piece down); links round the load balance both ways; with more links
+  than a balance settles, the most even shares that still balance. A
+  cantilevered load is passed on where it really is, so it levers what
+  is under too (a roof held from one wall pulls the wall over).
+- **Limits a link type**: compression, pull (also for holding from the
+  side), cantilever; **a material**: crush. A crushed piece lets go of
+  everything and is gone from the world (left as a solid box it went on
+  propping the wall up).
+- **Giving way takes time**: an overloaded link loses hit points as fast
+  as it is overloaded (collapse_seconds at just its limit), so what hits
+  have hurt goes sooner and a building stands a moment first. A link
+  breaking makes the pass due again at the next step: a collapse goes
+  on frame by frame.
+- The three cases (the `support` scene, support_show.txt), each with one
+  support knocked out. The wall on a pane: with a pier gone the wall
+  balances on the pane, which then has all 13 kN (not the share one
+  would guess), is crushed, and the wall falls. The roof: the lintel
+  cannot stand on one post; then the beams hold the roof from the wall
+  alone and it comes down, wall and all. The beam on three pillars: the
+  far pillar's link is pulled up and goes, then the beam tips on the
+  middle one. The cabin and its wall carry themselves with no link over
+  a fifth of its limit.
+- Costs 0.06 ms a step through the three collapses. The distances are
+  found the plain way (the square of the pieces): fine for hundreds,
+  to be made a heap for thousands.
+- Open, as before: only hits hurt links, slow pushes do not; and what
+  lies on a building weighs nothing in the pass.
 
 ## The model
 
@@ -178,7 +223,7 @@ again until quiet.
    **Done** (what it found is above).
 3. The graph: pieces, links, islands, groups splitting, with the
    simplest damage (a ball, a blast). **Done** (what it found is above).
-4. The support pass, with its three test cases.
+4. The support pass, with its three test cases. **Done** (above).
 5. Bending and cutting of long pieces.
 6. The notched corner link and explosions.
 
