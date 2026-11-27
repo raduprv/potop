@@ -131,6 +131,7 @@ typedef struct
 	float blast_falloff;               // meters beyond that over which it fades to nothing
 	float blast_inertia;               // for each kilogram of a piece, how many links' worth of a blast's push its own mass takes up
 	float air_drag;                    // newtons the air pushes back with for each square meter that faces the way a piece goes, at 1 m/s (and by the speed squared)
+	int blast_slices;                  // a blast's push comes on what stands in this many parts, links breaking between them
 	float blast_shielding;             // of its push, what a piece loses when another is between its middle and the blast (0: nothing shields)
 	float long_ratio;                  // a piece this many times longer than it is thick or wide is long: it can bend
 	float cut_min_length;              // meters: no piece is cut into one shorter than this
@@ -165,6 +166,7 @@ typedef struct
 	float hit_points_left;
 	int long_axis;                     // which of its own axes (0 x, 1 y, 2 z) it is long along; -1: it is not long
 	float bent;                        // how many times what it bears it is bent, from the last support pass
+	float blast_push_left;             // of the blast being worked out, the part of its push that came on after the piece came loose
 } damage_piece_t;
 
 typedef struct

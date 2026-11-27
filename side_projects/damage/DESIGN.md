@@ -273,12 +273,19 @@ Known and left so:
   times its speed squared (0.7: real air). The board is down to some
   tens of meters a second within a few meters, and falls broadside at
   about 14 m/s; logs and bricks hardly feel it.
-- Seen with these numbers: 3000 inside the cabin only shakes bits off,
-  6000 leaves its first course; the brick wall loses an end to 6000
-  and stands; 3000 inside the house blows it apart, the same outside
-  the front wall snaps its boards, which stay hanging by their nails.
-  All of it turns sharply on `blast_inertia` and the links' thresholds:
-  to be tuned by eye.
+- `blast_slices` (Radu's idea): all at once, a piece either held and
+  lost all of its push, or let go and left with all of it, so one blast
+  cracked a house and the next threw it into the sky. The push now
+  comes on in parts: after each, the links that have borne more than
+  they can break and the next part is shared among what is left (so
+  breaks can follow one another), and a piece that comes loose is
+  pushed only by the parts still to come.
+- Seen with these numbers (3000, 8 slices): the cabin falls apart
+  outwards in a heap instead of being thrown; inside the house the roof
+  lifts off whole and lands beside it and most of the walls go; outside
+  the front wall a hole is blown in and the boards drop in front; the
+  brick wall is untouched by 3000 and holed by 6000. Still to be tuned
+  by eye: `blast_inertia`, the strengths, the links' thresholds.
 
 ## The model
 
