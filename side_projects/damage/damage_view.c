@@ -16,7 +16,7 @@
 //   Space            pause, go on
 //   Right, Left      a frame forward, back (with Shift ten)
 //   [ ]              time slower, faster (1/16 to 4 times)
-//   R                back to frame 0
+//   R                back to frame 0, the scene made again (damage.ini read again)
 //   O                outlines on, off
 //   B                debug marks (contacts and their impulses) on, off
 //   1 2 ...          another scene, from its frame 0
@@ -263,7 +263,7 @@ static void draw_hud(const damage_scene_t *scene, soft_render_t *renderer, int f
 			"LEFT MOUSE: THROW A BALL   X: A BLAST (SHIFT: STRONGER)\n"
 			"BACKSPACE: TAKE THE LAST ONE BACK   DELETE: ALL\n"
 			"SPACE: PAUSE   RIGHT LEFT: A FRAME ON, BACK (SHIFT: TEN)\n"
-			"[ ]: SLOWER, FASTER   R: FRAME 0   1 2 3: SCENE\n"
+			"[ ]: SLOWER, FASTER   R: FRAME 0   1 TO 4: SCENE\n"
 			"O: OUTLINES   B: DEBUG MARKS\n"
 			"P: SAVE PNG   C: PRINT CAMERA\n"
 			"H: THESE KEYS   ESC: QUIT");
@@ -461,6 +461,10 @@ int main(int argument_count, char **arguments)
 						}
 						break;
 					case SDLK_R:
+						// From the start, the scene made again (one that
+						// reads its numbers from a file reads them now)
+						scene->close();
+						scene->open();
 						frame_index = 0;
 						frame_fraction = 0.0f;
 						break;

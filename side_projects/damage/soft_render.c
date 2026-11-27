@@ -856,7 +856,16 @@ static void draw_mark(soft_render_t *renderer, float x, float y, int size_pixels
 				continue;
 			}
 			pixel = pixel_y * renderer->width + pixel_x;
-			if (biased_inverse_w > renderer->depth[pixel])
+			if (renderer->marks_on_top)
+			{
+				// Over everything, and leaving the depth as it was
+				uint8_t *destination = &renderer->color[pixel * 4];
+
+				destination[0] = color[0];
+				destination[1] = color[1];
+				destination[2] = color[2];
+			}
+			else if (biased_inverse_w > renderer->depth[pixel])
 			{
 				uint8_t *destination = &renderer->color[pixel * 4];
 

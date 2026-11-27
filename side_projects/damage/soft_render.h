@@ -51,6 +51,7 @@ typedef struct
 	uint32_t current_object_id;
 	bool cull_back_faces;              // off: both sides of a triangle are drawn (the default)
 	int line_width_pixels;             // lines and their depth test, 1 by default
+	bool marks_on_top;                 // lines and points show through the solids (to see what is inside)
 
 	// Counted since soft_render_begin
 	int triangles_given;

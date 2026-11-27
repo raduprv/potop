@@ -1,0 +1,9 @@
+# damage events, scene cabin: fast balls at the wall and at the cabin,
+# then a big blast inside the cabin. See them with
+#   ./damage_view --events cabin_show.txt
+#   ./damage_shot --out sheet.png --events cabin_show.txt --sheet 20,16,12
+ball 10 3 1.25 8 0 0.5 -32
+ball 10 -3 1.25 8 0 0.5 -32
+ball 50 -2.2 1.6 8 0 0.5 -32
+ball 50 3.6 0.8 8 0 0.5 -32
+blast 130 -3 0.6 0 1800

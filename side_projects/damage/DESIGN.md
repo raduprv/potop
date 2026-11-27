@@ -5,7 +5,7 @@ project's Makefile and nothing of the engine is linked. What follows is
 what Radu and Claude agreed on (Nov 27 2026) before any of the model was
 written. Decisions, not code: check the sources for what exists.
 
-## The tools (steps 1 and 2, done)
+## The tools
 
 - `soft_render.c`: a crude software rasterizer (flat triangles, depth
   buffer, a fixed light, boxes, cylinders, prisms, spheres, lines, points,
@@ -13,9 +13,13 @@ written. Decisions, not code: check the sources for what exists.
   without lavapipe, and so Radu sees the very same pixels live.
 - `damage_scene.h`: what a scene is (open, seek to a frame, draw, a line
   about the frame, a checksum, a ray cast). The scenes: `pile`
-  (pile_scene.c, Box3D alone, with a film of its own), `sandbox` (the
-  same wall and crib with nothing happening by itself) and `test`
-  (test_scene.c, the renderer's own test).
+  `cabin` (cabin_scene.c, the damage model: a log cabin and a mortared
+  wall), `pile` (pile_scene.c, Box3D alone, with a film of its own),
+  `sandbox` (the pile's wall and crib with nothing happening by itself)
+  and `test` (test_scene.c, the renderer's own test).
+- `damage_model.c`: the model itself (below), on Box3D; `damage.ini`: its
+  numbers, read by the cabin scene at every start (R in the viewer).
+  A saved replay gives the same checksum only with the same ini.
 - `damage_events.h`: the balls thrown and blasts set off from the viewer
   (left mouse, X; Backspace takes the last one back), each noted with its
   frame. A scene sets them off again when it comes to that frame, so
@@ -61,6 +65,39 @@ needs no SDL3.
   ms for the first step after.
 - **b3World_Explode** exists: an impulse per area on what faces it,
   within a radius and a falloff. Enough for a first explosion.
+
+## What step 3 made and found
+
+damage_model.c has the graph, the groups and the first damage: one
+strength a link (a threshold and hit points), hits read from Box3D's hit
+events with the contact's impulse, blasts of its own (Box3D's explosion
+does nothing to a static body), small loose groups as rubble.
+
+- **The rule of a hit**: the hit piece shares the impulse evenly among
+  its whole links; each link passes hop_falloff of what it got to the
+  piece at its other end, which shares it again. A link is hurt once a
+  hit. With six links a brick the damage stays close to the hit; the
+  rest is done by what came loose hitting what still stands.
+- **A hit is worked out by Box3D before the damage is known**: the ball
+  bounces off a wall that was still whole. So a body whose hit broke
+  links gets back the speed it had before the step, times
+  breakthrough_speed_kept, and meets the loosened pieces in the next
+  step (which then take their push from a real collision).
+- **Pieces need play** (shape_gap, 3 mm): a brick freed among bricks
+  still standing, with shapes that touch exactly, is held like a drawer
+  gone askew whatever pushes it. Collision shapes are a little smaller
+  than the pieces drawn.
+- **Only hits hurt** (contacts faster than hit_speed): a slow push,
+  however strong, breaks nothing. A ball coming to rest in a seam wedged
+  two loose bricks apart with some 1500 N s a step against their standing
+  neighbours and nothing gave. To be decided: whether a contact's impulse
+  alone, over the threshold, should count (the weight of a heap on a
+  beam would then break it, which was left out on purpose).
+- **Nothing holds anything up yet**, as planned: knock the bricks out
+  from under a wall and the rest hangs there. Step 4.
+- The cabin and wall (79 pieces, 242 links): 0.03 ms a step through a
+  scene of balls and a blast; the same checksum straight, after going
+  back, and replayed from an events file.
 
 ## The model
 
@@ -139,7 +176,8 @@ again until quiet.
 1. The soft renderer and its test scene. **Done.**
 2. Box3D alone: a pile of boxes and logs falling, seen through it.
    **Done** (what it found is above).
-3. The graph: pieces, links, islands, groups splitting.
+3. The graph: pieces, links, islands, groups splitting, with the
+   simplest damage (a ball, a blast). **Done** (what it found is above).
 4. The support pass, with its three test cases.
 5. Bending and cutting of long pieces.
 6. The notched corner link and explosions.

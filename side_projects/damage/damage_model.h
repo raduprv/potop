@@ -1,0 +1,207 @@
+// The damage model: a building as pieces held together by links, on top
+// of Box3D (see DESIGN.md).
+//
+// The pieces and the links are one graph, made once. A link has a
+// threshold (what it shrugs off) and hit points (what it takes before it
+// breaks); a broken link is only marked so. A group is an island of that
+// graph, the pieces a walk over whole links reaches, and is ONE Box3D
+// body with a shape a piece: static while a link holds it to the ground
+// (so an untouched building costs nothing), moving once it has come
+// loose. When links break the islands are worked out again and the
+// bodies made anew for the groups that changed; a small loose group is
+// rubble, left alone from then on.
+//
+// Every body of a building keeps the building's own frame: a piece's
+// place in its body never changes, whichever body that is.
+//
+// Damage comes from hits (what Box3D reports as faster than a speed,
+// with the impulse of that contact) and from blasts. A hit piece shares
+// the impulse among its links; each link passes what it got, weakened, to
+// the piece at its other end, which shares it again.
+//
+// Not here yet (steps 4 to 6 of DESIGN.md): what holds what up (a house
+// hanging from one log stays there), limits by direction, pieces that
+// bend and break, notched corners.
+
+#ifndef DAMAGE_MODEL_H
+#define DAMAGE_MODEL_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "box3d/box3d.h"
+
+#include "soft_render.h"
+
+#define DAMAGE_PIECES_MAX 1024
+#define DAMAGE_LINKS_MAX 4096
+#define DAMAGE_PROJECTILES_MAX 256
+#define DAMAGE_RECENT_HITS_MAX 32
+// A link's other end when it holds a piece to the ground
+#define DAMAGE_GROUND -1
+
+typedef enum
+{
+	DAMAGE_MATERIAL_WOOD,
+	DAMAGE_MATERIAL_BRICK,
+	DAMAGE_MATERIAL_COUNT
+} damage_material_t;
+
+typedef enum
+{
+	DAMAGE_LINK_NAILS,                 // wood to wood
+	DAMAGE_LINK_MORTAR,                // brick to brick
+	DAMAGE_LINK_FOUNDATION,            // anything to the ground
+	DAMAGE_LINK_TYPE_COUNT
+} damage_link_type_t;
+
+typedef enum
+{
+	DAMAGE_PIECE_BOX,
+	DAMAGE_PIECE_LOG                   // a prism of 12 sides along its own x
+} damage_piece_shape_t;
+
+typedef struct
+{
+	float threshold;                   // newton seconds: a share of an impulse under this does nothing
+	float hit_points;                  // newton seconds over the threshold it takes, in all, before it breaks
+} damage_link_settings_t;
+
+// The numbers of damage.ini (damage_settings_load)
+typedef struct
+{
+	float densities[DAMAGE_MATERIAL_COUNT];                  // kilograms a cubic meter
+	damage_link_settings_t links[DAMAGE_LINK_TYPE_COUNT];
+	float hop_falloff;                 // what a link passes on to the piece at its other end, of what it got
+	float hit_speed;                   // meters a second: slower contacts are not hits
+	int rubble_pieces;                 // a loose group of fewer pieces than this is rubble
+	float breakthrough_speed_kept;     // of its speed before the hit, what a thing keeps when its hit broke links
+	float blast_radius;                // meters at full strength
+	float blast_falloff;               // meters beyond that over which it fades to nothing
+	float shape_gap;                   // meters a collision shape is smaller than its piece, all round
+	float ball_radius;                 // the ball the viewer throws: meters
+	float ball_density;                // kilograms a cubic meter
+} damage_settings_t;
+
+typedef struct
+{
+	damage_piece_shape_t shape;
+	damage_material_t material;
+	b3Vec3 half_extents;               // a box's
+	float radius;                      // a log's
+	float half_length;                 // a log's
+	b3Transform local;                 // its place in the building's frame, which is its place in any body
+	int group;
+	uint32_t color;
+} damage_piece_t;
+
+typedef struct
+{
+	int piece_a;
+	int piece_b;                       // DAMAGE_GROUND: holds piece_a to the ground
+	damage_link_type_t type;
+	b3Vec3 local_point;                // where it is, in the building's frame
+	float hit_points_left;
+	bool broken;
+	int broken_frame;
+} damage_link_t;
+
+typedef struct
+{
+	bool used;
+	b3BodyId body;
+	bool anchored;                     // a whole link holds it to the ground: its body is static
+	bool rubble;
+	bool rebuilt;                      // made in the step being worked on
+	int piece_count;
+	b3Vec3 linear_velocity_before_step;
+	b3Vec3 angular_velocity_before_step;
+} damage_group_t;
+
+// A thing thrown at the building (not a piece of it)
+typedef struct
+{
+	b3BodyId body;
+	float radius;
+	b3Vec3 linear_velocity_before_step;
+	b3Vec3 angular_velocity_before_step;
+} damage_projectile_t;
+
+typedef struct
+{
+	int frame_index;
+	b3Vec3 point;
+	float impulse;                     // newton seconds
+	bool broke_links;
+} damage_hit_t;
+
+typedef struct
+{
+	b3WorldId world;
+	damage_settings_t settings;
+	bool finished;
+
+	damage_piece_t pieces[DAMAGE_PIECES_MAX];
+	int piece_count;
+	damage_link_t links[DAMAGE_LINKS_MAX];
+	int link_count;
+	damage_group_t groups[DAMAGE_PIECES_MAX];
+	damage_projectile_t projectiles[DAMAGE_PROJECTILES_MAX];
+	int projectile_count;
+
+	// Every piece's links: piece_links[piece_link_start[p]] up to
+	// piece_links[piece_link_start[p + 1]] (made by damage_model_finish)
+	int piece_link_start[DAMAGE_PIECES_MAX + 1];
+	int piece_links[DAMAGE_LINKS_MAX * 2];
+
+	bool group_dirty[DAMAGE_PIECES_MAX];
+	bool any_group_dirty;
+
+	damage_hit_t recent_hits[DAMAGE_RECENT_HITS_MAX];
+	int hit_count;                     // all there were; the last DAMAGE_RECENT_HITS_MAX are kept
+	float largest_hit_impulse;
+	int broken_link_count;
+} damage_model_t;
+
+void damage_settings_default(damage_settings_t *settings);
+// Reads the ini over what the settings hold. False when there is no such
+// file (the settings are then left as they were).
+bool damage_settings_load(damage_settings_t *settings, const char *path);
+
+// An empty model in a world. The world's hit event threshold should be
+// the settings' hit_speed.
+void damage_model_create(damage_model_t *model, b3WorldId world, const damage_settings_t *settings);
+
+// Building: pieces where they stand, then links between them, then
+// damage_model_finish, which finds the islands and makes their bodies.
+// The adders return the piece's or link's number, -1 when full.
+int damage_model_add_box(damage_model_t *model, b3Vec3 position, b3Quat rotation, b3Vec3 half_extents, damage_material_t material, uint32_t color);
+int damage_model_add_log(damage_model_t *model, b3Vec3 position, b3Quat rotation, float radius, float half_length, damage_material_t material, uint32_t color);
+int damage_model_add_link(damage_model_t *model, int piece_a, int piece_b, b3Vec3 point, damage_link_type_t type);
+void damage_model_finish(damage_model_t *model);
+
+// A body thrown at the building (a ball): the model minds its speed, so
+// that it goes on through what it breaks instead of bouncing off it
+void damage_model_add_projectile(damage_model_t *model, b3BodyId body, float radius);
+
+// Round a step of the world: before it, and after it (the hits of the
+// step, the links they break, the groups made anew)
+void damage_model_before_step(damage_model_t *model);
+void damage_model_after_step(damage_model_t *model, int frame_index);
+
+// A blast: damage to the links of every piece it reaches, then a push
+// on what is loose. The strength is newton seconds on a square meter
+// facing it.
+void damage_model_blast(damage_model_t *model, b3Vec3 position, float strength, int frame_index);
+
+// The pieces (each its own object, numbered from first_object_id) and the
+// projectiles; with draw_debug the links (green whole, yellow hurt, red
+// just broken) and the hits with their impulses, shown through the solids
+void damage_model_draw_solids(const damage_model_t *model, soft_render_t *renderer, uint32_t first_object_id);
+void damage_model_draw_marks(const damage_model_t *model, soft_render_t *renderer, int frame_index, bool draw_debug);
+
+// A line about the model's state
+void damage_model_describe(const damage_model_t *model, char *text, int text_size);
+uint32_t damage_model_checksum(const damage_model_t *model);
+
+#endif

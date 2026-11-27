@@ -4,13 +4,15 @@
 
 #include <string.h>
 
+#include "cabin_scene.h"
 #include "pile_scene.h"
 #include "test_scene.h"
 
-#define SCENE_COUNT 3
+#define SCENE_COUNT 4
 
 static const damage_scene_t *const scenes[SCENE_COUNT] =
 {
+	&cabin_scene,
 	&pile_scene,
 	&sandbox_scene,
 	&test_scene,

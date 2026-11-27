@@ -701,7 +701,7 @@ static void pile_scene_draw(soft_render_t *renderer, const soft_render_camera_t 
 
 	soft_render_begin(renderer, camera, SKY_COLOR);
 	soft_render_set_object(renderer, 1);
-	soft_render_ground(renderer, 0.0f, 0.0f, 0.0f, 20.0f, 1.0f, GROUND_COLOR_FIRST, GROUND_COLOR_SECOND);
+	soft_render_ground(renderer, 0.0f, 0.0f, 0.0f, 40.0f, 1.0f, GROUND_COLOR_FIRST, GROUND_COLOR_SECOND);
 	for (i = 0; i < pile.piece_count; i++)
 	{
 		soft_render_set_object(renderer, (uint32_t)i + 2);
