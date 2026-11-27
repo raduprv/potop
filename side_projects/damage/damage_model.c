@@ -67,6 +67,10 @@ static double solver_diagonal[DAMAGE_PIECES_MAX * 6];
 static float piece_compressions[DAMAGE_PIECES_MAX];
 static b3Vec3 blast_impulses[DAMAGE_PIECES_MAX];
 static bool blast_was_standing[DAMAGE_PIECES_MAX];
+// The loose groups that hit something in the step being worked on, and
+// the pieces of theirs that did the hitting
+static bool shock_groups[DAMAGE_PIECES_MAX];
+static bool shock_pieces[DAMAGE_PIECES_MAX];
 // How stiffly each unknown is held where it is by nothing but its
 // piece's own mass: nothing when weights are solved for (they have all
 // the time in the world), something when a blast is
@@ -2018,12 +2022,112 @@ static void keep_going(damage_model_t *model, b3BodyId body)
 	}
 }
 
+// A loose group has hit something and was stopped short: the shock of it
+// through the whole group. Each piece was slowed by so much in the step
+// (less what gravity did), and what slowed it came through its links
+// from the pieces that did the hitting: so each piece is pushed, in the
+// group's own frame, by its mass times the speed it lost, the pieces
+// that hit are held where they are, and the springs solved, as for a
+// blast (damage_model_blast). What goes through a link hurts it, and a
+// long piece bent by more than it bears from a hit is cut. A roof that
+// lands on one corner breaks where its own weight bends it, not only at
+// the corner.
+static void shock_through_group(damage_model_t *model, int group_index, int frame_index, float step_seconds)
+{
+	const damage_group_t *group = &model->groups[group_index];
+	double turn_stiffness = (double)model->settings.joint_arm * (double)model->settings.joint_arm;
+	b3Quat rotation = b3Body_GetRotation(group->body);
+	b3Vec3 center = b3Body_GetWorldPoint(group->body, b3Body_GetLocalCenter(group->body));
+	int piece_count_before = model->piece_count;
+	double load_squared = 0.0;
+	int count = 0;
+	int i;
+	int k;
+
+	for (i = 0; i < model->piece_count; i++)
+	{
+		support_unknowns[i] = -1;
+		if (model->pieces[i].group == group_index)
+		{
+			support_unknowns[i] = count;
+			walk_queue[count++] = i;
+		}
+	}
+	for (i = 0; i < count; i++)
+	{
+		int piece_index = walk_queue[i];
+		const damage_piece_t *piece = &model->pieces[piece_index];
+		b3Vec3 place = b3Body_GetWorldPoint(group->body, piece->local.p);
+		b3Vec3 speed_before = b3Add(group->linear_velocity_before_step, b3Cross(group->angular_velocity_before_step, b3Sub(place, center)));
+		b3Vec3 speed_lost = b3Sub(speed_before, b3Body_GetWorldPointVelocity(group->body, place));
+		b3Vec3 push;
+
+		speed_lost.y -= GRAVITY * step_seconds;
+		push = b3InvRotateVector(rotation, b3MulSV(piece->mass, speed_lost));
+		for (k = 0; k < 6; k++)
+		{
+			solver_load[i * 6 + k] = 0.0;
+			solver_x[i * 6 + k] = 0.0;
+			// (A piece that hit is held as by one link at its middle)
+			solver_inertia[i * 6 + k] = !shock_pieces[piece_index] ? 0.0 : (k < 3 ? 1.0 : turn_stiffness);
+		}
+		solver_load[i * 6 + 0] = (double)push.x;
+		solver_load[i * 6 + 1] = (double)push.y;
+		solver_load[i * 6 + 2] = (double)push.z;
+		load_squared += (double)push.x * (double)push.x + (double)push.y * (double)push.y + (double)push.z * (double)push.z;
+	}
+	if (load_squared <= 0.0)
+	{
+		return;
+	}
+	solve_springs(model, count, load_squared);
+
+	for (i = 0; i < model->link_count; i++)
+	{
+		const damage_link_t *link = &model->links[i];
+		double apart[3];
+		double turned[3];
+		double through;
+
+		if (link->broken || support_unknowns[link->piece_a] < 0)
+		{
+			continue;
+		}
+		link_strain(model, link, solver_x, apart, turned);
+		through = sqrt(apart[0] * apart[0] + apart[1] * apart[1] + apart[2] * apart[2])
+			+ turn_stiffness * sqrt(turned[0] * turned[0] + turned[1] * turned[1] + turned[2] * turned[2]) / (double)model->settings.joint_arm;
+		hurt_link(model, i, (float)through, frame_index);
+	}
+	for (i = 0; i < count; i++)
+	{
+		int piece_index = walk_queue[i];
+		const damage_piece_t *piece = &model->pieces[piece_index];
+		double own_push[3];
+		double worst_position = 0.0;
+
+		if (piece->long_axis < 0 || piece->crushed || piece_index >= piece_count_before)
+		{
+			continue;
+		}
+		for (k = 0; k < 3; k++)
+		{
+			own_push[k] = solver_load[i * 6 + k] - solver_inertia[i * 6 + k] * solver_x[i * 6 + k];
+		}
+		if (piece_bending(model, piece_index, solver_x, own_push, (double)model->settings.snap[piece->material], &worst_position) > 1.0)
+		{
+			request_cut(model, piece_index, (float)worst_position);
+		}
+	}
+}
+
 void damage_model_after_step(damage_model_t *model, int frame_index, float step_seconds)
 {
 	b3ContactEvents events = b3World_GetContactEvents(model->world);
 	b3BodyId restored_bodies[RESTORED_BODIES_MAX];
 	int restored_count = 0;
+	bool any_shock = false;
 	int i;
+	int side;
 	int manifold_index;
 	int point_index;
 
@@ -2060,33 +2164,33 @@ void damage_model_after_step(damage_model_t *model, int frame_index, float step_
 		}
 
 		// Each piece hit: the hit on the piece itself, on its length if it
-		// is long, and on its links
-		if (piece_a >= 0)
+		// is long, and on its links (for a piece of a loose group of
+		// several, not here: the shock goes through the whole group, below)
+		for (side = 0; side < 2; side++)
 		{
-			if (hurt_piece(model, piece_a, impulse, frame_index))
+			int piece_index = side == 0 ? piece_a : piece_b;
+			const damage_group_t *group;
+
+			if (piece_index < 0 || model->pieces[piece_index].group == DAMAGE_GONE)
+			{
+				continue;
+			}
+			if (hurt_piece(model, piece_index, impulse, frame_index))
 			{
 				broke = true;
 			}
-			if (snap_piece(model, piece_a, event->point, event->normal, impulse))
+			if (snap_piece(model, piece_index, event->point, event->normal, impulse))
 			{
 				broke = true;
 			}
-			if (damage_piece(model, piece_a, impulse, frame_index))
+			group = &model->groups[model->pieces[piece_index].group];
+			if (!group->anchored && !group->rubble && !group->rebuilt && group->piece_count > 1)
 			{
-				broke = true;
+				shock_groups[model->pieces[piece_index].group] = true;
+				shock_pieces[piece_index] = true;
+				any_shock = true;
 			}
-		}
-		if (piece_b >= 0)
-		{
-			if (hurt_piece(model, piece_b, impulse, frame_index))
-			{
-				broke = true;
-			}
-			if (snap_piece(model, piece_b, event->point, event->normal, impulse))
-			{
-				broke = true;
-			}
-			if (damage_piece(model, piece_b, impulse, frame_index))
+			else if (damage_piece(model, piece_index, impulse, frame_index))
 			{
 				broke = true;
 			}
@@ -2107,6 +2211,19 @@ void damage_model_after_step(damage_model_t *model, int frame_index, float step_
 		{
 			model->largest_hit_impulse = impulse;
 		}
+	}
+
+	if (any_shock)
+	{
+		for (i = 0; i < DAMAGE_PIECES_MAX; i++)
+		{
+			if (shock_groups[i])
+			{
+				shock_through_group(model, i, frame_index, step_seconds);
+				shock_groups[i] = false;
+			}
+		}
+		memset(shock_pieces, 0, sizeof(shock_pieces));
 	}
 
 	// (Only now: the events point at shapes the rebuilding destroys, and a

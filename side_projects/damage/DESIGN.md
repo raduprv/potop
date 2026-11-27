@@ -287,6 +287,23 @@ Known and left so:
   brick wall is untouched by 3000 and holed by 6000. Still to be tuned
   by eye: `blast_inertia`, the strengths, the links' thresholds.
 
+## The shock of a fall through a loose group
+
+- Before, a hit on a piece of a loose group hurt only that piece's
+  links and its near neighbors' (the hit rule), so a roof that fell
+  from high up landed almost whole.
+- Now, when a piece of a loose group of several (not rubble) hits
+  something, the whole group is solved as a blast is: each piece is
+  pushed, in the group's frame, by its mass times the speed it lost in
+  the step (less gravity's part), the pieces that hit are held where
+  they are, and what goes through each link hurts it; long pieces bent
+  by more than they bear are cut. The piece that hit still takes the
+  hit on its own hit points and its own length.
+- Seen: a brick wall section that topples breaks up when it lands; a
+  roof of slabs that drops 2.5 m stays together; the house's roof,
+  blown off, is in pieces before it comes down (the flying boards hit
+  it too). No scene drops a whole roof from high up yet.
+
 ## The model
 
 Not a CAD grade simulation: if it shows in the game it is in, if it only
