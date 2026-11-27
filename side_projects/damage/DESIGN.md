@@ -343,6 +343,14 @@ presses on everything until it finds a way out.
   `blast_inertia`, is what a loose body leans on), and the gas is shut
   in by any piece still part of a body of `rubble_pieces` or more. The
   old piece-by-piece rule is gone from blasts.
+- Found by Radu: a blast against the inside of a wall was very small.
+  A piece was pushed from the blast towards its middle: for a 4 m board
+  with the blast 15 cm in front of one end that is along the board,
+  which then faces the blast with next to no area (and the ray to its
+  middle ran through the posts, so it was shielded too). A long piece
+  is now taken in five parts along its length, each pushed, faded and
+  shielded by itself, and how the sum turns the piece about its middle
+  goes into the solve, so the nails near the blast bear the most.
 - The physics ground is 1 km to a side now (40 m are drawn): what was
   thrown past its edge fell for ever.
 - `blast_gas` is 0.5: at 1 a blast of 3000 on the floor left nothing of
