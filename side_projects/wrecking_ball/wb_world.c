@@ -514,11 +514,14 @@ static float vertical_reach(b3Quat rotation, const float half[3])
 	return SDL_fabsf(row[0]) * half[0] + SDL_fabsf(row[1]) * half[1] + SDL_fabsf(row[2]) * half[2];
 }
 
+// The part of a body's turning the water takes each second, whole under water
+#define WATER_TURN_DRAG_PER_SECOND 3.0f
+
 // The water on a body at a point: lifted by the part under water (its
-// weight in water), dragged towards the water's own speed, its turning
-// slowed. reach: how far it goes up and down from the point; volume in
-// cubic meters; half_length: half its longest side (how hard it is to turn)
-static void push_by_water(wb_world_t *world, b3BodyId body, b3Vec3 point, float reach, float volume, float mass, float half_length)
+// weight in water), dragged towards the water's own speed. reach: how
+// far it goes up and down from the point; volume in cubic meters. How
+// much of it is under water, 0 to 1
+static float push_by_water(wb_world_t *world, b3BodyId body, b3Vec3 point, float reach, float volume, float mass)
 {
 	float depth;
 	float surface;
@@ -527,20 +530,17 @@ static void push_by_water(wb_world_t *world, b3BodyId body, b3Vec3 point, float 
 	b3Vec3 speed;
 	b3Vec3 force;
 	// (the part of its speed against the water lost each second, whole
-	// under water; and of its turning)
+	// under water)
 	const float drag_per_second = 3.0f;
-	const float turn_drag_per_second = 4.0f;
-	b3Vec3 turning;
-	float turn_inertia = mass * half_length * half_length / 3.0f;
 
 	if (!wb_water_sample(&world->water, point.x, point.z, &depth, &surface, flow))
 	{
-		return;
+		return 0.0f;
 	}
 	under = (surface - (point.y - reach)) / (2.0f * SDL_max(reach, 0.01f));
 	if (under <= 0.0f)
 	{
-		return;
+		return 0.0f;
 	}
 	under = SDL_min(under, 1.0f);
 	speed = b3Body_GetWorldPointVelocity(body, point);
@@ -550,13 +550,33 @@ static void push_by_water(wb_world_t *world, b3BodyId body, b3Vec3 point, float 
 	// (still water does not wake what has come to rest in it: it would
 	// keep every sunken piece awake for good)
 	b3Body_ApplyForce(body, force, point, SDL_fabsf(flow[0]) + SDL_fabsf(flow[1]) > 0.03f);
+	return under;
+}
+
+// A body's turning slowed by the water, by how much of it is under: its
+// spin scaled down outright (a torque against it would have to know how
+// hard the body turns round each axis; a plank turns round its length
+// far more easily than round its width, and a torque fitted to one
+// throws the other back and forth harder each step)
+static void slow_turning(b3BodyId body, float under, float seconds)
+{
+	b3Vec3 turning;
+
+	if (under <= 0.0f || !b3Body_IsAwake(body))
+	{
+		return;
+	}
 	turning = b3Body_GetAngularVelocity(body);
-	b3Body_ApplyTorque(body, b3MulSV(-turn_drag_per_second * under * turn_inertia, turning), false);
+	b3Body_SetAngularVelocity(body, b3MulSV(SDL_expf(-WATER_TURN_DRAG_PER_SECOND * under * seconds), turning));
 }
 
 // The water on what is loose: the pieces of fallen parts, the balls
-static void push_loose_things(wb_world_t *world)
+static void push_loose_things(wb_world_t *world, float seconds)
 {
+	// How much of each group of a building is under water: the most of
+	// any of its pieces
+	static float group_under[WRECK_PIECES_MAX];
+
 	if (world->water.total_volume <= 0.0)
 	{
 		return;
@@ -569,10 +589,12 @@ static void push_loose_things(wb_world_t *world)
 		{
 			continue;
 		}
+		SDL_memset(group_under, 0, sizeof(group_under));
 		for (int p = 0; p < model->piece_count; p++)
 		{
 			const wreck_piece_t *piece = &model->pieces[p];
 			const wreck_group_t *group;
+			float under;
 			b3Transform transform;
 			float half[3];
 			float volume;
@@ -601,8 +623,15 @@ static void push_loose_things(wb_world_t *world)
 				half[2] = piece->half_extents.z;
 				volume = 8.0f * half[0] * half[1] * half[2];
 			}
-			push_by_water(world, group->body, transform.p, vertical_reach(transform.q, half), volume, piece->mass,
-				SDL_max(half[0], SDL_max(half[1], half[2])));
+			under = push_by_water(world, group->body, transform.p, vertical_reach(transform.q, half), volume, piece->mass);
+			group_under[piece->group] = SDL_max(group_under[piece->group], under);
+		}
+		for (int g = 0; g < WRECK_PIECES_MAX; g++)
+		{
+			if (group_under[g] > 0.0f)
+			{
+				slow_turning(model->groups[g].body, group_under[g], seconds);
+			}
 		}
 	}
 	for (int i = 0; i < WB_BALLS_MAX; i++)
@@ -613,7 +642,9 @@ static void push_loose_things(wb_world_t *world)
 		{
 			float volume = 4.0f / 3.0f * SDL_PI_F * ball->radius * ball->radius * ball->radius;
 
-			push_by_water(world, ball->body, b3Body_GetPosition(ball->body), ball->radius, volume, b3Body_GetMass(ball->body), ball->radius);
+			float under = push_by_water(world, ball->body, b3Body_GetPosition(ball->body), ball->radius, volume, b3Body_GetMass(ball->body));
+
+			slow_turning(ball->body, under, seconds);
 		}
 	}
 }
@@ -623,7 +654,7 @@ void wb_world_step(wb_world_t *world)
 	const float step_seconds = 1.0f / (float)WB_WORLD_STEPS_PER_SECOND;
 	b3ContactEvents events;
 
-	push_loose_things(world);
+	push_loose_things(world, step_seconds);
 	wb_water_step(&world->water, step_seconds);
 
 	for (int b = 0; b < WB_BUILDINGS_MAX; b++)

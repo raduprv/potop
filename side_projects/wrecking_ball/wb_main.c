@@ -18,6 +18,7 @@
 //   --throw-at N        throw a ball from the camera at the building at frame N
 //   --blast-at N        a blast in the building's middle at frame N
 //   --flood-at N        water 60 cm deep everywhere at frame N
+//   --trace             with --shot: the fastest loose piece every half second
 //   --pour-at N         water poured as with the mouse, for 2 seconds from frame N, 6 m off the building's side
 //
 // In the window:
@@ -67,6 +68,7 @@ typedef struct
 	int blast_frame;
 	int flood_frame;
 	int pour_frame;
+	bool trace;
 	// More of the same building: x, z, yaw in degrees each
 	float extra_buildings[WB_BUILDINGS_MAX][3];
 	int extra_building_count;
@@ -429,6 +431,10 @@ static bool read_options(int argument_count, char **arguments, options_t *option
 		{
 			options->blast_frame = atoi(arguments[++i]);
 		}
+		else if (strcmp(argument, "--trace") == 0)
+		{
+			options->trace = true;
+		}
 		else if (strcmp(argument, "--pour-at") == 0 && has_value)
 		{
 			options->pour_frame = atoi(arguments[++i]);
@@ -457,6 +463,47 @@ static void add_extra_buildings(wb_world_t *world, const options_t *options, con
 		wb_world_add_building(world, path, options->extra_buildings[i][0], options->extra_buildings[i][1],
 			options->extra_buildings[i][2] * SDL_PI_F / 180.0f);
 	}
+}
+
+// The fastest moving and fastest turning of the loose pieces, and how high
+// the highest is: for tuning the water from the command line
+static void print_fastest_piece(const wb_world_t *world)
+{
+	float fastest = 0.0f;
+	float fastest_turning = 0.0f;
+	float highest = 0.0f;
+	int loose = 0;
+
+	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
+	{
+		const wreck_model_t *model = world->buildings[b].model;
+
+		if (!world->buildings[b].used)
+		{
+			continue;
+		}
+		for (int p = 0; p < model->piece_count; p++)
+		{
+			const wreck_piece_t *piece = &model->pieces[p];
+			const wreck_group_t *group;
+
+			if (piece->group == WRECK_GONE || piece->crushed)
+			{
+				continue;
+			}
+			group = &model->groups[piece->group];
+			if (group->anchored || !b3Body_IsValid(group->body))
+			{
+				continue;
+			}
+			loose++;
+			fastest = SDL_max(fastest, b3Length(b3Body_GetLinearVelocity(group->body)));
+			fastest_turning = SDL_max(fastest_turning, b3Length(b3Body_GetAngularVelocity(group->body)));
+			highest = SDL_max(highest, wreck_model_piece_transform(model, p).p.y);
+		}
+	}
+	printf("frame %4d: %3d loose, fastest %5.1f m/s, turning %5.1f rad/s, highest %5.1f m\n", world->frame_index, loose, (double)fastest,
+		(double)fastest_turning, (double)highest);
 }
 
 // The building's middle, for the scripted ball and blast
@@ -529,6 +576,10 @@ static int run_shot(const options_t *options)
 	{
 		scripted_events(world, options, &camera);
 		wb_world_step(world);
+		if (options->trace && world->frame_index % (WB_WORLD_STEPS_PER_SECOND / 2) == 0)
+		{
+			print_fastest_piece(world);
+		}
 	}
 	draw_world(render, world, NULL);
 	update_water(render, world);
