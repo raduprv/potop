@@ -516,6 +516,32 @@ static bool water_at(void *user, b3Vec3 point, float *surface_height, b3Vec3 *fl
 	return true;
 }
 
+// Whether any water lies within a meter of where a building stood
+static bool water_reaches(const wb_world_t *world, const wb_building_t *building)
+{
+	const shallow_water_t *water = &world->water;
+	int first_column = (int)SDL_floorf((building->minimum[0] - 1.0f - water->origin_x) / water->cell_meters);
+	int last_column = (int)SDL_floorf((building->maximum[0] + 1.0f - water->origin_x) / water->cell_meters);
+	int first_row = (int)SDL_floorf((building->minimum[2] - 1.0f - water->origin_z) / water->cell_meters);
+	int last_row = (int)SDL_floorf((building->maximum[2] + 1.0f - water->origin_z) / water->cell_meters);
+
+	first_column = SDL_max(first_column, 0);
+	first_row = SDL_max(first_row, 0);
+	last_column = SDL_min(last_column, water->cells - 1);
+	last_row = SDL_min(last_row, water->cells - 1);
+	for (int row = first_row; row <= last_row; row++)
+	{
+		for (int column = first_column; column <= last_column; column++)
+		{
+			if (water->depth[row * water->cells + column] > 0.002f)
+			{
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 // The models told of the water only while there is some: with it set, a
 // model counts as busy (stepped every step) for as long as anything of
 // it is loose
@@ -571,7 +597,11 @@ void wb_world_step(wb_world_t *world)
 	}
 	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
 	{
-		if (world->buildings[b].used && wreck_model_is_busy(world->buildings[b].model))
+		const wb_building_t *building = &world->buildings[b];
+
+		// (a building the water reaches is stepped even when it is not
+		// busy: the model does not know the water is there, wreck.h)
+		if (building->used && (wreck_model_is_busy(building->model) || (building->knows_water && water_reaches(world, building))))
 		{
 			wreck_model_after_step(world->buildings[b].model, world->frame_index, step_seconds);
 		}
