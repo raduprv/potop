@@ -59,9 +59,25 @@ void wb_render_set_water(wb_render_t *render, const float *depths, const float *
 // The part of the world the sun's shadows cover: a box round a center
 void wb_render_set_shadow_bounds(wb_render_t *render, const float center[3], float radius);
 
+typedef enum
+{
+	WB_EFFECT_FIRE,                    // a glowing ball, added onto what is behind it
+	WB_EFFECT_SMOKE,                   // a soft, see through ball, lit by the sky
+	WB_EFFECT_COUNT
+} wb_effect_t;
+
 void wb_render_begin_frame(wb_render_t *render);
 // A solid: color is 0xRRGGBB (sRGB)
 void wb_render_add(wb_render_t *render, wb_mesh_t mesh, const float position[3], const float rotation[4], const float scale[3], uint32_t color);
+// A ball of fire or smoke: color linear (fire's may be over 1: its
+// light), alpha how strongly it shows. Effects cast no shadows
+void wb_render_add_effect(wb_render_t *render, wb_effect_t effect, const float position[3], float radius, const float color[3], float alpha);
+// An explosion's flash lighting the solids this frame (the last one given
+// counts): color linear, falling off with the distance squared
+void wb_render_set_flash(wb_render_t *render, const float position[3], const float color[3]);
+// A shock wave this frame: a ring of bent air round a point, radius
+// meters, strength 0 to 1 (at most 4 a frame)
+void wb_render_add_shock_wave(wb_render_t *render, const float position[3], float radius, float strength);
 // png_path NULL: none saved. False when the frame could not be drawn
 bool wb_render_end_frame(wb_render_t *render, const wb_camera_t *camera, const char *png_path);
 

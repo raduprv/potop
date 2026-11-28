@@ -12,6 +12,11 @@
 #define SPHERE_STACKS 12
 #define SPHERE_SLICES 16
 #define INSTANCES_MAX 16384
+#define SHOCK_WAVES_MAX 4
+// The instance lists: one a mesh, then the effects (drawn with the sphere)
+#define LIST_FIRE WB_MESH_COUNT
+#define LIST_SMOKE (WB_MESH_COUNT + 1)
+#define LIST_COUNT (WB_MESH_COUNT + 2)
 
 typedef struct
 {
@@ -64,7 +69,23 @@ typedef struct
 	float fog_color[4];                // (not used now)
 	float eye[4];
 	float shadow_texel[4];             // x: one texel of the shadow map, in its coordinates
+	float flash_position[4];           // w: 1 while there is a flash
+	float flash_color[4];
 } light_uniforms_t;
+
+// post.frag's
+typedef struct
+{
+	float rings[SHOCK_WAVES_MAX][4];   // pixels: middle x, y, radius, how far it bends
+	float info[4];                     // count, ring width in pixels, 1 / width, 1 / height
+} shock_uniforms_t;
+
+typedef struct
+{
+	float position[3];
+	float radius;
+	float strength;
+} shock_wave_t;
 
 struct wb_render_s
 {
@@ -82,6 +103,18 @@ struct wb_render_s
 	SDL_GPUGraphicsPipeline *scene_pipeline;
 	SDL_GPUGraphicsPipeline *shadow_pipeline;
 	SDL_GPUGraphicsPipeline *water_pipeline;
+	SDL_GPUGraphicsPipeline *fire_pipeline;
+	SDL_GPUGraphicsPipeline *smoke_pipeline;
+	SDL_GPUGraphicsPipeline *post_pipeline;
+	// The picture bent by shock waves goes here (the scene is read from
+	// color_texture)
+	SDL_GPUTexture *post_texture;
+	SDL_GPUSampler *post_sampler;
+	shock_wave_t shock_waves[SHOCK_WAVES_MAX];
+	int shock_wave_count;
+	float flash_position[3];
+	float flash_color[3];
+	bool flash;
 	// The water's surface: a grid of corners like the ground's, written
 	// anew each frame it changes
 	SDL_GPUBuffer *water_vertex_buffer;
@@ -93,7 +126,7 @@ struct wb_render_s
 	uint32_t water_index_count;
 	bool water_dirty;                  // written since the last frame: to upload
 	bool water_any;                    // anything wet to draw
-	mesh_slot_t meshes[WB_MESH_COUNT];
+	mesh_slot_t meshes[LIST_COUNT];    // the meshes', then the effects' (LIST_FIRE, LIST_SMOKE)
 	SDL_GPUBuffer *instance_buffer;
 	SDL_GPUTransferBuffer *instance_transfer;
 	SDL_GPUTransferBuffer *download_transfer;
@@ -442,6 +475,11 @@ static void release_targets(wb_render_t *render)
 		SDL_ReleaseGPUTexture(render->device, render->depth_texture);
 		render->depth_texture = NULL;
 	}
+	if (render->post_texture != NULL)
+	{
+		SDL_ReleaseGPUTexture(render->device, render->post_texture);
+		render->post_texture = NULL;
+	}
 	if (render->download_transfer != NULL)
 	{
 		SDL_ReleaseGPUTransferBuffer(render->device, render->download_transfer);
@@ -475,12 +513,14 @@ static bool make_targets(wb_render_t *render, int width, int height)
 	render->color_texture = make_texture(render->device, render->color_format, SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER,
 		width, height);
 	render->depth_texture = make_texture(render->device, render->depth_format, SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET, width, height);
+	render->post_texture = make_texture(render->device, render->color_format, SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER,
+		width, height);
 	SDL_zero(download_info);
 	download_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
 	download_info.size = (uint32_t)(width * height * 4);
 	render->download_transfer = SDL_CreateGPUTransferBuffer(render->device, &download_info);
 	render->download_size = download_info.size;
-	return render->color_texture != NULL && render->depth_texture != NULL && render->download_transfer != NULL;
+	return render->color_texture != NULL && render->depth_texture != NULL && render->post_texture != NULL && render->download_transfer != NULL;
 }
 
 static void describe_vertex_input(SDL_GPUVertexBufferDescription buffers[2], SDL_GPUVertexAttribute attributes[6], SDL_GPUVertexInputState *state)
@@ -631,6 +671,104 @@ static bool make_pipelines(wb_render_t *render, const char *shader_directory)
 			goto done;
 		}
 	}
+	// The effects: on solid.vert, over the solids, writing no depth; fire
+	// added, smoke laid over
+	for (int effect = 0; effect < WB_EFFECT_COUNT; effect++)
+	{
+		SDL_GPUShader *effect_fragment = load_shader(render->device, shader_directory, effect == WB_EFFECT_FIRE ? "fire.frag" : "smoke.frag",
+			SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 1);
+		SDL_GPUGraphicsPipeline *pipeline;
+
+		if (effect_fragment == NULL)
+		{
+			goto done;
+		}
+		SDL_zero(info);
+		describe_vertex_input(buffers, attributes, &info.vertex_input_state);
+		info.vertex_shader = solid_vertex;
+		info.fragment_shader = effect_fragment;
+		info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+		info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+		info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_BACK;
+		info.rasterizer_state.front_face = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+		info.depth_stencil_state.enable_depth_test = true;
+		info.depth_stencil_state.enable_depth_write = false;
+		info.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS;
+		SDL_zero(color_target);
+		color_target.format = render->color_format;
+		color_target.blend_state.enable_blend = true;
+		color_target.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
+		color_target.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+		if (effect == WB_EFFECT_FIRE)
+		{
+			color_target.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+			color_target.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+			color_target.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ZERO;
+			color_target.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+		}
+		else
+		{
+			color_target.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+			color_target.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+			color_target.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+			color_target.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+		}
+		info.target_info.color_target_descriptions = &color_target;
+		info.target_info.num_color_targets = 1;
+		info.target_info.has_depth_stencil_target = true;
+		info.target_info.depth_stencil_format = render->depth_format;
+		pipeline = SDL_CreateGPUGraphicsPipeline(render->device, &info);
+		SDL_ReleaseGPUShader(render->device, effect_fragment);
+		if (pipeline == NULL)
+		{
+			SDL_Log("Render: an effect's pipeline: %s", SDL_GetError());
+			goto done;
+		}
+		if (effect == WB_EFFECT_FIRE)
+		{
+			render->fire_pipeline = pipeline;
+		}
+		else
+		{
+			render->smoke_pipeline = pipeline;
+		}
+	}
+	// The shock waves: the picture read again, bent
+	{
+		SDL_GPUShader *post_vertex = load_shader(render->device, shader_directory, "post.vert", SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
+		SDL_GPUShader *post_fragment = load_shader(render->device, shader_directory, "post.frag", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
+
+		if (post_vertex == NULL || post_fragment == NULL)
+		{
+			if (post_vertex != NULL)
+			{
+				SDL_ReleaseGPUShader(render->device, post_vertex);
+			}
+			if (post_fragment != NULL)
+			{
+				SDL_ReleaseGPUShader(render->device, post_fragment);
+			}
+			goto done;
+		}
+		SDL_zero(info);
+		info.vertex_shader = post_vertex;
+		info.fragment_shader = post_fragment;
+		info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+		info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+		info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+		SDL_zero(color_target);
+		color_target.format = render->color_format;
+		info.target_info.color_target_descriptions = &color_target;
+		info.target_info.num_color_targets = 1;
+		render->post_pipeline = SDL_CreateGPUGraphicsPipeline(render->device, &info);
+		SDL_ReleaseGPUShader(render->device, post_vertex);
+		SDL_ReleaseGPUShader(render->device, post_fragment);
+		if (render->post_pipeline == NULL)
+		{
+			SDL_Log("Render: the shock waves' pipeline: %s", SDL_GetError());
+			goto done;
+		}
+	}
 	made = true;
 done:
 	if (solid_vertex != NULL)
@@ -711,6 +849,8 @@ wb_render_t *wb_render_create(SDL_Window *window, int width, int height, const c
 	sampler_info.enable_compare = true;
 	sampler_info.compare_op = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
 	render->shadow_sampler = SDL_CreateGPUSampler(render->device, &sampler_info);
+	sampler_info.enable_compare = false;
+	render->post_sampler = SDL_CreateGPUSampler(render->device, &sampler_info);
 	SDL_zero(buffer_info);
 	buffer_info.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
 	buffer_info.size = sizeof(instance_t) * INSTANCES_MAX;
@@ -720,7 +860,7 @@ wb_render_t *wb_render_create(SDL_Window *window, int width, int height, const c
 	transfer_info.size = sizeof(instance_t) * INSTANCES_MAX;
 	render->instance_transfer = SDL_CreateGPUTransferBuffer(render->device, &transfer_info);
 	render->all_instances = SDL_malloc(sizeof(instance_t) * INSTANCES_MAX);
-	for (int m = 0; m < WB_MESH_COUNT; m++)
+	for (int m = 0; m < LIST_COUNT; m++)
 	{
 		render->meshes[m].instances = SDL_malloc(sizeof(instance_t) * INSTANCES_MAX);
 	}
@@ -733,7 +873,7 @@ wb_render_t *wb_render_create(SDL_Window *window, int width, int height, const c
 		wb_render_destroy(render);
 		return NULL;
 	}
-	for (int m = 0; m < WB_MESH_COUNT; m++)
+	for (int m = 0; m < LIST_COUNT; m++)
 	{
 		if (render->meshes[m].instances == NULL)
 		{
@@ -793,6 +933,22 @@ void wb_render_destroy(wb_render_t *render)
 		{
 			SDL_ReleaseGPUGraphicsPipeline(render->device, render->water_pipeline);
 		}
+		if (render->fire_pipeline != NULL)
+		{
+			SDL_ReleaseGPUGraphicsPipeline(render->device, render->fire_pipeline);
+		}
+		if (render->smoke_pipeline != NULL)
+		{
+			SDL_ReleaseGPUGraphicsPipeline(render->device, render->smoke_pipeline);
+		}
+		if (render->post_pipeline != NULL)
+		{
+			SDL_ReleaseGPUGraphicsPipeline(render->device, render->post_pipeline);
+		}
+		if (render->post_sampler != NULL)
+		{
+			SDL_ReleaseGPUSampler(render->device, render->post_sampler);
+		}
 		if (render->water_vertex_buffer != NULL)
 		{
 			SDL_ReleaseGPUBuffer(render->device, render->water_vertex_buffer);
@@ -811,7 +967,7 @@ void wb_render_destroy(wb_render_t *render)
 		}
 		SDL_DestroyGPUDevice(render->device);
 	}
-	for (int m = 0; m < WB_MESH_COUNT; m++)
+	for (int m = 0; m < LIST_COUNT; m++)
 	{
 		SDL_free(render->meshes[m].instances);
 	}
@@ -969,10 +1125,98 @@ void wb_render_set_water(wb_render_t *render, const float *depths, const float *
 
 void wb_render_begin_frame(wb_render_t *render)
 {
-	for (int m = 0; m < WB_MESH_COUNT; m++)
+	for (int m = 0; m < LIST_COUNT; m++)
 	{
 		render->meshes[m].instance_count = 0;
 	}
+	render->shock_wave_count = 0;
+	render->flash = false;
+}
+
+void wb_render_add_effect(wb_render_t *render, wb_effect_t effect, const float position[3], float radius, const float color[3], float alpha)
+{
+	mesh_slot_t *slot = &render->meshes[effect == WB_EFFECT_FIRE ? LIST_FIRE : LIST_SMOKE];
+	instance_t *instance;
+
+	if (slot->instance_count >= INSTANCES_MAX)
+	{
+		return;
+	}
+	instance = &slot->instances[slot->instance_count++];
+	SDL_memcpy(instance->position, position, sizeof(float) * 3);
+	instance->position[3] = 1.0f;
+	instance->rotation[0] = 0.0f;
+	instance->rotation[1] = 0.0f;
+	instance->rotation[2] = 0.0f;
+	instance->rotation[3] = 1.0f;
+	instance->scale[0] = radius;
+	instance->scale[1] = radius;
+	instance->scale[2] = radius;
+	instance->scale[3] = 1.0f;
+	SDL_memcpy(instance->color, color, sizeof(float) * 3);
+	instance->color[3] = alpha;
+}
+
+void wb_render_set_flash(wb_render_t *render, const float position[3], const float color[3])
+{
+	SDL_memcpy(render->flash_position, position, sizeof(render->flash_position));
+	SDL_memcpy(render->flash_color, color, sizeof(render->flash_color));
+	render->flash = true;
+}
+
+void wb_render_add_shock_wave(wb_render_t *render, const float position[3], float radius, float strength)
+{
+	shock_wave_t *wave;
+
+	if (render->shock_wave_count >= SHOCK_WAVES_MAX)
+	{
+		return;
+	}
+	wave = &render->shock_waves[render->shock_wave_count++];
+	SDL_memcpy(wave->position, position, sizeof(wave->position));
+	wave->radius = radius;
+	wave->strength = strength;
+}
+
+// The smoke drawn from the furthest in (each laid over what is behind it)
+static float smoke_sort_eye[3];
+
+static int compare_smoke_distance(const void *first, const void *second)
+{
+	const instance_t *a = first;
+	const instance_t *b = second;
+	float distance_a = 0.0f;
+	float distance_b = 0.0f;
+
+	for (int k = 0; k < 3; k++)
+	{
+		distance_a += (a->position[k] - smoke_sort_eye[k]) * (a->position[k] - smoke_sort_eye[k]);
+		distance_b += (b->position[k] - smoke_sort_eye[k]) * (b->position[k] - smoke_sort_eye[k]);
+	}
+	return distance_a < distance_b ? 1 : (distance_a > distance_b ? -1 : 0);
+}
+
+static void draw_effect(wb_render_t *render, SDL_GPURenderPass *pass, SDL_GPUCommandBuffer *command_buffer, int list,
+	SDL_GPUGraphicsPipeline *pipeline, const uint32_t first_instances[LIST_COUNT], const void *frame, uint32_t frame_size, const void *light,
+	uint32_t light_size)
+{
+	const mesh_slot_t *sphere = &render->meshes[WB_MESH_SPHERE];
+	SDL_GPUBufferBinding vertex_bindings[2];
+	SDL_GPUBufferBinding index_binding;
+
+	if (render->meshes[list].instance_count == 0 || pipeline == NULL)
+	{
+		return;
+	}
+	SDL_BindGPUGraphicsPipeline(pass, pipeline);
+	SDL_PushGPUVertexUniformData(command_buffer, 0, frame, frame_size);
+	SDL_PushGPUFragmentUniformData(command_buffer, 0, light, light_size);
+	vertex_bindings[0] = (SDL_GPUBufferBinding){ sphere->vertex_buffer, 0 };
+	vertex_bindings[1] = (SDL_GPUBufferBinding){ render->instance_buffer, 0 };
+	index_binding = (SDL_GPUBufferBinding){ sphere->index_buffer, 0 };
+	SDL_BindGPUVertexBuffers(pass, 0, vertex_bindings, 2);
+	SDL_BindGPUIndexBuffer(pass, &index_binding, SDL_GPU_INDEXELEMENTSIZE_16BIT);
+	SDL_DrawGPUIndexedPrimitives(pass, sphere->index_count, (uint32_t)render->meshes[list].instance_count, 0, 0, first_instances[list]);
 }
 
 void wb_render_add(wb_render_t *render, wb_mesh_t mesh, const float position[3], const float rotation[4], const float scale[3], uint32_t color)
@@ -997,7 +1241,7 @@ void wb_render_add(wb_render_t *render, wb_mesh_t mesh, const float position[3],
 
 // The instances of all meshes into the instance buffer, one mesh after
 // another; each mesh's first instance's number
-static int upload_instances(wb_render_t *render, SDL_GPUCommandBuffer *command_buffer, uint32_t first_instances[WB_MESH_COUNT])
+static int upload_instances(wb_render_t *render, SDL_GPUCommandBuffer *command_buffer, uint32_t first_instances[LIST_COUNT])
 {
 	int total = 0;
 	instance_t *mapped;
@@ -1005,7 +1249,7 @@ static int upload_instances(wb_render_t *render, SDL_GPUCommandBuffer *command_b
 	SDL_GPUTransferBufferLocation source;
 	SDL_GPUBufferRegion destination;
 
-	for (int m = 0; m < WB_MESH_COUNT; m++)
+	for (int m = 0; m < LIST_COUNT; m++)
 	{
 		int count = SDL_min(render->meshes[m].instance_count, INSTANCES_MAX - total);
 
@@ -1018,7 +1262,7 @@ static int upload_instances(wb_render_t *render, SDL_GPUCommandBuffer *command_b
 		return 0;
 	}
 	mapped = SDL_MapGPUTransferBuffer(render->device, render->instance_transfer, true);
-	for (int m = 0; m < WB_MESH_COUNT; m++)
+	for (int m = 0; m < LIST_COUNT; m++)
 	{
 		SDL_memcpy(mapped + first_instances[m], render->meshes[m].instances, sizeof(instance_t) * (size_t)render->meshes[m].instance_count);
 	}
@@ -1034,7 +1278,7 @@ static int upload_instances(wb_render_t *render, SDL_GPUCommandBuffer *command_b
 	return total;
 }
 
-static void draw_meshes(wb_render_t *render, SDL_GPURenderPass *pass, const uint32_t first_instances[WB_MESH_COUNT])
+static void draw_meshes(wb_render_t *render, SDL_GPURenderPass *pass, const uint32_t first_instances[LIST_COUNT])
 {
 	for (int m = 0; m < WB_MESH_COUNT; m++)
 	{
@@ -1080,7 +1324,7 @@ bool wb_render_end_frame(wb_render_t *render, const wb_camera_t *camera, const c
 	SDL_GPUTexture *swapchain_texture = NULL;
 	uint32_t swapchain_width = 0;
 	uint32_t swapchain_height = 0;
-	uint32_t first_instances[WB_MESH_COUNT];
+	uint32_t first_instances[LIST_COUNT];
 	frame_uniforms_t frame;
 	light_uniforms_t light;
 	float view[16];
@@ -1093,6 +1337,7 @@ bool wb_render_end_frame(wb_render_t *render, const wb_camera_t *camera, const c
 	SDL_GPUColorTargetInfo color_target;
 	SDL_GPURenderPass *pass;
 	SDL_GPUTextureSamplerBinding shadow_binding;
+	SDL_GPUTexture *final_texture;
 	const float sky[3] = { 0.62f, 0.74f, 0.88f };
 
 	// The window resized: the targets with it
@@ -1116,6 +1361,8 @@ bool wb_render_end_frame(wb_render_t *render, const wb_camera_t *camera, const c
 	{
 		return false;
 	}
+	SDL_memcpy(smoke_sort_eye, camera->eye, sizeof(smoke_sort_eye));
+	SDL_qsort(render->meshes[LIST_SMOKE].instances, (size_t)render->meshes[LIST_SMOKE].instance_count, sizeof(instance_t), compare_smoke_distance);
 	upload_instances(render, command_buffer, first_instances);
 	if (render->water_dirty && render->water_any)
 	{
@@ -1182,6 +1429,12 @@ bool wb_render_end_frame(wb_render_t *render, const wb_camera_t *camera, const c
 	light.ground_color[2] = 0.09f;
 	SDL_memcpy(light.eye, camera->eye, sizeof(float) * 3);
 	light.shadow_texel[0] = 1.0f / (float)SHADOW_MAP_SIZE;
+	if (render->flash)
+	{
+		SDL_memcpy(light.flash_position, render->flash_position, sizeof(float) * 3);
+		light.flash_position[3] = 1.0f;
+		SDL_memcpy(light.flash_color, render->flash_color, sizeof(float) * 3);
+	}
 	SDL_zero(color_target);
 	color_target.texture = render->color_texture;
 	color_target.clear_color = (SDL_FColor){ sky[0], sky[1], sky[2], 1.0f };
@@ -1213,7 +1466,61 @@ bool wb_render_end_frame(wb_render_t *render, const wb_camera_t *camera, const c
 		SDL_BindGPUIndexBuffer(pass, &index_binding, SDL_GPU_INDEXELEMENTSIZE_16BIT);
 		SDL_DrawGPUIndexedPrimitives(pass, render->water_index_count, 1, 0, 0, 0);
 	}
+	draw_effect(render, pass, command_buffer, LIST_SMOKE, render->smoke_pipeline, first_instances, &frame, sizeof(frame), &light, sizeof(light));
+	draw_effect(render, pass, command_buffer, LIST_FIRE, render->fire_pipeline, first_instances, &frame, sizeof(frame), &light, sizeof(light));
 	SDL_EndGPURenderPass(pass);
+
+	// The shock waves: the picture read again, bent round each
+	final_texture = render->color_texture;
+	if (render->shock_wave_count > 0 && render->post_pipeline != NULL)
+	{
+		shock_uniforms_t shock;
+		SDL_GPUTextureSamplerBinding scene_binding;
+		int count = 0;
+
+		SDL_zero(shock);
+		for (int i = 0; i < render->shock_wave_count; i++)
+		{
+			const shock_wave_t *wave = &render->shock_waves[i];
+			float clip[4];
+
+			for (int row = 0; row < 4; row++)
+			{
+				clip[row] = frame.view_projection[row] * wave->position[0] + frame.view_projection[4 + row] * wave->position[1]
+					+ frame.view_projection[8 + row] * wave->position[2] + frame.view_projection[12 + row];
+			}
+			if (clip[3] < 0.1f)
+			{
+				continue;
+			}
+			shock.rings[count][0] = (0.5f + 0.5f * clip[0] / clip[3]) * (float)render->width;
+			shock.rings[count][1] = (0.5f - 0.5f * clip[1] / clip[3]) * (float)render->height;
+			// (meters to pixels at its distance: the projection's focal length)
+			shock.rings[count][2] = wave->radius * projection[5] * 0.5f * (float)render->height / clip[3];
+			shock.rings[count][3] = wave->strength * 22.0f * (float)render->height / 720.0f;
+			count++;
+		}
+		shock.info[0] = (float)count;
+		shock.info[1] = 10.0f * (float)render->height / 720.0f;
+		shock.info[2] = 1.0f / (float)render->width;
+		shock.info[3] = 1.0f / (float)render->height;
+		if (count > 0)
+		{
+			SDL_zero(color_target);
+			color_target.texture = render->post_texture;
+			color_target.load_op = SDL_GPU_LOADOP_DONT_CARE;
+			color_target.store_op = SDL_GPU_STOREOP_STORE;
+			pass = SDL_BeginGPURenderPass(command_buffer, &color_target, 1, NULL);
+			SDL_BindGPUGraphicsPipeline(pass, render->post_pipeline);
+			SDL_PushGPUFragmentUniformData(command_buffer, 0, &shock, sizeof(shock));
+			scene_binding.texture = render->color_texture;
+			scene_binding.sampler = render->post_sampler;
+			SDL_BindGPUFragmentSamplers(pass, 0, &scene_binding, 1);
+			SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+			SDL_EndGPURenderPass(pass);
+			final_texture = render->post_texture;
+		}
+	}
 
 	// To the window
 	if (render->window != NULL && SDL_WaitAndAcquireGPUSwapchainTexture(command_buffer, render->window, &swapchain_texture, &swapchain_width,
@@ -1222,7 +1529,7 @@ bool wb_render_end_frame(wb_render_t *render, const wb_camera_t *camera, const c
 		SDL_GPUBlitInfo blit;
 
 		SDL_zero(blit);
-		blit.source.texture = render->color_texture;
+		blit.source.texture = final_texture;
 		blit.source.w = (uint32_t)render->width;
 		blit.source.h = (uint32_t)render->height;
 		blit.destination.texture = swapchain_texture;
@@ -1241,7 +1548,7 @@ bool wb_render_end_frame(wb_render_t *render, const wb_camera_t *camera, const c
 		SDL_GPUFence *fence;
 
 		SDL_zero(source);
-		source.texture = render->color_texture;
+		source.texture = final_texture;
 		source.w = (uint32_t)render->width;
 		source.h = (uint32_t)render->height;
 		source.d = 1;

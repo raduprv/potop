@@ -711,6 +711,15 @@ void wb_world_blast(wb_world_t *world, const float position[3], float kilograms)
 	// (the water too: a crater and a ring of waves, if it went off in or
 	// near it)
 	shallow_water_blast(&world->water, position[0], position[1], position[2], kilograms);
+	if (world->blast_count < WB_BLASTS_KEPT)
+	{
+		float *kept = world->blasts[world->blast_count++];
+
+		kept[0] = position[0];
+		kept[1] = position[1];
+		kept[2] = position[2];
+		kept[3] = kilograms;
+	}
 	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
 	{
 		if (world->buildings[b].used)
@@ -719,6 +728,15 @@ void wb_world_blast(wb_world_t *world, const float position[3], float kilograms)
 				world->frame_index);
 		}
 	}
+}
+
+int wb_world_take_blasts(wb_world_t *world, float blasts[WB_BLASTS_KEPT][4])
+{
+	int count = world->blast_count;
+
+	SDL_memcpy(blasts, world->blasts, sizeof(float) * 4 * (size_t)count);
+	world->blast_count = 0;
+	return count;
 }
 
 bool wb_world_cast_ray(const wb_world_t *world, const float origin[3], const float direction[3], float distance, float hit_point[3])

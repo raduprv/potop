@@ -43,6 +43,7 @@
 #include <string.h>
 #include <SDL3/SDL.h>
 
+#include "wb_effects.h"
 #include "wb_math.h"
 #include "wb_render.h"
 #include "wb_world.h"
@@ -341,6 +342,18 @@ static void draw_world(wb_render_t *render, const wb_world_t *world, const float
 	}
 }
 
+// The world's new blasts to their looks
+static void start_blast_effects(wb_world_t *world, wb_effects_t *effects)
+{
+	float blasts[WB_BLASTS_KEPT][4];
+	int count = wb_world_take_blasts(world, blasts);
+
+	for (int i = 0; i < count; i++)
+	{
+		wb_effects_start(effects, blasts[i], blasts[i][3]);
+	}
+}
+
 static void update_water(wb_render_t *render, const wb_world_t *world)
 {
 	const shallow_water_t *water = &world->water;
@@ -573,6 +586,8 @@ static void scripted_events(wb_world_t *world, const options_t *options, const f
 static int run_shot(const options_t *options)
 {
 	wb_world_t *world = SDL_calloc(1, sizeof(*world));
+	static wb_effects_t effects_storage;
+	wb_effects_t *effects = &effects_storage;
 	wb_render_t *render;
 	fly_camera_t camera;
 	wb_camera_t render_camera;
@@ -607,12 +622,15 @@ static int run_shot(const options_t *options)
 	{
 		scripted_events(world, options, &camera);
 		wb_world_step(world);
+		start_blast_effects(world, effects);
+		wb_effects_update(effects, 1.0f / (float)WB_WORLD_STEPS_PER_SECOND);
 		if (options->trace && world->frame_index % (WB_WORLD_STEPS_PER_SECOND / 2) == 0)
 		{
 			print_fastest_piece(world);
 		}
 	}
 	draw_world(render, world, NULL);
+	wb_effects_draw(effects, render);
 	update_water(render, world);
 	camera_to_render(&camera, &render_camera);
 	saved = wb_render_end_frame(render, &render_camera, options->shot_path);
@@ -643,6 +661,8 @@ static int run_window(const options_t *options)
 	SDL_Window *window;
 	wb_render_t *render;
 	wb_world_t *world = SDL_calloc(1, sizeof(*world));
+	static wb_effects_t effects_storage;
+	wb_effects_t *effects = &effects_storage;
 	fly_camera_t camera;
 	bool running = true;
 	bool looking = false;
@@ -855,6 +875,7 @@ static int run_window(const options_t *options)
 				else if (key == SDLK_R)
 				{
 					wb_world_reset_buildings(world);
+					wb_effects_clear(effects);
 				}
 				else if (key == SDLK_H)
 				{
@@ -957,9 +978,12 @@ static int run_window(const options_t *options)
 			{
 				step_time_left = 0.0;
 			}
+			start_blast_effects(world, effects);
+			wb_effects_update(effects, (float)seconds * (slow ? 0.25f : 1.0f));
 		}
 		aiming = wb_world_cast_ray(world, camera.position, aim_direction, 200.0f, aim_point);
 		draw_world(render, world, aiming ? aim_point : NULL);
+		wb_effects_draw(effects, render);
 		if (!paused || pouring)
 		{
 			update_water(render, world);

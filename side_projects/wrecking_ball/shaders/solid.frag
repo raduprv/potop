@@ -21,6 +21,8 @@ layout(set = 3, binding = 0) uniform light_block
 	vec4 fog_color;                    // (not used now)
 	vec4 eye;
 	vec4 shadow_texel;
+	vec4 flash_position;               // an explosion's flash: where; w: 1 while there is one
+	vec4 flash_color;                  // its light (linear, falling off with the distance squared)
 };
 
 float sun_visible()
@@ -66,6 +68,14 @@ void main()
 		albedo *= 1.0 - 0.07 * minor - 0.14 * major;
 	}
 	color = albedo * (ambient * 0.85 + sun_color.rgb * facing_sun * shadow);
+	if (flash_position.w > 0.0)
+	{
+		vec3 to_flash = flash_position.xyz - in_world_position;
+		float distance_squared = dot(to_flash, to_flash);
+
+		color += albedo * flash_color.rgb * max(dot(normal, to_flash * inversesqrt(max(distance_squared, 0.0001))), 0.0)
+			/ (1.0 + distance_squared);
+	}
 	// A gentle curve, then to sRGB by hand (the target is not sRGB)
 	color = color / (1.0 + color * 0.25);
 	out_color = vec4(pow(clamp(color, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0);

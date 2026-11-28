@@ -22,6 +22,7 @@
 #define WB_TERRAIN_CELL_METERS 0.5f
 #define WB_BALLS_MAX 8
 #define WB_BUILDINGS_MAX 16
+#define WB_BLASTS_KEPT 16
 #define WB_BOMB_RADIUS 0.2f
 #define WB_BOMB_DENSITY 1500.0f              // kilograms a cubic meter: 50 kg
 #define WB_BOMB_ARM_SECONDS 0.05f            // (not set off by the hand that throws it)
@@ -67,6 +68,10 @@ typedef struct
 	int next_ball;
 	int frame_index;
 	shallow_water_t water;
+	// The blasts since they were last taken (for how they look): x, y, z,
+	// kilograms
+	float blasts[WB_BLASTS_KEPT][4];
+	int blast_count;
 } wb_world_t;
 
 // The world with its ground; settings_path: an ini of the model's numbers
@@ -100,6 +105,9 @@ void wb_world_throw_ball(wb_world_t *world, const float origin[3], const float d
 void wb_world_throw_bomb(wb_world_t *world, const float origin[3], const float direction[3], float speed, float kilograms);
 // A blast of kilograms of explosive at a point
 void wb_world_blast(wb_world_t *world, const float position[3], float kilograms);
+// The blasts since the last call (x, y, z, kilograms each): how many,
+// copied into blasts; then forgotten
+int wb_world_take_blasts(wb_world_t *world, float blasts[WB_BLASTS_KEPT][4]);
 // The first thing along a ray (direction of unit length) within a
 // distance; false if nothing
 bool wb_world_cast_ray(const wb_world_t *world, const float origin[3], const float direction[3], float distance, float hit_point[3]);
