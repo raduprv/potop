@@ -40,6 +40,7 @@ typedef struct
 	float yaw_radians;
 	float minimum[3];                  // the box it stood in when placed
 	float maximum[3];
+	bool knows_water;                  // its model was given the water (wreck_model_set_water)
 } wb_building_t;
 
 typedef struct
