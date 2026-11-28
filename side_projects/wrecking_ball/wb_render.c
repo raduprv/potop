@@ -19,6 +19,18 @@ typedef struct
 	float normal[3];
 } vertex_t;
 
+// A corner of the water's surface (water.vert's inputs)
+typedef struct
+{
+	float position[3];
+	float normal[3];
+	float depth;
+	float unused;
+} water_vertex_t;
+
+// Thinner than this the water is not drawn (wb_water.c's dry depth)
+#define WATER_DRY_DEPTH 0.002f
+
 // What the shaders read of an instance (solid.vert's inputs 2 to 5)
 typedef struct
 {
@@ -49,7 +61,7 @@ typedef struct
 	float sun_color[4];
 	float sky_color[4];
 	float ground_color[4];
-	float fog_color[4];                // alpha: 1 / the distance at which the fog is whole
+	float fog_color[4];                // (not used now)
 	float eye[4];
 	float shadow_texel[4];             // x: one texel of the shadow map, in its coordinates
 } light_uniforms_t;
@@ -69,6 +81,18 @@ struct wb_render_s
 	SDL_GPUSampler *shadow_sampler;
 	SDL_GPUGraphicsPipeline *scene_pipeline;
 	SDL_GPUGraphicsPipeline *shadow_pipeline;
+	SDL_GPUGraphicsPipeline *water_pipeline;
+	// The water's surface: a grid of corners like the ground's, written
+	// anew each frame it changes
+	SDL_GPUBuffer *water_vertex_buffer;
+	SDL_GPUBuffer *water_index_buffer;
+	SDL_GPUTransferBuffer *water_transfer;
+	water_vertex_t *water_vertices;
+	float *water_surface;              // a corner's height of surface (scratch)
+	int water_cells;
+	uint32_t water_index_count;
+	bool water_dirty;                  // written since the last frame: to upload
+	bool water_any;                    // anything wet to draw
 	mesh_slot_t meshes[WB_MESH_COUNT];
 	SDL_GPUBuffer *instance_buffer;
 	SDL_GPUTransferBuffer *instance_transfer;
@@ -546,6 +570,67 @@ static bool make_pipelines(wb_render_t *render, const char *shader_directory)
 		SDL_Log("Render: the shadows' pipeline: %s", SDL_GetError());
 		goto done;
 	}
+	// The water: see through, over the solids, writing no depth
+	{
+		SDL_GPUShader *water_vertex = load_shader(render->device, shader_directory, "water.vert", SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
+		SDL_GPUShader *water_fragment = load_shader(render->device, shader_directory, "water.frag", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
+		SDL_GPUVertexBufferDescription water_buffer;
+		SDL_GPUVertexAttribute water_attributes[3];
+
+		if (water_vertex == NULL || water_fragment == NULL)
+		{
+			if (water_vertex != NULL)
+			{
+				SDL_ReleaseGPUShader(render->device, water_vertex);
+			}
+			if (water_fragment != NULL)
+			{
+				SDL_ReleaseGPUShader(render->device, water_fragment);
+			}
+			goto done;
+		}
+		SDL_zero(info);
+		SDL_zero(water_buffer);
+		water_buffer.slot = 0;
+		water_buffer.pitch = sizeof(water_vertex_t);
+		water_buffer.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
+		water_attributes[0] = (SDL_GPUVertexAttribute){ 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, 0 };
+		water_attributes[1] = (SDL_GPUVertexAttribute){ 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, sizeof(float) * 3 };
+		water_attributes[2] = (SDL_GPUVertexAttribute){ 2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT, sizeof(float) * 6 };
+		info.vertex_input_state.vertex_buffer_descriptions = &water_buffer;
+		info.vertex_input_state.num_vertex_buffers = 1;
+		info.vertex_input_state.vertex_attributes = water_attributes;
+		info.vertex_input_state.num_vertex_attributes = 3;
+		info.vertex_shader = water_vertex;
+		info.fragment_shader = water_fragment;
+		info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+		info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+		info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+		info.depth_stencil_state.enable_depth_test = true;
+		info.depth_stencil_state.enable_depth_write = false;
+		info.depth_stencil_state.compare_op = SDL_GPU_COMPAREOP_LESS;
+		SDL_zero(color_target);
+		color_target.format = render->color_format;
+		color_target.blend_state.enable_blend = true;
+		color_target.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+		color_target.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+		color_target.blend_state.color_blend_op = SDL_GPU_BLENDOP_ADD;
+		color_target.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+		color_target.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+		color_target.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
+		info.target_info.color_target_descriptions = &color_target;
+		info.target_info.num_color_targets = 1;
+		info.target_info.has_depth_stencil_target = true;
+		info.target_info.depth_stencil_format = render->depth_format;
+		render->water_pipeline = SDL_CreateGPUGraphicsPipeline(render->device, &info);
+		SDL_ReleaseGPUShader(render->device, water_vertex);
+		SDL_ReleaseGPUShader(render->device, water_fragment);
+		if (render->water_pipeline == NULL)
+		{
+			SDL_Log("Render: the water's pipeline: %s", SDL_GetError());
+			goto done;
+		}
+	}
 	made = true;
 done:
 	if (solid_vertex != NULL)
@@ -704,6 +789,22 @@ void wb_render_destroy(wb_render_t *render)
 		{
 			SDL_ReleaseGPUGraphicsPipeline(render->device, render->shadow_pipeline);
 		}
+		if (render->water_pipeline != NULL)
+		{
+			SDL_ReleaseGPUGraphicsPipeline(render->device, render->water_pipeline);
+		}
+		if (render->water_vertex_buffer != NULL)
+		{
+			SDL_ReleaseGPUBuffer(render->device, render->water_vertex_buffer);
+		}
+		if (render->water_index_buffer != NULL)
+		{
+			SDL_ReleaseGPUBuffer(render->device, render->water_index_buffer);
+		}
+		if (render->water_transfer != NULL)
+		{
+			SDL_ReleaseGPUTransferBuffer(render->device, render->water_transfer);
+		}
 		if (render->window != NULL)
 		{
 			SDL_ReleaseWindowFromGPUDevice(render->device, render->window);
@@ -715,6 +816,8 @@ void wb_render_destroy(wb_render_t *render)
 		SDL_free(render->meshes[m].instances);
 	}
 	SDL_free(render->all_instances);
+	SDL_free(render->water_vertices);
+	SDL_free(render->water_surface);
 	SDL_free(render);
 }
 
@@ -728,6 +831,137 @@ void wb_render_set_shadow_bounds(wb_render_t *render, const float center[3], flo
 {
 	SDL_memcpy(render->shadow_center, center, sizeof(render->shadow_center));
 	render->shadow_radius = SDL_max(radius, 1.0f);
+}
+
+// The water's grid: its buffers and indices, made once for its size
+static bool make_water_grid(wb_render_t *render, int cells)
+{
+	int corners = cells + 1;
+	int vertex_count = corners * corners;
+	int index_count = cells * cells * 6;
+	uint16_t *indices;
+	SDL_GPUBufferCreateInfo buffer_info;
+	SDL_GPUTransferBufferCreateInfo transfer_info;
+
+	if (vertex_count > 65536)
+	{
+		return false;
+	}
+	render->water_vertices = SDL_calloc((size_t)vertex_count, sizeof(water_vertex_t));
+	render->water_surface = SDL_calloc((size_t)vertex_count, sizeof(float));
+	indices = SDL_malloc(sizeof(uint16_t) * (size_t)index_count);
+	if (render->water_vertices == NULL || render->water_surface == NULL || indices == NULL)
+	{
+		SDL_free(indices);
+		return false;
+	}
+	index_count = 0;
+	for (int row = 0; row < cells; row++)
+	{
+		for (int column = 0; column < cells; column++)
+		{
+			int a = row * corners + column;
+			int b = a + corners;
+
+			indices[index_count++] = (uint16_t)a;
+			indices[index_count++] = (uint16_t)b;
+			indices[index_count++] = (uint16_t)(a + 1);
+			indices[index_count++] = (uint16_t)(a + 1);
+			indices[index_count++] = (uint16_t)b;
+			indices[index_count++] = (uint16_t)(b + 1);
+		}
+	}
+	render->water_index_buffer = make_buffer(render->device, SDL_GPU_BUFFERUSAGE_INDEX, indices, (uint32_t)(sizeof(uint16_t) * (size_t)index_count));
+	SDL_free(indices);
+	render->water_index_count = (uint32_t)index_count;
+	SDL_zero(buffer_info);
+	buffer_info.usage = SDL_GPU_BUFFERUSAGE_VERTEX;
+	buffer_info.size = (uint32_t)(sizeof(water_vertex_t) * (size_t)vertex_count);
+	render->water_vertex_buffer = SDL_CreateGPUBuffer(render->device, &buffer_info);
+	SDL_zero(transfer_info);
+	transfer_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+	transfer_info.size = buffer_info.size;
+	render->water_transfer = SDL_CreateGPUTransferBuffer(render->device, &transfer_info);
+	render->water_cells = cells;
+	return render->water_index_buffer != NULL && render->water_vertex_buffer != NULL && render->water_transfer != NULL;
+}
+
+void wb_render_set_water(wb_render_t *render, const float *depths, const float *floors, const float *corner_heights, int cells, float cell_meters,
+	float origin_x, float origin_z)
+{
+	int corners = cells + 1;
+	bool any = false;
+
+	if (render->water_cells != cells && (render->water_cells != 0 || !make_water_grid(render, cells)))
+	{
+		return;
+	}
+	// Each corner: the mean surface of the wet cells round it, and the
+	// mean depth of all four; a corner with no wet cell is put under the
+	// ground, so the surface meets the ground where the water ends
+	for (int row = 0; row < corners; row++)
+	{
+		for (int column = 0; column < corners; column++)
+		{
+			float surface_sum = 0.0f;
+			float depth_sum = 0.0f;
+			int wet = 0;
+			water_vertex_t *vertex = &render->water_vertices[row * corners + column];
+
+			for (int cell_row = row - 1; cell_row <= row; cell_row++)
+			{
+				for (int cell_column = column - 1; cell_column <= column; cell_column++)
+				{
+					int index = cell_row * cells + cell_column;
+
+					if (cell_row < 0 || cell_column < 0 || cell_row >= cells || cell_column >= cells)
+					{
+						continue;
+					}
+					depth_sum += depths[index];
+					if (depths[index] > WATER_DRY_DEPTH)
+					{
+						surface_sum += floors[index] + depths[index];
+						wet++;
+					}
+				}
+			}
+			vertex->position[0] = origin_x + (float)column * cell_meters;
+			vertex->position[2] = origin_z + (float)row * cell_meters;
+			if (wet > 0)
+			{
+				vertex->position[1] = surface_sum / (float)wet;
+				vertex->depth = depth_sum * 0.25f;
+				any = true;
+			}
+			else
+			{
+				vertex->position[1] = corner_heights[row * corners + column] - 0.01f;
+				vertex->depth = 0.0f;
+			}
+			render->water_surface[row * corners + column] = vertex->position[1];
+		}
+	}
+	// The normals, from the surface round each corner
+	for (int row = 0; row < corners; row++)
+	{
+		for (int column = 0; column < corners; column++)
+		{
+			int left = SDL_max(column - 1, 0);
+			int right = SDL_min(column + 1, cells);
+			int up = SDL_max(row - 1, 0);
+			int down = SDL_min(row + 1, cells);
+			float slope_x = (render->water_surface[row * corners + right] - render->water_surface[row * corners + left]) / ((float)(right - left) * cell_meters);
+			float slope_z = (render->water_surface[down * corners + column] - render->water_surface[up * corners + column]) / ((float)(down - up) * cell_meters);
+			float normal[3] = { -slope_x, 1.0f, -slope_z };
+			water_vertex_t *vertex = &render->water_vertices[row * corners + column];
+
+			wb_vector_normalize(normal);
+			SDL_memcpy(vertex->normal, normal, sizeof(normal));
+		}
+	}
+	render->water_any = any;
+	render->water_dirty = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -883,6 +1117,26 @@ bool wb_render_end_frame(wb_render_t *render, const wb_camera_t *camera, const c
 		return false;
 	}
 	upload_instances(render, command_buffer, first_instances);
+	if (render->water_dirty && render->water_any)
+	{
+		uint32_t size = (uint32_t)(sizeof(water_vertex_t) * (size_t)(render->water_cells + 1) * (size_t)(render->water_cells + 1));
+		void *mapped = SDL_MapGPUTransferBuffer(render->device, render->water_transfer, true);
+		SDL_GPUCopyPass *copy_pass;
+		SDL_GPUTransferBufferLocation source;
+		SDL_GPUBufferRegion destination;
+
+		SDL_memcpy(mapped, render->water_vertices, size);
+		SDL_UnmapGPUTransferBuffer(render->device, render->water_transfer);
+		copy_pass = SDL_BeginGPUCopyPass(command_buffer);
+		SDL_zero(source);
+		source.transfer_buffer = render->water_transfer;
+		SDL_zero(destination);
+		destination.buffer = render->water_vertex_buffer;
+		destination.size = size;
+		SDL_UploadToGPUBuffer(copy_pass, &source, &destination, true);
+		SDL_EndGPUCopyPass(copy_pass);
+		render->water_dirty = false;
+	}
 
 	// The matrices: the camera's, and the sun's box round the shadows' bounds
 	SDL_memcpy(sun, sun_direction, sizeof(sun));
@@ -926,7 +1180,6 @@ bool wb_render_end_frame(wb_render_t *render, const wb_camera_t *camera, const c
 	light.ground_color[0] = 0.12f;
 	light.ground_color[1] = 0.11f;
 	light.ground_color[2] = 0.09f;
-	light.fog_color[3] = 1.0f / 260.0f;
 	SDL_memcpy(light.eye, camera->eye, sizeof(float) * 3);
 	light.shadow_texel[0] = 1.0f / (float)SHADOW_MAP_SIZE;
 	SDL_zero(color_target);
@@ -947,6 +1200,19 @@ bool wb_render_end_frame(wb_render_t *render, const wb_camera_t *camera, const c
 	shadow_binding.sampler = render->shadow_sampler;
 	SDL_BindGPUFragmentSamplers(pass, 0, &shadow_binding, 1);
 	draw_meshes(render, pass, first_instances);
+	if (render->water_any && render->water_pipeline != NULL)
+	{
+		SDL_GPUBufferBinding vertex_binding = { render->water_vertex_buffer, 0 };
+		SDL_GPUBufferBinding index_binding = { render->water_index_buffer, 0 };
+
+		SDL_BindGPUGraphicsPipeline(pass, render->water_pipeline);
+		SDL_PushGPUVertexUniformData(command_buffer, 0, &frame, sizeof(frame));
+		SDL_PushGPUFragmentUniformData(command_buffer, 0, &light, sizeof(light));
+		SDL_BindGPUFragmentSamplers(pass, 0, &shadow_binding, 1);
+		SDL_BindGPUVertexBuffers(pass, 0, &vertex_binding, 1);
+		SDL_BindGPUIndexBuffer(pass, &index_binding, SDL_GPU_INDEXELEMENTSIZE_16BIT);
+		SDL_DrawGPUIndexedPrimitives(pass, render->water_index_count, 1, 0, 0, 0);
+	}
 	SDL_EndGPURenderPass(pass);
 
 	// To the window

@@ -19,12 +19,12 @@ SDL_LIBS := $(shell $(PKG_CONFIG) --libs sdl3 2>/dev/null)
 SDL_LIBRARY_DIRECTORY := $(shell $(PKG_CONFIG) --variable=libdir sdl3 2>/dev/null)
 CFLAGS += -std=c11 -Wall -Wextra -O2 -g -I$(THIRD_PARTY) -I$(THIRD_PARTY)/box3d/include -I$(ENGINE) $(SDL_CFLAGS)
 
-SOURCES = wb_main.c wb_world.c wb_render.c wb_math.c wb_ini.c
+SOURCES = wb_main.c wb_world.c wb_render.c wb_math.c wb_ini.c wb_water.c
 OBJECTS = $(SOURCES:%.c=build/%.o) build/wb_stb.o build/wreck.o
 HEADERS = $(wildcard *.h) $(ENGINE)/wreck.h
 BOX3D_SOURCES = $(wildcard $(THIRD_PARTY)/box3d/src/*.c)
 BOX3D_OBJECTS = $(BOX3D_SOURCES:$(THIRD_PARTY)/box3d/src/%.c=build/box3d/%.o)
-SHADERS = solid.vert solid.frag shadow.vert shadow.frag
+SHADERS = solid.vert solid.frag shadow.vert shadow.frag water.vert water.frag
 SHADER_BINARIES = $(SHADERS:%=build/shaders/%.spv)
 
 all: wrecking_ball $(SHADER_BINARIES)

@@ -101,6 +101,11 @@ bool wb_world_create(wb_world_t *world, const char *settings_path)
 	definition.hitEventThreshold = world->settings.hit_speed;
 	world->world = b3CreateWorld(&definition);
 	make_terrain(world);
+	if (!wb_water_create(&world->water, world->terrain_heights, WB_TERRAIN_CELLS, WB_TERRAIN_CELL_METERS, -wb_world_terrain_half_size(),
+		-wb_world_terrain_half_size()))
+	{
+		return false;
+	}
 	return true;
 }
 
@@ -157,6 +162,7 @@ void wb_world_destroy(wb_world_t *world)
 	{
 		b3DestroyHeightField(world->terrain_field);
 	}
+	wb_water_destroy(&world->water);
 	SDL_zerop(world);
 }
 
@@ -495,10 +501,121 @@ static void remove_ball(wb_world_t *world, wb_ball_t *ball)
 	ball->used = false;
 }
 
+// How far a box (half sizes, turned) reaches up and down from its middle
+static float vertical_reach(b3Quat rotation, const float half[3])
+{
+	float x = rotation.v.x;
+	float y = rotation.v.y;
+	float z = rotation.v.z;
+	float w = rotation.s;
+	// The world's y of each of the box's own axes (the rotation matrix's middle row)
+	float row[3] = { 2.0f * (x * y + w * z), 1.0f - 2.0f * (x * x + z * z), 2.0f * (y * z - w * x) };
+
+	return SDL_fabsf(row[0]) * half[0] + SDL_fabsf(row[1]) * half[1] + SDL_fabsf(row[2]) * half[2];
+}
+
+// The water on a body at a point: lifted by the part under water (its
+// weight in water), dragged towards the water's own speed. reach: how
+// far it goes up and down from the point; volume in cubic meters
+static void push_by_water(wb_world_t *world, b3BodyId body, b3Vec3 point, float reach, float volume, float mass)
+{
+	float depth;
+	float surface;
+	float flow[2];
+	float under;
+	b3Vec3 speed;
+	b3Vec3 force;
+	const float drag_per_second = 1.5f;
+
+	if (!wb_water_sample(&world->water, point.x, point.z, &depth, &surface, flow))
+	{
+		return;
+	}
+	under = (surface - (point.y - reach)) / (2.0f * SDL_max(reach, 0.01f));
+	if (under <= 0.0f)
+	{
+		return;
+	}
+	under = SDL_min(under, 1.0f);
+	speed = b3Body_GetWorldPointVelocity(body, point);
+	force.x = -drag_per_second * under * mass * (speed.x - flow[0]);
+	force.y = WB_WATER_DENSITY * 9.81f * volume * under - drag_per_second * under * mass * speed.y;
+	force.z = -drag_per_second * under * mass * (speed.z - flow[1]);
+	// (still water does not wake what has come to rest in it: it would
+	// keep every sunken piece awake for good)
+	b3Body_ApplyForce(body, force, point, SDL_fabsf(flow[0]) + SDL_fabsf(flow[1]) > 0.03f);
+}
+
+// The water on what is loose: the pieces of fallen parts, the balls
+static void push_loose_things(wb_world_t *world)
+{
+	if (world->water.total_volume <= 0.0)
+	{
+		return;
+	}
+	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
+	{
+		const wreck_model_t *model = world->buildings[b].model;
+
+		if (!world->buildings[b].used)
+		{
+			continue;
+		}
+		for (int p = 0; p < model->piece_count; p++)
+		{
+			const wreck_piece_t *piece = &model->pieces[p];
+			const wreck_group_t *group;
+			b3Transform transform;
+			float half[3];
+			float volume;
+
+			if (piece->group == WRECK_GONE || piece->crushed)
+			{
+				continue;
+			}
+			group = &model->groups[piece->group];
+			if (group->anchored || !b3Body_IsValid(group->body))
+			{
+				continue;
+			}
+			transform = wreck_model_piece_transform(model, p);
+			if (piece->shape == WRECK_PIECE_LOG)
+			{
+				half[0] = piece->half_length;
+				half[1] = piece->radius;
+				half[2] = piece->radius;
+				volume = SDL_PI_F * piece->radius * piece->radius * 2.0f * piece->half_length;
+			}
+			else
+			{
+				half[0] = piece->half_extents.x;
+				half[1] = piece->half_extents.y;
+				half[2] = piece->half_extents.z;
+				volume = 8.0f * half[0] * half[1] * half[2];
+			}
+			push_by_water(world, group->body, transform.p, vertical_reach(transform.q, half), volume, piece->mass);
+		}
+	}
+	for (int i = 0; i < WB_BALLS_MAX; i++)
+	{
+		const wb_ball_t *ball = &world->balls[i];
+
+		if (ball->used)
+		{
+			float volume = 4.0f / 3.0f * SDL_PI_F * ball->radius * ball->radius * ball->radius;
+
+			push_by_water(world, ball->body, b3Body_GetPosition(ball->body), ball->radius, volume, b3Body_GetMass(ball->body));
+		}
+	}
+}
+
 void wb_world_step(wb_world_t *world)
 {
 	const float step_seconds = 1.0f / (float)WB_WORLD_STEPS_PER_SECOND;
 	b3ContactEvents events;
+
+	push_loose_things(world);
+	wb_water_step(&world->water, step_seconds);
 
 	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
 	{

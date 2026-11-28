@@ -1,6 +1,6 @@
 #version 450
 // A solid of one color: the sun (with its shadow map, 3 x 3 samples), the
-// sky above and the ground below as ambient, fog far away. The ground is
+// sky above and the ground below as ambient. The ground is
 // drawn with a grid of 1 and 5 meters.
 
 layout(location = 0) in vec3 in_world_position;
@@ -18,7 +18,7 @@ layout(set = 3, binding = 0) uniform light_block
 	vec4 sun_color;
 	vec4 sky_color;
 	vec4 ground_color;
-	vec4 fog_color;                    // a: 1 / the distance of whole fog
+	vec4 fog_color;                    // (not used now)
 	vec4 eye;
 	vec4 shadow_texel;
 };
@@ -58,8 +58,6 @@ void main()
 	float shadow = facing_sun > 0.0 ? sun_visible() : 0.0;
 	vec3 ambient = mix(ground_color.rgb, sky_color.rgb, 0.5 + 0.5 * normal.y);
 	vec3 color;
-	float distance_to_eye = length(in_world_position - eye.xyz);
-	float fog;
 
 	if (in_color.a < 0.5)
 	{
@@ -68,8 +66,6 @@ void main()
 		albedo *= 1.0 - 0.07 * minor - 0.14 * major;
 	}
 	color = albedo * (ambient * 0.85 + sun_color.rgb * facing_sun * shadow);
-	fog = 1.0 - exp(-distance_to_eye * fog_color.a);
-	color = mix(color, fog_color.rgb, clamp(fog, 0.0, 1.0));
 	// A gentle curve, then to sRGB by hand (the target is not sRGB)
 	color = color / (1.0 + color * 0.25);
 	out_color = vec4(pow(clamp(color, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0);

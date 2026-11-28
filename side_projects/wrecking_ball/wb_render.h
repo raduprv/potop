@@ -51,6 +51,11 @@ void wb_render_destroy(wb_render_t *render);
 // z, the first corner at (origin_x, origin_z)
 bool wb_render_set_terrain(wb_render_t *render, const float *heights, int cells, float cell_meters, float origin_x, float origin_z);
 
+// The water's surface from its depths (wb_water.h), every frame it
+// changes; corner_heights: the ground's, as for wb_render_set_terrain
+void wb_render_set_water(wb_render_t *render, const float *depths, const float *floors, const float *corner_heights, int cells, float cell_meters,
+	float origin_x, float origin_z);
+
 // The part of the world the sun's shadows cover: a box round a center
 void wb_render_set_shadow_bounds(wb_render_t *render, const float center[3], float radius);
 

@@ -14,6 +14,7 @@
 #include <stdint.h>
 
 #include "box3d/box3d.h"
+#include "wb_water.h"
 #include "wreck.h"
 
 #define WB_WORLD_STEPS_PER_SECOND 60
@@ -54,6 +55,7 @@ typedef struct
 	wb_ball_t balls[WB_BALLS_MAX];
 	int next_ball;
 	int frame_index;
+	wb_water_t water;
 } wb_world_t;
 
 // The world with its ground; settings_path: an ini of the model's numbers

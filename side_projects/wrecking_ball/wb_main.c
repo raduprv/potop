@@ -17,11 +17,15 @@
 //   --add X Z YAW       one more of the building at (x, z), turned yaw degrees
 //   --throw-at N        throw a ball from the camera at the building at frame N
 //   --blast-at N        a blast in the building's middle at frame N
+//   --flood-at N        water 60 cm deep everywhere at frame N
+//   --pour-at N         40 cubic meters poured 4 m off the building's side at frame N
 //
 // In the window:
 //   right mouse button held: look round; W A S D, Q E: move (shift: faster)
-//   1: the wrecking ball, 2: the bomb; left click: the weapon at the
-//   cursor (the ball thrown towards it, the bomb set off where it points)
+//   1: the wrecking ball, 2: the bomb, 3: water; left click: the weapon at
+//   the cursor (the ball thrown towards it, the bomb set off where it
+//   points, water poured there while held)
+//   F: a flood (the water 30 cm higher everywhere); G: the water gone
 //   middle button held: turn round what is under the cursor; wheel: closer
 //   or further, towards the cursor
 //   F1 to F4: house, cabin, support, bend, alone in the middle; H: one
@@ -61,6 +65,8 @@ typedef struct
 	float camera[6];
 	int throw_frame;
 	int blast_frame;
+	int flood_frame;
+	int pour_frame;
 	// More of the same building: x, z, yaw in degrees each
 	float extra_buildings[WB_BUILDINGS_MAX][3];
 	int extra_building_count;
@@ -72,10 +78,15 @@ typedef enum
 {
 	WEAPON_BALL,
 	WEAPON_BOMB,
+	WEAPON_WATER,
 	WEAPON_COUNT
 } weapon_t;
 
-static const char *const WEAPON_NAMES[WEAPON_COUNT] = { "wrecking ball", "bomb" };
+static const char *const WEAPON_NAMES[WEAPON_COUNT] = { "wrecking ball", "bomb", "water" };
+
+#define WATER_POUR_CUBIC_METERS_A_SECOND 2.0f
+#define WATER_POUR_RADIUS 1.0f
+#define FLOOD_STEP_METERS 0.3f
 
 // ---------------------------------------------------------------------------
 // The camera
@@ -321,6 +332,13 @@ static void draw_world(wb_render_t *render, const wb_world_t *world, const float
 	}
 }
 
+static void update_water(wb_render_t *render, const wb_world_t *world)
+{
+	const wb_water_t *water = &world->water;
+
+	wb_render_set_water(render, water->depth, water->floor, world->terrain_heights, water->cells, water->cell_meters, water->origin_x, water->origin_z);
+}
+
 static void update_shadow_bounds(wb_render_t *render, const wb_world_t *world)
 {
 	float center[3];
@@ -336,7 +354,7 @@ static void update_shadow_bounds(wb_render_t *render, const wb_world_t *world)
 static void usage(void)
 {
 	fprintf(stderr, "wrecking_ball [BUILDING.wreck] [--settings FILE] [--shaders DIR] [--shot FILE.png --frames N --size WxH]\n"
-		"              [--camera EX EY EZ TX TY TZ] [--add X Z YAW]... [--throw-at N] [--blast-at N]\n");
+		"              [--camera EX EY EZ TX TY TZ] [--add X Z YAW]... [--throw-at N] [--blast-at N] [--flood-at N] [--pour-at N]\n");
 }
 
 static bool read_options(int argument_count, char **arguments, options_t *options)
@@ -350,6 +368,8 @@ static bool read_options(int argument_count, char **arguments, options_t *option
 	options->height = 720;
 	options->throw_frame = -1;
 	options->blast_frame = -1;
+	options->flood_frame = -1;
+	options->pour_frame = -1;
 	for (int i = 1; i < argument_count; i++)
 	{
 		const char *argument = arguments[i];
@@ -409,6 +429,14 @@ static bool read_options(int argument_count, char **arguments, options_t *option
 		{
 			options->blast_frame = atoi(arguments[++i]);
 		}
+		else if (strcmp(argument, "--pour-at") == 0 && has_value)
+		{
+			options->pour_frame = atoi(arguments[++i]);
+		}
+		else if (strcmp(argument, "--flood-at") == 0 && has_value)
+		{
+			options->flood_frame = atoi(arguments[++i]);
+		}
 		else if (argument[0] != '-')
 		{
 			options->building_path = argument;
@@ -449,6 +477,14 @@ static void scripted_events(wb_world_t *world, const options_t *options, const f
 	if (world->frame_index == options->blast_frame)
 	{
 		wb_world_blast(world, center, BLAST_KILOGRAMS);
+	}
+	if (world->frame_index == options->pour_frame)
+	{
+		wb_water_pour(&world->water, center[0] + radius + 4.0f, center[2], 2.0f, 40.0f);
+	}
+	if (world->frame_index == options->flood_frame)
+	{
+		wb_water_fill_to(&world->water, 0.6f);
 	}
 }
 
@@ -494,6 +530,7 @@ static int run_shot(const options_t *options)
 		wb_world_step(world);
 	}
 	draw_world(render, world, NULL);
+	update_water(render, world);
 	camera_to_render(&camera, &render_camera);
 	saved = wb_render_end_frame(render, &render_camera, options->shot_path);
 	if (saved)
@@ -530,6 +567,8 @@ static int run_window(const options_t *options)
 	bool slow = false;
 	weapon_t weapon = WEAPON_BALL;
 	bool orbiting = false;
+	bool pouring = false;
+	float flood_level = 0.0f;
 	float orbit_pivot[3] = { 0.0f, 0.0f, 0.0f };
 	char building_path[512];
 	uint64_t last_ticks;
@@ -618,7 +657,11 @@ static int run_window(const options_t *options)
 				{
 					camera_ray_through(&camera, window, event.button.x, event.button.y, aim_direction);
 				}
-				if (weapon == WEAPON_BALL)
+				if (weapon == WEAPON_WATER)
+				{
+					pouring = true;
+				}
+				else if (weapon == WEAPON_BALL)
 				{
 					float hit[3];
 					float throw_direction[3];
@@ -647,6 +690,10 @@ static int run_window(const options_t *options)
 						wb_world_blast(world, hit, BLAST_KILOGRAMS);
 					}
 				}
+			}
+			else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT)
+			{
+				pouring = false;
 			}
 			else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_MIDDLE)
 			{
@@ -746,6 +793,20 @@ static int run_window(const options_t *options)
 				{
 					weapon = WEAPON_BOMB;
 				}
+				else if (key == SDLK_3)
+				{
+					weapon = WEAPON_WATER;
+				}
+				else if (key == SDLK_F)
+				{
+					flood_level += FLOOD_STEP_METERS;
+					wb_water_fill_to(&world->water, flood_level);
+				}
+				else if (key == SDLK_G)
+				{
+					flood_level = 0.0f;
+					wb_water_clear(&world->water);
+				}
 				else if (key >= SDLK_F1 && key <= SDLK_F4)
 				{
 					// That kind of building, alone in the middle (H then adds more of it)
@@ -777,6 +838,16 @@ static int run_window(const options_t *options)
 			camera.position[k] += move * speed;
 		}
 		// Stepping, at a fixed rate
+		if (pouring && weapon == WEAPON_WATER && !paused)
+		{
+			float hit[3];
+
+			if (wb_world_cast_ray(world, camera.position, aim_direction, 200.0f, hit))
+			{
+				wb_water_pour(&world->water, hit[0], hit[2], WATER_POUR_RADIUS,
+					WATER_POUR_CUBIC_METERS_A_SECOND * (float)seconds * (slow ? 0.25f : 1.0f));
+			}
+		}
 		if (!paused)
 		{
 			int steps = 0;
@@ -795,6 +866,10 @@ static int run_window(const options_t *options)
 		}
 		aiming = wb_world_cast_ray(world, camera.position, aim_direction, 200.0f, aim_point);
 		draw_world(render, world, aiming ? aim_point : NULL);
+		if (!paused || pouring)
+		{
+			update_water(render, world);
+		}
 		camera_to_render(&camera, &render_camera);
 		wb_render_end_frame(render, &render_camera, NULL);
 		// The title says how it goes (until there is an interface)
@@ -805,8 +880,8 @@ static int run_window(const options_t *options)
 			const char *name = strrchr(building_path, '/');
 			double fps = (double)frames_counted * 1e9 / (double)(now_ticks - title_ticks);
 
-			SDL_snprintf(title, sizeof(title), "WreckingBall - %s - %s x%d: %d pieces, %d links broken - %.0f fps%s%s", WEAPON_NAMES[weapon],
-				name != NULL ? name + 1 : building_path, wb_world_building_count(world), wb_world_piece_count(world), wb_world_broken_link_count(world), fps,
+			SDL_snprintf(title, sizeof(title), "WreckingBall - %s - %s x%d: %d pieces, %d links broken - water %.0f m3 - %.0f fps%s%s", WEAPON_NAMES[weapon],
+				name != NULL ? name + 1 : building_path, wb_world_building_count(world), wb_world_piece_count(world), wb_world_broken_link_count(world), world->water.total_volume, fps,
 				paused ? " - paused" : "", slow ? " - slow" : "");
 			SDL_SetWindowTitle(window, title);
 			title_ticks = now_ticks;
