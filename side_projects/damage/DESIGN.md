@@ -523,6 +523,13 @@ nothing turns faster than 0.4 rad/s, after 15 s all but a few pieces
 sleep. The dry demos changed a little (the air's drag is now per part,
 so it also slows spinning).
 
+Balls (Radu: the ball went through water as if it were not there): the
+model pushes its own pieces only, and a ball may be known to many
+models, so there is `wreck_push_ball_by_fluids` for whoever owns the
+ball to call once a step: the same lift, drag (0.4 of a flat face's, a
+ball being round) and waves. A 34 kg ball thrown at 20 m/s into 1 m of
+water is down to 5 m/s after 2 m.
+
 Not done yet: water on what stands, pieces in the water's way.
 
 ## The model

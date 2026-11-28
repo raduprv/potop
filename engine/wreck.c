@@ -55,6 +55,9 @@
 // ...nor does water that has risen or fallen along it, since it fell
 // asleep, by less than what bears this much of its weight
 #define WATER_WAKE_LIFT 0.1f
+// A ball is pushed back by the air and the water this many times as
+// hard as a flat face as wide (the air goes around it more easily)
+#define BALL_DRAG_SHARE 0.4f
 #define SUPPORT_ROUNDS_MAX 4000
 // A long piece's bending is looked at where its links are and at this
 // many places evenly along it; and a piece's links looked at, at most
@@ -2234,6 +2237,78 @@ static void push_by_fluids(wreck_model_t *model, float step_seconds)
 				}
 			}
 		}
+	}
+}
+
+void wreck_push_ball_by_fluids(const wreck_settings_t *settings, wreck_water_function_t *water_function, void *water_user, b3BodyId body, float radius, float step_seconds)
+{
+	b3Vec3 place = b3Body_GetWorldCenter(body);
+	b3Vec3 velocity = b3Body_GetLinearVelocity(body);
+	b3Vec3 flow = b3Vec3_zero;
+	b3Vec3 push = b3Vec3_zero;
+	float mass = b3Body_GetMass(body);
+	float face = PI * radius * radius;
+	float surface_height = 0.0f;
+	float depth_sunk = 0.0f;
+	float under_water;
+	float lift;
+	float speed;
+
+	if (mass <= 0.0f)
+	{
+		return;
+	}
+	if (water_function != NULL && water_function(water_user, place, &surface_height, &flow))
+	{
+		depth_sunk = surface_height - (place.y - radius);
+		depth_sunk = depth_sunk < 0.0f ? 0.0f : (depth_sunk > 2.0f * radius ? 2.0f * radius : depth_sunk);
+	}
+	// (The share of a ball's volume below a level: that of its cap)
+	under_water = depth_sunk * depth_sunk * (3.0f * radius - depth_sunk) / (4.0f * radius * radius * radius);
+	lift = settings->water_density * GRAVITY * under_water * 4.0f / 3.0f * PI * radius * radius * radius;
+	if (!b3Body_IsAwake(body))
+	{
+		// As with the pieces: a ball asleep is woken by water that flows
+		// or that would bear it up
+		if (b3Length(flow) < WATER_WAKE_SPEED && lift < mass * GRAVITY)
+		{
+			return;
+		}
+		b3Body_SetAwake(body, true);
+	}
+	if (under_water > 0.0f)
+	{
+		b3Vec3 through_water = b3Sub(velocity, flow);
+		b3Vec3 lift_force = { 0.0f, lift, 0.0f };
+
+		b3Body_ApplyForceToCenter(body, lift_force, false);
+		if (under_water < 1.0f)
+		{
+			// (Waves, as for a piece at the surface)
+			float area_at_surface = PI * depth_sunk * (2.0f * radius - depth_sunk);
+			float slowing = settings->water_density * area_at_surface * sqrtf(GRAVITY * depth_sunk) * step_seconds / mass;
+
+			push.y -= mass * slowing / (1.0f + slowing) * through_water.y;
+		}
+		speed = b3Length(through_water);
+		if (speed > 1e-4f)
+		{
+			float water_drag = BALL_DRAG_SHARE * settings->air_drag * settings->water_density / settings->air_density;
+			float slowing = water_drag * under_water * face * speed * step_seconds / mass;
+
+			push = b3Add(push, b3MulSV(-mass * slowing / (1.0f + slowing), through_water));
+		}
+	}
+	speed = b3Length(velocity);
+	if (under_water < 1.0f && speed >= AIR_DRAG_SPEED_MIN)
+	{
+		float slowing = BALL_DRAG_SHARE * settings->air_drag * (1.0f - under_water) * face * speed * step_seconds / mass;
+
+		push = b3Add(push, b3MulSV(-mass * slowing / (1.0f + slowing), velocity));
+	}
+	if (push.x != 0.0f || push.y != 0.0f || push.z != 0.0f)
+	{
+		b3Body_ApplyLinearImpulseToCenter(body, push, false);
 	}
 }
 

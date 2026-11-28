@@ -349,6 +349,12 @@ void wreck_model_destroy(wreck_model_t *model);
 // (push_by_fluids in wreck.c); what stands is not touched by it yet.
 // NULL: no water. (wreck_model_create sets none.)
 void wreck_model_set_water(wreck_model_t *model, wreck_water_function_t *water_function, void *user);
+// The same air and water on a ball (any round body that is not a
+// piece: the model does not do it by itself, since a ball may be known
+// to many models and must be pushed once). To be called once a step for
+// each ball, after the world's step; water_function may be NULL (air
+// alone).
+void wreck_push_ball_by_fluids(const wreck_settings_t *settings, wreck_water_function_t *water_function, void *water_user, b3BodyId body, float radius, float step_seconds);
 
 // Building: pieces where they stand, then links between them, then
 // wreck_model_finish, which finds the islands and makes their bodies.

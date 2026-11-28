@@ -913,6 +913,10 @@ static void step_world(void)
 	{
 		shallow_water_step(&water, STEP_SECONDS);
 	}
+	for (i = 0; i < model.projectile_count; i++)
+	{
+		wreck_push_ball_by_fluids(&cabin.settings, water_is_made ? water_at : NULL, NULL, model.projectiles[i].body, model.projectiles[i].radius, STEP_SECONDS);
+	}
 	wreck_model_after_step(&model, cabin.frame_index, STEP_SECONDS);
 }
 
