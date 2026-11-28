@@ -18,13 +18,13 @@
 //   --throw-at N        throw a ball from the camera at the building at frame N
 //   --blast-at N        a blast in the building's middle at frame N
 //   --flood-at N        water 60 cm deep everywhere at frame N
-//   --pour-at N         40 cubic meters poured 4 m off the building's side at frame N
+//   --pour-at N         water poured as with the mouse, for 2 seconds from frame N, 6 m off the building's side
 //
 // In the window:
 //   right mouse button held: look round; W A S D, Q E: move (shift: faster)
 //   1: the wrecking ball, 2: the bomb, 3: water; left click: the weapon at
 //   the cursor (the ball thrown towards it, the bomb set off where it
-//   points, water poured there while held)
+//   points, water poured there while held, 1000 cubic meters a second)
 //   F: a flood (the water 30 cm higher everywhere); G: the water gone
 //   middle button held: turn round what is under the cursor; wheel: closer
 //   or further, towards the cursor
@@ -84,8 +84,8 @@ typedef enum
 
 static const char *const WEAPON_NAMES[WEAPON_COUNT] = { "wrecking ball", "bomb", "water" };
 
-#define WATER_POUR_CUBIC_METERS_A_SECOND 2.0f
-#define WATER_POUR_RADIUS 1.0f
+#define WATER_POUR_CUBIC_METERS_A_SECOND 1000.0f
+#define WATER_POUR_RADIUS 3.0f
 #define FLOOD_STEP_METERS 0.3f
 
 // ---------------------------------------------------------------------------
@@ -478,9 +478,10 @@ static void scripted_events(wb_world_t *world, const options_t *options, const f
 	{
 		wb_world_blast(world, center, BLAST_KILOGRAMS);
 	}
-	if (world->frame_index == options->pour_frame)
+	if (options->pour_frame >= 0 && world->frame_index >= options->pour_frame && world->frame_index < options->pour_frame + 2 * WB_WORLD_STEPS_PER_SECOND)
 	{
-		wb_water_pour(&world->water, center[0] + radius + 4.0f, center[2], 2.0f, 40.0f);
+		wb_water_pour(&world->water, center[0] + radius + 6.0f, center[2], WATER_POUR_RADIUS,
+			WATER_POUR_CUBIC_METERS_A_SECOND / (float)WB_WORLD_STEPS_PER_SECOND);
 	}
 	if (world->frame_index == options->flood_frame)
 	{

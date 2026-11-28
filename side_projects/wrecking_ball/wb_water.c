@@ -76,7 +76,33 @@ static float pipe_flow(float flow, float surface_here, float surface_there, floa
 	return pushed > 0.0f ? pushed : 0.0f;
 }
 
+// One step of the flows and depths
+static void step_once(wb_water_t *water, float seconds);
+
+// Split in as many steps as fast waves need: a wave goes as fast as the
+// square root of gravity times the depth, and must not cross more than
+// half a cell a step
 void wb_water_step(wb_water_t *water, float seconds)
+{
+	int count = water->cells * water->cells;
+	float deepest = 0.0f;
+	float wave_speed;
+	int steps;
+
+	for (int i = 0; i < count; i++)
+	{
+		deepest = SDL_max(deepest, water->depth[i]);
+	}
+	wave_speed = SDL_sqrtf(GRAVITY * deepest);
+	steps = (int)SDL_ceilf(wave_speed * seconds / (0.5f * water->cell_meters));
+	steps = SDL_clamp(steps, 1, 16);
+	for (int s = 0; s < steps; s++)
+	{
+		step_once(water, seconds / (float)steps);
+	}
+}
+
+static void step_once(wb_water_t *water, float seconds)
 {
 	int cells = water->cells;
 	float cell_area = water->cell_meters * water->cell_meters;
