@@ -44,6 +44,11 @@ typedef struct
 	uint32_t piece_objects[WRECK_PIECES_MAX];   // each piece's object's id (0: none yet, or gone)
 	bool piece_gone[WRECK_PIECES_MAX];          // its object taken away for good
 	float piece_sizes[WRECK_PIECES_MAX][3];     // its size when its object was made (a cut piece is shorter: its object made anew)
+	// Half the length of the whole piece a piece was cut from (its own,
+	// for a piece never cut): a cut piece is drawn at one of a few parts
+	// of it (wrecks_t's cut_steps), so its pieces share a few models
+	float piece_whole[WRECK_PIECES_MAX];
+	int placed_piece_count;                     // the pieces the building came with (the rest were cut off them)
 	// The moving pieces drawn between the last two steps (the physics goes
 	// at a fixed rate): where each was and is (x, y, z, then a quaternion)
 	float pose_from[WRECK_PIECES_MAX][7];
@@ -63,12 +68,17 @@ typedef struct wrecks_s
 {
 	wreck_settings_t settings;
 	wrecks_look_t looks[WRECK_MATERIAL_COUNT];
+	// [cuts]: a cut piece is drawn at the nearest of steps parts of its
+	// whole piece (6: a sixth, a third, a half...), and not at all under
+	// vanish_meters long (the physics keeps its exact size)
+	int cut_steps;
+	float vanish_meters;
 	wrecks_building_t buildings[WRECKS_MAX];
 	int frame_index;                   // the physics' steps
 } wrecks_t;
 
 // Reads data/wreck.ini (the model's numbers, as side_projects/damage's
-// damage.ini, and [looks])
+// damage.ini, [looks] and [cuts])
 void wrecks_initialize(wrecks_t *wrecks);
 
 // A building of data/wrecks/NAME.wreck placed on the ground at (x, z),

@@ -45,11 +45,24 @@ static int material_from_name(const char *name)
 }
 
 // [looks]: wood_albedo, wood_normal, wood_orm, wood_meters (and brick_,
-// glass_); every other section is the model's
+// glass_); [cuts]: steps, vanish_meters; every other section is the model's
 static bool read_settings_key(void *user, const char *section, const char *key, const char *value)
 {
 	wrecks_t *wrecks = user;
 
+	if (SDL_strcmp(section, "cuts") == 0)
+	{
+		if (SDL_strcmp(key, "steps") == 0)
+		{
+			wrecks->cut_steps = SDL_atoi(value);
+			return true;
+		}
+		if (SDL_strcmp(key, "vanish_meters") == 0)
+		{
+			return ini_value_to_float(value, &wrecks->vanish_meters);
+		}
+		return false;
+	}
 	if (SDL_strcmp(section, "looks") == 0)
 	{
 		for (int m = 0; m < WRECK_MATERIAL_COUNT; m++)
@@ -93,6 +106,8 @@ void wrecks_initialize(wrecks_t *wrecks)
 	SDL_zerop(wrecks);
 	wreck_settings_default(&wrecks->settings);
 	default_looks(wrecks);
+	wrecks->cut_steps = 6;
+	wrecks->vanish_meters = 0.12f;
 	if (!ini_parse_data_file("wreck.ini", read_settings_key, wrecks))
 	{
 		SDL_Log("Wrecks: no data/wreck.ini, the model's own numbers");
@@ -101,6 +116,8 @@ void wrecks_initialize(wrecks_t *wrecks)
 	{
 		wrecks->looks[m].texture_meters = SDL_max(wrecks->looks[m].texture_meters, 0.05f);
 	}
+	wrecks->cut_steps = SDL_clamp(wrecks->cut_steps, 1, 64);
+	wrecks->vanish_meters = SDL_max(wrecks->vanish_meters, 0.0f);
 }
 
 // ---------------------------------------------------------------------------
@@ -291,25 +308,73 @@ static object_material_t material_of(objects_t *objects, const wrecks_look_t *lo
 	return material;
 }
 
+// Half a piece's length along its long axis (a log's along its X); -1 if
+// it is not long (it is not cut)
+static float piece_half_length(const wreck_piece_t *piece)
+{
+	if (piece->shape == WRECK_PIECE_LOG)
+	{
+		return piece->half_length;
+	}
+	if (piece->long_axis < 0)
+	{
+		return -1.0f;
+	}
+	return (&piece->half_extents.x)[piece->long_axis];
+}
+
+// Half the length a piece is drawn at: the nearest of cut_steps parts of
+// its whole piece (half_whole), at least the smallest part
+static float drawn_half_length(const wrecks_t *wrecks, float half_length, float half_whole)
+{
+	int steps = wrecks->cut_steps;
+	int step;
+
+	if (half_whole <= 0.0f || half_length >= half_whole)
+	{
+		return half_length;
+	}
+	step = (int)SDL_lroundf(half_length / half_whole * (float)steps);
+	step = SDL_clamp(step, 1, steps);
+	return half_whole * (float)step / (float)steps;
+}
+
 // The procedural type a piece is drawn with (made now if it is the first
-// of its shape, size and material); -1 if it cannot be
-static int piece_type(wrecks_t *wrecks, objects_t *objects, const wreck_piece_t *piece)
+// of its shape, size and material); -1 if it cannot be. half_whole: half
+// the length of the whole piece it was cut from (0: drawn as it is)
+static int piece_type(wrecks_t *wrecks, objects_t *objects, const wreck_piece_t *piece, float half_whole)
 {
 	char key[OBJECT_MODEL_NAME_LENGTH];
 	const wrecks_look_t *look = &wrecks->looks[piece->material];
 	int type;
 	mesh_t mesh;
 	object_material_t material;
+	float log_half_length = piece->half_length;
+	float half[3] = { piece->half_extents.x, piece->half_extents.y, piece->half_extents.z };
+	float half_length = piece_half_length(piece);
 
+	if (half_length > 0.0f)
+	{
+		float drawn = drawn_half_length(wrecks, half_length, half_whole);
+
+		if (piece->shape == WRECK_PIECE_LOG)
+		{
+			log_half_length = drawn;
+		}
+		else
+		{
+			half[piece->long_axis] = drawn;
+		}
+	}
 	if (piece->shape == WRECK_PIECE_LOG)
 	{
 		SDL_snprintf(key, sizeof(key), "wreck:log:%s:%.3f:%.3f", MATERIAL_NAMES[piece->material], (double)piece->radius,
-			(double)piece->half_length);
+			(double)log_half_length);
 	}
 	else
 	{
-		SDL_snprintf(key, sizeof(key), "wreck:box:%s:%.3f:%.3f:%.3f", MATERIAL_NAMES[piece->material], (double)piece->half_extents.x,
-			(double)piece->half_extents.y, (double)piece->half_extents.z);
+		SDL_snprintf(key, sizeof(key), "wreck:box:%s:%.3f:%.3f:%.3f", MATERIAL_NAMES[piece->material], (double)half[0],
+			(double)half[1], (double)half[2]);
 	}
 	type = objects_procedural_type(objects, key, NULL, NULL, 0, NULL, 0, NULL);
 	if (type >= 0)
@@ -329,12 +394,10 @@ static int piece_type(wrecks_t *wrecks, objects_t *objects, const wreck_piece_t 
 	}
 	if (piece->shape == WRECK_PIECE_LOG)
 	{
-		make_log(&mesh, piece->radius, piece->half_length, look->texture_meters);
+		make_log(&mesh, piece->radius, log_half_length, look->texture_meters);
 	}
 	else
 	{
-		float half[3] = { piece->half_extents.x, piece->half_extents.y, piece->half_extents.z };
-
 		make_box(&mesh, half, look->texture_meters);
 	}
 	material = material_of(objects, look, piece->material);
@@ -607,6 +670,11 @@ void wrecks_place(wrecks_t *wrecks, b3WorldId world, objects_t *objects, const t
 	}
 	wreck_model_finish(building->model);
 	building->used = true;
+	building->placed_piece_count = building->model->piece_count;
+	for (int p = 0; p < building->placed_piece_count; p++)
+	{
+		building->piece_whole[p] = piece_half_length(&building->model->pieces[p]);
+	}
 	SDL_Log("Wrecks: %s placed at (%.1f, %.1f, %.1f): %d pieces, %d links%s", name, (double)x, (double)reading.origin[1], (double)z,
 		building->model->piece_count, building->model->link_count, reading.failed ? " (some lines could not be read, see above)" : "");
 	wrecks_update_objects(wrecks, objects, terrain);
@@ -722,6 +790,11 @@ void wrecks_update_objects(wrecks_t *wrecks, objects_t *objects, const terrain_t
 		{
 			continue;
 		}
+		// The pieces cut shorter this step (a piece cut off one of them is
+		// part of the same whole piece)
+		int cut_pieces[WRECK_PIECES_MAX];
+		int cut_count = 0;
+
 		for (int p = 0; p < model->piece_count; p++)
 		{
 			const wreck_piece_t *piece = &model->pieces[p];
@@ -730,13 +803,50 @@ void wrecks_update_objects(wrecks_t *wrecks, objects_t *objects, const terrain_t
 			object_instance_t *instance;
 			bool moving;
 			bool moving_forced = false;
+			float half_length = piece_half_length(piece);
 
 			if (building->piece_gone[p])
 			{
 				continue;
 			}
-			// Gone (crushed, broken by hits): its object with it
-			if (piece->group == WRECK_GONE || piece->crushed)
+			// Cut off another piece this step: the same whole piece as it
+			// (the one of its material and its width; cut off after it, so
+			// numbered after it)
+			if (p >= building->placed_piece_count && building->piece_whole[p] <= 0.0f && building->piece_objects[p] == 0)
+			{
+				building->piece_whole[p] = half_length;
+				for (int c = 0; c < cut_count; c++)
+				{
+					const wreck_piece_t *other = &model->pieces[cut_pieces[c]];
+					bool same;
+
+					if (other->shape != piece->shape || other->material != piece->material)
+					{
+						continue;
+					}
+					if (piece->shape == WRECK_PIECE_LOG)
+					{
+						same = SDL_fabsf(other->radius - piece->radius) < 0.001f;
+					}
+					else
+					{
+						same = piece->long_axis >= 0 && other->long_axis == piece->long_axis;
+						for (int k = 0; same && k < 3; k++)
+						{
+							same = k == piece->long_axis || SDL_fabsf((&other->half_extents.x)[k] - (&piece->half_extents.x)[k]) < 0.001f;
+						}
+					}
+					if (same)
+					{
+						building->piece_whole[p] = building->piece_whole[cut_pieces[c]];
+						break;
+					}
+				}
+			}
+			// Gone (crushed, broken by hits, or a cut piece too short to
+			// draw): its object with it
+			if (piece->group == WRECK_GONE || piece->crushed
+				|| (half_length > 0.0f && half_length < building->piece_whole[p] && 2.0f * half_length < wrecks->vanish_meters))
 			{
 				if (building->piece_objects[p] != 0 && (index = objects_find_id(objects, building->piece_objects[p])) >= 0)
 				{
@@ -757,11 +867,16 @@ void wrecks_update_objects(wrecks_t *wrecks, objects_t *objects, const terrain_t
 				SDL_memcpy(building->piece_sizes[p], size, sizeof(size));
 				// Cut in two: the part that kept its number is shorter, and
 				// somewhere else in its body (its object of its new size)
+				if (resized && building->piece_whole[p] > 0.0f && cut_count < WRECK_PIECES_MAX)
+				{
+					cut_pieces[cut_count++] = p;
+				}
 				if (resized && index >= 0)
 				{
-					int type = piece_type(wrecks, objects, piece);
+					int type = piece_type(wrecks, objects, piece, building->piece_whole[p]);
 
-					if (type >= 0)
+					// (drawn at one of a few lengths: often still the same)
+					if (type >= 0 && type != objects->instances[index].type)
 					{
 						objects_retype(objects, index, type);
 					}
@@ -773,7 +888,7 @@ void wrecks_update_objects(wrecks_t *wrecks, objects_t *objects, const terrain_t
 			if (index < 0)
 			{
 				uint64_t start = SDL_GetPerformanceCounter();
-				int type = piece_type(wrecks, objects, piece);
+				int type = piece_type(wrecks, objects, piece, building->piece_whole[p]);
 				double milliseconds = 1000.0 * (double)(SDL_GetPerformanceCounter() - start) / (double)SDL_GetPerformanceFrequency();
 
 				if (milliseconds >= 2.0)
