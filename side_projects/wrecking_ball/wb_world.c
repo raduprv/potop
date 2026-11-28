@@ -708,6 +708,9 @@ static wb_ball_t *throw_round_thing(wb_world_t *world, const float origin[3], co
 
 void wb_world_blast(wb_world_t *world, const float position[3], float kilograms)
 {
+	// (the water too: a crater and a ring of waves, if it went off in or
+	// near it)
+	shallow_water_blast(&world->water, position[0], position[1], position[2], kilograms);
 	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
 	{
 		if (world->buildings[b].used)

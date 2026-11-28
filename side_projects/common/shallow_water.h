@@ -42,6 +42,12 @@ void shallow_water_pour(shallow_water_t *water, float x, float z, float radius, 
 // emptied with a height below the ground
 void shallow_water_fill_to(shallow_water_t *water, float surface_height);
 void shallow_water_clear(shallow_water_t *water);
+// A blast at (x, y, z) of kilograms of explosive: the water near it
+// thrown out of a crater into a ring round it and set flowing outwards,
+// so it runs off as a ring of waves. Less the higher over the surface it
+// goes off; nothing past its reach (1.6 m times the cube root of the
+// kilograms)
+void shallow_water_blast(shallow_water_t *water, float x, float y, float z, float kilograms);
 
 // At a point: the water's depth, its surface's height, how fast it flows
 // (meters a second, along x and z); false where it is dry

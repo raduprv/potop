@@ -249,6 +249,116 @@ void shallow_water_fill_to(shallow_water_t *water, float surface_height)
 	}
 }
 
+void shallow_water_blast(shallow_water_t *water, float x, float y, float z, float kilograms)
+{
+	int cells = water->cells;
+	float reach = 1.6f * cbrtf(kilograms > 0.0f ? kilograms : 0.0f);
+	float ring_reach = reach * 1.6f;
+	float cell_area = water->cell_meters * water->cell_meters;
+	int center_column = (int)floorf((x - water->origin_x) / water->cell_meters);
+	int center_row = (int)floorf((z - water->origin_z) / water->cell_meters);
+	int span = (int)ceilf(ring_reach / water->cell_meters) + 1;
+	float surface = y;
+	float strength;
+	double thrown = 0.0;
+	int ring_cells = 0;
+
+	if (reach <= 0.0f)
+	{
+		return;
+	}
+	// How high over the water it went off: the surface of the deepest
+	// cell within its reach (it may go off over the shore)
+	{
+		float deepest = 0.0f;
+
+		for (int row = larger_int(center_row - span, 0); row <= smaller_int(center_row + span, cells - 1); row++)
+		{
+			for (int column = larger_int(center_column - span, 0); column <= smaller_int(center_column + span, cells - 1); column++)
+			{
+				int index = row * cells + column;
+
+				if (water->depth[index] > deepest)
+				{
+					deepest = water->depth[index];
+					surface = water->floor[index] + water->depth[index];
+				}
+			}
+		}
+		if (deepest < DRY_DEPTH)
+		{
+			return;
+		}
+	}
+	strength = 1.0f - (y - surface) / reach;
+	strength = strength > 1.0f ? 1.0f : strength;
+	if (strength <= 0.0f)
+	{
+		return;
+	}
+	// The crater: out of the cells within reach, most from the middle;
+	// and every cell out to the ring set flowing outwards
+	for (int row = larger_int(center_row - span, 0); row <= smaller_int(center_row + span, cells - 1); row++)
+	{
+		for (int column = larger_int(center_column - span, 0); column <= smaller_int(center_column + span, cells - 1); column++)
+		{
+			int index = row * cells + column;
+			float offset_x = water->origin_x + ((float)column + 0.5f) * water->cell_meters - x;
+			float offset_z = water->origin_z + ((float)row + 0.5f) * water->cell_meters - z;
+			float distance = sqrtf(offset_x * offset_x + offset_z * offset_z);
+			float outward_x = distance > 0.001f ? offset_x / distance : 0.0f;
+			float outward_z = distance > 0.001f ? offset_z / distance : 0.0f;
+			float depth = water->depth[index];
+			float speed;
+			float flow;
+
+			if (distance > ring_reach)
+			{
+				continue;
+			}
+			if (distance < reach)
+			{
+				float fraction = 0.9f * strength * (1.0f - distance * distance / (reach * reach));
+				float taken = depth * fraction;
+
+				water->depth[index] -= taken;
+				depth -= taken;
+				thrown += (double)taken * (double)cell_area;
+			}
+			else
+			{
+				ring_cells++;
+			}
+			// (fastest at the crater's rim, none at the ring's edge)
+			speed = 6.0f * strength * (1.0f - distance / ring_reach);
+			flow = speed * depth * water->cell_meters;
+			water->flow_right[index] = larger_of(outward_x, 0.0f) * flow;
+			water->flow_left[index] = larger_of(-outward_x, 0.0f) * flow;
+			water->flow_down[index] = larger_of(outward_z, 0.0f) * flow;
+			water->flow_up[index] = larger_of(-outward_z, 0.0f) * flow;
+		}
+	}
+	if (ring_cells == 0)
+	{
+		return;
+	}
+	// What was thrown out falls on the ring
+	for (int row = larger_int(center_row - span, 0); row <= smaller_int(center_row + span, cells - 1); row++)
+	{
+		for (int column = larger_int(center_column - span, 0); column <= smaller_int(center_column + span, cells - 1); column++)
+		{
+			float offset_x = water->origin_x + ((float)column + 0.5f) * water->cell_meters - x;
+			float offset_z = water->origin_z + ((float)row + 0.5f) * water->cell_meters - z;
+			float distance = sqrtf(offset_x * offset_x + offset_z * offset_z);
+
+			if (distance >= reach && distance <= ring_reach)
+			{
+				water->depth[row * cells + column] += (float)(thrown / (double)ring_cells / (double)cell_area);
+			}
+		}
+	}
+}
+
 bool shallow_water_sample(const shallow_water_t *water, float x, float z, float *depth, float *surface_height, float velocity[2])
 {
 	int cells = water->cells;

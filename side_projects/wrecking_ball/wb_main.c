@@ -18,6 +18,7 @@
 //   --throw-at N        throw a ball from the camera at the building at frame N
 //   --blast-at N        a blast in the building's middle at frame N
 //   --flood-at N        water 60 cm deep everywhere at frame N
+//   --water-blast-at N  a blast 50 cm up, 8 m off the building's side, at frame N
 //   --bomb-at N         throw a bomb ball from the camera at the building at frame N
 //   --trace             with --shot: the fastest loose piece every half second
 //   --pour-at N         water poured as with the mouse, for 2 seconds from frame N, 6 m off the building's side
@@ -72,6 +73,7 @@ typedef struct
 	int flood_frame;
 	int pour_frame;
 	int bomb_frame;
+	int water_blast_frame;
 	bool trace;
 	// More of the same building: x, z, yaw in degrees each
 	float extra_buildings[WB_BUILDINGS_MAX][3];
@@ -361,7 +363,7 @@ static void update_shadow_bounds(wb_render_t *render, const wb_world_t *world)
 static void usage(void)
 {
 	fprintf(stderr, "wrecking_ball [BUILDING.wreck] [--settings FILE] [--shaders DIR] [--shot FILE.png --frames N --size WxH]\n"
-		"              [--camera EX EY EZ TX TY TZ] [--add X Z YAW]... [--throw-at N] [--blast-at N] [--flood-at N] [--pour-at N] [--bomb-at N] [--trace]\n");
+		"              [--camera EX EY EZ TX TY TZ] [--add X Z YAW]... [--throw-at N] [--blast-at N] [--flood-at N] [--pour-at N] [--bomb-at N] [--water-blast-at N] [--trace]\n");
 }
 
 static bool read_options(int argument_count, char **arguments, options_t *options)
@@ -378,6 +380,7 @@ static bool read_options(int argument_count, char **arguments, options_t *option
 	options->flood_frame = -1;
 	options->pour_frame = -1;
 	options->bomb_frame = -1;
+	options->water_blast_frame = -1;
 	for (int i = 1; i < argument_count; i++)
 	{
 		const char *argument = arguments[i];
@@ -436,6 +439,10 @@ static bool read_options(int argument_count, char **arguments, options_t *option
 		else if (strcmp(argument, "--blast-at") == 0 && has_value)
 		{
 			options->blast_frame = atoi(arguments[++i]);
+		}
+		else if (strcmp(argument, "--water-blast-at") == 0 && has_value)
+		{
+			options->water_blast_frame = atoi(arguments[++i]);
 		}
 		else if (strcmp(argument, "--bomb-at") == 0 && has_value)
 		{
@@ -547,6 +554,12 @@ static void scripted_events(wb_world_t *world, const options_t *options, const f
 	{
 		shallow_water_pour(&world->water, center[0] + radius + 6.0f, center[2], WATER_POUR_RADIUS,
 			WATER_POUR_CUBIC_METERS_A_SECOND / (float)WB_WORLD_STEPS_PER_SECOND);
+	}
+	if (world->frame_index == options->water_blast_frame)
+	{
+		const float position[3] = { center[0] + radius + 8.0f, 0.5f, center[2] };
+
+		wb_world_blast(world, position, BLAST_KILOGRAMS);
 	}
 	if (world->frame_index == options->flood_frame)
 	{
