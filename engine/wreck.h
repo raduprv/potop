@@ -303,6 +303,10 @@ typedef struct
 	// The water, if there is any (wreck_model_set_water)
 	wreck_water_function_t *water_function;
 	void *water_user;
+	// What the water did to each standing piece when who bears what was
+	// last worked out: force (newtons) and turning (newton meters), in
+	// the building's frame
+	float water_loads[WRECK_PIECES_MAX][6];
 
 	wreck_hit_t recent_hits[WRECK_RECENT_HITS_MAX];
 	int hit_count;                     // all there were; the last WRECK_RECENT_HITS_MAX are kept
@@ -346,7 +350,13 @@ void wreck_model_destroy(wreck_model_t *model);
 // high its surface is there and how it flows (meters a second), false
 // where there is none. With it set, what is loose floats or sinks by
 // its material's density and is carried and slowed by the water
-// (push_by_fluids in wreck.c); what stands is not touched by it yet.
+// (push_by_fluids in wreck.c); what stands is lifted by it and pushed
+// by its flow, as loads that its links have to bear with the weights
+// (water_on_standing): a building in deep or fast water comes apart or
+// off the ground. The pieces do not stand in the water's way.
+// The standing pieces are looked at in wreck_model_after_step:
+// wreck_model_is_busy does not know that water is coming, so a building
+// the water may reach has to be stepped even when it is not busy.
 // NULL: no water. (wreck_model_create sets none.)
 void wreck_model_set_water(wreck_model_t *model, wreck_water_function_t *water_function, void *user);
 // The same air and water on a ball (any round body that is not a

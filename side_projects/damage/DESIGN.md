@@ -530,7 +530,39 @@ ball to call once a step: the same lift, drag (0.4 of a flat face's, a
 ball being round) and waves. A 34 kg ball thrown at 20 m/s into 1 m of
 water is down to 5 m/s after 2 m.
 
-Not done yet: water on what stands, pieces in the water's way.
+### Water on what stands (Archimedes and the push of the flow)
+
+The support pass's loads were the weights alone. Now each standing
+piece also gets what the water does to it (`water_on_standing`, the
+same 4 x 2 parts): the lift on what of it is under water, and the push
+of the flow by the law that slows a loose piece (area facing the flow x
+speed squared), with its turning about the piece's middle. The links
+bear it with the weights, by their own limits; long pieces are bent by
+it (taken as spread evenly) and cut. Nothing else is new: what the
+water overloads gives way over `collapse_seconds` like anything
+overloaded, comes loose, and then floats or is carried.
+
+The pass is run anew when the water's force on any standing piece has
+changed by 5 % of that piece's weight since the last pass
+(`watch_water_on_standing`): in moving water that is every step; in
+still water never.
+
+Measured on the house (13.3 kN of wood at 600 kg/m3):
+- flooded to 4.5 m (all of it under): lift 22 kN, so 9 kN upwards net.
+  Nothing breaks: that is shared among foundation links good for 5 kN
+  of pull each, and the most pulled nail is at 0.84 of its limit. A
+  building held down like this one does not float away by the wood's
+  lift alone. (Real ones mostly leave because they hold air; ours hold
+  none, the water being as high inside as outside.)
+- 180 m3 poured 9 m from it: the flow pushes with up to 11.5 kN and
+  breaks boards on the side it comes from; the frame stands.
+
+Known to be wrong: the pieces do not stand in the water's way, so the
+ones inside feel the flow as much as the ones outside, and there is no
+piling up of water before a wall (the hydrostatic part). The flow's
+speeds are the shallow water's, which has no friction with the ground.
+
+Not done yet: pieces in the water's way.
 
 ## The model
 

@@ -58,6 +58,9 @@
 // A ball is pushed back by the air and the water this many times as
 // hard as a flat face as wide (the air goes around it more easily)
 #define BALL_DRAG_SHARE 0.4f
+// Who bears what is worked out anew when the water's push on a standing
+// piece has changed by this much of the piece's weight
+#define WATER_LOAD_CHANGE 0.05f
 #define SUPPORT_ROUNDS_MAX 4000
 // A long piece's bending is looked at where its links are and at this
 // many places evenly along it; and a piece's links looked at, at most
@@ -1823,6 +1826,8 @@ static int solve_springs(const wreck_model_t *model, int standing_count, double 
 // conjugate gradients from where it settled last time; then what every
 // link bears against what it can. Pieces pressed harder than their
 // material bears are crushed: their links break.
+static void water_on_standing(const wreck_model_t *model, int piece_index, double load[6]);
+
 static void work_out_support(wreck_model_t *model, int frame_index)
 {
 	double turn_stiffness = (double)model->settings.joint_arm * (double)model->settings.joint_arm;
@@ -1876,8 +1881,15 @@ static void work_out_support(wreck_model_t *model, int frame_index)
 			solver_load[i * 6 + k] = 0.0;
 			solver_x[i * 6 + k] = model->support_solution[piece_index * 6 + k];
 		}
-		solver_load[i * 6 + 1] = -(double)model->pieces[piece_index].mass * (double)GRAVITY;
-		load_squared += solver_load[i * 6 + 1] * solver_load[i * 6 + 1];
+		// (The water on it: its lift, and the push and the turning of its
+		// flow)
+		water_on_standing(model, piece_index, &solver_load[i * 6]);
+		for (k = 0; k < 6; k++)
+		{
+			model->water_loads[piece_index][k] = (float)solver_load[i * 6 + k];
+		}
+		solver_load[i * 6 + 1] -= (double)model->pieces[piece_index].mass * (double)GRAVITY;
+		load_squared += solver_load[i * 6 + 0] * solver_load[i * 6 + 0] + solver_load[i * 6 + 1] * solver_load[i * 6 + 1] + solver_load[i * 6 + 2] * solver_load[i * 6 + 2];
 	}
 	for (i = 0; i < unknown_count; i++)
 	{
@@ -1962,7 +1974,9 @@ static void work_out_support(wreck_model_t *model, int frame_index)
 	{
 		int piece_index = walk_queue[i];
 		wreck_piece_t *piece = &model->pieces[piece_index];
-		double own_weight[3] = { 0.0, -(double)piece->mass * (double)GRAVITY, 0.0 };
+		// (Its own weight and the water on it, taken as spread evenly
+		// along it)
+		double own_weight[3] = { (double)model->water_loads[piece_index][0], (double)model->water_loads[piece_index][1] - (double)piece->mass * (double)GRAVITY, (double)model->water_loads[piece_index][2] };
 		double worst_position = 0.0;
 		double worst_bent;
 
@@ -2066,6 +2080,191 @@ static float exposed_area(const wreck_piece_t *piece, b3Quat rotation, b3Vec3 di
 // Each part's push is worked out so that it can never take more than all
 // of the part's own speed through the fluid, however long the step: it
 // cannot fling anything.
+// A piece laid out in parts for the air and the water: where the parts
+// are in the world and how tall the piece and each part stand as they
+// lie
+typedef struct
+{
+	b3Transform transform;
+	b3Vec3 places[FLUID_PARTS_LONG * FLUID_PARTS_WIDE];
+	int part_count;
+	float half_height;
+	float part_half_height;
+} fluid_parts_t;
+
+static void lay_out_fluid_parts(const wreck_model_t *model, int piece_index, fluid_parts_t *parts)
+{
+	const wreck_piece_t *piece = &model->pieces[piece_index];
+	b3Vec3 axes[3];
+	float half_sizes[3];
+	int part_counts[3] = { 1, 1, 1 };
+	int longest = 0;
+	int shortest = 0;
+	int part_x;
+	int part_y;
+	int part_z;
+	int k;
+
+	parts->transform = wreck_model_piece_transform(model, piece_index);
+	piece_half_sizes(piece, half_sizes);
+	for (k = 0; k < 3; k++)
+	{
+		b3Vec3 own = { k == 0 ? 1.0f : 0.0f, k == 1 ? 1.0f : 0.0f, k == 2 ? 1.0f : 0.0f };
+
+		axes[k] = b3RotateVector(parts->transform.q, own);
+		if (half_sizes[k] > half_sizes[longest])
+		{
+			longest = k;
+		}
+		if (half_sizes[k] < half_sizes[shortest])
+		{
+			shortest = k;
+		}
+	}
+	if (longest == shortest)
+	{
+		shortest = (longest + 1) % 3;
+	}
+	part_counts[longest] = FLUID_PARTS_LONG;
+	part_counts[3 - longest - shortest] = FLUID_PARTS_WIDE;
+	parts->half_height = 0.0f;
+	parts->part_half_height = 0.0f;
+	for (k = 0; k < 3; k++)
+	{
+		parts->half_height += fabsf(axes[k].y) * half_sizes[k];
+		parts->part_half_height += fabsf(axes[k].y) * half_sizes[k] / (float)part_counts[k];
+	}
+	parts->part_count = 0;
+	for (part_x = 0; part_x < part_counts[0]; part_x++)
+	{
+		for (part_y = 0; part_y < part_counts[1]; part_y++)
+		{
+			for (part_z = 0; part_z < part_counts[2]; part_z++)
+			{
+				int indices[3] = { part_x, part_y, part_z };
+				b3Vec3 place = parts->transform.p;
+
+				for (k = 0; k < 3; k++)
+				{
+					place = b3Add(place, b3MulSV(((2.0f * (float)indices[k] + 1.0f) / (float)part_counts[k] - 1.0f) * half_sizes[k], axes[k]));
+				}
+				parts->places[parts->part_count++] = place;
+			}
+		}
+	}
+}
+
+// How much of something that reaches half_height up and down from
+// place.y is under the water there (0 none, 1 all), and how the water
+// flows there
+static float share_under_water(const wreck_model_t *model, b3Vec3 place, float half_height, b3Vec3 *flow)
+{
+	float surface_height = 0.0f;
+	float under_water;
+
+	*flow = b3Vec3_zero;
+	if (model->water_function == NULL || !model->water_function(model->water_user, place, &surface_height, flow))
+	{
+		*flow = b3Vec3_zero;
+		return 0.0f;
+	}
+	under_water = (surface_height - (place.y - half_height)) / (2.0f * half_height);
+	return under_water < 0.0f ? 0.0f : (under_water > 1.0f ? 1.0f : under_water);
+}
+
+// The water on a piece that stands, as a load for the support pass, in
+// the building's frame: the force (newtons: the lift on what of it is
+// under water, and the push of the flow, by the same law that slows a
+// loose piece moving through still water) and its turning about the
+// piece's middle (newton meters)
+static void water_on_standing(const wreck_model_t *model, int piece_index, double load[6])
+{
+	const wreck_piece_t *piece = &model->pieces[piece_index];
+	float water_drag = model->settings.air_drag * model->settings.water_density / model->settings.air_density;
+	b3Vec3 force = b3Vec3_zero;
+	b3Vec3 turning = b3Vec3_zero;
+	b3Quat frame_rotation;
+	fluid_parts_t parts;
+	float part_volume;
+	int part;
+	int k;
+
+	for (k = 0; k < 6; k++)
+	{
+		load[k] = 0.0;
+	}
+	if (model->water_function == NULL)
+	{
+		return;
+	}
+	lay_out_fluid_parts(model, piece_index, &parts);
+	part_volume = piece->mass / model->settings.densities[piece->material] / (float)parts.part_count;
+	for (part = 0; part < parts.part_count; part++)
+	{
+		b3Vec3 flow;
+		float under_water = share_under_water(model, parts.places[part], parts.part_half_height, &flow);
+		b3Vec3 part_force = { 0.0f, model->settings.water_density * GRAVITY * part_volume * under_water, 0.0f };
+		float speed = b3Length(flow);
+
+		if (under_water <= 0.0f)
+		{
+			continue;
+		}
+		if (speed > 1e-4f)
+		{
+			float area = under_water * exposed_area(piece, parts.transform.q, b3MulSV(1.0f / speed, flow)) / (float)parts.part_count;
+
+			part_force = b3Add(part_force, b3MulSV(water_drag * area * speed, flow));
+		}
+		force = b3Add(force, part_force);
+		turning = b3Add(turning, b3Cross(b3Sub(parts.places[part], parts.transform.p), part_force));
+	}
+	frame_rotation = b3Body_GetRotation(model->groups[piece->group].body);
+	force = b3InvRotateVector(frame_rotation, force);
+	turning = b3InvRotateVector(frame_rotation, turning);
+	load[0] = (double)force.x;
+	load[1] = (double)force.y;
+	load[2] = (double)force.z;
+	load[3] = (double)turning.x;
+	load[4] = (double)turning.y;
+	load[5] = (double)turning.z;
+}
+
+// Has the water on what stands changed enough, since who bears what was
+// last worked out, for it to be worked out anew?
+static void watch_water_on_standing(wreck_model_t *model)
+{
+	int i;
+	int k;
+
+	if (model->water_function == NULL || model->support_dirty)
+	{
+		return;
+	}
+	for (i = 0; i < model->piece_count; i++)
+	{
+		const wreck_piece_t *piece = &model->pieces[i];
+		double load[6];
+		double change_squared = 0.0;
+		double enough = (double)(WATER_LOAD_CHANGE * piece->mass * GRAVITY);
+
+		if (piece->group == WRECK_GONE || !model->groups[piece->group].anchored)
+		{
+			continue;
+		}
+		water_on_standing(model, i, load);
+		for (k = 0; k < 3; k++)
+		{
+			change_squared += (load[k] - (double)model->water_loads[i][k]) * (load[k] - (double)model->water_loads[i][k]);
+		}
+		if (change_squared > enough * enough)
+		{
+			model->support_dirty = true;
+			return;
+		}
+	}
+}
+
 static void push_by_fluids(wreck_model_t *model, float step_seconds)
 {
 	float water_drag = model->settings.air_drag * model->settings.water_density / model->settings.air_density;
@@ -2075,21 +2274,11 @@ static void push_by_fluids(wreck_model_t *model, float step_seconds)
 	{
 		wreck_piece_t *piece = &model->pieces[i];
 		const wreck_group_t *group;
-		b3Transform transform;
-		b3Vec3 axes[3];
-		float half_sizes[3];
+		fluid_parts_t parts;
 		float wet = 0.0f;
-		int part_counts[3] = { 1, 1, 1 };
-		int longest = 0;
-		int shortest = 0;
-		int part_count;
 		float part_mass;
 		float part_volume;
-		float part_half_height = 0.0f;
-		int part_x;
-		int part_y;
-		int part_z;
-		int k;
+		int part;
 
 		if (piece->group == WRECK_GONE)
 		{
@@ -2100,41 +2289,16 @@ static void push_by_fluids(wreck_model_t *model, float step_seconds)
 		{
 			continue;
 		}
-		transform = wreck_model_piece_transform(model, i);
-		piece_half_sizes(piece, half_sizes);
-		for (k = 0; k < 3; k++)
-		{
-			b3Vec3 own = { k == 0 ? 1.0f : 0.0f, k == 1 ? 1.0f : 0.0f, k == 2 ? 1.0f : 0.0f };
-
-			axes[k] = b3RotateVector(transform.q, own);
-			if (half_sizes[k] > half_sizes[longest])
-			{
-				longest = k;
-			}
-			if (half_sizes[k] < half_sizes[shortest])
-			{
-				shortest = k;
-			}
-		}
-		if (longest == shortest)
-		{
-			shortest = (longest + 1) % 3;
-		}
+		lay_out_fluid_parts(model, i, &parts);
 		// How much of the piece as a whole is under water. What sleeps is
 		// left asleep (or nothing would ever sleep in water) unless the
 		// water flows past it, or has risen or fallen along it since it
 		// was last awake by enough to matter against its weight
 		if (model->water_function != NULL)
 		{
-			float half_height = fabsf(axes[0].y) * half_sizes[0] + fabsf(axes[1].y) * half_sizes[1] + fabsf(axes[2].y) * half_sizes[2];
-			float surface_height;
-			b3Vec3 flow = b3Vec3_zero;
+			b3Vec3 flow;
 
-			if (model->water_function(model->water_user, transform.p, &surface_height, &flow))
-			{
-				wet = (surface_height - (transform.p.y - half_height)) / (2.0f * half_height);
-				wet = wet < 0.0f ? 0.0f : (wet > 1.0f ? 1.0f : wet);
-			}
+			wet = share_under_water(model, parts.transform.p, parts.half_height, &flow);
 			if (!b3Body_IsAwake(group->body))
 			{
 				if (b3Length(flow) < WATER_WAKE_SPEED && fabsf(wet - piece->wet) * model->settings.water_density < WATER_WAKE_LIFT * model->settings.densities[piece->material])
@@ -2149,92 +2313,63 @@ static void push_by_fluids(wreck_model_t *model, float step_seconds)
 			continue;
 		}
 		piece->wet = wet;
-		part_counts[longest] = FLUID_PARTS_LONG;
-		part_counts[3 - longest - shortest] = FLUID_PARTS_WIDE;
-		part_count = part_counts[0] * part_counts[1] * part_counts[2];
-		part_mass = piece->mass / (float)part_count;
+		part_mass = piece->mass / (float)parts.part_count;
 		part_volume = part_mass / model->settings.densities[piece->material];
-		// (How far a part reaches up and down from its middle, as it lies)
-		for (k = 0; k < 3; k++)
-		{
-			part_half_height += fabsf(axes[k].y) * half_sizes[k] / (float)part_counts[k];
-		}
 
-		for (part_x = 0; part_x < part_counts[0]; part_x++)
+		for (part = 0; part < parts.part_count; part++)
 		{
-			for (part_y = 0; part_y < part_counts[1]; part_y++)
+			b3Vec3 place = parts.places[part];
+			b3Vec3 velocity = b3Body_GetWorldPointVelocity(group->body, place);
+			b3Vec3 push = b3Vec3_zero;
+			b3Vec3 flow;
+			float under_water = share_under_water(model, place, parts.part_half_height, &flow);
+			float speed;
+
+			if (under_water > 0.0f)
 			{
-				for (part_z = 0; part_z < part_counts[2]; part_z++)
+				b3Vec3 through_water = b3Sub(velocity, flow);
+				b3Vec3 lift = { 0.0f, model->settings.water_density * GRAVITY * part_volume * under_water, 0.0f };
+
+				// (A force, not a push: it goes into the next step side
+				// by side with the weight, so what floats at rest has no
+				// speed and can fall asleep)
+				b3Body_ApplyForce(group->body, lift, place, false);
+				if (under_water < 1.0f)
 				{
-					int indices[3] = { part_x, part_y, part_z };
-					b3Vec3 place = transform.p;
-					b3Vec3 velocity;
-					b3Vec3 push = b3Vec3_zero;
-					b3Vec3 flow = b3Vec3_zero;
-					float surface_height = 0.0f;
-					float under_water = 0.0f;
-					float speed;
+					// Waves: a part at the surface that goes up or down
+					// makes waves, which carry its movement away. The
+					// water pushes back on its area at the surface by its
+					// speed up or down and by the speed of the waves it
+					// makes, which is that of waves in water as deep as
+					// the part is sunk: sqrt(gravity * depth sunk). It is
+					// what stops a floating board bobbing and rocking
+					// after a swing or two
+					float depth_sunk = under_water * 2.0f * parts.part_half_height;
+					float area_at_surface = part_volume / (2.0f * parts.part_half_height);
+					float slowing = model->settings.water_density * area_at_surface * sqrtf(GRAVITY * depth_sunk) * step_seconds / part_mass;
 
-					for (k = 0; k < 3; k++)
-					{
-						place = b3Add(place, b3MulSV(((2.0f * (float)indices[k] + 1.0f) / (float)part_counts[k] - 1.0f) * half_sizes[k], axes[k]));
-					}
-					if (model->water_function != NULL && model->water_function(model->water_user, place, &surface_height, &flow))
-					{
-						under_water = (surface_height - (place.y - part_half_height)) / (2.0f * part_half_height);
-						under_water = under_water < 0.0f ? 0.0f : (under_water > 1.0f ? 1.0f : under_water);
-					}
-					velocity = b3Body_GetWorldPointVelocity(group->body, place);
-
-					if (under_water > 0.0f)
-					{
-						b3Vec3 through_water = b3Sub(velocity, flow);
-
-						b3Vec3 lift = { 0.0f, model->settings.water_density * GRAVITY * part_volume * under_water, 0.0f };
-
-						// (A force, not a push: it goes into the next step
-						// side by side with the weight, so what floats at
-						// rest has no speed and can fall asleep)
-						b3Body_ApplyForce(group->body, lift, place, false);
-						if (under_water < 1.0f)
-						{
-							// Waves: a part at the surface that goes up or
-							// down makes waves, which carry its movement
-							// away. The water pushes back on its area at
-							// the surface by its speed up or down and by
-							// the speed of the waves it makes, which is
-							// that of waves in water as deep as the part
-							// is sunk: sqrt(gravity * depth sunk). It is
-							// what stops a floating board bobbing and
-							// rocking after a swing or two
-							float depth_sunk = under_water * 2.0f * part_half_height;
-							float area_at_surface = part_volume / (2.0f * part_half_height);
-							float slowing = model->settings.water_density * area_at_surface * sqrtf(GRAVITY * depth_sunk) * step_seconds / part_mass;
-
-							push.y -= part_mass * slowing / (1.0f + slowing) * through_water.y;
-						}
-						speed = b3Length(through_water);
-						if (speed > 1e-4f)
-						{
-							float area = under_water * exposed_area(piece, transform.q, b3MulSV(1.0f / speed, through_water)) / (float)part_count;
-							float slowing = water_drag * area * speed * step_seconds / part_mass;
-
-							push = b3Add(push, b3MulSV(-part_mass * slowing / (1.0f + slowing), through_water));
-						}
-					}
-					speed = b3Length(velocity);
-					if (under_water < 1.0f && speed >= AIR_DRAG_SPEED_MIN)
-					{
-						float area = (1.0f - under_water) * exposed_area(piece, transform.q, b3MulSV(1.0f / speed, velocity)) / (float)part_count;
-						float slowing = model->settings.air_drag * area * speed * step_seconds / part_mass;
-
-						push = b3Add(push, b3MulSV(-part_mass * slowing / (1.0f + slowing), velocity));
-					}
-					if (push.x != 0.0f || push.y != 0.0f || push.z != 0.0f)
-					{
-						b3Body_ApplyLinearImpulse(group->body, push, place, false);
-					}
+					push.y -= part_mass * slowing / (1.0f + slowing) * through_water.y;
 				}
+				speed = b3Length(through_water);
+				if (speed > 1e-4f)
+				{
+					float area = under_water * exposed_area(piece, parts.transform.q, b3MulSV(1.0f / speed, through_water)) / (float)parts.part_count;
+					float slowing = water_drag * area * speed * step_seconds / part_mass;
+
+					push = b3Add(push, b3MulSV(-part_mass * slowing / (1.0f + slowing), through_water));
+				}
+			}
+			speed = b3Length(velocity);
+			if (under_water < 1.0f && speed >= AIR_DRAG_SPEED_MIN)
+			{
+				float area = (1.0f - under_water) * exposed_area(piece, parts.transform.q, b3MulSV(1.0f / speed, velocity)) / (float)parts.part_count;
+				float slowing = model->settings.air_drag * area * speed * step_seconds / part_mass;
+
+				push = b3Add(push, b3MulSV(-part_mass * slowing / (1.0f + slowing), velocity));
+			}
+			if (push.x != 0.0f || push.y != 0.0f || push.z != 0.0f)
+			{
+				b3Body_ApplyLinearImpulse(group->body, push, place, false);
 			}
 		}
 	}
@@ -2588,6 +2723,7 @@ void wreck_model_after_step(wreck_model_t *model, int frame_index, float step_se
 	// is overloaded gives way a little more. A link that breaks here
 	// makes the pass due again, at the next step: a collapse goes on
 	// frame by frame.
+	watch_water_on_standing(model);
 	if (model->support_dirty)
 	{
 		work_out_support(model, frame_index);
