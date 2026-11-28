@@ -515,9 +515,10 @@ static float vertical_reach(b3Quat rotation, const float half[3])
 }
 
 // The water on a body at a point: lifted by the part under water (its
-// weight in water), dragged towards the water's own speed. reach: how
-// far it goes up and down from the point; volume in cubic meters
-static void push_by_water(wb_world_t *world, b3BodyId body, b3Vec3 point, float reach, float volume, float mass)
+// weight in water), dragged towards the water's own speed, its turning
+// slowed. reach: how far it goes up and down from the point; volume in
+// cubic meters; half_length: half its longest side (how hard it is to turn)
+static void push_by_water(wb_world_t *world, b3BodyId body, b3Vec3 point, float reach, float volume, float mass, float half_length)
 {
 	float depth;
 	float surface;
@@ -525,7 +526,12 @@ static void push_by_water(wb_world_t *world, b3BodyId body, b3Vec3 point, float 
 	float under;
 	b3Vec3 speed;
 	b3Vec3 force;
-	const float drag_per_second = 1.5f;
+	// (the part of its speed against the water lost each second, whole
+	// under water; and of its turning)
+	const float drag_per_second = 3.0f;
+	const float turn_drag_per_second = 4.0f;
+	b3Vec3 turning;
+	float turn_inertia = mass * half_length * half_length / 3.0f;
 
 	if (!wb_water_sample(&world->water, point.x, point.z, &depth, &surface, flow))
 	{
@@ -544,6 +550,8 @@ static void push_by_water(wb_world_t *world, b3BodyId body, b3Vec3 point, float 
 	// (still water does not wake what has come to rest in it: it would
 	// keep every sunken piece awake for good)
 	b3Body_ApplyForce(body, force, point, SDL_fabsf(flow[0]) + SDL_fabsf(flow[1]) > 0.03f);
+	turning = b3Body_GetAngularVelocity(body);
+	b3Body_ApplyTorque(body, b3MulSV(-turn_drag_per_second * under * turn_inertia, turning), false);
 }
 
 // The water on what is loose: the pieces of fallen parts, the balls
@@ -593,7 +601,8 @@ static void push_loose_things(wb_world_t *world)
 				half[2] = piece->half_extents.z;
 				volume = 8.0f * half[0] * half[1] * half[2];
 			}
-			push_by_water(world, group->body, transform.p, vertical_reach(transform.q, half), volume, piece->mass);
+			push_by_water(world, group->body, transform.p, vertical_reach(transform.q, half), volume, piece->mass,
+				SDL_max(half[0], SDL_max(half[1], half[2])));
 		}
 	}
 	for (int i = 0; i < WB_BALLS_MAX; i++)
@@ -604,7 +613,7 @@ static void push_loose_things(wb_world_t *world)
 		{
 			float volume = 4.0f / 3.0f * SDL_PI_F * ball->radius * ball->radius * ball->radius;
 
-			push_by_water(world, ball->body, b3Body_GetPosition(ball->body), ball->radius, volume, b3Body_GetMass(ball->body));
+			push_by_water(world, ball->body, b3Body_GetPosition(ball->body), ball->radius, volume, b3Body_GetMass(ball->body), ball->radius);
 		}
 	}
 }
