@@ -24,9 +24,10 @@
 //   --pour-at N         water poured as with the mouse, for 2 seconds from frame N, 6 m off the building's side
 //
 // In the window:
+//   left button dragged: turn round the middle of the buildings
 //   right mouse button held: look round; W A S D, Q E: move (shift: faster)
 //   1: the wrecking ball, 2: the bomb, 3: water, 4: the bomb ball; left
-//   click: the weapon at the cursor (the balls thrown towards it, the bomb
+//   click (let go without dragging): the weapon at the cursor (the balls thrown towards it, the bomb
 //   ball going off where it first knocks into anything; the bomb set off
 //   where it points; water poured there while held, 1000 cubic meters a
 //   second)
@@ -656,6 +657,49 @@ static void numbered_building_path(const char *first_path, int number, char *pat
 	SDL_snprintf(path, path_size, "%.*s%s.wreck", directory_length, first_path, BUILDING_NAMES[number]);
 }
 
+// The weapon fired along a direction from the camera: a ball thrown (lifted
+// for gravity, so it lands where it points), or the bomb set off where it
+// points
+static void fire_weapon(wb_world_t *world, const fly_camera_t *camera, const float aim_direction[3], weapon_t weapon)
+{
+	if (weapon == WEAPON_BALL || weapon == WEAPON_BOMB_BALL)
+	{
+		float hit[3];
+		float throw_direction[3];
+
+		// Lifted by what gravity takes off it on the way, so it
+		// lands where the cursor points
+		SDL_memcpy(throw_direction, aim_direction, sizeof(throw_direction));
+		if (wb_world_cast_ray(world, camera->position, aim_direction, 200.0f, hit))
+		{
+			float offset[3];
+			float flight_seconds;
+
+			wb_vector_subtract(hit, camera->position, offset);
+			flight_seconds = wb_vector_length(offset) / BALL_SPEED;
+			throw_direction[1] += 0.5f * 9.81f * flight_seconds / BALL_SPEED;
+		}
+		wb_vector_normalize(throw_direction);
+		if (weapon == WEAPON_BOMB_BALL)
+		{
+			wb_world_throw_bomb(world, camera->position, throw_direction, BALL_SPEED, BLAST_KILOGRAMS);
+		}
+		else
+		{
+			wb_world_throw_ball(world, camera->position, throw_direction, BALL_SPEED);
+		}
+	}
+	else
+	{
+		float hit[3];
+
+		if (wb_world_cast_ray(world, camera->position, aim_direction, 200.0f, hit))
+		{
+			wb_world_blast(world, hit, BLAST_KILOGRAMS);
+		}
+	}
+}
+
 static int run_window(const options_t *options)
 {
 	SDL_Window *window;
@@ -670,6 +714,10 @@ static int run_window(const options_t *options)
 	bool slow = false;
 	weapon_t weapon = WEAPON_BALL;
 	bool orbiting = false;
+	bool left_held = false;
+	bool left_dragging = false;
+	float left_moved = 0.0f;
+	float scene_pivot[3] = { 0.0f, 0.0f, 0.0f };
 	bool pouring = false;
 	float flood_level = 0.0f;
 	float orbit_pivot[3] = { 0.0f, 0.0f, 0.0f };
@@ -756,53 +804,49 @@ static int run_window(const options_t *options)
 			}
 			else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT)
 			{
-				if (!looking)
-				{
-					camera_ray_through(&camera, window, event.button.x, event.button.y, aim_direction);
-				}
+				// A click fires (when let go); held and dragged, it turns
+				// round the middle of the buildings instead
+				left_held = true;
+				left_dragging = false;
+				left_moved = 0.0f;
 				if (weapon == WEAPON_WATER)
 				{
 					pouring = true;
 				}
-				else if (weapon == WEAPON_BALL || weapon == WEAPON_BOMB_BALL)
+			}
+			else if (event.type == SDL_EVENT_MOUSE_MOTION && left_held)
+			{
+				left_moved += SDL_fabsf(event.motion.xrel) + SDL_fabsf(event.motion.yrel);
+				if (!left_dragging && left_moved > 5.0f)
 				{
-					float hit[3];
-					float throw_direction[3];
+					float radius;
 
-					// Lifted by what gravity takes off it on the way, so it
-					// lands where the cursor points
-					SDL_memcpy(throw_direction, aim_direction, sizeof(throw_direction));
-					if (wb_world_cast_ray(world, camera.position, aim_direction, 200.0f, hit))
-					{
-						float offset[3];
-						float flight_seconds;
-
-						wb_vector_subtract(hit, camera.position, offset);
-						flight_seconds = wb_vector_length(offset) / BALL_SPEED;
-						throw_direction[1] += 0.5f * 9.81f * flight_seconds / BALL_SPEED;
-					}
-					wb_vector_normalize(throw_direction);
-					if (weapon == WEAPON_BOMB_BALL)
-					{
-						wb_world_throw_bomb(world, camera.position, throw_direction, BALL_SPEED, BLAST_KILOGRAMS);
-					}
-					else
-					{
-						wb_world_throw_ball(world, camera.position, throw_direction, BALL_SPEED);
-					}
+					left_dragging = true;
+					pouring = false;
+					building_center(world, scene_pivot, &radius);
+					SDL_SetWindowRelativeMouseMode(window, true);
 				}
-				else
+				if (left_dragging)
 				{
-					float hit[3];
-
-					if (wb_world_cast_ray(world, camera.position, aim_direction, 200.0f, hit))
-					{
-						wb_world_blast(world, hit, BLAST_KILOGRAMS);
-					}
+					camera_orbit(&camera, scene_pivot, -event.motion.xrel * 0.005f, -event.motion.yrel * 0.005f);
 				}
 			}
 			else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT)
 			{
+				if (left_dragging)
+				{
+					SDL_SetWindowRelativeMouseMode(window, false);
+				}
+				else if (weapon != WEAPON_WATER && left_held)
+				{
+					if (!looking)
+					{
+						camera_ray_through(&camera, window, event.button.x, event.button.y, aim_direction);
+					}
+					fire_weapon(world, &camera, aim_direction, weapon);
+				}
+				left_held = false;
+				left_dragging = false;
 				pouring = false;
 			}
 			else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_MIDDLE)
