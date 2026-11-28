@@ -114,33 +114,41 @@ static void clear_balls(wb_world_t *world)
 		{
 			continue;
 		}
-		if (world->model != NULL && world->building_loaded)
+		for (int b = 0; b < WB_BUILDINGS_MAX; b++)
 		{
-			wreck_model_remove_projectile(world->model, ball->body);
+			if (world->buildings[b].used)
+			{
+				wreck_model_remove_projectile(world->buildings[b].model, ball->body);
+			}
 		}
 		b3DestroyBody(ball->body);
 		ball->used = false;
 	}
 }
 
-static void free_building(wb_world_t *world)
+static void free_building(wb_building_t *building)
+{
+	if (building->model != NULL)
+	{
+		wreck_model_destroy(building->model);
+		SDL_free(building->model);
+		building->model = NULL;
+	}
+	building->used = false;
+}
+
+void wb_world_clear(wb_world_t *world)
 {
 	clear_balls(world);
-	if (world->model != NULL)
+	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
 	{
-		if (world->building_loaded)
-		{
-			wreck_model_destroy(world->model);
-		}
-		SDL_free(world->model);
-		world->model = NULL;
+		free_building(&world->buildings[b]);
 	}
-	world->building_loaded = false;
 }
 
 void wb_world_destroy(wb_world_t *world)
 {
-	free_building(world);
+	wb_world_clear(world);
 	if (B3_IS_NON_NULL(world->world))
 	{
 		b3DestroyWorld(world->world);
@@ -159,9 +167,38 @@ typedef struct
 {
 	wreck_model_t *model;
 	const char *path;
-	float foot_height;                 // the ground under the building's middle
+	float origin[3];                   // the building's foot: its place on the ground
+	float turn[4];                     // its turn round the vertical, a quaternion
 	bool failed;
 } reading_t;
+
+static void cross_3(const float a[3], const float b[3], float out[3])
+{
+	out[0] = a[1] * b[2] - a[2] * b[1];
+	out[1] = a[2] * b[0] - a[0] * b[2];
+	out[2] = a[0] * b[1] - a[1] * b[0];
+}
+
+// A point of the building's frame in the world
+static b3Vec3 placed_point(const reading_t *reading, float x, float y, float z)
+{
+	const float local[3] = { x, y, z };
+	float twice_cross[3];
+	float second[3];
+	float turned[3];
+
+	cross_3(reading->turn, local, twice_cross);
+	for (int k = 0; k < 3; k++)
+	{
+		twice_cross[k] *= 2.0f;
+	}
+	cross_3(reading->turn, twice_cross, second);
+	for (int k = 0; k < 3; k++)
+	{
+		turned[k] = local[k] + reading->turn[3] * twice_cross[k] + second[k];
+	}
+	return (b3Vec3){ reading->origin[0] + turned[0], reading->origin[1] + turned[1], reading->origin[2] + turned[2] };
+}
 
 // "a, b, c" into the numbers; how many were read
 static int read_numbers(const char *text, float *numbers, int most)
@@ -239,8 +276,11 @@ static bool read_wreck_key(void *user, const char *section, const char *key, con
 			reading->failed = true;
 			return true;
 		}
-		position = (b3Vec3){ numbers[0], numbers[1] + reading->foot_height, numbers[2] };
-		rotation = b3NormalizeQuat((b3Quat){ { numbers[3], numbers[4], numbers[5] }, numbers[6] });
+		position = placed_point(reading, numbers[0], numbers[1], numbers[2]);
+		// (its own turn, then the building's)
+		rotation = b3MulQuat((b3Quat){ { reading->turn[0], reading->turn[1], reading->turn[2] }, reading->turn[3] },
+			b3NormalizeQuat((b3Quat){ { numbers[3], numbers[4], numbers[5] }, numbers[6] }));
+		rotation = b3NormalizeQuat(rotation);
 		if (box)
 		{
 			wreck_model_add_box(reading->model, position, rotation, (b3Vec3){ numbers[7], numbers[8], numbers[9] }, (wreck_material_t)material,
@@ -277,21 +317,20 @@ static bool read_wreck_key(void *user, const char *section, const char *key, con
 			reading->failed = true;
 			return true;
 		}
-		wreck_model_add_link(reading->model, piece_a, piece_b, (b3Vec3){ numbers[0], numbers[1] + reading->foot_height, numbers[2] },
-			(wreck_link_type_t)type);
+		wreck_model_add_link(reading->model, piece_a, piece_b, placed_point(reading, numbers[0], numbers[1], numbers[2]), (wreck_link_type_t)type);
 		return true;
 	}
 	return false;
 }
 
-static void measure_building(wb_world_t *world)
+static void measure_building(wb_building_t *building)
 {
-	const wreck_model_t *model = world->model;
+	const wreck_model_t *model = building->model;
 
 	for (int k = 0; k < 3; k++)
 	{
-		world->building_minimum[k] = 1e9f;
-		world->building_maximum[k] = -1e9f;
+		building->minimum[k] = 1e9f;
+		building->maximum[k] = -1e9f;
 	}
 	for (int p = 0; p < model->piece_count; p++)
 	{
@@ -301,96 +340,205 @@ static void measure_building(wb_world_t *world)
 
 		for (int k = 0; k < 3; k++)
 		{
-			world->building_minimum[k] = SDL_min(world->building_minimum[k], center[k] - reach);
-			world->building_maximum[k] = SDL_max(world->building_maximum[k], center[k] + reach);
+			building->minimum[k] = SDL_min(building->minimum[k], center[k] - reach);
+			building->maximum[k] = SDL_max(building->maximum[k], center[k] + reach);
 		}
 	}
 }
 
-bool wb_world_load_building(wb_world_t *world, const char *path)
+int wb_world_add_building(wb_world_t *world, const char *path, float x, float z, float yaw_radians)
 {
+	wb_building_t *building = NULL;
+	int number = -1;
 	reading_t reading;
 
-	free_building(world);
-	world->model = SDL_calloc(1, sizeof(*world->model));
-	if (world->model == NULL)
+	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
 	{
-		return false;
+		if (!world->buildings[b].used)
+		{
+			building = &world->buildings[b];
+			number = b;
+			break;
+		}
 	}
-	wreck_model_create(world->model, world->world, &world->settings);
-	world->building_loaded = true;
+	if (building == NULL)
+	{
+		SDL_Log("World: there are %d buildings already", WB_BUILDINGS_MAX);
+		return -1;
+	}
+	SDL_zerop(building);
+	building->model = SDL_calloc(1, sizeof(*building->model));
+	if (building->model == NULL)
+	{
+		return -1;
+	}
+	wreck_model_create(building->model, world->world, &world->settings);
+	building->used = true;
+	SDL_strlcpy(building->path, path, sizeof(building->path));
+	building->x = x;
+	building->z = z;
+	building->yaw_radians = yaw_radians;
 	SDL_zero(reading);
-	reading.model = world->model;
+	reading.model = building->model;
 	reading.path = path;
-	reading.foot_height = wb_world_terrain_height(world, 0.0f, 0.0f);
-	if (!wb_ini_parse_file(path, read_wreck_key, &reading) || world->model->piece_count == 0)
+	reading.origin[0] = x;
+	reading.origin[1] = wb_world_terrain_height(world, x, z);
+	reading.origin[2] = z;
+	reading.turn[1] = SDL_sinf(0.5f * yaw_radians);
+	reading.turn[3] = SDL_cosf(0.5f * yaw_radians);
+	if (!wb_ini_parse_file(path, read_wreck_key, &reading) || building->model->piece_count == 0)
 	{
 		SDL_Log("World: no %s, or nothing in it", path);
-		free_building(world);
-		return false;
+		free_building(building);
+		return -1;
 	}
-	wreck_model_finish(world->model);
-	if (path != world->building_path)
+	wreck_model_finish(building->model);
+	measure_building(building);
+	// (the balls in the air know the new building too)
+	for (int i = 0; i < WB_BALLS_MAX; i++)
 	{
-		SDL_strlcpy(world->building_path, path, sizeof(world->building_path));
+		if (world->balls[i].used)
+		{
+			wreck_model_add_projectile(building->model, world->balls[i].body, world->balls[i].radius);
+		}
 	}
-	measure_building(world);
-	world->broken_links_at_start = world->model->broken_link_count;
-	SDL_Log("World: %s: %d pieces, %d links%s", path, world->model->piece_count, world->model->link_count,
-		reading.failed ? " (some lines could not be read, see above)" : "");
-	return true;
+	SDL_Log("World: %s at (%.1f, %.1f): %d pieces, %d links%s", path, (double)x, (double)z, building->model->piece_count,
+		building->model->link_count, reading.failed ? " (some lines could not be read, see above)" : "");
+	return number;
 }
 
-bool wb_world_reset_building(wb_world_t *world)
+void wb_world_reset_buildings(wb_world_t *world)
 {
-	if (world->building_path[0] == '\0')
+	wb_building_t placed[WB_BUILDINGS_MAX];
+
+	SDL_memcpy(placed, world->buildings, sizeof(placed));
+	wb_world_clear(world);
+	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
 	{
-		return false;
+		if (placed[b].used)
+		{
+			wb_world_add_building(world, placed[b].path, placed[b].x, placed[b].z, placed[b].yaw_radians);
+		}
 	}
-	return wb_world_load_building(world, world->building_path);
+}
+
+int wb_world_building_count(const wb_world_t *world)
+{
+	int count = 0;
+
+	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
+	{
+		count += world->buildings[b].used ? 1 : 0;
+	}
+	return count;
+}
+
+bool wb_world_buildings_bounds(const wb_world_t *world, float minimum[3], float maximum[3])
+{
+	bool any = false;
+
+	for (int k = 0; k < 3; k++)
+	{
+		minimum[k] = 1e9f;
+		maximum[k] = -1e9f;
+	}
+	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
+	{
+		const wb_building_t *building = &world->buildings[b];
+
+		if (!building->used)
+		{
+			continue;
+		}
+		any = true;
+		for (int k = 0; k < 3; k++)
+		{
+			minimum[k] = SDL_min(minimum[k], building->minimum[k]);
+			maximum[k] = SDL_max(maximum[k], building->maximum[k]);
+		}
+	}
+	return any;
+}
+
+int wb_world_piece_count(const wb_world_t *world)
+{
+	int count = 0;
+
+	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
+	{
+		count += world->buildings[b].used ? world->buildings[b].model->piece_count : 0;
+	}
+	return count;
+}
+
+int wb_world_broken_link_count(const wb_world_t *world)
+{
+	int count = 0;
+
+	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
+	{
+		count += world->buildings[b].used ? world->buildings[b].model->broken_link_count : 0;
+	}
+	return count;
+}
+
+static void remove_ball(wb_world_t *world, wb_ball_t *ball)
+{
+	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
+	{
+		if (world->buildings[b].used)
+		{
+			wreck_model_remove_projectile(world->buildings[b].model, ball->body);
+		}
+	}
+	b3DestroyBody(ball->body);
+	ball->used = false;
 }
 
 void wb_world_step(wb_world_t *world)
 {
 	const float step_seconds = 1.0f / (float)WB_WORLD_STEPS_PER_SECOND;
 	b3ContactEvents events;
-	bool has_model = world->model != NULL && world->building_loaded;
 
-	if (has_model)
+	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
 	{
-		wreck_model_before_step(world->model);
+		if (world->buildings[b].used)
+		{
+			wreck_model_before_step(world->buildings[b].model);
+		}
 	}
 	b3World_Step(world->world, step_seconds, 4);
-	if (has_model)
+	// Each hit to the buildings whose pieces it touches (both, for a hit
+	// between pieces of two)
+	events = b3World_GetContactEvents(world->world);
+	for (int e = 0; e < events.hitCount; e++)
 	{
-		events = b3World_GetContactEvents(world->world);
-		for (int e = 0; e < events.hitCount; e++)
-		{
-			const b3ContactHitEvent *event = &events.hitEvents[e];
+		const b3ContactHitEvent *event = &events.hitEvents[e];
+		wreck_model_t *model_a = wreck_shape_model(event->shapeIdA);
+		wreck_model_t *model_b = wreck_shape_model(event->shapeIdB);
 
-			if (wreck_shape_model(event->shapeIdA) == world->model || wreck_shape_model(event->shapeIdB) == world->model)
-			{
-				wreck_model_take_hit(world->model, event, world->frame_index);
-			}
-		}
-		if (wreck_model_is_busy(world->model))
+		if (model_a != NULL)
 		{
-			wreck_model_after_step(world->model, world->frame_index, step_seconds);
+			wreck_model_take_hit(model_a, event, world->frame_index);
+		}
+		if (model_b != NULL && model_b != model_a)
+		{
+			wreck_model_take_hit(model_b, event, world->frame_index);
+		}
+	}
+	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
+	{
+		if (world->buildings[b].used && wreck_model_is_busy(world->buildings[b].model))
+		{
+			wreck_model_after_step(world->buildings[b].model, world->frame_index, step_seconds);
 		}
 	}
 	// Balls fallen off the world go
 	for (int i = 0; i < WB_BALLS_MAX; i++)
 	{
-		wb_ball_t *ball = &world->balls[i];
-
-		if (ball->used && b3Body_GetPosition(ball->body).y < -50.0f)
+		if (world->balls[i].used && b3Body_GetPosition(world->balls[i].body).y < -50.0f)
 		{
-			if (has_model)
-			{
-				wreck_model_remove_projectile(world->model, ball->body);
-			}
-			b3DestroyBody(ball->body);
-			ball->used = false;
+			remove_ball(world, &world->balls[i]);
 		}
 	}
 	world->frame_index++;
@@ -402,17 +550,11 @@ void wb_world_throw_ball(wb_world_t *world, const float origin[3], const float d
 	b3BodyDef body_definition = b3DefaultBodyDef();
 	b3ShapeDef shape_definition = b3DefaultShapeDef();
 	b3Sphere sphere;
-	bool has_model = world->model != NULL && world->building_loaded;
 
 	world->next_ball = (world->next_ball + 1) % WB_BALLS_MAX;
 	if (ball->used)
 	{
-		if (has_model)
-		{
-			wreck_model_remove_projectile(world->model, ball->body);
-		}
-		b3DestroyBody(ball->body);
-		ball->used = false;
+		remove_ball(world, ball);
 	}
 	body_definition.type = b3_dynamicBody;
 	body_definition.position = (b3Vec3){ origin[0], origin[1], origin[2] };
@@ -426,19 +568,25 @@ void wb_world_throw_ball(wb_world_t *world, const float origin[3], const float d
 	shape_definition.enableHitEvents = true;
 	b3CreateSphereShape(ball->body, &shape_definition, &sphere);
 	ball->used = true;
-	if (has_model)
+	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
 	{
-		wreck_model_add_projectile(world->model, ball->body, ball->radius);
+		if (world->buildings[b].used)
+		{
+			wreck_model_add_projectile(world->buildings[b].model, ball->body, ball->radius);
+		}
 	}
 }
 
 void wb_world_blast(wb_world_t *world, const float position[3], float kilograms)
 {
-	if (world->model == NULL || !world->building_loaded)
+	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
 	{
-		return;
+		if (world->buildings[b].used)
+		{
+			wreck_model_blast_kilograms(world->buildings[b].model, (b3Vec3){ position[0], position[1], position[2] }, kilograms,
+				world->frame_index);
+		}
 	}
-	wreck_model_blast_kilograms(world->model, (b3Vec3){ position[0], position[1], position[2] }, kilograms, world->frame_index);
 }
 
 bool wb_world_cast_ray(const wb_world_t *world, const float origin[3], const float direction[3], float distance, float hit_point[3])

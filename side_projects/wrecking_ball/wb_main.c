@@ -14,6 +14,7 @@
 //   --frames N          (default 1)
 //   --size WxH          the picture's size without a window (default 1280x720)
 //   --camera EX EY EZ TX TY TZ    where the camera is and looks at
+//   --add X Z YAW       one more of the building at (x, z), turned yaw degrees
 //   --throw-at N        throw a ball from the camera at the building at frame N
 //   --blast-at N        a blast in the building's middle at frame N
 //
@@ -21,7 +22,11 @@
 //   right mouse button held: look round; W A S D, Q E: move (shift: faster)
 //   1: the wrecking ball, 2: the bomb; left click: the weapon at the
 //   cursor (the ball thrown towards it, the bomb set off where it points)
-//   R: the building again; F1 to F4: house, cabin, support, bend
+//   middle button held: turn round what is under the cursor; wheel: closer
+//   or further, towards the cursor
+//   F1 to F4: house, cabin, support, bend, alone in the middle; H: one
+//   more of it where the cursor points; R: all again as placed; C or
+//   Delete: all taken away
 //   space: pause; T: slow motion; Esc: quit
 
 #include <stdio.h>
@@ -56,6 +61,9 @@ typedef struct
 	float camera[6];
 	int throw_frame;
 	int blast_frame;
+	// More of the same building: x, z, yaw in degrees each
+	float extra_buildings[WB_BUILDINGS_MAX][3];
+	int extra_building_count;
 } options_t;
 
 static const char *const BUILDING_NAMES[4] = { "house", "cabin", "support", "bend" };
@@ -131,26 +139,38 @@ static void camera_ray_through(const fly_camera_t *camera, SDL_Window *window, f
 	wb_vector_normalize(direction);
 }
 
-// Looking at the building from a little above, at a distance that shows it whole
-static void camera_frame_building(fly_camera_t *camera, const wb_world_t *world)
+// The middle of the buildings and half their size (a place in the
+// middle of the ground when there are none)
+static void building_center(const wb_world_t *world, float center[3], float *radius)
 {
-	float center[3];
-	float radius = 0.0f;
-	float direction[3] = { -0.55f, 0.42f, 0.72f };
-	float eye[3];
+	float minimum[3];
+	float maximum[3];
 
-	for (int k = 0; k < 3; k++)
-	{
-		center[k] = 0.5f * (world->building_minimum[k] + world->building_maximum[k]);
-		radius = SDL_max(radius, 0.5f * (world->building_maximum[k] - world->building_minimum[k]));
-	}
-	if (!world->building_loaded)
+	*radius = 0.0f;
+	if (!wb_world_buildings_bounds(world, minimum, maximum))
 	{
 		center[0] = 0.0f;
 		center[1] = 1.0f;
 		center[2] = 0.0f;
-		radius = 5.0f;
+		*radius = 5.0f;
+		return;
 	}
+	for (int k = 0; k < 3; k++)
+	{
+		center[k] = 0.5f * (minimum[k] + maximum[k]);
+		*radius = SDL_max(*radius, 0.5f * (maximum[k] - minimum[k]));
+	}
+}
+
+// Looking at the buildings from a little above, at a distance that shows them whole
+static void camera_frame_building(fly_camera_t *camera, const wb_world_t *world)
+{
+	float center[3];
+	float radius;
+	float direction[3] = { -0.55f, 0.42f, 0.72f };
+	float eye[3];
+
+	building_center(world, center, &radius);
 	wb_vector_normalize(direction);
 	for (int k = 0; k < 3; k++)
 	{
@@ -159,14 +179,44 @@ static void camera_frame_building(fly_camera_t *camera, const wb_world_t *world)
 	camera_look_at(camera, eye, center);
 }
 
-static void building_center(const wb_world_t *world, float center[3], float *radius)
+// Turned round a point: the camera moved and turned as one, yaw round the
+// vertical and pitch round its own right, so what it looks at stays put
+// on the screen
+static void camera_orbit(fly_camera_t *camera, const float pivot[3], float yaw_change, float pitch_change)
 {
-	*radius = 0.0f;
+	float offset[3];
+	float right[3];
+	float forward[3];
+	const float up[3] = { 0.0f, 1.0f, 0.0f };
+	float new_pitch = SDL_clamp(camera->pitch + pitch_change, -1.5f, 1.5f);
+	float cosine;
+	float sine;
+	float turned[3];
+
+	pitch_change = new_pitch - camera->pitch;
+	wb_vector_subtract(camera->position, pivot, offset);
+	// Pitch: round the camera's right (level, so the pitch just adds)
+	camera_forward(camera, forward);
+	wb_vector_cross(forward, up, right);
+	wb_vector_normalize(right);
+	{
+		const float rotation[4] = { right[0] * SDL_sinf(0.5f * pitch_change), right[1] * SDL_sinf(0.5f * pitch_change),
+			right[2] * SDL_sinf(0.5f * pitch_change), SDL_cosf(0.5f * pitch_change) };
+
+		wb_quaternion_rotate(rotation, offset, offset);
+	}
+	// Yaw: round the vertical
+	cosine = SDL_cosf(yaw_change);
+	sine = SDL_sinf(yaw_change);
+	turned[0] = offset[0] * cosine + offset[2] * sine;
+	turned[1] = offset[1];
+	turned[2] = -offset[0] * sine + offset[2] * cosine;
 	for (int k = 0; k < 3; k++)
 	{
-		center[k] = 0.5f * (world->building_minimum[k] + world->building_maximum[k]);
-		*radius = SDL_max(*radius, 0.5f * (world->building_maximum[k] - world->building_minimum[k]));
+		camera->position[k] = pivot[k] + turned[k];
 	}
+	camera->yaw += yaw_change;
+	camera->pitch = new_pitch;
 }
 
 // ---------------------------------------------------------------------------
@@ -201,10 +251,14 @@ static void draw_world(wb_render_t *render, const wb_world_t *world, const float
 
 	wb_render_begin_frame(render);
 	wb_render_add(render, WB_MESH_TERRAIN, no_place, no_turn, unit_scale, 0x7d8768);
-	if (world->model != NULL && world->building_loaded)
+	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
 	{
-		const wreck_model_t *model = world->model;
+		const wreck_model_t *model = world->buildings[b].model;
 
+		if (!world->buildings[b].used)
+		{
+			continue;
+		}
 		for (int p = 0; p < model->piece_count; p++)
 		{
 			const wreck_piece_t *piece = &model->pieces[p];
@@ -226,7 +280,7 @@ static void draw_world(wb_render_t *render, const wb_world_t *world, const float
 			rotation[1] = transform.q.v.y;
 			rotation[2] = transform.q.v.z;
 			rotation[3] = transform.q.s;
-			color = scale_color(material_colors[piece->material], 0.88f + 0.24f * hash_unit((uint32_t)p * 2654435761u));
+			color = scale_color(material_colors[piece->material], 0.88f + 0.24f * hash_unit((uint32_t)(b * WRECK_PIECES_MAX + p) * 2654435761u));
 			if (piece->shape == WRECK_PIECE_LOG)
 			{
 				scale[0] = piece->half_length;
@@ -273,12 +327,7 @@ static void update_shadow_bounds(wb_render_t *render, const wb_world_t *world)
 	float radius;
 
 	building_center(world, center, &radius);
-	if (!world->building_loaded)
-	{
-		center[0] = center[1] = center[2] = 0.0f;
-		radius = 8.0f;
-	}
-	wb_render_set_shadow_bounds(render, center, SDL_max(radius * 1.8f, 10.0f));
+	wb_render_set_shadow_bounds(render, center, SDL_clamp(radius * 1.8f, 10.0f, wb_world_terrain_half_size() * 1.5f));
 }
 
 // ---------------------------------------------------------------------------
@@ -287,7 +336,7 @@ static void update_shadow_bounds(wb_render_t *render, const wb_world_t *world)
 static void usage(void)
 {
 	fprintf(stderr, "wrecking_ball [BUILDING.wreck] [--settings FILE] [--shaders DIR] [--shot FILE.png --frames N --size WxH]\n"
-		"              [--camera EX EY EZ TX TY TZ] [--throw-at N] [--blast-at N]\n");
+		"              [--camera EX EY EZ TX TY TZ] [--add X Z YAW]... [--throw-at N] [--blast-at N]\n");
 }
 
 static bool read_options(int argument_count, char **arguments, options_t *options)
@@ -340,6 +389,18 @@ static bool read_options(int argument_count, char **arguments, options_t *option
 			}
 			options->camera_given = true;
 		}
+		else if (strcmp(argument, "--add") == 0 && i + 3 < argument_count)
+		{
+			if (options->extra_building_count < WB_BUILDINGS_MAX)
+			{
+				for (int k = 0; k < 3; k++)
+				{
+					options->extra_buildings[options->extra_building_count][k] = (float)atof(arguments[i + 1 + k]);
+				}
+				options->extra_building_count++;
+			}
+			i += 3;
+		}
 		else if (strcmp(argument, "--throw-at") == 0 && has_value)
 		{
 			options->throw_frame = atoi(arguments[++i]);
@@ -359,6 +420,15 @@ static bool read_options(int argument_count, char **arguments, options_t *option
 		}
 	}
 	return true;
+}
+
+static void add_extra_buildings(wb_world_t *world, const options_t *options, const char *path)
+{
+	for (int i = 0; i < options->extra_building_count; i++)
+	{
+		wb_world_add_building(world, path, options->extra_buildings[i][0], options->extra_buildings[i][1],
+			options->extra_buildings[i][2] * SDL_PI_F / 180.0f);
+	}
 }
 
 // The building's middle, for the scripted ball and blast
@@ -397,7 +467,8 @@ static int run_shot(const options_t *options)
 	{
 		return 1;
 	}
-	wb_world_load_building(world, options->building_path);
+	wb_world_add_building(world, options->building_path, 0.0f, 0.0f, 0.0f);
+	add_extra_buildings(world, options, options->building_path);
 	render = wb_render_create(NULL, options->width, options->height, options->shader_directory);
 	if (render == NULL)
 	{
@@ -425,9 +496,9 @@ static int run_shot(const options_t *options)
 	draw_world(render, world, NULL);
 	camera_to_render(&camera, &render_camera);
 	saved = wb_render_end_frame(render, &render_camera, options->shot_path);
-	if (saved && world->model != NULL)
+	if (saved)
 	{
-		printf("%s: frame %d, %d links broken\n", options->shot_path, world->frame_index, world->model->broken_link_count);
+		printf("%s: frame %d, %d links broken\n", options->shot_path, world->frame_index, wb_world_broken_link_count(world));
 	}
 	wb_render_destroy(render);
 	wb_world_destroy(world);
@@ -438,18 +509,13 @@ static int run_shot(const options_t *options)
 // ---------------------------------------------------------------------------
 // The window
 
-static void load_numbered_building(wb_world_t *world, wb_render_t *render, fly_camera_t *camera, const char *first_path, int number)
+// The path of one of the buildings next to the first one given
+static void numbered_building_path(const char *first_path, int number, char *path, size_t path_size)
 {
-	char path[512];
 	const char *slash = strrchr(first_path, '/');
 	int directory_length = slash != NULL ? (int)(slash - first_path) + 1 : 0;
 
-	SDL_snprintf(path, sizeof(path), "%.*s%s.wreck", directory_length, first_path, BUILDING_NAMES[number]);
-	if (wb_world_load_building(world, path))
-	{
-		update_shadow_bounds(render, world);
-		camera_frame_building(camera, world);
-	}
+	SDL_snprintf(path, path_size, "%.*s%s.wreck", directory_length, first_path, BUILDING_NAMES[number]);
 }
 
 static int run_window(const options_t *options)
@@ -463,6 +529,9 @@ static int run_window(const options_t *options)
 	bool paused = false;
 	bool slow = false;
 	weapon_t weapon = WEAPON_BALL;
+	bool orbiting = false;
+	float orbit_pivot[3] = { 0.0f, 0.0f, 0.0f };
+	char building_path[512];
 	uint64_t last_ticks;
 	double step_time_left = 0.0;
 	uint64_t title_ticks = 0;
@@ -480,7 +549,9 @@ static int run_window(const options_t *options)
 		SDL_DestroyWindow(window);
 		return 1;
 	}
-	wb_world_load_building(world, options->building_path);
+	SDL_strlcpy(building_path, options->building_path, sizeof(building_path));
+	wb_world_add_building(world, building_path, 0.0f, 0.0f, 0.0f);
+	add_extra_buildings(world, options, building_path);
 	wb_render_set_terrain(render, world->terrain_heights, WB_TERRAIN_CELLS, WB_TERRAIN_CELL_METERS, -wb_world_terrain_half_size(),
 		-wb_world_terrain_half_size());
 	update_shadow_bounds(render, world);
@@ -517,7 +588,7 @@ static int run_window(const options_t *options)
 		// Aimed at the cursor (at the middle while looking round: the
 		// cursor is hidden then)
 		SDL_GetMouseState(&mouse_x, &mouse_y);
-		if (looking)
+		if (looking || orbiting)
 		{
 			SDL_memcpy(aim_direction, forward, sizeof(aim_direction));
 		}
@@ -577,6 +648,51 @@ static int run_window(const options_t *options)
 					}
 				}
 			}
+			else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_MIDDLE)
+			{
+				// Turning round what is under the cursor (or a point 10 m
+				// along it, over nothing)
+				float direction[3];
+
+				camera_ray_through(&camera, window, event.button.x, event.button.y, direction);
+				if (!wb_world_cast_ray(world, camera.position, direction, 200.0f, orbit_pivot))
+				{
+					for (int k = 0; k < 3; k++)
+					{
+						orbit_pivot[k] = camera.position[k] + direction[k] * 10.0f;
+					}
+				}
+				orbiting = true;
+				SDL_SetWindowRelativeMouseMode(window, true);
+			}
+			else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_MIDDLE)
+			{
+				orbiting = false;
+				SDL_SetWindowRelativeMouseMode(window, false);
+			}
+			else if (event.type == SDL_EVENT_MOUSE_MOTION && orbiting)
+			{
+				camera_orbit(&camera, orbit_pivot, -event.motion.xrel * 0.005f, -event.motion.yrel * 0.005f);
+			}
+			else if (event.type == SDL_EVENT_MOUSE_WHEEL && !orbiting)
+			{
+				// Towards the cursor, a part of the way to what it points
+				// at (closer, slower), or a meter
+				float hit[3];
+				float distance = 5.0f;
+
+				if (wb_world_cast_ray(world, camera.position, aim_direction, 200.0f, hit))
+				{
+					float offset[3];
+
+					wb_vector_subtract(hit, camera.position, offset);
+					distance = wb_vector_length(offset);
+				}
+				for (int k = 0; k < 3; k++)
+				{
+					camera.position[k] += aim_direction[k] * event.wheel.y * SDL_max(distance * 0.15f, 0.2f);
+				}
+			}
 			else if (event.type == SDL_EVENT_MOUSE_MOTION && looking)
 			{
 				camera.yaw -= event.motion.xrel * 0.003f;
@@ -601,7 +717,26 @@ static int run_window(const options_t *options)
 				}
 				else if (key == SDLK_R)
 				{
-					wb_world_reset_building(world);
+					wb_world_reset_buildings(world);
+				}
+				else if (key == SDLK_H)
+				{
+					// Another building where the cursor points, turned any way
+					float hit[3];
+
+					if (wb_world_cast_ray(world, camera.position, aim_direction, 200.0f, hit))
+					{
+						float yaw = (float)SDL_rand(3600) * SDL_PI_F / 1800.0f;
+
+						if (wb_world_add_building(world, building_path, hit[0], hit[2], yaw) >= 0)
+						{
+							update_shadow_bounds(render, world);
+						}
+					}
+				}
+				else if (key == SDLK_DELETE || key == SDLK_C)
+				{
+					wb_world_clear(world);
 				}
 				else if (key == SDLK_1)
 				{
@@ -613,7 +748,14 @@ static int run_window(const options_t *options)
 				}
 				else if (key >= SDLK_F1 && key <= SDLK_F4)
 				{
-					load_numbered_building(world, render, &camera, options->building_path, (int)(key - SDLK_F1));
+					// That kind of building, alone in the middle (H then adds more of it)
+					numbered_building_path(options->building_path, (int)(key - SDLK_F1), building_path, sizeof(building_path));
+					wb_world_clear(world);
+					if (wb_world_add_building(world, building_path, 0.0f, 0.0f, 0.0f) >= 0)
+					{
+						update_shadow_bounds(render, world);
+						camera_frame_building(&camera, world);
+					}
 				}
 			}
 		}
@@ -660,12 +802,11 @@ static int run_window(const options_t *options)
 		if (now_ticks - title_ticks >= 500000000ull)
 		{
 			char title[256];
-			const char *name = strrchr(world->building_path, '/');
+			const char *name = strrchr(building_path, '/');
 			double fps = (double)frames_counted * 1e9 / (double)(now_ticks - title_ticks);
 
-			SDL_snprintf(title, sizeof(title), "WreckingBall - %s - %s: %d pieces, %d links broken - %.0f fps%s%s", WEAPON_NAMES[weapon],
-				name != NULL ? name + 1 : world->building_path,
-				world->model != NULL ? world->model->piece_count : 0, world->model != NULL ? world->model->broken_link_count : 0, fps,
+			SDL_snprintf(title, sizeof(title), "WreckingBall - %s - %s x%d: %d pieces, %d links broken - %.0f fps%s%s", WEAPON_NAMES[weapon],
+				name != NULL ? name + 1 : building_path, wb_world_building_count(world), wb_world_piece_count(world), wb_world_broken_link_count(world), fps,
 				paused ? " - paused" : "", slow ? " - slow" : "");
 			SDL_SetWindowTitle(window, title);
 			title_ticks = now_ticks;
