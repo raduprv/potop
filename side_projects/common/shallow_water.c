@@ -1,6 +1,6 @@
-// Water on the ground: see wb_water.h
+// Water on the ground: see shallow_water.h
 
-#include "wb_water.h"
+#include "shallow_water.h"
 
 #include <SDL3/SDL.h>
 
@@ -10,7 +10,7 @@
 // Thinner than this a cell counts as dry
 #define DRY_DEPTH 0.002f
 
-bool wb_water_create(wb_water_t *water, const float *corner_heights, int cells, float cell_meters, float origin_x, float origin_z)
+bool shallow_water_create(shallow_water_t *water, const float *corner_heights, int cells, float cell_meters, float origin_x, float origin_z)
 {
 	size_t count = (size_t)cells * (size_t)cells;
 	int corners = cells + 1;
@@ -29,7 +29,7 @@ bool wb_water_create(wb_water_t *water, const float *corner_heights, int cells, 
 	if (water->floor == NULL || water->depth == NULL || water->flow_left == NULL || water->flow_right == NULL || water->flow_up == NULL
 		|| water->flow_down == NULL)
 	{
-		wb_water_destroy(water);
+		shallow_water_destroy(water);
 		return false;
 	}
 	for (int row = 0; row < cells; row++)
@@ -43,7 +43,7 @@ bool wb_water_create(wb_water_t *water, const float *corner_heights, int cells, 
 	return true;
 }
 
-void wb_water_destroy(wb_water_t *water)
+void shallow_water_destroy(shallow_water_t *water)
 {
 	SDL_free(water->floor);
 	SDL_free(water->depth);
@@ -54,7 +54,7 @@ void wb_water_destroy(wb_water_t *water)
 	SDL_zerop(water);
 }
 
-void wb_water_clear(wb_water_t *water)
+void shallow_water_clear(shallow_water_t *water)
 {
 	size_t count = (size_t)water->cells * (size_t)water->cells;
 
@@ -77,12 +77,12 @@ static float pipe_flow(float flow, float surface_here, float surface_there, floa
 }
 
 // One step of the flows and depths
-static void step_once(wb_water_t *water, float seconds);
+static void step_once(shallow_water_t *water, float seconds);
 
 // Split in as many steps as fast waves need: a wave goes as fast as the
 // square root of gravity times the depth, and must not cross more than
 // half a cell a step
-void wb_water_step(wb_water_t *water, float seconds)
+void shallow_water_step(shallow_water_t *water, float seconds)
 {
 	int count = water->cells * water->cells;
 	float deepest = 0.0f;
@@ -102,7 +102,7 @@ void wb_water_step(wb_water_t *water, float seconds)
 	}
 }
 
-static void step_once(wb_water_t *water, float seconds)
+static void step_once(shallow_water_t *water, float seconds)
 {
 	int cells = water->cells;
 	float cell_area = water->cell_meters * water->cell_meters;
@@ -174,7 +174,7 @@ static void step_once(wb_water_t *water, float seconds)
 	water->total_volume = total;
 }
 
-void wb_water_pour(wb_water_t *water, float x, float z, float radius, float cubic_meters)
+void shallow_water_pour(shallow_water_t *water, float x, float z, float radius, float cubic_meters)
 {
 	int cells = water->cells;
 	int first_column = (int)SDL_floorf((x - radius - water->origin_x) / water->cell_meters);
@@ -216,7 +216,7 @@ void wb_water_pour(wb_water_t *water, float x, float z, float radius, float cubi
 	}
 }
 
-void wb_water_fill_to(wb_water_t *water, float surface_height)
+void shallow_water_fill_to(shallow_water_t *water, float surface_height)
 {
 	int count = water->cells * water->cells;
 
@@ -231,7 +231,7 @@ void wb_water_fill_to(wb_water_t *water, float surface_height)
 	}
 }
 
-bool wb_water_sample(const wb_water_t *water, float x, float z, float *depth, float *surface_height, float velocity[2])
+bool shallow_water_sample(const shallow_water_t *water, float x, float z, float *depth, float *surface_height, float velocity[2])
 {
 	int cells = water->cells;
 	int column = (int)SDL_floorf((x - water->origin_x) / water->cell_meters);

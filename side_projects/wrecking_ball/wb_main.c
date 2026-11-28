@@ -336,7 +336,7 @@ static void draw_world(wb_render_t *render, const wb_world_t *world, const float
 
 static void update_water(wb_render_t *render, const wb_world_t *world)
 {
-	const wb_water_t *water = &world->water;
+	const shallow_water_t *water = &world->water;
 
 	wb_render_set_water(render, water->depth, water->floor, world->terrain_heights, water->cells, water->cell_meters, water->origin_x, water->origin_z);
 }
@@ -527,12 +527,12 @@ static void scripted_events(wb_world_t *world, const options_t *options, const f
 	}
 	if (options->pour_frame >= 0 && world->frame_index >= options->pour_frame && world->frame_index < options->pour_frame + 2 * WB_WORLD_STEPS_PER_SECOND)
 	{
-		wb_water_pour(&world->water, center[0] + radius + 6.0f, center[2], WATER_POUR_RADIUS,
+		shallow_water_pour(&world->water, center[0] + radius + 6.0f, center[2], WATER_POUR_RADIUS,
 			WATER_POUR_CUBIC_METERS_A_SECOND / (float)WB_WORLD_STEPS_PER_SECOND);
 	}
 	if (world->frame_index == options->flood_frame)
 	{
-		wb_water_fill_to(&world->water, 0.6f);
+		shallow_water_fill_to(&world->water, 0.6f);
 	}
 }
 
@@ -852,12 +852,12 @@ static int run_window(const options_t *options)
 				else if (key == SDLK_F)
 				{
 					flood_level += FLOOD_STEP_METERS;
-					wb_water_fill_to(&world->water, flood_level);
+					shallow_water_fill_to(&world->water, flood_level);
 				}
 				else if (key == SDLK_G)
 				{
 					flood_level = 0.0f;
-					wb_water_clear(&world->water);
+					shallow_water_clear(&world->water);
 				}
 				else if (key >= SDLK_F1 && key <= SDLK_F4)
 				{
@@ -896,7 +896,7 @@ static int run_window(const options_t *options)
 
 			if (wb_world_cast_ray(world, camera.position, aim_direction, 200.0f, hit))
 			{
-				wb_water_pour(&world->water, hit[0], hit[2], WATER_POUR_RADIUS,
+				shallow_water_pour(&world->water, hit[0], hit[2], WATER_POUR_RADIUS,
 					WATER_POUR_CUBIC_METERS_A_SECOND * (float)seconds * (slow ? 0.25f : 1.0f));
 			}
 		}

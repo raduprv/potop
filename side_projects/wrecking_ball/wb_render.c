@@ -28,7 +28,7 @@ typedef struct
 	float unused;
 } water_vertex_t;
 
-// Thinner than this the water is not drawn (wb_water.c's dry depth)
+// Thinner than this the water is not drawn (shallow_water.c's dry depth)
 #define WATER_DRY_DEPTH 0.002f
 
 // What the shaders read of an instance (solid.vert's inputs 2 to 5)

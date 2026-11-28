@@ -101,7 +101,7 @@ bool wb_world_create(wb_world_t *world, const char *settings_path)
 	definition.hitEventThreshold = world->settings.hit_speed;
 	world->world = b3CreateWorld(&definition);
 	make_terrain(world);
-	if (!wb_water_create(&world->water, world->terrain_heights, WB_TERRAIN_CELLS, WB_TERRAIN_CELL_METERS, -wb_world_terrain_half_size(),
+	if (!shallow_water_create(&world->water, world->terrain_heights, WB_TERRAIN_CELLS, WB_TERRAIN_CELL_METERS, -wb_world_terrain_half_size(),
 		-wb_world_terrain_half_size()))
 	{
 		return false;
@@ -162,7 +162,7 @@ void wb_world_destroy(wb_world_t *world)
 	{
 		b3DestroyHeightField(world->terrain_field);
 	}
-	wb_water_destroy(&world->water);
+	shallow_water_destroy(&world->water);
 	SDL_zerop(world);
 }
 
@@ -533,7 +533,7 @@ static float push_by_water(wb_world_t *world, b3BodyId body, b3Vec3 point, float
 	// under water)
 	const float drag_per_second = 3.0f;
 
-	if (!wb_water_sample(&world->water, point.x, point.z, &depth, &surface, flow))
+	if (!shallow_water_sample(&world->water, point.x, point.z, &depth, &surface, flow))
 	{
 		return 0.0f;
 	}
@@ -545,7 +545,7 @@ static float push_by_water(wb_world_t *world, b3BodyId body, b3Vec3 point, float
 	under = SDL_min(under, 1.0f);
 	speed = b3Body_GetWorldPointVelocity(body, point);
 	force.x = -drag_per_second * under * mass * (speed.x - flow[0]);
-	force.y = WB_WATER_DENSITY * 9.81f * volume * under - drag_per_second * under * mass * speed.y;
+	force.y = SHALLOW_WATER_DENSITY * 9.81f * volume * under - drag_per_second * under * mass * speed.y;
 	force.z = -drag_per_second * under * mass * (speed.z - flow[1]);
 	// (still water does not wake what has come to rest in it: it would
 	// keep every sunken piece awake for good)
@@ -655,7 +655,7 @@ void wb_world_step(wb_world_t *world)
 	b3ContactEvents events;
 
 	push_loose_things(world, step_seconds);
-	wb_water_step(&world->water, step_seconds);
+	shallow_water_step(&world->water, step_seconds);
 
 	for (int b = 0; b < WB_BUILDINGS_MAX; b++)
 	{
