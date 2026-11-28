@@ -50,6 +50,10 @@ typedef struct
 	float light_direction[3];          // towards the light, unit length
 	uint32_t current_object_id;
 	bool cull_back_faces;              // off: both sides of a triangle are drawn (the default)
+	// Over 0 (to 1): triangles are mixed into the picture by so much where
+	// they are in front, and leave the depth and the object ids as they
+	// were (water: draw it after the solids)
+	float blend_opacity;
 	int line_width_pixels;             // lines and their depth test, 1 by default
 	bool marks_on_top;                 // lines and points show through the solids (to see what is inside)
 

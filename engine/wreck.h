@@ -45,7 +45,8 @@
 //   - the shock of a fall: when a loose group hits something, each of
 //     its pieces is pushed by its mass times the speed it lost, solved
 //     through the group's links.
-// Loose moving pieces are slowed by the air.
+// Loose pieces are slowed by the air and, where there is water, borne up,
+// carried and slowed by it.
 //
 // One thread: the solver's scratch arrays are the file's own (they hold
 // nothing from one call to the next; all that lasts is in the model).
@@ -72,6 +73,8 @@
 // The group of a piece that is no more (crushed): it has no body and is
 // not drawn
 #define WRECK_GONE -1
+
+typedef bool wreck_water_function_t(void *user, b3Vec3 point, float *surface_height, b3Vec3 *flow);
 
 typedef enum
 {
@@ -145,6 +148,8 @@ typedef struct
 	float blast_charge_density;
 	float link_elastic;                // of what a link can take of a sudden push, the part that springs back and costs it nothing
 	float blast_inertia;               // for each kilogram of a piece, how many links' worth of a blast's push its own mass takes up
+	float air_density;                 // kilograms a cubic meter
+	float water_density;               // the same: it bears up what is in it, and drags on it as many times harder than the air as it is denser
 	float air_drag;                    // newtons the air pushes back with for each square meter that faces the way a piece goes, at 1 m/s (and by the speed squared)
 	int blast_slices;                  // a blast's push comes on what stands in this many parts, links breaking between them
 	// The gas left by a blast that is shut in: how hard it presses, as a
@@ -189,6 +194,7 @@ typedef struct
 	float bent;                        // how many times what it bears it is bent, from the last support pass
 	float gas_push_left;               // of the same blast's gas, what is still to push the piece, as a part of the blast's strength
 	float blast_push_left;             // of the blast being worked out, the part of its push that came on after the piece came loose
+	float wet;                         // how much of it was under water (0 none, 1 all) when its body was last awake
 } wreck_piece_t;
 
 typedef struct
@@ -294,6 +300,10 @@ typedef struct
 	bool shock_pieces[WRECK_PIECES_MAX];
 	bool any_shock;
 
+	// The water, if there is any (wreck_model_set_water)
+	wreck_water_function_t *water_function;
+	void *water_user;
+
 	wreck_hit_t recent_hits[WRECK_RECENT_HITS_MAX];
 	int hit_count;                     // all there were; the last WRECK_RECENT_HITS_MAX are kept
 	float largest_hit_impulse;
@@ -330,6 +340,15 @@ void wreck_model_create(wreck_model_t *model, b3WorldId world, const wreck_setti
 // Takes all of the model's bodies out of the world (not the projectiles:
 // they are not its own) and leaves it empty
 void wreck_model_destroy(wreck_model_t *model);
+
+// Water. The model has none of its own: it asks whoever uses it, through
+// this function, what the water is like at a point of the world: how
+// high its surface is there and how it flows (meters a second), false
+// where there is none. With it set, what is loose floats or sinks by
+// its material's density and is carried and slowed by the water
+// (push_by_fluids in wreck.c); what stands is not touched by it yet.
+// NULL: no water. (wreck_model_create sets none.)
+void wreck_model_set_water(wreck_model_t *model, wreck_water_function_t *water_function, void *user);
 
 // Building: pieces where they stand, then links between them, then
 // wreck_model_finish, which finds the islands and makes their bodies.

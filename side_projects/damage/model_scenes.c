@@ -11,6 +11,7 @@
 #include "damage_events.h"
 #include "damage_draw.h"
 #include "damage_ini.h"
+#include "shallow_water.h"
 #include "wreck.h"
 
 #define SETTINGS_PATH "damage.ini"
@@ -18,6 +19,14 @@
 #define SUBSTEP_COUNT 4
 #define GRAVITY 9.81f
 #define PI 3.14159265358979f
+#define WATER_CELLS 128
+#define WATER_CELL_METERS 0.5f
+#define WATER_COLOR 0x2E6FB0
+#define WATER_OPACITY 0.55f
+// Water shallower than this is not drawn; a dry corner of the sheet is
+// this far under the ground (meters)
+#define WATER_SHOWN_METERS 0.005f
+#define WATER_DRY_CORNER_METERS 0.05f
 #define RECENT_BLASTS_MAX 16
 #define BLAST_SHOWN_FRAMES 12
 
@@ -62,6 +71,11 @@ typedef struct
 } cabin_t;
 
 static cabin_t cabin;
+// The water on the scenes' ground (side_projects/common/shallow_water.h),
+// dry until some is poured: WATER_CELLS cells a side of WATER_CELL_METERS,
+// the ground flat under it
+static shallow_water_t water;
+static bool water_is_made;
 // (Big: kept out of the struct that is cleared at every start)
 static wreck_model_t model;
 static bool settings_missing_was_said;
@@ -747,6 +761,9 @@ static void build_support_structures(void)
 	build_beam_on_pillars(6.5f, 0.0f);
 }
 
+static void build_water(void);
+static bool water_at(void *user, b3Vec3 point, float *surface_height, b3Vec3 *flow);
+
 static void build_world(void)
 {
 	b3WorldDef definition = b3DefaultWorldDef();
@@ -769,12 +786,43 @@ static void build_world(void)
 	cabin.is_open = true;
 
 	build_ground();
+	build_water();
 	wreck_model_create(&model, cabin.world, &cabin.settings);
+	wreck_model_set_water(&model, water_at, NULL);
 	build_structures();
 	wreck_model_finish(&model);
 }
 
-// The balls and blasts of the person at the keys that belong to this frame
+// The water starts dry at every start of a scene
+static void build_water(void)
+{
+	static float corner_heights[(WATER_CELLS + 1) * (WATER_CELLS + 1)];
+
+	if (water_is_made)
+	{
+		shallow_water_destroy(&water);
+	}
+	water_is_made = shallow_water_create(&water, corner_heights, WATER_CELLS, WATER_CELL_METERS,
+		-0.5f * (float)WATER_CELLS * WATER_CELL_METERS, -0.5f * (float)WATER_CELLS * WATER_CELL_METERS);
+}
+
+// What the model asks to know of the water at a point (wreck_model_set_water)
+static bool water_at(void *user, b3Vec3 point, float *surface_height, b3Vec3 *flow)
+{
+	float depth;
+	float velocity[2];
+
+	(void)user;
+	if (!water_is_made || !shallow_water_sample(&water, point.x, point.z, &depth, surface_height, velocity))
+	{
+		return false;
+	}
+	*flow = make_vector(velocity[0], 0.0f, velocity[1]);
+	return true;
+}
+
+// The balls, blasts and water of the person at the keys that belong to
+// this frame
 static void set_off_events(void)
 {
 	int i;
@@ -806,6 +854,27 @@ static void set_off_events(void)
 			b3CreateSphereShape(body, &shape_definition, &sphere);
 			b3Body_SetLinearVelocity(body, make_vector(event->velocity[0], event->velocity[1], event->velocity[2]));
 			wreck_model_add_projectile(&model, body, cabin.settings.ball_radius);
+		}
+		else if (event->kind == DAMAGE_EVENT_POUR)
+		{
+			if (water_is_made)
+			{
+				shallow_water_pour(&water, event->position[0], event->position[2], event->radius, event->cubic_meters);
+			}
+		}
+		else if (event->kind == DAMAGE_EVENT_FLOOD)
+		{
+			if (water_is_made)
+			{
+				shallow_water_fill_to(&water, event->height);
+			}
+		}
+		else if (event->kind == DAMAGE_EVENT_DRY)
+		{
+			if (water_is_made)
+			{
+				shallow_water_clear(&water);
+			}
 		}
 		else
 		{
@@ -839,6 +908,10 @@ static void step_world(void)
 		{
 			wreck_model_take_hit(&model, event, cabin.frame_index);
 		}
+	}
+	if (water_is_made)
+	{
+		shallow_water_step(&water, STEP_SECONDS);
 	}
 	wreck_model_after_step(&model, cabin.frame_index, STEP_SECONDS);
 }
@@ -961,6 +1034,69 @@ static void cabin_scene_seek(int frame_index)
 	}
 }
 
+// The water's surface, mixed into the picture over the solids. A sheet
+// over the ground's cells: at each corner the mean surface of the wet
+// cells round it, a dry corner a little under the ground, so that the
+// shore comes out by itself where the sheet goes into the ground.
+static float water_corner_height(int corner_x, int corner_z)
+{
+	float sum = 0.0f;
+	int wet = 0;
+	int x;
+	int z;
+
+	for (z = corner_z - 1; z <= corner_z; z++)
+	{
+		for (x = corner_x - 1; x <= corner_x; x++)
+		{
+			if (x >= 0 && z >= 0 && x < water.cells && z < water.cells && water.depth[z * water.cells + x] > WATER_SHOWN_METERS)
+			{
+				sum += water.floor[z * water.cells + x] + water.depth[z * water.cells + x];
+				wet++;
+			}
+		}
+	}
+	return wet > 0 ? sum / (float)wet : -WATER_DRY_CORNER_METERS;
+}
+
+static void draw_water(soft_render_t *renderer)
+{
+	int x;
+	int z;
+
+	if (!water_is_made || water.total_volume <= 0.0)
+	{
+		return;
+	}
+	renderer->blend_opacity = WATER_OPACITY;
+	for (z = 0; z < water.cells; z++)
+	{
+		for (x = 0; x < water.cells; x++)
+		{
+			float corners[4][3];
+			bool any_wet = false;
+			int corner;
+
+			for (corner = 0; corner < 4; corner++)
+			{
+				int corner_x = x + (corner == 1 || corner == 2 ? 1 : 0);
+				int corner_z = z + (corner >= 2 ? 1 : 0);
+
+				corners[corner][0] = water.origin_x + (float)corner_x * water.cell_meters;
+				corners[corner][1] = water_corner_height(corner_x, corner_z);
+				corners[corner][2] = water.origin_z + (float)corner_z * water.cell_meters;
+				any_wet = any_wet || corners[corner][1] > -WATER_DRY_CORNER_METERS;
+			}
+			if (any_wet)
+			{
+				soft_render_triangle(renderer, corners[0], corners[3], corners[2], WATER_COLOR);
+				soft_render_triangle(renderer, corners[0], corners[2], corners[1], WATER_COLOR);
+			}
+		}
+	}
+	renderer->blend_opacity = 0.0f;
+}
+
 static void cabin_scene_draw(soft_render_t *renderer, const soft_render_camera_t *camera, bool draw_outlines, bool draw_debug)
 {
 	int first_blast = cabin.blast_count > RECENT_BLASTS_MAX ? cabin.blast_count - RECENT_BLASTS_MAX : 0;
@@ -978,6 +1114,7 @@ static void cabin_scene_draw(soft_render_t *renderer, const soft_render_camera_t
 	{
 		soft_render_outlines(renderer);
 	}
+	draw_water(renderer);
 	damage_draw_marks(&model, renderer, cabin.frame_index, draw_debug);
 	if (inspected_piece >= 0)
 	{
@@ -1005,6 +1142,12 @@ static void cabin_scene_draw(soft_render_t *renderer, const soft_render_camera_t
 static void cabin_scene_describe(char *text, int text_size)
 {
 	wreck_model_describe(&model, text, text_size);
+	if (water_is_made && water.total_volume > 0.0)
+	{
+		int length = (int)strlen(text);
+
+		snprintf(text + length, (size_t)(text_size - length), "  WATER %.0f M3", water.total_volume);
+	}
 }
 
 static uint32_t cabin_scene_checksum(void)

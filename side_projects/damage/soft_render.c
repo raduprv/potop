@@ -477,15 +477,38 @@ static void rasterize_triangle(soft_render_t *renderer, const screen_corner_t *c
 			uint32_t *object_ids = renderer->object_ids;
 			uint32_t *colors = (uint32_t *)(void *)renderer->color;
 
-			for (; pixel <= pixel_end; pixel++)
+			if (renderer->blend_opacity > 0.0f)
 			{
-				if (inverse_w > depth[pixel])
+				// Mixed in: 8 bit fixed point, a color at a time
+				uint32_t mix = (uint32_t)(renderer->blend_opacity * 256.0f);
+				uint8_t *bytes = renderer->color;
+
+				mix = mix > 256 ? 256 : mix;
+				for (; pixel <= pixel_end; pixel++)
 				{
-					depth[pixel] = inverse_w;
-					object_ids[pixel] = object_id;
-					colors[pixel] = packed_color;
+					if (inverse_w > depth[pixel])
+					{
+						uint8_t *destination = &bytes[pixel * 4];
+
+						destination[0] = (uint8_t)((destination[0] * (256 - mix) + color[0] * mix) >> 8);
+						destination[1] = (uint8_t)((destination[1] * (256 - mix) + color[1] * mix) >> 8);
+						destination[2] = (uint8_t)((destination[2] * (256 - mix) + color[2] * mix) >> 8);
+					}
+					inverse_w += inverse_w_step_x;
 				}
-				inverse_w += inverse_w_step_x;
+			}
+			else
+			{
+				for (; pixel <= pixel_end; pixel++)
+				{
+					if (inverse_w > depth[pixel])
+					{
+						depth[pixel] = inverse_w;
+						object_ids[pixel] = object_id;
+						colors[pixel] = packed_color;
+					}
+					inverse_w += inverse_w_step_x;
+				}
 			}
 		}
 		edge_ab_row += edge_ab_step_y;

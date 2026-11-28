@@ -473,6 +473,58 @@ model of its own, worked on one after another on one thread.
 - Not done, for later: a collision filter for the pieces' shapes, and
   putting far buildings to sleep (bodies gone, graph kept).
 
+## Water (the shared shallow water, and what it does to loose pieces)
+
+The water is Opus's `side_projects/common/shallow_water` (virtual pipes
+on a grid), the same file WreckingBall uses. It was made free of SDL
+(plain C library calls) so that the headless `damage_shot` can link it.
+
+In the test bench: a 64 m square of it under every model scene, stepped
+with the world, drawn as a see-through sheet (`blend_opacity` in the
+soft renderer). Events: `pour F x z radius m3`, `flood F height`,
+`dry F`. In the viewer: F pours 3 m3 where the mouse points, Shift+F
+40 m3, G floods to half a meter, Shift+G dries.
+
+In the core the water is a function the model is given
+(`wreck_model_set_water`): for a point, the height of the surface and
+the flow there. The core knows nothing else about where water comes
+from. `push_by_fluids` (which took the place of the air-only drag) takes
+each loose piece in 4 x 2 parts, and on each part:
+
+- **lift**: the weight of the water the sunk share of the part takes
+  the place of. Given as a force (not a push after the step), so that
+  what floats at rest has no speed and falls asleep like anything else;
+- **drag**: the same law as in the air (area facing the way it goes,
+  speed squared), the water as many times harder as it is denser
+  (`water_density / air_density`), on the sunk share, against the flow;
+  the air on the rest;
+- **waves**: a part at the surface going up or down makes waves that
+  carry its movement away: water density x its area at the surface x
+  sqrt(gravity x depth sunk) x its speed up or down. The speed in it is
+  that of waves in water as deep as the part is sunk; it is right in
+  order of size, not a measured number. It gives a floating piece about
+  half of the damping at which it would not swing at all, whatever its
+  size: it bobs or rocks once or twice and lies still.
+
+There is no rule for turning. A board that spins has parts that move
+through the water, and they are slowed; it floats flat because the
+deeper parts are lifted more. Found on the way: with drag alone a
+floating board rocked for ever (speed-squared drag is next to nothing
+at small speeds, which is true of real water too: what stops a real
+board is the waves), and lift given as a push kept everything awake.
+
+Sleep: what sleeps is left asleep unless the water flows past it
+(0.03 m/s) or has risen or fallen along it, since it fell asleep, by
+what bears a tenth of its weight. So a flood lifts sleeping wood and a
+drying drops it, and bricks on the bottom sleep on.
+
+Measured (house flooded to 0.6 m, then blown up): 4 s after the blast
+nothing turns faster than 0.4 rad/s, after 15 s all but a few pieces
+sleep. The dry demos changed a little (the air's drag is now per part,
+so it also slows spinning).
+
+Not done yet: water on what stands, pieces in the water's way.
+
 ## The model
 
 Not a CAD grade simulation: if it shows in the game it is in, if it only

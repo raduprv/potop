@@ -79,6 +79,18 @@ bool damage_events_load(const char *path)
 		{
 			event.kind = DAMAGE_EVENT_BLAST;
 		}
+		else if (sscanf(line + first, "pour %d %f %f %f %f", &event.frame_index, &event.position[0], &event.position[2], &event.radius, &event.cubic_meters) == 5)
+		{
+			event.kind = DAMAGE_EVENT_POUR;
+		}
+		else if (sscanf(line + first, "flood %d %f", &event.frame_index, &event.height) == 2)
+		{
+			event.kind = DAMAGE_EVENT_FLOOD;
+		}
+		else if (sscanf(line + first, "dry %d", &event.frame_index) == 1)
+		{
+			event.kind = DAMAGE_EVENT_DRY;
+		}
 		else
 		{
 			fclose(file);
@@ -116,10 +128,23 @@ bool damage_events_save(const char *path, const char *scene_name)
 				(double)event->position[0], (double)event->position[1], (double)event->position[2],
 				(double)event->velocity[0], (double)event->velocity[1], (double)event->velocity[2]);
 		}
-		else
+		else if (event->kind == DAMAGE_EVENT_BLAST)
 		{
 			fprintf(file, "blast %d %.9g %.9g %.9g %.9g\n", event->frame_index,
 				(double)event->position[0], (double)event->position[1], (double)event->position[2], (double)event->strength);
+		}
+		else if (event->kind == DAMAGE_EVENT_POUR)
+		{
+			fprintf(file, "pour %d %.9g %.9g %.9g %.9g\n", event->frame_index,
+				(double)event->position[0], (double)event->position[2], (double)event->radius, (double)event->cubic_meters);
+		}
+		else if (event->kind == DAMAGE_EVENT_FLOOD)
+		{
+			fprintf(file, "flood %d %.9g\n", event->frame_index, (double)event->height);
+		}
+		else
+		{
+			fprintf(file, "dry %d\n", event->frame_index);
 		}
 	}
 	return fclose(file) == 0;

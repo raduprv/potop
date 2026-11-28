@@ -19,7 +19,10 @@
 typedef enum
 {
 	DAMAGE_EVENT_BALL,
-	DAMAGE_EVENT_BLAST
+	DAMAGE_EVENT_BLAST,
+	DAMAGE_EVENT_POUR,                 // water poured on a disc of ground
+	DAMAGE_EVENT_FLOOD,                // water everywhere up to a height
+	DAMAGE_EVENT_DRY                   // all the water gone
 } damage_event_kind_t;
 
 typedef struct
@@ -29,6 +32,11 @@ typedef struct
 	float position[3];                 // where the ball starts or the blast is
 	float velocity[3];                 // the ball's, meters a second
 	float strength;                    // the blast's impulse on a square meter facing it, newton seconds
+	// The water: where it is poured (position, its height unused), over
+	// what radius and how many cubic meters; or the height of a flood
+	float radius;
+	float cubic_meters;
+	float height;
 } damage_event_t;
 
 int damage_events_count(void);

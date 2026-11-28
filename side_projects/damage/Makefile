@@ -17,15 +17,17 @@ THIRD_PARTY = ../../third_party
 # The model itself is the engine's (engine/wreck.c): this directory is its
 # test bench, and builds that one file of the engine with its own
 ENGINE = ../../engine
-CFLAGS += -std=c11 -Wall -Wextra -O2 -g -ffp-contract=off -I$(THIRD_PARTY) -I$(THIRD_PARTY)/box3d/include -I$(ENGINE)
+# The water is shared with the other side projects (../common)
+COMMON = ../common
+CFLAGS += -std=c11 -Wall -Wextra -O2 -g -ffp-contract=off -I$(THIRD_PARTY) -I$(THIRD_PARTY)/box3d/include -I$(ENGINE) -I$(COMMON)
 SDL_CFLAGS := $(shell $(PKG_CONFIG) --cflags sdl3 2>/dev/null)
 SDL_LIBS := $(shell $(PKG_CONFIG) --libs sdl3 2>/dev/null)
 SDL_LIBRARY_DIRECTORY := $(shell $(PKG_CONFIG) --variable=libdir sdl3 2>/dev/null)
 
 COMMON_SOURCES = soft_render.c soft_render_png.c command_line.c damage_draw.c damage_events.c damage_ini.c \
 	damage_scene.c model_scenes.c pile_scene.c test_scene.c
-COMMON_OBJECTS = $(COMMON_SOURCES:%.c=build/%.o) build/wreck.o
-HEADERS = $(wildcard *.h) $(ENGINE)/wreck.h
+COMMON_OBJECTS = $(COMMON_SOURCES:%.c=build/%.o) build/wreck.o build/shallow_water.o
+HEADERS = $(wildcard *.h) $(ENGINE)/wreck.h $(COMMON)/shallow_water.h
 BOX3D_SOURCES = $(wildcard $(THIRD_PARTY)/box3d/src/*.c)
 BOX3D_OBJECTS = $(BOX3D_SOURCES:$(THIRD_PARTY)/box3d/src/%.c=build/box3d/%.o)
 
@@ -52,6 +54,10 @@ build/%.o: %.c $(HEADERS)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 build/wreck.o: $(ENGINE)/wreck.c $(ENGINE)/wreck.h
+	@mkdir -p build
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+build/shallow_water.o: $(COMMON)/shallow_water.c $(COMMON)/shallow_water.h
 	@mkdir -p build
 	$(CC) $(CFLAGS) -c -o $@ $<
 

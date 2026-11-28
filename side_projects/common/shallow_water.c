@@ -2,7 +2,9 @@
 
 #include "shallow_water.h"
 
-#include <SDL3/SDL.h>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define GRAVITY 9.81f
 // The flow kept from one step to the next (the rest lost to friction)
@@ -15,17 +17,17 @@ bool shallow_water_create(shallow_water_t *water, const float *corner_heights, i
 	size_t count = (size_t)cells * (size_t)cells;
 	int corners = cells + 1;
 
-	SDL_zerop(water);
+	memset(water, 0, sizeof(*water));
 	water->cells = cells;
 	water->cell_meters = cell_meters;
 	water->origin_x = origin_x;
 	water->origin_z = origin_z;
-	water->floor = SDL_calloc(count, sizeof(float));
-	water->depth = SDL_calloc(count, sizeof(float));
-	water->flow_left = SDL_calloc(count, sizeof(float));
-	water->flow_right = SDL_calloc(count, sizeof(float));
-	water->flow_up = SDL_calloc(count, sizeof(float));
-	water->flow_down = SDL_calloc(count, sizeof(float));
+	water->floor = calloc(count, sizeof(float));
+	water->depth = calloc(count, sizeof(float));
+	water->flow_left = calloc(count, sizeof(float));
+	water->flow_right = calloc(count, sizeof(float));
+	water->flow_up = calloc(count, sizeof(float));
+	water->flow_down = calloc(count, sizeof(float));
 	if (water->floor == NULL || water->depth == NULL || water->flow_left == NULL || water->flow_right == NULL || water->flow_up == NULL
 		|| water->flow_down == NULL)
 	{
@@ -45,29 +47,45 @@ bool shallow_water_create(shallow_water_t *water, const float *corner_heights, i
 
 void shallow_water_destroy(shallow_water_t *water)
 {
-	SDL_free(water->floor);
-	SDL_free(water->depth);
-	SDL_free(water->flow_left);
-	SDL_free(water->flow_right);
-	SDL_free(water->flow_up);
-	SDL_free(water->flow_down);
-	SDL_zerop(water);
+	free(water->floor);
+	free(water->depth);
+	free(water->flow_left);
+	free(water->flow_right);
+	free(water->flow_up);
+	free(water->flow_down);
+	memset(water, 0, sizeof(*water));
 }
 
 void shallow_water_clear(shallow_water_t *water)
 {
 	size_t count = (size_t)water->cells * (size_t)water->cells;
 
-	SDL_memset(water->depth, 0, sizeof(float) * count);
-	SDL_memset(water->flow_left, 0, sizeof(float) * count);
-	SDL_memset(water->flow_right, 0, sizeof(float) * count);
-	SDL_memset(water->flow_up, 0, sizeof(float) * count);
-	SDL_memset(water->flow_down, 0, sizeof(float) * count);
+	memset(water->depth, 0, sizeof(float) * count);
+	memset(water->flow_left, 0, sizeof(float) * count);
+	memset(water->flow_right, 0, sizeof(float) * count);
+	memset(water->flow_up, 0, sizeof(float) * count);
+	memset(water->flow_down, 0, sizeof(float) * count);
 	water->total_volume = 0.0;
 }
 
 // The new flow through one pipe: what it had, kept, plus what the
 // difference of the two surfaces pushes through it
+// (Functions, not macros: an argument is worked out once)
+static float larger_of(float first, float second)
+{
+	return first > second ? first : second;
+}
+
+static int larger_int(int first, int second)
+{
+	return first > second ? first : second;
+}
+
+static int smaller_int(int first, int second)
+{
+	return first < second ? first : second;
+}
+
 static float pipe_flow(float flow, float surface_here, float surface_there, float seconds, float cell_meters)
 {
 	float pipe_area = cell_meters * cell_meters;
@@ -91,11 +109,11 @@ void shallow_water_step(shallow_water_t *water, float seconds)
 
 	for (int i = 0; i < count; i++)
 	{
-		deepest = SDL_max(deepest, water->depth[i]);
+		deepest = larger_of(deepest, water->depth[i]);
 	}
-	wave_speed = SDL_sqrtf(GRAVITY * deepest);
-	steps = (int)SDL_ceilf(wave_speed * seconds / (0.5f * water->cell_meters));
-	steps = SDL_clamp(steps, 1, 16);
+	wave_speed = sqrtf(GRAVITY * deepest);
+	steps = (int)ceilf(wave_speed * seconds / (0.5f * water->cell_meters));
+	steps = larger_int(1, smaller_int(steps, 16));
 	for (int s = 0; s < steps; s++)
 	{
 		step_once(water, seconds / (float)steps);
@@ -177,17 +195,17 @@ static void step_once(shallow_water_t *water, float seconds)
 void shallow_water_pour(shallow_water_t *water, float x, float z, float radius, float cubic_meters)
 {
 	int cells = water->cells;
-	int first_column = (int)SDL_floorf((x - radius - water->origin_x) / water->cell_meters);
-	int last_column = (int)SDL_floorf((x + radius - water->origin_x) / water->cell_meters);
-	int first_row = (int)SDL_floorf((z - radius - water->origin_z) / water->cell_meters);
-	int last_row = (int)SDL_floorf((z + radius - water->origin_z) / water->cell_meters);
+	int first_column = (int)floorf((x - radius - water->origin_x) / water->cell_meters);
+	int last_column = (int)floorf((x + radius - water->origin_x) / water->cell_meters);
+	int first_row = (int)floorf((z - radius - water->origin_z) / water->cell_meters);
+	int last_row = (int)floorf((z + radius - water->origin_z) / water->cell_meters);
 	int touched[1024];
 	int touched_count = 0;
 	float cell_area = water->cell_meters * water->cell_meters;
 
-	for (int row = SDL_max(first_row, 0); row <= SDL_min(last_row, cells - 1); row++)
+	for (int row = larger_int(first_row, 0); row <= smaller_int(last_row, cells - 1); row++)
 	{
-		for (int column = SDL_max(first_column, 0); column <= SDL_min(last_column, cells - 1); column++)
+		for (int column = larger_int(first_column, 0); column <= smaller_int(last_column, cells - 1); column++)
 		{
 			float center_x = water->origin_x + ((float)column + 0.5f) * water->cell_meters - x;
 			float center_z = water->origin_z + ((float)row + 0.5f) * water->cell_meters - z;
@@ -201,8 +219,8 @@ void shallow_water_pour(shallow_water_t *water, float x, float z, float radius, 
 	// (a disc smaller than a cell: the cell under its middle)
 	if (touched_count == 0)
 	{
-		int column = (int)SDL_floorf((x - water->origin_x) / water->cell_meters);
-		int row = (int)SDL_floorf((z - water->origin_z) / water->cell_meters);
+		int column = (int)floorf((x - water->origin_x) / water->cell_meters);
+		int row = (int)floorf((z - water->origin_z) / water->cell_meters);
 
 		if (column < 0 || row < 0 || column >= cells || row >= cells)
 		{
@@ -234,8 +252,8 @@ void shallow_water_fill_to(shallow_water_t *water, float surface_height)
 bool shallow_water_sample(const shallow_water_t *water, float x, float z, float *depth, float *surface_height, float velocity[2])
 {
 	int cells = water->cells;
-	int column = (int)SDL_floorf((x - water->origin_x) / water->cell_meters);
-	int row = (int)SDL_floorf((z - water->origin_z) / water->cell_meters);
+	int column = (int)floorf((x - water->origin_x) / water->cell_meters);
+	int row = (int)floorf((z - water->origin_z) / water->cell_meters);
 	int index;
 	float here;
 	float through;

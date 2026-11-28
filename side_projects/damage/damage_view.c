@@ -58,6 +58,13 @@
 #define BLAST_REACH_METERS 200.0f
 // A blast is put this far before what the cross points at, not inside it
 #define BLAST_BACK_METERS 0.15f
+// F pours so much water over a disc of so much; with Shift, more. G
+// floods all the ground so deep.
+#define POUR_RADIUS_METERS 1.0f
+#define POUR_CUBIC_METERS 3.0f
+#define POUR_MUCH_RADIUS_METERS 2.5f
+#define POUR_MUCH_CUBIC_METERS 40.0f
+#define FLOOD_METERS 0.5f
 
 typedef struct
 {
@@ -178,6 +185,44 @@ static void throw_ball(const soft_render_camera_t *camera, int frame_index, bool
 }
 
 // A blast at what the middle of the screen points at, if anything is there
+// Water poured where the middle of the picture looks, from this frame on
+static void pour_water(const damage_scene_t *scene, const soft_render_camera_t *camera, int frame_index, bool much)
+{
+	damage_event_t event;
+	float forward[3];
+	float hit_point[3];
+	int i;
+
+	for (i = 0; i < 3; i++)
+	{
+		forward[i] = camera->target[i] - camera->eye[i];
+	}
+	if (scene->cast_ray == NULL || !scene->cast_ray(camera->eye, forward, BLAST_REACH_METERS, hit_point))
+	{
+		return;
+	}
+	memset(&event, 0, sizeof(event));
+	event.frame_index = frame_index;
+	event.kind = DAMAGE_EVENT_POUR;
+	event.position[0] = hit_point[0];
+	event.position[2] = hit_point[2];
+	event.radius = much ? POUR_MUCH_RADIUS_METERS : POUR_RADIUS_METERS;
+	event.cubic_meters = much ? POUR_MUCH_CUBIC_METERS : POUR_CUBIC_METERS;
+	damage_events_add(&event);
+}
+
+// A flood over all the ground, or all the water gone
+static void flood_or_dry(int frame_index, bool dry)
+{
+	damage_event_t event;
+
+	memset(&event, 0, sizeof(event));
+	event.frame_index = frame_index;
+	event.kind = dry ? DAMAGE_EVENT_DRY : DAMAGE_EVENT_FLOOD;
+	event.height = FLOOD_METERS;
+	damage_events_add(&event);
+}
+
 static void set_off_blast(const damage_scene_t *scene, const soft_render_camera_t *camera, int frame_index, bool big)
 {
 	damage_event_t event;
@@ -265,10 +310,11 @@ static void draw_hud(const damage_scene_t *scene, soft_render_t *renderer, int f
 	soft_render_text(renderer, renderer->width / 2 - 5, renderer->height / 2 - 7, 2, HUD_COLOR, "+");
 	if (show_keys)
 	{
-		soft_render_text(renderer, 6, renderer->height - 9 * 18 - 6, 2, HUD_COLOR,
+		soft_render_text(renderer, 6, renderer->height - 10 * 18 - 6, 2, HUD_COLOR,
 			"W A S D MOVE, Q E DOWN UP, SHIFT FASTER\n"
 			"MOUSE: LOOK ROUND (I: UP AND DOWN THE OTHER WAY)   TAB: LET THE MOUSE GO\n"
 			"LEFT MOUSE: THROW A BALL   X: A BLAST (SHIFT: STRONGER)   RIGHT MOUSE: LOOK INTO A PIECE\n"
+			"F: POUR WATER WHERE YOU LOOK (SHIFT: A LOT)   G: A FLOOD HALF A METER DEEP (SHIFT: DRY IT ALL)\n"
 			"BACKSPACE: TAKE THE LAST ONE BACK   DELETE: ALL\n"
 			"SPACE: PAUSE   RIGHT LEFT: A FRAME ON, BACK (SHIFT: TEN)\n"
 			"[ ]: SLOWER, FASTER   R: FRAME 0   1 TO 7: SCENE\n"
@@ -502,6 +548,13 @@ int main(int argument_count, char **arguments)
 					case SDLK_X:
 						view_camera_to_render_camera(&view_camera, &camera);
 						set_off_blast(scene, &camera, frame_index, (event.key.mod & SDL_KMOD_SHIFT) != 0);
+						break;
+					case SDLK_F:
+						view_camera_to_render_camera(&view_camera, &camera);
+						pour_water(scene, &camera, frame_index, (event.key.mod & SDL_KMOD_SHIFT) != 0);
+						break;
+					case SDLK_G:
+						flood_or_dry(frame_index, (event.key.mod & SDL_KMOD_SHIFT) != 0);
 						break;
 					case SDLK_BACKSPACE:
 						// The scene is made again; the stepping below brings
