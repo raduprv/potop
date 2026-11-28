@@ -18,14 +18,17 @@
 //   --throw-at N        throw a ball from the camera at the building at frame N
 //   --blast-at N        a blast in the building's middle at frame N
 //   --flood-at N        water 60 cm deep everywhere at frame N
+//   --bomb-at N         throw a bomb ball from the camera at the building at frame N
 //   --trace             with --shot: the fastest loose piece every half second
 //   --pour-at N         water poured as with the mouse, for 2 seconds from frame N, 6 m off the building's side
 //
 // In the window:
 //   right mouse button held: look round; W A S D, Q E: move (shift: faster)
-//   1: the wrecking ball, 2: the bomb, 3: water; left click: the weapon at
-//   the cursor (the ball thrown towards it, the bomb set off where it
-//   points, water poured there while held, 1000 cubic meters a second)
+//   1: the wrecking ball, 2: the bomb, 3: water, 4: the bomb ball; left
+//   click: the weapon at the cursor (the balls thrown towards it, the bomb
+//   ball going off where it first knocks into anything; the bomb set off
+//   where it points; water poured there while held, 1000 cubic meters a
+//   second)
 //   F: a flood (the water 30 cm higher everywhere); G: the water gone
 //   middle button held: turn round what is under the cursor; wheel: closer
 //   or further, towards the cursor
@@ -68,6 +71,7 @@ typedef struct
 	int blast_frame;
 	int flood_frame;
 	int pour_frame;
+	int bomb_frame;
 	bool trace;
 	// More of the same building: x, z, yaw in degrees each
 	float extra_buildings[WB_BUILDINGS_MAX][3];
@@ -81,10 +85,11 @@ typedef enum
 	WEAPON_BALL,
 	WEAPON_BOMB,
 	WEAPON_WATER,
+	WEAPON_BOMB_BALL,
 	WEAPON_COUNT
 } weapon_t;
 
-static const char *const WEAPON_NAMES[WEAPON_COUNT] = { "wrecking ball", "bomb", "water" };
+static const char *const WEAPON_NAMES[WEAPON_COUNT] = { "wrecking ball", "bomb", "water", "bomb ball" };
 
 #define WATER_POUR_CUBIC_METERS_A_SECOND 1000.0f
 #define WATER_POUR_RADIUS 3.0f
@@ -322,7 +327,7 @@ static void draw_world(wb_render_t *render, const wb_world_t *world, const float
 			const float rotation[4] = { turn.v.x, turn.v.y, turn.v.z, turn.s };
 			const float scale[3] = { ball->radius, ball->radius, ball->radius };
 
-			wb_render_add(render, WB_MESH_SPHERE, position, rotation, scale, 0x45474a);
+			wb_render_add(render, WB_MESH_SPHERE, position, rotation, scale, ball->explosive ? 0x9a2418 : 0x45474a);
 		}
 	}
 	// Where a blast would go (the cross, until there is an interface)
@@ -356,7 +361,7 @@ static void update_shadow_bounds(wb_render_t *render, const wb_world_t *world)
 static void usage(void)
 {
 	fprintf(stderr, "wrecking_ball [BUILDING.wreck] [--settings FILE] [--shaders DIR] [--shot FILE.png --frames N --size WxH]\n"
-		"              [--camera EX EY EZ TX TY TZ] [--add X Z YAW]... [--throw-at N] [--blast-at N] [--flood-at N] [--pour-at N]\n");
+		"              [--camera EX EY EZ TX TY TZ] [--add X Z YAW]... [--throw-at N] [--blast-at N] [--flood-at N] [--pour-at N] [--bomb-at N] [--trace]\n");
 }
 
 static bool read_options(int argument_count, char **arguments, options_t *options)
@@ -372,6 +377,7 @@ static bool read_options(int argument_count, char **arguments, options_t *option
 	options->blast_frame = -1;
 	options->flood_frame = -1;
 	options->pour_frame = -1;
+	options->bomb_frame = -1;
 	for (int i = 1; i < argument_count; i++)
 	{
 		const char *argument = arguments[i];
@@ -430,6 +436,10 @@ static bool read_options(int argument_count, char **arguments, options_t *option
 		else if (strcmp(argument, "--blast-at") == 0 && has_value)
 		{
 			options->blast_frame = atoi(arguments[++i]);
+		}
+		else if (strcmp(argument, "--bomb-at") == 0 && has_value)
+		{
+			options->bomb_frame = atoi(arguments[++i]);
 		}
 		else if (strcmp(argument, "--trace") == 0)
 		{
@@ -520,6 +530,14 @@ static void scripted_events(wb_world_t *world, const options_t *options, const f
 		wb_vector_subtract(center, camera->position, direction);
 		wb_vector_normalize(direction);
 		wb_world_throw_ball(world, camera->position, direction, BALL_SPEED);
+	}
+	if (world->frame_index == options->bomb_frame)
+	{
+		float direction[3];
+
+		wb_vector_subtract(center, camera->position, direction);
+		wb_vector_normalize(direction);
+		wb_world_throw_bomb(world, camera->position, direction, BALL_SPEED, BLAST_KILOGRAMS);
 	}
 	if (world->frame_index == options->blast_frame)
 	{
@@ -713,7 +731,7 @@ static int run_window(const options_t *options)
 				{
 					pouring = true;
 				}
-				else if (weapon == WEAPON_BALL)
+				else if (weapon == WEAPON_BALL || weapon == WEAPON_BOMB_BALL)
 				{
 					float hit[3];
 					float throw_direction[3];
@@ -731,7 +749,14 @@ static int run_window(const options_t *options)
 						throw_direction[1] += 0.5f * 9.81f * flight_seconds / BALL_SPEED;
 					}
 					wb_vector_normalize(throw_direction);
-					wb_world_throw_ball(world, camera.position, throw_direction, BALL_SPEED);
+					if (weapon == WEAPON_BOMB_BALL)
+					{
+						wb_world_throw_bomb(world, camera.position, throw_direction, BALL_SPEED, BLAST_KILOGRAMS);
+					}
+					else
+					{
+						wb_world_throw_ball(world, camera.position, throw_direction, BALL_SPEED);
+					}
 				}
 				else
 				{
@@ -848,6 +873,10 @@ static int run_window(const options_t *options)
 				else if (key == SDLK_3)
 				{
 					weapon = WEAPON_WATER;
+				}
+				else if (key == SDLK_4)
+				{
+					weapon = WEAPON_BOMB_BALL;
 				}
 				else if (key == SDLK_F)
 				{

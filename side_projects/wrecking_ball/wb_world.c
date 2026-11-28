@@ -587,6 +587,31 @@ void wb_world_step(wb_world_t *world)
 				step_seconds);
 		}
 	}
+	// Bombs that knocked into something go off
+	for (int i = 0; i < WB_BALLS_MAX; i++)
+	{
+		wb_ball_t *ball = &world->balls[i];
+		b3Vec3 velocity;
+		b3Vec3 change;
+
+		if (!ball->used || !ball->explosive)
+		{
+			continue;
+		}
+		velocity = b3Body_GetLinearVelocity(ball->body);
+		change = b3Sub(velocity, ball->last_velocity);
+		ball->last_velocity = velocity;
+		ball->age_seconds += step_seconds;
+		if (ball->age_seconds >= WB_BOMB_ARM_SECONDS && b3Length(change) > WB_BOMB_KNOCK_SPEED)
+		{
+			b3Vec3 at = b3Body_GetPosition(ball->body);
+			const float position[3] = { at.x, at.y, at.z };
+			float kilograms = ball->kilograms;
+
+			remove_ball(world, ball);
+			wb_world_blast(world, position, kilograms);
+		}
+	}
 	// Balls fallen off the world go
 	for (int i = 0; i < WB_BALLS_MAX; i++)
 	{
@@ -598,7 +623,23 @@ void wb_world_step(wb_world_t *world)
 	world->frame_index++;
 }
 
+static wb_ball_t *throw_round_thing(wb_world_t *world, const float origin[3], const float direction[3], float speed, float radius, float density);
+
 void wb_world_throw_ball(wb_world_t *world, const float origin[3], const float direction[3], float speed)
+{
+	throw_round_thing(world, origin, direction, speed, world->settings.ball_radius, world->settings.ball_density);
+}
+
+void wb_world_throw_bomb(wb_world_t *world, const float origin[3], const float direction[3], float speed, float kilograms)
+{
+	wb_ball_t *ball = throw_round_thing(world, origin, direction, speed, WB_BOMB_RADIUS, WB_BOMB_DENSITY);
+
+	ball->explosive = true;
+	ball->kilograms = kilograms;
+	ball->last_velocity = b3Body_GetLinearVelocity(ball->body);
+}
+
+static wb_ball_t *throw_round_thing(wb_world_t *world, const float origin[3], const float direction[3], float speed, float radius, float density)
 {
 	wb_ball_t *ball = &world->balls[world->next_ball];
 	b3BodyDef body_definition = b3DefaultBodyDef();
@@ -615,10 +656,13 @@ void wb_world_throw_ball(wb_world_t *world, const float origin[3], const float d
 	body_definition.linearVelocity = (b3Vec3){ direction[0] * speed, direction[1] * speed, direction[2] * speed };
 	body_definition.isBullet = true;
 	ball->body = b3CreateBody(world->world, &body_definition);
-	ball->radius = world->settings.ball_radius;
+	ball->radius = radius;
+	ball->explosive = false;
+	ball->kilograms = 0.0f;
+	ball->age_seconds = 0.0f;
 	sphere.center = (b3Vec3){ 0.0f, 0.0f, 0.0f };
 	sphere.radius = ball->radius;
-	shape_definition.density = world->settings.ball_density;
+	shape_definition.density = density;
 	shape_definition.enableHitEvents = true;
 	b3CreateSphereShape(ball->body, &shape_definition, &sphere);
 	ball->used = true;
@@ -629,6 +673,7 @@ void wb_world_throw_ball(wb_world_t *world, const float origin[3], const float d
 			wreck_model_add_projectile(world->buildings[b].model, ball->body, ball->radius);
 		}
 	}
+	return ball;
 }
 
 void wb_world_blast(wb_world_t *world, const float position[3], float kilograms)

@@ -22,12 +22,22 @@
 #define WB_TERRAIN_CELL_METERS 0.5f
 #define WB_BALLS_MAX 8
 #define WB_BUILDINGS_MAX 16
+#define WB_BOMB_RADIUS 0.2f
+#define WB_BOMB_DENSITY 1500.0f              // kilograms a cubic meter: 50 kg
+#define WB_BOMB_ARM_SECONDS 0.05f            // (not set off by the hand that throws it)
+#define WB_BOMB_KNOCK_SPEED 4.0f             // meters a second
 
 typedef struct
 {
 	b3BodyId body;
 	float radius;
 	bool used;
+	// A bomb: goes off at the first knock after it is armed (its speed
+	// changing by more than WB_BOMB_KNOCK_SPEED in a step)
+	bool explosive;
+	float kilograms;                   // of explosive
+	float age_seconds;
+	b3Vec3 last_velocity;
 } wb_ball_t;
 
 typedef struct
@@ -85,6 +95,9 @@ void wb_world_step(wb_world_t *world);
 // A ball from a point, flying along a direction at a speed (meters a
 // second); the oldest goes when there are WB_BALLS_MAX
 void wb_world_throw_ball(wb_world_t *world, const float origin[3], const float direction[3], float speed);
+// The same with a bomb in it: a smaller ball that goes off as kilograms
+// of explosive where it first knocks into anything
+void wb_world_throw_bomb(wb_world_t *world, const float origin[3], const float direction[3], float speed, float kilograms);
 // A blast of kilograms of explosive at a point
 void wb_world_blast(wb_world_t *world, const float position[3], float kilograms);
 // The first thing along a ray (direction of unit length) within a
