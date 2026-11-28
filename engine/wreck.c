@@ -61,6 +61,10 @@
 // Who bears what is worked out anew when the water's push on a standing
 // piece has changed by this much of the piece's weight
 #define WATER_LOAD_CHANGE 0.05f
+// A loose long piece that was hit is looked at in this many slices along
+// it, with at most this many of its body's contacts
+#define BEND_SLICES 32
+#define BEND_CONTACTS_MAX 32
 #define SUPPORT_ROUNDS_MAX 4000
 // A long piece's bending is looked at where its links are and at this
 // many places evenly along it; and a piece's links looked at, at most
@@ -155,6 +159,9 @@ void wreck_settings_default(wreck_settings_t *settings)
 	settings->piece_hit_points[WRECK_MATERIAL_WOOD] = 12000.0f;
 	settings->bend[WRECK_MATERIAL_WOOD] = 3000000.0f;
 	settings->snap[WRECK_MATERIAL_WOOD] = 150000.0f;
+	settings->stretch[WRECK_MATERIAL_WOOD] = 0.01f;
+	settings->stretch[WRECK_MATERIAL_BRICK] = 0.0003f;
+	settings->stretch[WRECK_MATERIAL_GLASS] = 0.001f;
 	settings->piece_threshold[WRECK_MATERIAL_BRICK] = 5000.0f;
 	settings->piece_hit_points[WRECK_MATERIAL_BRICK] = 6000.0f;
 	settings->bend[WRECK_MATERIAL_BRICK] = 200000.0f;
@@ -259,6 +266,10 @@ static bool read_material_key(wreck_settings_t *settings, wreck_material_t mater
 	if (strcmp(key, "snap") == 0)
 	{
 		return read_float(value, &settings->snap[material]);
+	}
+	if (strcmp(key, "stretch") == 0)
+	{
+		return read_float(value, &settings->stretch[material]);
 	}
 	return false;
 }
@@ -2606,6 +2617,217 @@ static void shock_through_group(wreck_model_t *model, int group_index, int frame
 	}
 }
 
+// A long piece, loose by itself, that was hit in the step just made (it
+// fell on something, something fell on it): is it bent enough to break,
+// and where?
+//
+// The pushes of everything that touches it (the step's contact impulses,
+// across its length) would move and turn it as a whole; each slice of it
+// takes its share of that by its mass. What the pushes give a slice
+// beyond its share has to pass along the piece, as bending. That gives
+// the bending at every section between slices, as a push times an arm
+// (newton second meters). Where the piece lies against a face (a contact
+// with points apart along it) it is backed and cannot bend: those
+// sections are left out, which is why a board that lands flat does not
+// break and one that lands across a log, or on one end, may.
+//
+// At the worst section: the energy the two halves would take up turning
+// against each other about it if it were a free hinge, but no more than
+// what the hits had to give (energy_given). Against the energy the piece
+// stores bent to breaking: its bending strength times how far it bends
+// by then, which is stretch * length / (3 * depth) for a bar bent by a
+// push at one point.
+static void bend_loose_piece(wreck_model_t *model, int piece_index, float energy_given)
+{
+	static b3ContactData contacts[BEND_CONTACTS_MAX];
+	const wreck_piece_t *piece = &model->pieces[piece_index];
+	const wreck_group_t *group;
+	b3Vec3 slice_pushes[BEND_SLICES];
+	float span_starts[BEND_CONTACTS_MAX * 4];
+	float span_ends[BEND_CONTACTS_MAX * 4];
+	int span_count = 0;
+	b3Transform frame;
+	b3Vec3 axis;
+	b3Vec3 push_sum = b3Vec3_zero;
+	b3Vec3 turn_sum = b3Vec3_zero;
+	b3Vec3 move;
+	b3Vec3 turn;
+	float half_sizes[3];
+	float half_length;
+	float length;
+	float slice_length;
+	float slice_mass;
+	float turning_mass = 0.0f;
+	float worst_squared = 0.0f;
+	float worst_position = 0.0f;
+	float before;
+	float after;
+	float mass_before;
+	float mass_after;
+	float lopsided;
+	float hinge_ease;
+	float energy;
+	float energy_to_break;
+	int contact_count;
+	int contact_index;
+	int manifold_index;
+	int point_index;
+	int section;
+	int slice;
+	int k;
+
+	if (piece->group == WRECK_GONE || piece->long_axis < 0)
+	{
+		return;
+	}
+	group = &model->groups[piece->group];
+	if (group->anchored || group->piece_count != 1)
+	{
+		return;
+	}
+	frame = b3Body_GetTransform(group->body);
+	axis = b3RotateVector(frame.q, piece_axis(piece));
+	piece_half_sizes(piece, half_sizes);
+	half_length = half_sizes[piece->long_axis];
+	length = 2.0f * half_length;
+	slice_length = length / (float)BEND_SLICES;
+	slice_mass = piece->mass / (float)BEND_SLICES;
+	for (slice = 0; slice < BEND_SLICES; slice++)
+	{
+		slice_pushes[slice] = b3Vec3_zero;
+	}
+
+	// The pushes, each into its slice; and where the piece is backed
+	contact_count = b3Body_GetContactData(group->body, contacts, BEND_CONTACTS_MAX);
+	for (contact_index = 0; contact_index < contact_count; contact_index++)
+	{
+		const b3ContactData *contact = &contacts[contact_index];
+		bool is_first = B3_ID_EQUALS(b3Shape_GetBody(contact->shapeIdA), group->body);
+
+		for (manifold_index = 0; manifold_index < contact->manifoldCount; manifold_index++)
+		{
+			const b3Manifold *manifold = &contact->manifolds[manifold_index];
+			float first_position = 0.0f;
+			float last_position = 0.0f;
+			int pushing_count = 0;
+
+			for (point_index = 0; point_index < manifold->pointCount; point_index++)
+			{
+				const b3ManifoldPoint *point = &manifold->points[point_index];
+				// (The normal goes from the first shape to the second)
+				b3Vec3 push = b3MulSV(is_first ? -point->totalNormalImpulse : point->totalNormalImpulse, manifold->normal);
+				float position = b3Dot(is_first ? point->anchorA : point->anchorB, axis);
+
+				if (point->totalNormalImpulse <= 0.0f)
+				{
+					continue;
+				}
+				position = position < -half_length ? -half_length : (position > half_length ? half_length : position);
+				slice = (int)((position + half_length) / slice_length);
+				slice = slice >= BEND_SLICES ? BEND_SLICES - 1 : slice;
+				push = b3Sub(push, b3MulSV(b3Dot(push, axis), axis));
+				slice_pushes[slice] = b3Add(slice_pushes[slice], push);
+				if (pushing_count == 0 || position < first_position)
+				{
+					first_position = position;
+				}
+				if (pushing_count == 0 || position > last_position)
+				{
+					last_position = position;
+				}
+				pushing_count++;
+			}
+			if (pushing_count >= 2 && span_count < BEND_CONTACTS_MAX * 4)
+			{
+				span_starts[span_count] = first_position;
+				span_ends[span_count] = last_position;
+				span_count++;
+			}
+		}
+	}
+
+	// How the pushes move and turn the piece as a whole
+	for (slice = 0; slice < BEND_SLICES; slice++)
+	{
+		float position = -half_length + ((float)slice + 0.5f) * slice_length;
+
+		push_sum = b3Add(push_sum, slice_pushes[slice]);
+		turn_sum = b3Add(turn_sum, b3MulSV(position, b3Cross(axis, slice_pushes[slice])));
+		turning_mass += slice_mass * position * position;
+	}
+	move = b3MulSV(1.0f / piece->mass, push_sum);
+	turn = b3MulSV(1.0f / turning_mass, turn_sum);
+	// What each slice gets beyond its share of that
+	for (slice = 0; slice < BEND_SLICES; slice++)
+	{
+		float position = -half_length + ((float)slice + 0.5f) * slice_length;
+		b3Vec3 share = b3MulSV(slice_mass, b3Add(move, b3MulSV(position, b3Cross(turn, axis))));
+
+		slice_pushes[slice] = b3Sub(slice_pushes[slice], share);
+	}
+	// The bending at each section between slices: of everything before
+	// it, the push times its arm to the section
+	for (section = 1; section < BEND_SLICES; section++)
+	{
+		float section_position = -half_length + (float)section * slice_length;
+		b3Vec3 bending = b3Vec3_zero;
+		bool is_backed = false;
+
+		for (k = 0; k < span_count; k++)
+		{
+			if (section_position > span_starts[k] && section_position < span_ends[k])
+			{
+				is_backed = true;
+			}
+		}
+		if (is_backed)
+		{
+			continue;
+		}
+		for (slice = 0; slice < section; slice++)
+		{
+			float position = -half_length + ((float)slice + 0.5f) * slice_length;
+
+			bending = b3Add(bending, b3MulSV(position - section_position, b3Cross(axis, slice_pushes[slice])));
+		}
+		if (b3Dot(bending, bending) > worst_squared)
+		{
+			worst_squared = b3Dot(bending, bending);
+			worst_position = section_position;
+		}
+	}
+	if (worst_squared <= 0.0f)
+	{
+		return;
+	}
+
+	// Two bars joined end to end by a pin, free otherwise, turned against
+	// each other by a turning push at the pin: how readily they turn
+	// (one over what stands for their mass in it). Each alone would be
+	// 1 / (mass * length^2 / 12); the pin, which keeps their ends
+	// together, takes some of that back when the bars are unlike
+	before = worst_position + half_length;
+	after = length - before;
+	mass_before = piece->mass * before / length;
+	mass_after = piece->mass * after / length;
+	lopsided = 1.0f / (mass_after * after) - 1.0f / (mass_before * before);
+	hinge_ease = 12.0f / (mass_before * before * before) + 12.0f / (mass_after * after * after) - 9.0f * lopsided * lopsided / (1.0f / mass_before + 1.0f / mass_after);
+	energy = 0.5f * worst_squared * hinge_ease;
+	if (energy > energy_given)
+	{
+		energy = energy_given;
+	}
+
+	// (Bending strength, bend * depth^2 * width, times how far it bends
+	// by then, stretch * length / (3 * depth): the depth and the width
+	// come together into the piece's volume, whichever way it is bent)
+	energy_to_break = model->settings.bend[piece->material] * model->settings.stretch[piece->material] * piece->mass / model->settings.densities[piece->material] / 3.0f;
+	if (energy > energy_to_break)
+	{
+		request_cut(model, piece_index, worst_position);
+	}
+}
+
 void wreck_model_take_hit(wreck_model_t *model, const b3ContactHitEvent *event, int frame_index)
 {
 	int piece_a;
@@ -2657,11 +2879,20 @@ void wreck_model_take_hit(wreck_model_t *model, const b3ContactHitEvent *event, 
 		{
 			broke = true;
 		}
-		if (snap_piece(model, piece_index, event->point, event->normal, impulse))
+		group = &model->groups[model->pieces[piece_index].group];
+		if (!group->anchored && group->piece_count == 1 && model->pieces[piece_index].long_axis >= 0)
+		{
+			// (A long piece loose by itself: looked at after the step,
+			// with everything that touches it, in bend_loose_piece. What
+			// this hit had to give: half its push by the speed it came
+			// at, which is what a hit that does not bounce loses)
+			model->bend_energies[piece_index] += 0.5f * impulse * event->approachSpeed;
+			model->any_bend = true;
+		}
+		else if (snap_piece(model, piece_index, event->point, event->normal, impulse))
 		{
 			broke = true;
 		}
-		group = &model->groups[model->pieces[piece_index].group];
 		if (!group->anchored && !group->rubble && !group->rebuilt && group->piece_count > 1)
 		{
 			model->shock_groups[model->pieces[piece_index].group] = true;
@@ -2695,6 +2926,22 @@ void wreck_model_after_step(wreck_model_t *model, int frame_index, float step_se
 {
 	int i;
 
+	if (model->any_bend)
+	{
+		// (Up to the count as it is now: a piece made by a cut here was
+		// not hit)
+		int piece_count = model->piece_count;
+
+		for (i = 0; i < piece_count; i++)
+		{
+			if (model->bend_energies[i] > 0.0f)
+			{
+				bend_loose_piece(model, i, model->bend_energies[i]);
+				model->bend_energies[i] = 0.0f;
+			}
+		}
+		model->any_bend = false;
+	}
 	if (model->any_shock)
 	{
 		for (i = 0; i < WRECK_PIECES_MAX; i++)
@@ -2739,7 +2986,7 @@ bool wreck_model_is_busy(const wreck_model_t *model)
 {
 	int i;
 
-	if (model->restored_count > 0 || model->any_shock || model->support_dirty || model->any_group_dirty
+	if (model->restored_count > 0 || model->any_shock || model->any_bend || model->support_dirty || model->any_group_dirty
 		|| model->overloaded_count > 0 || model->pending_cut_count > 0)
 	{
 		return true;

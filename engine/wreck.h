@@ -133,6 +133,11 @@ typedef struct
 	// newton second meters)
 	float bend[WRECK_MATERIAL_COUNT];
 	float snap[WRECK_MATERIAL_COUNT];
+	// How far the material stretches before it breaks, as a share of its
+	// length (wood about 0.01): with bend, the energy a long piece
+	// stores bent to breaking, which a piece loose by itself is held
+	// against when it is hit (bend_loose_piece in wreck.c)
+	float stretch[WRECK_MATERIAL_COUNT];
 	wreck_link_settings_t links[WRECK_LINK_TYPE_COUNT];
 	float hop_falloff;                 // what a link passes on to the piece at its other end, of what it got
 	float hit_speed;                   // meters a second: slower contacts are not hits
@@ -299,6 +304,10 @@ typedef struct
 	bool shock_groups[WRECK_PIECES_MAX];
 	bool shock_pieces[WRECK_PIECES_MAX];
 	bool any_shock;
+	// Long pieces loose by themselves that were hit in this step: for
+	// each, the energy the hits had to give (joules; 0 not hit)
+	float bend_energies[WRECK_PIECES_MAX];
+	bool any_bend;
 
 	// The water, if there is any (wreck_model_set_water)
 	wreck_water_function_t *water_function;

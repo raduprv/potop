@@ -564,6 +564,48 @@ speeds are the shallow water's, which has no friction with the ground.
 
 Not done yet: pieces in the water's way.
 
+## A loose long piece that lands (bending by energy)
+
+Radu: a board thrown high that comes down ought to break. The old rule
+for it (`snap_piece`) took the hit as one point, gave no bending for a
+hit on an end, could not tell lying flat from lying across something,
+and its limit was in the ball-tuned newton second meters. For a long
+piece loose by itself it is replaced by `bend_loose_piece` (standing
+pieces and pieces of loose groups keep their rules):
+
+- after the step, all the contact impulses of the piece's body are
+  taken (not the hit alone: what it rests on counts), across its length,
+  each into one of 32 slices;
+- they would move and turn the piece as a whole; each slice takes its
+  share by its mass; what a slice gets beyond its share passes along
+  the piece as bending. That gives the bending at every section;
+- where the piece lies against a face (a contact with points apart
+  along it) it is backed and cannot bend: those sections are left out.
+  The solver cannot say how a face contact shares its push, and need
+  not: outside the backed span only the sum and its turning matter;
+- at the worst section, the energy the two halves would take up turning
+  against each other if it were a free hinge (closed form for two bars
+  joined by a pin), but no more than the hits had to give (half of each
+  hit's impulse times its approach speed: what a hit that does not
+  bounce loses);
+- against the energy the piece stores bent to breaking: bend x stretch
+  x volume / 3, with `stretch` a new number of the material (how far it
+  stretches before it breaks: wood 0.01, brick 0.0003, glass 0.001).
+
+What comes of it: a breaking speed that does not depend on the piece's
+size, only on how it lands. With the wood as it is set (bend 3e6,
+600 kg/m3): about 6 m/s stopped across something at its middle, about
+12 m/s landing on one end (it breaks a third of the way along); flat on
+the ground, never. These are estimates right in order of size: the
+hinge is free, the hits are taken as not bouncing, friction is left
+out.
+
+On the house demo (three balls and a blast): 116 cuts where there were
+39.
+
+Still on the old rules: a hit on a standing long piece (`snap_piece`),
+a piece's own hit points.
+
 ## The model
 
 Not a CAD grade simulation: if it shows in the game it is in, if it only
