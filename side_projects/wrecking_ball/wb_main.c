@@ -19,8 +19,9 @@
 //
 // In the window:
 //   right mouse button held: look round; W A S D, Q E: move (shift: faster)
-//   left click: throw a ball; B: a blast where the cross points
-//   R: the building again; 1 to 4: house, cabin, support, bend
+//   1: the wrecking ball, 2: the bomb; left click: the weapon at the
+//   cursor (the ball thrown towards it, the bomb set off where it points)
+//   R: the building again; F1 to F4: house, cabin, support, bend
 //   space: pause; T: slow motion; Esc: quit
 
 #include <stdio.h>
@@ -59,6 +60,15 @@ typedef struct
 
 static const char *const BUILDING_NAMES[4] = { "house", "cabin", "support", "bend" };
 
+typedef enum
+{
+	WEAPON_BALL,
+	WEAPON_BOMB,
+	WEAPON_COUNT
+} weapon_t;
+
+static const char *const WEAPON_NAMES[WEAPON_COUNT] = { "wrecking ball", "bomb" };
+
 // ---------------------------------------------------------------------------
 // The camera
 
@@ -91,6 +101,34 @@ static void camera_to_render(const fly_camera_t *camera, wb_camera_t *render_cam
 		render_camera->target[k] = camera->position[k] + forward[k];
 	}
 	render_camera->vertical_field_of_view_degrees = 60.0f;
+}
+
+// The direction from the eye through a point of the window (in its own
+// coordinates, as the mouse's are)
+static void camera_ray_through(const fly_camera_t *camera, SDL_Window *window, float window_x, float window_y, float direction[3])
+{
+	float forward[3];
+	float right[3];
+	float up[3];
+	const float world_up[3] = { 0.0f, 1.0f, 0.0f };
+	int width;
+	int height;
+	float half_height = SDL_tanf(0.5f * 60.0f * SDL_PI_F / 180.0f);
+	float across;
+	float upwards;
+
+	SDL_GetWindowSize(window, &width, &height);
+	camera_forward(camera, forward);
+	wb_vector_cross(forward, world_up, right);
+	wb_vector_normalize(right);
+	wb_vector_cross(right, forward, up);
+	across = (2.0f * window_x / (float)SDL_max(width, 1) - 1.0f) * half_height * (float)width / (float)SDL_max(height, 1);
+	upwards = (1.0f - 2.0f * window_y / (float)SDL_max(height, 1)) * half_height;
+	for (int k = 0; k < 3; k++)
+	{
+		direction[k] = forward[k] + right[k] * across + up[k] * upwards;
+	}
+	wb_vector_normalize(direction);
 }
 
 // Looking at the building from a little above, at a distance that shows it whole
@@ -424,6 +462,7 @@ static int run_window(const options_t *options)
 	bool looking = false;
 	bool paused = false;
 	bool slow = false;
+	weapon_t weapon = WEAPON_BALL;
 	uint64_t last_ticks;
 	double step_time_left = 0.0;
 	uint64_t title_ticks = 0;
@@ -466,12 +505,26 @@ static int run_window(const options_t *options)
 		const float up[3] = { 0.0f, 1.0f, 0.0f };
 		float speed;
 		float aim_point[3];
+		float aim_direction[3];
+		float mouse_x;
+		float mouse_y;
 		bool aiming;
 		wb_camera_t render_camera;
 
 		last_ticks = now_ticks;
 		seconds = SDL_min(seconds, 0.1);
 		camera_forward(&camera, forward);
+		// Aimed at the cursor (at the middle while looking round: the
+		// cursor is hidden then)
+		SDL_GetMouseState(&mouse_x, &mouse_y);
+		if (looking)
+		{
+			SDL_memcpy(aim_direction, forward, sizeof(aim_direction));
+		}
+		else
+		{
+			camera_ray_through(&camera, window, mouse_x, mouse_y, aim_direction);
+		}
 		while (SDL_PollEvent(&event))
 		{
 			if (event.type == SDL_EVENT_QUIT)
@@ -490,7 +543,39 @@ static int run_window(const options_t *options)
 			}
 			else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT)
 			{
-				wb_world_throw_ball(world, camera.position, forward, BALL_SPEED);
+				if (!looking)
+				{
+					camera_ray_through(&camera, window, event.button.x, event.button.y, aim_direction);
+				}
+				if (weapon == WEAPON_BALL)
+				{
+					float hit[3];
+					float throw_direction[3];
+
+					// Lifted by what gravity takes off it on the way, so it
+					// lands where the cursor points
+					SDL_memcpy(throw_direction, aim_direction, sizeof(throw_direction));
+					if (wb_world_cast_ray(world, camera.position, aim_direction, 200.0f, hit))
+					{
+						float offset[3];
+						float flight_seconds;
+
+						wb_vector_subtract(hit, camera.position, offset);
+						flight_seconds = wb_vector_length(offset) / BALL_SPEED;
+						throw_direction[1] += 0.5f * 9.81f * flight_seconds / BALL_SPEED;
+					}
+					wb_vector_normalize(throw_direction);
+					wb_world_throw_ball(world, camera.position, throw_direction, BALL_SPEED);
+				}
+				else
+				{
+					float hit[3];
+
+					if (wb_world_cast_ray(world, camera.position, aim_direction, 200.0f, hit))
+					{
+						wb_world_blast(world, hit, BLAST_KILOGRAMS);
+					}
+				}
 			}
 			else if (event.type == SDL_EVENT_MOUSE_MOTION && looking)
 			{
@@ -518,18 +603,17 @@ static int run_window(const options_t *options)
 				{
 					wb_world_reset_building(world);
 				}
-				else if (key == SDLK_B)
+				else if (key == SDLK_1)
 				{
-					float hit[3];
-
-					if (wb_world_cast_ray(world, camera.position, forward, 200.0f, hit))
-					{
-						wb_world_blast(world, hit, BLAST_KILOGRAMS);
-					}
+					weapon = WEAPON_BALL;
 				}
-				else if (key >= SDLK_1 && key <= SDLK_4)
+				else if (key == SDLK_2)
 				{
-					load_numbered_building(world, render, &camera, options->building_path, (int)(key - SDLK_1));
+					weapon = WEAPON_BOMB;
+				}
+				else if (key >= SDLK_F1 && key <= SDLK_F4)
+				{
+					load_numbered_building(world, render, &camera, options->building_path, (int)(key - SDLK_F1));
 				}
 			}
 		}
@@ -567,7 +651,7 @@ static int run_window(const options_t *options)
 				step_time_left = 0.0;
 			}
 		}
-		aiming = wb_world_cast_ray(world, camera.position, forward, 200.0f, aim_point);
+		aiming = wb_world_cast_ray(world, camera.position, aim_direction, 200.0f, aim_point);
 		draw_world(render, world, aiming ? aim_point : NULL);
 		camera_to_render(&camera, &render_camera);
 		wb_render_end_frame(render, &render_camera, NULL);
@@ -579,7 +663,8 @@ static int run_window(const options_t *options)
 			const char *name = strrchr(world->building_path, '/');
 			double fps = (double)frames_counted * 1e9 / (double)(now_ticks - title_ticks);
 
-			SDL_snprintf(title, sizeof(title), "WreckingBall - %s: %d pieces, %d links broken - %.0f fps%s%s", name != NULL ? name + 1 : world->building_path,
+			SDL_snprintf(title, sizeof(title), "WreckingBall - %s - %s: %d pieces, %d links broken - %.0f fps%s%s", WEAPON_NAMES[weapon],
+				name != NULL ? name + 1 : world->building_path,
 				world->model != NULL ? world->model->piece_count : 0, world->model != NULL ? world->model->broken_link_count : 0, fps,
 				paused ? " - paused" : "", slow ? " - slow" : "");
 			SDL_SetWindowTitle(window, title);
